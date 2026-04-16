@@ -1,4 +1,4 @@
-# Claude Code Configuration - RuFlo V3
+# Claude Code Configuration - AEAP
 
 ## Behavioral Rules (Always Enforced)
 
@@ -240,5 +240,5 @@ npx @claude-flow/cli@latest doctor --fix
 
 ## Support
 
-- Documentation: https://github.com/ruvnet/ruflo
-- Issues: https://github.com/ruvnet/ruflo/issues
+- Documentation: https://github.com/agenomics-labs/aeap
+- Issues: https://github.com/agenomics-labs/aeap/issues
