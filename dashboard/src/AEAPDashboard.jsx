@@ -19,7 +19,7 @@ const PROGRAM_IDS = {
 const MONITORED_VAULT = null; // Set to a PublicKey string to monitor a specific vault
 
 // ============================================================================
-// AEAP Dashboard — Agenomics Protocol
+// Agenomics Protocol Dashboard
 // Interactive overview of the 3-program Solana architecture
 // ============================================================================
 
@@ -328,7 +328,7 @@ function MCPSection() {
     <div className="space-y-4">
       <h3 className="text-sm font-semibold text-gray-300">MCP Server Tools ({MCP_TOOLS.length})</h3>
       <p className="text-xs text-gray-400">
-        Every on-chain instruction is exposed as an MCP tool, enabling any AI agent to interact with AEAP through the Model Context Protocol.
+        Every on-chain instruction is exposed as an MCP tool, enabling any AI agent to interact with Agenomics through the Model Context Protocol.
       </p>
       <div className="grid grid-cols-3 gap-3">
         {Object.entries(grouped).map(([key, tools]) => (
@@ -450,12 +450,11 @@ export default function AEAPDashboard() {
         <div className="text-center mb-8">
           <div className="flex items-center justify-center gap-3 mb-2">
             <h1 className="text-3xl font-bold bg-gradient-to-r from-violet-400 via-cyan-400 to-emerald-400 bg-clip-text text-transparent">
-              AEAP Dashboard
+              Agenomics Protocol
             </h1>
             <DevnetBadge />
           </div>
-          <p className="text-gray-400 mt-1 text-sm">Agenomics Protocol — Solana/Anchor</p>
-          <p className="text-gray-500 text-xs mt-1">Colosseum Frontier Hackathon 2026</p>
+          <p className="text-gray-400 mt-1 text-sm">Trustless economic layer for autonomous AI agents on Solana</p>
           {lastUpdated && (
             <p className="text-gray-600 text-xs mt-1">
               Last updated: {lastUpdated.toLocaleTimeString()}
