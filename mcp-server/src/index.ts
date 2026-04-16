@@ -18,6 +18,7 @@ import {
   deriveAgentProfilePDA,
   deriveEscrowPDA,
   deriveEscrowTokenAccount,
+  getAssociatedTokenAddressSync,
   isValidPublicKey,
   parsePublicKey,
   solToLamports,
@@ -736,10 +737,7 @@ async function handleCreateEscrow(args: Record<string, unknown>) {
   }));
 
   // Derive client's ATA for the token mint
-  const { getAssociatedTokenAddressSync: getAta } = await import(
-    "@solana/spl-token"
-  );
-  const clientTokenAccount = getAta(tokenMintAddress, wallet.publicKey);
+  const clientTokenAccount = getAssociatedTokenAddressSync(tokenMintAddress, wallet.publicKey);
 
   const sig = await program.methods
     .createEscrow(
@@ -975,10 +973,7 @@ async function handleCancelEscrow(args: Record<string, unknown>) {
     escrowAddress,
     tokenMint
   );
-  const { getAssociatedTokenAddressSync: getAta } = await import(
-    "@solana/spl-token"
-  );
-  const clientTokenAccount = getAta(tokenMint, wallet.publicKey);
+  const clientTokenAccount = getAssociatedTokenAddressSync(tokenMint, wallet.publicKey);
 
   const sig = await program.methods
     .cancelEscrow()
@@ -1107,10 +1102,7 @@ async function handleVaultTokenTransfer(args: Record<string, unknown>) {
   const [vaultPDA] = deriveVaultPDA(wallet.publicKey);
 
   // Derive the vault's ATA for this token mint
-  const { getAssociatedTokenAddressSync: getAta } = await import(
-    "@solana/spl-token"
-  );
-  const vaultTokenAccount = getAta(tokenMintAddress, vaultPDA, true);
+  const vaultTokenAccount = getAssociatedTokenAddressSync(tokenMintAddress, vaultPDA, true);
 
   const sig = await program.methods
     .executeTokenTransfer(new BN(amount))
@@ -1194,11 +1186,8 @@ async function handleResolveDisputeTimeout(args: Record<string, unknown>) {
   const escrowTokenAccount = deriveEscrowTokenAccount(escrowAddress, tokenMint);
 
   // Derive ATAs for client and provider
-  const { getAssociatedTokenAddressSync: getAta } = await import(
-    "@solana/spl-token"
-  );
-  const clientTokenAccount = getAta(tokenMint, client);
-  const providerTokenAccount = getAta(tokenMint, provider);
+  const clientTokenAccount = getAssociatedTokenAddressSync(tokenMint, client);
+  const providerTokenAccount = getAssociatedTokenAddressSync(tokenMint, provider);
 
   const sig = await program.methods
     .resolveDisputeTimeout()

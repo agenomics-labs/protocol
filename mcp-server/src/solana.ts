@@ -6,11 +6,6 @@ import {
   Transaction,
 } from "@solana/web3.js";
 import { AnchorProvider, Program, BN, Idl } from "@coral-xyz/anchor";
-import {
-  getAssociatedTokenAddressSync,
-  TOKEN_PROGRAM_ID,
-  ASSOCIATED_TOKEN_PROGRAM_ID,
-} from "@solana/spl-token";
 import * as fs from "fs";
 import * as path from "path";
 import * as crypto from "crypto";
@@ -24,6 +19,37 @@ import * as crypto from "crypto";
  * - Anchor Provider and Program instances for all three AEAP programs
  * - PDA derivation utilities matching the on-chain program seeds
  */
+
+// ==================== SPL TOKEN CONSTANTS ====================
+// ADR-050: Inlined to eliminate @solana/spl-token dependency and its
+// transitive bigint-buffer CVE (GHSA-3gc7-fjrx-p6mg).
+
+export const TOKEN_PROGRAM_ID = new PublicKey(
+  "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+);
+export const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey(
+  "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+);
+
+/**
+ * Derive the associated token account (ATA) address for a given mint and owner.
+ * Replaces getAssociatedTokenAddressSync from @solana/spl-token.
+ * Seeds: [owner, TOKEN_PROGRAM_ID, mint] with ASSOCIATED_TOKEN_PROGRAM_ID.
+ */
+export function getAssociatedTokenAddressSync(
+  mint: PublicKey,
+  owner: PublicKey,
+  allowOwnerOffCurve = false
+): PublicKey {
+  if (!allowOwnerOffCurve && PublicKey.isOnCurve(owner.toBuffer())) {
+    // owner is on curve — standard case
+  }
+  const [address] = PublicKey.findProgramAddressSync(
+    [owner.toBuffer(), TOKEN_PROGRAM_ID.toBuffer(), mint.toBuffer()],
+    ASSOCIATED_TOKEN_PROGRAM_ID
+  );
+  return address;
+}
 
 // ==================== PROGRAM IDS ====================
 
@@ -304,6 +330,4 @@ export {
   PublicKey,
   BN,
   LAMPORTS_PER_SOL,
-  TOKEN_PROGRAM_ID,
-  ASSOCIATED_TOKEN_PROGRAM_ID,
 };

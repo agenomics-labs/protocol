@@ -19,10 +19,6 @@ import * as crypto from "crypto";
 import * as fs from "fs";
 import * as path from "path";
 import { PublicKey, Connection, Keypair } from "@solana/web3.js";
-import {
-  getAssociatedTokenAddressSync,
-} from "@solana/spl-token";
-
 // ==================== CONSTANTS ====================
 
 export const VAULT_PROGRAM_ID = "4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN";
@@ -149,10 +145,11 @@ export function deriveEscrowTokenAccountv2(
   escrowPDA: string,
   tokenMint: string
 ): string {
-  const ata = getAssociatedTokenAddressSync(
-    new PublicKey(tokenMint),
-    new PublicKey(escrowPDA),
-    true
+  const TOKEN_PID = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+  const ATA_PID = new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+  const [ata] = PublicKey.findProgramAddressSync(
+    [new PublicKey(escrowPDA).toBuffer(), TOKEN_PID.toBuffer(), new PublicKey(tokenMint).toBuffer()],
+    ATA_PID
   );
   return ata.toBase58();
 }
