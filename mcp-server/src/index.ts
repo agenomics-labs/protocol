@@ -1044,12 +1044,25 @@ async function handleResolveDispute(args: Record<string, unknown>) {
   const wallet = loadWallet();
   const program = getSettlementProgram();
 
-  // Get escrow token account
+  // Get escrow token account and provider for PDA derivation
   const escrow = await (program.account as any).taskEscrow.fetch(escrowAddress);
   const tokenMint = escrow.tokenMint as PublicKey;
+  const provider = escrow.provider as PublicKey;
   const escrowTokenAccount = deriveEscrowTokenAccount(
     escrowAddress,
     tokenMint
+  );
+
+  // Derive provider's AgentProfile PDA for CPI reputation update
+  const [providerProfilePDA] = PublicKey.findProgramAddressSync(
+    [provider.toBuffer(), Buffer.from("agent-profile")],
+    REGISTRY_PROGRAM_ID
+  );
+
+  // Derive settlement_authority PDA
+  const [settlementAuthorityPDA] = PublicKey.findProgramAddressSync(
+    [Buffer.from("settlement_authority")],
+    SETTLEMENT_PROGRAM_ID
   );
 
   const sig = await program.methods
@@ -1060,6 +1073,9 @@ async function handleResolveDispute(args: Record<string, unknown>) {
       escrowTokenAccount: escrowTokenAccount,
       clientTokenAccount: clientTokenAccount,
       providerTokenAccount: providerTokenAccount,
+      registryProgram: REGISTRY_PROGRAM_ID,
+      providerProfile: providerProfilePDA,
+      settlementAuthority: settlementAuthorityPDA,
       tokenProgram: TOKEN_PROGRAM_ID,
     })
     .signers([wallet])

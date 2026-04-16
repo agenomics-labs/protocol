@@ -4,12 +4,16 @@ use anchor_spl::token::{Token, TokenAccount};
 use crate::state::Vault;
 use crate::errors::VaultError;
 
+/// ADR-050: Explicit serialized size replaces mem::size_of (which returns stack size).
+/// 8 (disc) + 32 (agent_id) + 32 (authority) + 1 (paused) + 8 (spent_today) + 8 (last_day)
+/// + VaultPolicy: 8+8+4+324+324=668 + 4 (txs_window) + 8 (rate_start)
+/// + 4+(10*(32+8+8))=484 (token_spend_records) + 1 (bump) = 1254 + 200 margin = 1454
 #[derive(Accounts)]
 pub struct InitializeVault<'info> {
     #[account(
         init,
         payer = authority,
-        space = 8 + std::mem::size_of::<Vault>() + 1024,
+        space = 1454,
         seeds = [b"vault", authority.key().as_ref()],
         bump
     )]
@@ -83,18 +87,7 @@ pub struct ExecuteTransfer<'info> {
     pub system_program: Program<'info, System>,
 }
 
-#[derive(Accounts)]
-pub struct ExecuteProgramCall<'info> {
-    #[account(
-        mut,
-        seeds = [b"vault", vault.authority.key().as_ref()],
-        bump
-    )]
-    pub vault: Account<'info, Vault>,
-
-    /// The signer must be the agent authority or the vault authority.
-    pub agent: Signer<'info>,
-}
+// ADR-050: ExecuteProgramCall removed — see lib.rs comment.
 
 #[derive(Accounts)]
 pub struct ExecuteTokenTransfer<'info> {

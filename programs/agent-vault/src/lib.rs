@@ -87,16 +87,10 @@ pub mod agent_vault {
         instructions::execute_transfer(ctx, amount_lamports)
     }
 
-    /// Executes an arbitrary program invocation on behalf of the vault.
-    /// The program must be in the vault's allowlist.
-    /// This is a cross-program invocation (CPI) to any program.
-    pub fn execute_program_call<'info>(
-        ctx: Context<'_, '_, 'info, 'info, ExecuteProgramCall<'info>>,
-        instruction_data: Vec<u8>,
-        program_to_invoke: Pubkey,
-    ) -> Result<()> {
-        instructions::execute_program_call(ctx, instruction_data, program_to_invoke)
-    }
+    // ADR-050: execute_program_call removed — without vault PDA signing (ADR-038),
+    // it was a rate-limited invoke wrapper with limited utility. Financial operations
+    // use execute_transfer and execute_token_transfer. Non-financial CPI can be done
+    // directly by the agent without going through the vault.
 
     /// Executes an SPL token transfer from the vault's token account to a recipient.
     /// Enforces token allowlist, rate limiting, and the vault's pause state.
@@ -296,26 +290,7 @@ mod tests {
         assert!(not_found.is_none());
     }
 
-    #[test]
-    fn test_vault_action_variants() {
-        let action = VaultAction::Transfer {
-            recipient: sample_pubkey(),
-            amount: 100,
-        };
-        assert_eq!(
-            action,
-            VaultAction::Transfer {
-                recipient: match &action {
-                    VaultAction::Transfer { recipient, .. } => *recipient,
-                    _ => unreachable!(),
-                },
-                amount: 100,
-            }
-        );
-
-        let action2 = VaultAction::Pause;
-        assert_eq!(action2, VaultAction::Pause);
-    }
+    // ADR-050: VaultAction test removed — enum was orphaned dead code
 
     // ================================================================
     // ADR-021: Property-based fuzz tests (proptest)

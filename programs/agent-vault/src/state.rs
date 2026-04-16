@@ -112,33 +112,5 @@ impl VaultPolicy {
     }
 }
 
-/// The action enum for the audit log.
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
-pub enum VaultAction {
-    Transfer {
-        recipient: Pubkey,
-        amount: u64,
-    },
-    ProgramCall {
-        program_id: Pubkey,
-        instruction_hash: [u8; 32],
-    },
-    PolicyUpdate {
-        new_daily_limit: u64,
-        new_per_tx_limit: u64,
-    },
-    TokenAllowlistAdd {
-        token_mint: Pubkey,
-    },
-    TokenAllowlistRemove {
-        token_mint: Pubkey,
-    },
-    ProgramAllowlistAdd {
-        program_id: Pubkey,
-    },
-    ProgramAllowlistRemove {
-        program_id: Pubkey,
-    },
-    Pause,
-    Resume,
-}
+// ADR-050: VaultAction enum removed — was orphaned dead code from the removed AuditEntry struct.
+// Audit logging uses emit! events (TransactionExecuted, ProgramCallExecuted, etc.).

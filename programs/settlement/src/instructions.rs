@@ -472,6 +472,18 @@ pub fn resolve_dispute_timeout(ctx: Context<ResolveDisputeTimeout>) -> Result<()
     escrow.released_amount = escrow.total_amount;
     escrow.status = EscrowStatus::Completed;
 
+    // ADR-050: Slash provider on timeout — 100% refund to client means full failure
+    update_provider_reputation(
+        provider_key,
+        0,
+        -25,
+        false, // triggers slashing in Registry
+        ctx.accounts.registry_program.to_account_info(),
+        ctx.accounts.provider_profile.to_account_info(),
+        ctx.accounts.settlement_authority.to_account_info(),
+        ctx.bumps.settlement_authority,
+    )?;
+
     emit!(DisputeResolved {
         escrow: escrow.key(),
         resolver: ctx.accounts.payer.key(),
@@ -623,9 +635,27 @@ pub fn expire_escrow(ctx: Context<ExpireEscrow>) -> Result<()> {
         )?;
     }
 
+    // ADR-050: Slash provider if they had submitted-but-unapproved milestones
+    // This means they claimed work was done but it wasn't approved before expiry
+    let has_undelivered = escrow.milestones.iter().any(|m| m.status == MilestoneStatus::Submitted);
+    let provider_key_for_slash = escrow.provider;
+
     let escrow = &mut ctx.accounts.escrow;
     escrow.released_amount = escrow.total_amount; // All funds distributed
     escrow.status = EscrowStatus::Expired;
+
+    if has_undelivered {
+        update_provider_reputation(
+            provider_key_for_slash,
+            0,
+            -10,   // lighter penalty than dispute (-25)
+            false,  // triggers slashing in Registry
+            ctx.accounts.registry_program.to_account_info(),
+            ctx.accounts.provider_profile.to_account_info(),
+            ctx.accounts.settlement_authority.to_account_info(),
+            ctx.bumps.settlement_authority,
+        )?;
+    }
 
     emit!(EscrowExpired {
         escrow: escrow.key(),

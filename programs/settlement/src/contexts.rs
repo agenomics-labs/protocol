@@ -31,10 +31,16 @@ pub struct CreateEscrow<'info> {
     pub client_token_account: Account<'info, TokenAccount>,
 
     /// Escrow state account
+    ///
+    /// ADR-050: Explicit space breakdown:
+    /// 8 (disc) + 160 (5 pubkeys) + 16 (amounts) + 209 (5 milestones max: 4+5*(32+8+1))
+    /// + 1 (status) + 8 (task_id) + 32 (desc_hash) + 16 (timestamps)
+    /// + 33 (dispute_resolver Option<Pubkey>) + 9 (disputed_at Option<i64>)
+    /// + 1 (bump) = 493 + 200 margin = 693
     #[account(
         init,
         payer = client,
-        space = 8 + 32 + 32 + 32 + 32 + 32 + 8 + 8 + 1024 + 1 + 8 + 32 + 8 + 8 + 33 + 1,
+        space = 693,
         seeds = [b"escrow", client.key().as_ref(), provider.key().as_ref(), &task_id.to_le_bytes()],
         bump
     )]
@@ -202,7 +208,8 @@ pub struct ResolveDispute<'info> {
     pub token_program: Program<'info, Token>,
 }
 
-/// ADR-030: Context for auto-resolving a dispute after timeout.
+/// ADR-030/050: Context for auto-resolving a dispute after timeout.
+/// Includes registry accounts for provider reputation slashing.
 #[derive(Accounts)]
 pub struct ResolveDisputeTimeout<'info> {
     #[account(mut)]
@@ -224,6 +231,22 @@ pub struct ResolveDisputeTimeout<'info> {
         constraint = client_token_account.owner == escrow.client @ SettlementError::InvalidTokenAccount,
     )]
     pub client_token_account: Account<'info, TokenAccount>,
+
+    /// ADR-050: Registry accounts for slashing on timeout
+    /// CHECK: Validated by constraint.
+    #[account(
+        executable,
+        constraint = registry_program.key() == AGENT_REGISTRY_PROGRAM_ID @ SettlementError::InvalidRegistryProgram
+    )]
+    pub registry_program: UncheckedAccount<'info>,
+
+    /// CHECK: Provider's AgentProfile PDA. Validated by Registry during CPI.
+    #[account(mut)]
+    pub provider_profile: UncheckedAccount<'info>,
+
+    /// CHECK: Settlement authority PDA for CPI signing.
+    #[account(seeds = [b"settlement_authority"], bump)]
+    pub settlement_authority: UncheckedAccount<'info>,
 
     pub token_program: Program<'info, Token>,
 }
@@ -285,6 +308,22 @@ pub struct ExpireEscrow<'info> {
         constraint = provider_token_account.owner == escrow.provider @ SettlementError::InvalidTokenAccount,
     )]
     pub provider_token_account: Account<'info, TokenAccount>,
+
+    /// ADR-050: Registry accounts for slashing on expiry with undelivered milestones
+    /// CHECK: Validated by constraint.
+    #[account(
+        executable,
+        constraint = registry_program.key() == AGENT_REGISTRY_PROGRAM_ID @ SettlementError::InvalidRegistryProgram
+    )]
+    pub registry_program: UncheckedAccount<'info>,
+
+    /// CHECK: Provider's AgentProfile PDA. Validated by Registry during CPI.
+    #[account(mut)]
+    pub provider_profile: UncheckedAccount<'info>,
+
+    /// CHECK: Settlement authority PDA for CPI signing.
+    #[account(seeds = [b"settlement_authority"], bump)]
+    pub settlement_authority: UncheckedAccount<'info>,
 
     pub token_program: Program<'info, Token>,
 }
