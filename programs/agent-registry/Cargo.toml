@@ -5,9 +5,8 @@ edition = "2021"
 description = "Agent Registry - Discovery and identity component for the Autonomous Economic Agents Protocol (AEAP) on Solana"
 
 [dependencies]
-anchor-lang = { version = "0.30", features = ["init-if-needed"] }
-anchor-spl = { version = "0.30" }
-solana-program = "1.18"
+anchor-lang = { version = "0.31.1", features = ["init-if-needed"] }
+anchor-spl = { version = "0.31.1" }
 
 [lib]
 crate-type = ["cdylib", "lib"]
@@ -15,6 +14,9 @@ name = "agent_registry"
 
 [features]
 idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+
+[dev-dependencies]
+proptest = "1"
 
 [profile.release]
 overflow-checks = true

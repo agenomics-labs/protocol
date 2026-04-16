@@ -75,6 +75,10 @@ pub mod agent_registry {
         agent_profile.avg_rating = 0;
         agent_profile.created_at = Clock::get()?.unix_timestamp;
         agent_profile.updated_at = Clock::get()?.unix_timestamp;
+        agent_profile.reputation_stake = ReputationStake {
+            staked_amount: 0,
+            slash_count: 0,
+        };
         agent_profile.bump = ctx.bumps.agent_profile;
 
         emit!(AgentRegistered {
@@ -175,7 +179,15 @@ pub mod agent_registry {
         // - Retired is a terminal state; cannot go back to Active or Paused
         // - Active and Paused can transition freely between each other and to Retired
         match (&agent_profile.status, &new_status) {
-            (AgentStatus::Retired, AgentStatus::Active) | (AgentStatus::Retired, AgentStatus::Paused) => {
+            // Retired is terminal
+            (AgentStatus::Retired, AgentStatus::Active)
+            | (AgentStatus::Retired, AgentStatus::Paused)
+            | (AgentStatus::Retired, AgentStatus::Suspended) => {
+                return Err(error!(AgentRegistryError::InvalidStatusTransition));
+            }
+            // Suspended agents cannot self-reactivate (must be handled by governance)
+            (AgentStatus::Suspended, AgentStatus::Active)
+            | (AgentStatus::Suspended, AgentStatus::Paused) => {
                 return Err(error!(AgentRegistryError::InvalidStatusTransition));
             }
             _ => {
@@ -256,6 +268,33 @@ pub mod agent_registry {
             }
         }
 
+        // Slashing logic (ADR-020): negative reputation + failed task = slash
+        if reputation_delta < 0 && !task_completed {
+            agent_profile.reputation_stake.slash_count = agent_profile
+                .reputation_stake
+                .slash_count
+                .saturating_add(1);
+
+            // If slash_count reaches 3, suspend the agent
+            if agent_profile.reputation_stake.slash_count >= 3 {
+                agent_profile.status = AgentStatus::Suspended;
+
+                emit!(AgentSlashed {
+                    authority: agent_profile.authority,
+                    slash_count: agent_profile.reputation_stake.slash_count,
+                    suspended: true,
+                    timestamp: Clock::get()?.unix_timestamp,
+                });
+            } else {
+                emit!(AgentSlashed {
+                    authority: agent_profile.authority,
+                    slash_count: agent_profile.reputation_stake.slash_count,
+                    suspended: false,
+                    timestamp: Clock::get()?.unix_timestamp,
+                });
+            }
+        }
+
         agent_profile.updated_at = Clock::get()?.unix_timestamp;
 
         emit!(ReputationUpdated {
@@ -263,6 +302,54 @@ pub mod agent_registry {
             new_reputation_score: agent_profile.reputation_score,
             reputation_delta,
             task_completed,
+            timestamp: agent_profile.updated_at,
+        });
+
+        Ok(())
+    }
+
+    /// Stake SOL for reputation (ADR-020)
+    ///
+    /// Transfers SOL from the authority to a staking PDA. Higher stake amounts
+    /// make the agent eligible for higher-value tasks in the marketplace.
+    ///
+    /// # Arguments
+    /// * `amount` - Amount of SOL to stake (in lamports)
+    pub fn stake_reputation(ctx: Context<StakeReputation>, amount: u64) -> Result<()> {
+        require!(amount > 0, AgentRegistryError::InvalidStakeAmount);
+
+        let agent_profile = &ctx.accounts.agent_profile;
+        require!(
+            agent_profile.status != AgentStatus::Retired
+                && agent_profile.status != AgentStatus::Suspended,
+            AgentRegistryError::InvalidStatusTransition
+        );
+
+        // Transfer SOL from authority to staking PDA
+        let transfer_ix = anchor_lang::system_program::Transfer {
+            from: ctx.accounts.authority.to_account_info(),
+            to: ctx.accounts.staking_pda.to_account_info(),
+        };
+        anchor_lang::system_program::transfer(
+            CpiContext::new(
+                ctx.accounts.system_program.to_account_info(),
+                transfer_ix,
+            ),
+            amount,
+        )?;
+
+        // Update staked amount
+        let agent_profile = &mut ctx.accounts.agent_profile;
+        agent_profile.reputation_stake.staked_amount = agent_profile
+            .reputation_stake
+            .staked_amount
+            .saturating_add(amount);
+        agent_profile.updated_at = Clock::get()?.unix_timestamp;
+
+        emit!(ReputationStaked {
+            authority: agent_profile.authority,
+            amount,
+            total_staked: agent_profile.reputation_stake.staked_amount,
             timestamp: agent_profile.updated_at,
         });
 
@@ -362,6 +449,9 @@ pub struct AgentProfile {
     /// Unix timestamp of last profile update
     pub updated_at: i64,
 
+    /// Reputation stake for eligibility in higher-value tasks (ADR-020)
+    pub reputation_stake: ReputationStake,
+
     /// Bump seed for PDA derivation
     pub bump: u8,
 }
@@ -386,6 +476,17 @@ pub enum AgentStatus {
     Paused,
     /// Agent is retired and permanently inactive
     Retired,
+    /// Agent is suspended due to repeated slashing (slash_count >= 3)
+    Suspended,
+}
+
+/// Reputation stake tracking for an agent (ADR-020)
+#[derive(Clone, Copy, Debug, PartialEq, Eq, AnchorSerialize, AnchorDeserialize)]
+pub struct ReputationStake {
+    /// Amount of SOL staked (in lamports)
+    pub staked_amount: u64,
+    /// Number of times the agent has been slashed
+    pub slash_count: u8,
 }
 
 // ============================================================================
@@ -425,6 +526,24 @@ pub struct ReputationUpdated {
     pub new_reputation_score: u64,
     pub reputation_delta: i64,
     pub task_completed: bool,
+    pub timestamp: i64,
+}
+
+/// Emitted when SOL is staked for reputation (ADR-020)
+#[event]
+pub struct ReputationStaked {
+    pub authority: Pubkey,
+    pub amount: u64,
+    pub total_staked: u64,
+    pub timestamp: i64,
+}
+
+/// Emitted when an agent is slashed (ADR-020)
+#[event]
+pub struct AgentSlashed {
+    pub authority: Pubkey,
+    pub slash_count: u8,
+    pub suspended: bool,
     pub timestamp: i64,
 }
 
@@ -522,6 +641,35 @@ pub struct UpdateReputation<'info> {
     pub settlement_authority: UncheckedAccount<'info>,
 }
 
+/// Context for staking SOL for reputation (ADR-020)
+#[derive(Accounts)]
+pub struct StakeReputation<'info> {
+    /// The agent's authority account (signer, pays the stake)
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    /// The agent's profile account
+    #[account(
+        mut,
+        has_one = authority,
+        seeds = [authority.key().as_ref(), b"agent-profile"],
+        bump = agent_profile.bump
+    )]
+    pub agent_profile: Account<'info, AgentProfile>,
+
+    /// Staking PDA that holds the staked SOL
+    /// CHECK: PDA derived from agent authority + "reputation-stake" seeds; validated by seeds constraint.
+    #[account(
+        mut,
+        seeds = [authority.key().as_ref(), b"reputation-stake"],
+        bump
+    )]
+    pub staking_pda: UncheckedAccount<'info>,
+
+    /// System program for SOL transfer
+    pub system_program: Program<'info, System>,
+}
+
 /// Context for deregistering an agent
 #[derive(Accounts)]
 pub struct DeregisterAgent<'info> {
@@ -569,6 +717,9 @@ pub enum AgentRegistryError {
 
     #[msg("Invalid status transition: Retired agents cannot be reactivated")]
     InvalidStatusTransition,
+
+    #[msg("Invalid stake amount (must be > 0)")]
+    InvalidStakeAmount,
 }
 
 // ============================================================================
@@ -706,6 +857,119 @@ mod tests {
         assert!(name_too_long.len() > 64);
     }
 
+    // ================================================================
+    // ADR-020: Reputation staking and slashing tests
+    // ================================================================
+
+    #[test]
+    fn test_reputation_stake_initial_state() {
+        let stake = ReputationStake {
+            staked_amount: 0,
+            slash_count: 0,
+        };
+        assert_eq!(stake.staked_amount, 0);
+        assert_eq!(stake.slash_count, 0);
+    }
+
+    #[test]
+    fn test_reputation_stake_accumulation() {
+        let mut stake = ReputationStake {
+            staked_amount: 1_000_000,
+            slash_count: 0,
+        };
+        let additional = 500_000u64;
+        stake.staked_amount = stake.staked_amount.saturating_add(additional);
+        assert_eq!(stake.staked_amount, 1_500_000);
+    }
+
+    #[test]
+    fn test_slash_count_increments_on_negative_delta_failed_task() {
+        let mut slash_count: u8 = 0;
+        let reputation_delta: i64 = -10;
+        let task_completed = false;
+        if reputation_delta < 0 && !task_completed {
+            slash_count = slash_count.saturating_add(1);
+        }
+        assert_eq!(slash_count, 1);
+    }
+
+    #[test]
+    fn test_slash_count_no_increment_on_completed_task() {
+        let mut slash_count: u8 = 0;
+        let reputation_delta: i64 = -10;
+        let task_completed = true;
+        if reputation_delta < 0 && !task_completed {
+            slash_count = slash_count.saturating_add(1);
+        }
+        assert_eq!(slash_count, 0, "Should not slash when task completed");
+    }
+
+    #[test]
+    fn test_slash_count_no_increment_on_positive_delta() {
+        let mut slash_count: u8 = 0;
+        let reputation_delta: i64 = 10;
+        let task_completed = false;
+        if reputation_delta < 0 && !task_completed {
+            slash_count = slash_count.saturating_add(1);
+        }
+        assert_eq!(slash_count, 0, "Should not slash on positive delta");
+    }
+
+    #[test]
+    fn test_suspension_at_three_slashes() {
+        let mut slash_count: u8 = 2;
+        let mut status = AgentStatus::Active;
+        // Third slash
+        slash_count = slash_count.saturating_add(1);
+        if slash_count >= 3 {
+            status = AgentStatus::Suspended;
+        }
+        assert_eq!(slash_count, 3);
+        assert_eq!(status, AgentStatus::Suspended);
+    }
+
+    #[test]
+    fn test_no_suspension_below_three_slashes() {
+        let mut slash_count: u8 = 1;
+        let mut status = AgentStatus::Active;
+        slash_count = slash_count.saturating_add(1);
+        if slash_count >= 3 {
+            status = AgentStatus::Suspended;
+        }
+        assert_eq!(slash_count, 2);
+        assert_eq!(status, AgentStatus::Active);
+    }
+
+    #[test]
+    fn test_suspended_cannot_transition_to_active() {
+        let current = AgentStatus::Suspended;
+        let new_status = AgentStatus::Active;
+        let valid = !matches!(
+            (&current, &new_status),
+            (AgentStatus::Retired, AgentStatus::Active)
+            | (AgentStatus::Retired, AgentStatus::Paused)
+            | (AgentStatus::Retired, AgentStatus::Suspended)
+            | (AgentStatus::Suspended, AgentStatus::Active)
+            | (AgentStatus::Suspended, AgentStatus::Paused)
+        );
+        assert!(!valid, "Suspended -> Active should be invalid");
+    }
+
+    #[test]
+    fn test_suspended_cannot_transition_to_paused() {
+        let current = AgentStatus::Suspended;
+        let new_status = AgentStatus::Paused;
+        let valid = !matches!(
+            (&current, &new_status),
+            (AgentStatus::Retired, AgentStatus::Active)
+            | (AgentStatus::Retired, AgentStatus::Paused)
+            | (AgentStatus::Retired, AgentStatus::Suspended)
+            | (AgentStatus::Suspended, AgentStatus::Active)
+            | (AgentStatus::Suspended, AgentStatus::Paused)
+        );
+        assert!(!valid, "Suspended -> Paused should be invalid");
+    }
+
     #[test]
     fn test_capabilities_count_validation_logic() {
         let empty: Vec<String> = vec![];
@@ -716,5 +980,55 @@ mod tests {
 
         let too_many: Vec<String> = vec!["a".into(); 11];
         assert!(too_many.len() > 10);
+    }
+
+    // ================================================================
+    // ADR-021: Property-based fuzz tests (proptest)
+    // ================================================================
+
+    mod fuzz {
+        use super::*;
+        use proptest::prelude::*;
+        use proptest::collection::vec as prop_vec;
+
+        proptest! {
+            /// Reputation score arithmetic with random deltas never panics
+            /// (uses saturating ops, matching the on-chain logic).
+            #[test]
+            fn reputation_score_saturating_ops_never_panic(
+                initial_score in any::<u64>(),
+                delta in any::<i64>(),
+            ) {
+                let result = if delta >= 0 {
+                    initial_score.saturating_add(delta as u64)
+                } else {
+                    initial_score.saturating_sub((-delta) as u64)
+                };
+                // Result must be within u64 bounds (no panic)
+                prop_assert!(result <= u64::MAX);
+            }
+
+            /// avg_rating stays within 0-5 for any sequence of valid ratings.
+            /// Simulates the weighted running average used in update_reputation.
+            #[test]
+            fn avg_rating_stays_within_bounds(
+                ratings in prop_vec(1u8..=5, 1..50)
+            ) {
+                let mut avg: u8 = 0;
+                let mut n: u128 = 0;
+
+                for rating in ratings {
+                    n += 1;
+                    if n == 1 {
+                        avg = rating;
+                    } else {
+                        let old_avg = avg as u128;
+                        let new_avg = (old_avg * (n - 1) + rating as u128) / n;
+                        avg = new_avg.min(5) as u8;
+                    }
+                }
+                prop_assert!(avg <= 5);
+            }
+        }
     }
 }

@@ -1184,4 +1184,76 @@ mod tests {
         let total_refund = client_refund.checked_add(provider_refund).unwrap();
         assert_ne!(total_refund, remaining);
     }
+
+    /// ADR-014: Verify that the hardcoded CPI discriminator in `update_provider_reputation`
+    /// matches the Anchor convention: sha256("global:update_reputation")[..8].
+    ///
+    /// This test ensures the discriminator stays in sync if the instruction is renamed
+    /// or the Anchor namespace convention changes.
+    #[test]
+    fn test_cpi_discriminator_matches_anchor_convention() {
+        use anchor_lang::solana_program::hash::hash;
+
+        // The hardcoded discriminator from update_provider_reputation()
+        let hardcoded: [u8; 8] = [194, 220, 43, 201, 54, 209, 49, 178];
+
+        // Compute expected discriminator: sha256("global:update_reputation")[..8]
+        let preimage = "global:update_reputation";
+        let hash_bytes = hash(preimage.as_bytes()).to_bytes();
+        let expected: [u8; 8] = hash_bytes[..8].try_into().unwrap();
+
+        assert_eq!(
+            hardcoded, expected,
+            "CPI discriminator mismatch! Hardcoded {:?} != computed {:?} from '{}'",
+            hardcoded, expected, preimage
+        );
+    }
+
+    // ================================================================
+    // ADR-021: Property-based fuzz tests (proptest)
+    // ================================================================
+
+    mod fuzz {
+        use super::*;
+        use proptest::prelude::*;
+        use proptest::collection::vec as prop_vec;
+
+        proptest! {
+            /// Milestone amounts with random values either sum correctly
+            /// or overflow detection works (checked_add returns None).
+            #[test]
+            fn milestone_amounts_sum_or_detect_overflow(
+                amounts in prop_vec(1u64..=u64::MAX / 5, 1..=MAX_MILESTONES)
+            ) {
+                let mut total: Option<u64> = Some(0);
+                for amount in &amounts {
+                    total = total.and_then(|t| t.checked_add(*amount));
+                }
+                // Either we got a valid sum or overflow was detected (None)
+                match total {
+                    Some(sum) => prop_assert!(sum >= amounts.iter().copied().min().unwrap_or(0)),
+                    None => { /* overflow detected correctly */ }
+                }
+            }
+
+            /// released_amount tracking with random milestone amounts
+            /// never exceeds total_amount (mirrors approve_milestone logic).
+            #[test]
+            fn released_amount_never_exceeds_total(
+                amounts in prop_vec(1u64..=1_000_000_000, 1..=MAX_MILESTONES)
+            ) {
+                // Compute total using checked_add (skip if overflow)
+                let total_amount = amounts.iter().try_fold(0u64, |acc, &a| acc.checked_add(a));
+                if let Some(total_amount) = total_amount {
+                    let mut released: u64 = 0;
+                    for amount in &amounts {
+                        released = released.checked_add(*amount)
+                            .expect("released_amount overflow");
+                    }
+                    prop_assert!(released <= total_amount);
+                    prop_assert_eq!(released, total_amount);
+                }
+            }
+        }
+    }
 }

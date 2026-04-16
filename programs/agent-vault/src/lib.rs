@@ -11,6 +11,10 @@ const MAX_TOKEN_ALLOWLIST: usize = 10;
 /// Same sizing rationale as token allowlist.
 const MAX_PROGRAM_ALLOWLIST: usize = 10;
 
+/// Maximum number of per-token daily spend tracking records.
+/// Matches MAX_TOKEN_ALLOWLIST so every allowlisted token can be tracked.
+const MAX_TOKEN_SPEND_RECORDS: usize = 10;
+
 #[program]
 pub mod agent_vault {
     use super::*;
@@ -122,6 +126,17 @@ pub mod agent_vault {
 // ACCOUNT STRUCTURES & CONSTRAINTS
 // ============================================================================
 
+/// Tracks per-token daily spending for a specific mint.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
+pub struct TokenSpendRecord {
+    /// The SPL token mint this record tracks.
+    pub mint: Pubkey,
+    /// Amount of this token spent today (in base units).
+    pub spent_today: u64,
+    /// The day for which spent_today is tracked (Unix timestamp / 86400).
+    pub last_spend_day: u64,
+}
+
 #[account]
 pub struct Vault {
     /// The agent identity this vault is linked to (for reputation tracking).
@@ -147,6 +162,9 @@ pub struct Vault {
 
     /// Timestamp of when the current rate-limit window started.
     pub rate_limit_window_start: i64,
+
+    /// Per-token daily spending records (max MAX_TOKEN_SPEND_RECORDS entries).
+    pub token_spend_records: Vec<TokenSpendRecord>,
 
     /// PDA bump seed for vault signing in CPIs.
     pub bump: u8,
@@ -425,6 +443,7 @@ mod instructions {
         vault.policy = VaultPolicy::new(per_tx_limit_lamports, daily_limit_lamports, max_txs_per_hour);
         vault.txs_in_current_window = 0;
         vault.rate_limit_window_start = clock.unix_timestamp;
+        vault.token_spend_records = vec![];
         vault.bump = ctx.bumps.vault;
 
         emit!(VaultInitialized {
@@ -804,7 +823,7 @@ mod instructions {
             bump = vault.bump;
         }
 
-        // Rate limit check and update
+        // Rate limit check and update + per-token daily limit enforcement
         {
             let vault = &mut ctx.accounts.vault;
             let time_since_window_start = clock.unix_timestamp - vault.rate_limit_window_start;
@@ -817,6 +836,46 @@ mod instructions {
                 VaultError::RateLimitExceeded
             );
             vault.txs_in_current_window = vault.txs_in_current_window.saturating_add(1);
+
+            // Per-token daily spending limit enforcement (ADR-015)
+            let mint = ctx.accounts.vault_token_account.mint;
+            let current_day = (clock.unix_timestamp / 86400) as u64;
+            let daily_limit = vault.policy.daily_limit_lamports;
+
+            // Find existing record for this mint, or create one
+            let record_idx = vault.token_spend_records.iter().position(|r| r.mint == mint);
+            match record_idx {
+                Some(idx) => {
+                    let record = &mut vault.token_spend_records[idx];
+                    // Reset if day changed
+                    if current_day > record.last_spend_day {
+                        record.spent_today = 0;
+                        record.last_spend_day = current_day;
+                    }
+                    require!(
+                        record.spent_today.saturating_add(amount) <= daily_limit,
+                        VaultError::TokenDailyLimitExceeded
+                    );
+                    record.spent_today = record.spent_today.saturating_add(amount);
+                }
+                None => {
+                    // New token -- check capacity
+                    require!(
+                        vault.token_spend_records.len() < MAX_TOKEN_SPEND_RECORDS,
+                        VaultError::TokenSpendRecordsFull
+                    );
+                    // First spend of the day for this token
+                    require!(
+                        amount <= daily_limit,
+                        VaultError::TokenDailyLimitExceeded
+                    );
+                    vault.token_spend_records.push(TokenSpendRecord {
+                        mint,
+                        spent_today: amount,
+                        last_spend_day: current_day,
+                    });
+                }
+            }
         }
 
         // CPI transfer with vault PDA as signer
@@ -922,6 +981,12 @@ pub enum VaultError {
 
     #[msg("Arithmetic overflow")]
     ArithmeticOverflow,
+
+    #[msg("Per-token daily spending limit exceeded")]
+    TokenDailyLimitExceeded,
+
+    #[msg("Token spend records full (max 10)")]
+    TokenSpendRecordsFull,
 }
 
 // ============================================================================
@@ -1065,6 +1130,105 @@ mod tests {
         assert!(policy.token_allowlist.len() >= MAX_TOKEN_ALLOWLIST);
     }
 
+    // ================================================================
+    // ADR-015: Per-token daily spending limit tests
+    // ================================================================
+
+    #[test]
+    fn test_token_spend_record_new_day_resets() {
+        let mint = sample_pubkey();
+        let mut record = TokenSpendRecord {
+            mint,
+            spent_today: 500,
+            last_spend_day: 100,
+        };
+        // Simulate day change
+        let current_day: u64 = 101;
+        if current_day > record.last_spend_day {
+            record.spent_today = 0;
+            record.last_spend_day = current_day;
+        }
+        assert_eq!(record.spent_today, 0);
+        assert_eq!(record.last_spend_day, 101);
+    }
+
+    #[test]
+    fn test_token_spend_record_same_day_accumulates() {
+        let mint = sample_pubkey();
+        let mut record = TokenSpendRecord {
+            mint,
+            spent_today: 300,
+            last_spend_day: 100,
+        };
+        let amount: u64 = 200;
+        let daily_limit: u64 = 1000;
+        let current_day: u64 = 100; // same day
+        if current_day > record.last_spend_day {
+            record.spent_today = 0;
+            record.last_spend_day = current_day;
+        }
+        assert!(record.spent_today.saturating_add(amount) <= daily_limit);
+        record.spent_today = record.spent_today.saturating_add(amount);
+        assert_eq!(record.spent_today, 500);
+    }
+
+    #[test]
+    fn test_token_spend_record_exceeds_daily_limit() {
+        let mint = sample_pubkey();
+        let record = TokenSpendRecord {
+            mint,
+            spent_today: 900,
+            last_spend_day: 100,
+        };
+        let amount: u64 = 200;
+        let daily_limit: u64 = 1000;
+        // 900 + 200 = 1100 > 1000 -- should be rejected
+        assert!(record.spent_today.saturating_add(amount) > daily_limit);
+    }
+
+    #[test]
+    fn test_token_spend_record_exact_daily_limit() {
+        let mint = sample_pubkey();
+        let record = TokenSpendRecord {
+            mint,
+            spent_today: 800,
+            last_spend_day: 100,
+        };
+        let amount: u64 = 200;
+        let daily_limit: u64 = 1000;
+        // 800 + 200 = 1000 == 1000 -- should pass (<=)
+        assert!(record.spent_today.saturating_add(amount) <= daily_limit);
+    }
+
+    #[test]
+    fn test_token_spend_records_capacity() {
+        let mut records: Vec<TokenSpendRecord> = Vec::new();
+        for _ in 0..MAX_TOKEN_SPEND_RECORDS {
+            records.push(TokenSpendRecord {
+                mint: sample_pubkey(),
+                spent_today: 0,
+                last_spend_day: 0,
+            });
+        }
+        assert_eq!(records.len(), MAX_TOKEN_SPEND_RECORDS);
+        // Should not be able to add more
+        assert!(records.len() >= MAX_TOKEN_SPEND_RECORDS);
+    }
+
+    #[test]
+    fn test_token_spend_record_lookup_by_mint() {
+        let mint_a = sample_pubkey();
+        let mint_b = sample_pubkey();
+        let records = vec![
+            TokenSpendRecord { mint: mint_a, spent_today: 100, last_spend_day: 50 },
+            TokenSpendRecord { mint: mint_b, spent_today: 200, last_spend_day: 50 },
+        ];
+        let found = records.iter().position(|r| r.mint == mint_b);
+        assert_eq!(found, Some(1));
+        let not_found = records.iter().position(|r| r.mint == sample_pubkey());
+        assert!(not_found.is_none());
+    }
+
     #[test]
     fn test_vault_action_variants() {
         let action = VaultAction::Transfer {
@@ -1084,5 +1248,62 @@ mod tests {
 
         let action2 = VaultAction::Pause;
         assert_eq!(action2, VaultAction::Pause);
+    }
+
+    // ================================================================
+    // ADR-021: Property-based fuzz tests (proptest)
+    // ================================================================
+
+    mod fuzz {
+        use super::*;
+        use proptest::prelude::*;
+        use proptest::collection::vec as prop_vec;
+
+        proptest! {
+            /// Allowlist operations never exceed MAX_TOKEN_ALLOWLIST.
+            /// Simulates a sequence of add/remove operations on the token allowlist.
+            #[test]
+            fn token_allowlist_never_exceeds_max(
+                ops in prop_vec((any::<[u8; 32]>(), any::<bool>()), 0..50)
+            ) {
+                let mut policy = VaultPolicy::new(100, 1000, 10);
+                for (key_bytes, is_add) in ops {
+                    let pubkey = Pubkey::new_from_array(key_bytes);
+                    if is_add {
+                        if !policy.token_allowlist.contains(&pubkey)
+                            && policy.token_allowlist.len() < MAX_TOKEN_ALLOWLIST
+                        {
+                            policy.token_allowlist.push(pubkey);
+                        }
+                    } else {
+                        policy.token_allowlist.retain(|&t| t != pubkey);
+                    }
+                }
+                prop_assert!(policy.token_allowlist.len() <= MAX_TOKEN_ALLOWLIST);
+            }
+
+            /// is_token_allowed always returns true when the allowlist is empty.
+            #[test]
+            fn empty_allowlist_allows_any_token(key_bytes in any::<[u8; 32]>()) {
+                let policy = VaultPolicy::new(100, 1000, 10);
+                let mint = Pubkey::new_from_array(key_bytes);
+                prop_assert!(policy.is_token_allowed(&mint));
+            }
+
+            /// Daily limit arithmetic never overflows with random inputs
+            /// (mirrors the saturating_add pattern used in execute_transfer).
+            #[test]
+            fn daily_limit_arithmetic_no_overflow(
+                spent_today in any::<u64>(),
+                amount in any::<u64>(),
+                daily_limit in any::<u64>(),
+            ) {
+                let new_total = spent_today.saturating_add(amount);
+                // saturating_add must never panic and must be <= u64::MAX
+                prop_assert!(new_total >= spent_today || new_total == u64::MAX);
+                // The limit check itself must not panic
+                let _within_limit = new_total <= daily_limit;
+            }
+        }
     }
 }

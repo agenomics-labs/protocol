@@ -4,15 +4,17 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-anchor-lang = "0.30"
-anchor-spl = "0.30"
-solana-program = "1.18"
+anchor-lang = "0.31.1"
+anchor-spl = "0.31.1"
 
 [lib]
 crate-type = ["cdylib", "lib"]
 
 [features]
 idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+
+[dev-dependencies]
+proptest = "1"
 
 [profile.release]
 opt-level = 3

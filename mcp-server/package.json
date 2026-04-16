@@ -20,7 +20,7 @@
   "author": "Alejandro",
   "license": "MIT",
   "dependencies": {
-    "@coral-xyz/anchor": "^0.30.0",
+    "@coral-xyz/anchor": "^0.31.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@solana/spl-token": "^0.4.0",
     "@solana/web3.js": "^1.87.0",

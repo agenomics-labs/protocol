@@ -1,0 +1,291 @@
+/** AEAP Off-chain Event Indexer - subscribes to program logs, stores in SQLite, exposes REST API */
+import express, { Request, Response } from "express";
+import Database from "better-sqlite3";
+import { Connection, PublicKey, Logs, Context as SolanaContext } from "@solana/web3.js";
+
+const RPC_URL = process.env.SOLANA_RPC_URL || "http://127.0.0.1:8899";
+const PORT = parseInt(process.env.INDEXER_PORT || "3100", 10);
+const PROGRAM_IDS = {
+  vault: new PublicKey("AuZc1rQBxT5Ekz84NJ7DCMuHGwuvcSFbgufvmRcuh338"),
+  registry: new PublicKey("8t5oSA3xrLt9rMmM7QZBFWFDgBu8qvWsrUyXFYwPYWmV"),
+  settlement: new PublicKey("2uSDxQtYLU4uSeZtA1ueJx7xg4PDYpEbkxM957T5UUm4"),
+};
+
+function initDb(dbPath: string): Database.Database {
+  const db = new Database(dbPath);
+  db.pragma("journal_mode = WAL");
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      program TEXT NOT NULL,
+      event_name TEXT NOT NULL,
+      data TEXT NOT NULL,
+      signature TEXT NOT NULL,
+      slot INTEGER NOT NULL,
+      timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_events_program ON events(program);
+    CREATE INDEX IF NOT EXISTS idx_events_name ON events(event_name);
+    CREATE INDEX IF NOT EXISTS idx_events_slot ON events(slot);
+
+    CREATE TABLE IF NOT EXISTS agents (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      authority TEXT NOT NULL UNIQUE,
+      name TEXT,
+      category TEXT,
+      reputation_score INTEGER DEFAULT 0,
+      tasks_completed INTEGER DEFAULT 0,
+      last_updated TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agents_category ON agents(category);
+    CREATE INDEX IF NOT EXISTS idx_agents_reputation ON agents(reputation_score);
+  `);
+
+  return db;
+}
+
+interface ParsedEvent {
+  name: string;
+  data: Record<string, unknown>;
+}
+
+function parseLogsForEvents(logs: string[], _programLabel: string): ParsedEvent[] {
+  const events: ParsedEvent[] = [];
+  const eventRegex = /Program data: (.+)/;
+
+  for (const log of logs) {
+    if (log.includes("Program data:")) {
+      const match = log.match(eventRegex);
+      if (match) {
+        try {
+          const decoded = Buffer.from(match[1], "base64");
+          const discriminator = decoded.subarray(0, 8).toString("hex");
+          const rawData = decoded.subarray(8).toString("hex");
+          events.push({
+            name: `event_${discriminator.substring(0, 8)}`,
+            data: { discriminator, rawData },
+          });
+        } catch {
+          // Skip unparseable data
+        }
+      }
+    }
+
+    const knownEvents = [
+      "EscrowCreated",
+      "TaskAccepted",
+      "MilestoneSubmitted",
+      "MilestoneApproved",
+      "MilestoneRejected",
+      "EscrowCancelled",
+      "DisputeRaised",
+      "DisputeResolved",
+      "VaultCreated",
+      "VaultTransfer",
+      "VaultPaused",
+      "VaultResumed",
+      "PolicyUpdated",
+      "AllowlistUpdated",
+      "AgentRegistered",
+      "AgentProfileUpdated",
+      "ReputationUpdated",
+    ];
+    for (const eventName of knownEvents) {
+      if (log.includes(eventName)) {
+        events.push({ name: eventName, data: { log } });
+        break;
+      }
+    }
+  }
+
+  return events;
+}
+
+function updateAgentFromEvent(db: Database.Database, event: ParsedEvent): void {
+  const data = event.data as Record<string, string>;
+
+  if (event.name === "AgentRegistered") {
+    const stmt = db.prepare(`
+      INSERT INTO agents (authority, name, category, last_updated)
+      VALUES (?, ?, ?, datetime('now'))
+      ON CONFLICT(authority) DO UPDATE SET
+        name = excluded.name,
+        category = excluded.category,
+        last_updated = datetime('now')
+    `);
+    stmt.run(
+      data.authority || "unknown",
+      data.name || null,
+      data.category || null
+    );
+  }
+
+  if (event.name === "ReputationUpdated") {
+    const stmt = db.prepare(`
+      UPDATE agents SET
+        reputation_score = ?,
+        tasks_completed = tasks_completed + 1,
+        last_updated = datetime('now')
+      WHERE authority = ?
+    `);
+    stmt.run(
+      parseInt(data.new_score || "0", 10),
+      data.authority || "unknown"
+    );
+  }
+}
+
+function subscribeToPrograms(connection: Connection, db: Database.Database): void {
+  const insertStmt = db.prepare(`
+    INSERT INTO events (program, event_name, data, signature, slot)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+
+  for (const [label, programId] of Object.entries(PROGRAM_IDS)) {
+    console.log(`Subscribing to ${label}: ${programId.toBase58()}`);
+
+    connection.onLogs(
+      programId,
+      (logs: Logs, ctx: SolanaContext) => {
+        const events = parseLogsForEvents(logs.logs, label);
+
+        for (const event of events) {
+          try {
+            insertStmt.run(
+              label,
+              event.name,
+              JSON.stringify(event.data),
+              logs.signature,
+              ctx.slot
+            );
+            updateAgentFromEvent(db, event);
+            console.log(
+              `[${label}] ${event.name} @ slot ${ctx.slot} tx=${logs.signature.substring(0, 16)}...`
+            );
+          } catch (err) {
+            console.error(`Failed to store event: ${err}`);
+          }
+        }
+      },
+      "confirmed"
+    );
+  }
+}
+
+function createApi(db: Database.Database): express.Application {
+  const app = express();
+  app.use(express.json());
+
+  app.get("/health", (_req: Request, res: Response) => {
+    res.json({ status: "ok", programs: Object.keys(PROGRAM_IDS) });
+  });
+
+  app.get("/events", (req: Request, res: Response) => {
+    const limit = Math.min(parseInt(req.query.limit as string) || 100, 1000);
+    const offset = parseInt(req.query.offset as string) || 0;
+    const eventName = req.query.event_name as string | undefined;
+
+    let query = "SELECT * FROM events";
+    const params: unknown[] = [];
+
+    if (eventName) {
+      query += " WHERE event_name = ?";
+      params.push(eventName);
+    }
+
+    query += " ORDER BY id DESC LIMIT ? OFFSET ?";
+    params.push(limit, offset);
+
+    const rows = db.prepare(query).all(...params);
+    const countRow = db.prepare("SELECT COUNT(*) as total FROM events").get() as { total: number };
+
+    res.json({ total: countRow.total, limit, offset, events: rows });
+  });
+
+  app.get("/events/:program", (req: Request, res: Response) => {
+    const program = req.params.program;
+    if (!["vault", "registry", "settlement"].includes(program)) {
+      res.status(400).json({ error: "Invalid program. Use: vault, registry, settlement" });
+      return;
+    }
+
+    const limit = Math.min(parseInt(req.query.limit as string) || 100, 1000);
+    const offset = parseInt(req.query.offset as string) || 0;
+
+    const rows = db
+      .prepare(
+        "SELECT * FROM events WHERE program = ? ORDER BY id DESC LIMIT ? OFFSET ?"
+      )
+      .all(program, limit, offset);
+
+    const countRow = db
+      .prepare("SELECT COUNT(*) as total FROM events WHERE program = ?")
+      .get(program) as { total: number };
+
+    res.json({ program, total: countRow.total, limit, offset, events: rows });
+  });
+
+  app.get("/agents", (req: Request, res: Response) => {
+    const category = req.query.category as string | undefined;
+    const minReputation = parseInt(req.query.min_reputation as string) || 0;
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
+
+    let query = "SELECT * FROM agents WHERE reputation_score >= ?";
+    const params: unknown[] = [minReputation];
+
+    if (category) {
+      query += " AND category = ?";
+      params.push(category);
+    }
+
+    query += " ORDER BY reputation_score DESC LIMIT ?";
+    params.push(limit);
+
+    const rows = db.prepare(query).all(...params);
+    res.json({ agents: rows });
+  });
+
+  app.get("/stats", (_req: Request, res: Response) => {
+    const eventCount = db
+      .prepare("SELECT COUNT(*) as total FROM events")
+      .get() as { total: number };
+    const agentCount = db
+      .prepare("SELECT COUNT(*) as total FROM agents")
+      .get() as { total: number };
+    const byProgram = db.prepare("SELECT program, COUNT(*) as count FROM events GROUP BY program").all();
+    const byEvent = db.prepare("SELECT event_name, COUNT(*) as count FROM events GROUP BY event_name ORDER BY count DESC LIMIT 20").all();
+
+    res.json({ totalEvents: eventCount.total, totalAgents: agentCount.total, byProgram, topEvents: byEvent });
+  });
+
+  return app;
+}
+
+async function main(): Promise<void> {
+  console.log("AEAP Event Indexer starting...");
+  console.log(`RPC: ${RPC_URL}`);
+
+  const connection = new Connection(RPC_URL, "confirmed");
+  const db = initDb(process.env.DB_PATH || "./aeap-events.db");
+
+  subscribeToPrograms(connection, db);
+  const app = createApi(db);
+  app.listen(PORT, () => {
+    console.log(`Indexer API listening on http://localhost:${PORT}`);
+    console.log("Endpoints: GET /events, GET /events/:program, GET /agents, GET /stats");
+  });
+
+  process.on("SIGINT", () => {
+    console.log("\nShutting down...");
+    db.close();
+    process.exit(0);
+  });
+}
+
+main().catch((err) => {
+  console.error("Fatal error:", err);
+  process.exit(1);
+});
