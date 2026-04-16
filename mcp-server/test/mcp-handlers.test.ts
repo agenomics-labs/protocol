@@ -58,7 +58,8 @@ function loadIdl(name: string): any {
 }
 
 class KeypairWallet {
-  constructor(readonly payer: Keypair) {}
+  payer: Keypair;
+  constructor(payer: Keypair) { this.payer = payer; }
   get publicKey(): PublicKey {
     return this.payer.publicKey;
   }
@@ -429,6 +430,37 @@ describe("MCP Registry Handlers", () => {
   });
 });
 
+// Register provider in registry (needed for slashing CPI in resolve_dispute)
+describe("Provider Registration", () => {
+  it("registers provider for settlement tests", async () => {
+    const providerProvider = createProvider(provider);
+    const provRegistry = new Program(loadIdl("agent_registry"), providerProvider);
+    const [provProfilePDA] = deriveAgentProfilePDA(provider.publicKey);
+
+    await provRegistry.methods
+      .registerAgent(
+        "TestProvider",
+        "Provider for settlement tests",
+        "testing",
+        ["provider"],
+        { perTask: {} },
+        new BN(50_000),
+        [tokenMint],
+        provider.publicKey
+      )
+      .accounts({
+        authority: provider.publicKey,
+        agentProfile: provProfilePDA,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([provider])
+      .rpc();
+
+    const profile = await (registryProgram.account as any).agentProfile.fetch(provProfilePDA);
+    expect(profile.name).to.equal("TestProvider");
+  });
+});
+
 // ==================== SETTLEMENT TESTS ====================
 
 describe("MCP Settlement Handlers", () => {
@@ -633,6 +665,13 @@ describe("MCP Settlement Handlers", () => {
   });
 
   it("resolve_dispute: client resolves dispute splitting funds", async () => {
+    // ADR-039: ResolveDispute now requires registry accounts for slashing CPI
+    const [providerProfilePDA] = deriveAgentProfilePDA(provider.publicKey);
+    const [settlementAuthorityPDA] = PublicKey.findProgramAddressSync(
+      [Buffer.from("settlement_authority")],
+      SETTLEMENT_PROGRAM_ID
+    );
+
     await settlementProgram.methods
       .resolveDispute(new BN(200_000), new BN(200_000))
       .accounts({
@@ -641,6 +680,9 @@ describe("MCP Settlement Handlers", () => {
         escrowTokenAccount: escrowTokenAccount,
         clientTokenAccount: agentTokenAccount,
         providerTokenAccount: providerTokenAccount,
+        registryProgram: REGISTRY_PROGRAM_ID,
+        providerProfile: providerProfilePDA,
+        settlementAuthority: settlementAuthorityPDA,
         tokenProgram: TOKEN_PROGRAM_ID,
       })
       .signers([agent])
