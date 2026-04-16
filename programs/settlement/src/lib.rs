@@ -2,14 +2,14 @@ use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
 
-declare_id!("2uSDxQtYLU4uSeZtA1ueJx7xg4PDYpEbkxM957T5UUm4");
+declare_id!("GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3");
 
 // ============================================================================
 // CONSTANTS
 // ============================================================================
 
 /// Agent Registry program ID — used for CPI reputation updates.
-const AGENT_REGISTRY_PROGRAM_ID: Pubkey = pubkey!("8t5oSA3xrLt9rMmM7QZBFWFDgBu8qvWsrUyXFYwPYWmV");
+const AGENT_REGISTRY_PROGRAM_ID: Pubkey = pubkey!("8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh");
 const MAX_MILESTONES: usize = 5;
 
 // ============================================================================

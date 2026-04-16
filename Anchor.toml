@@ -3,14 +3,14 @@ seeds = false
 skip-lint = false
 
 [programs.localnet]
-agent_vault = "AuZc1rQBxT5Ekz84NJ7DCMuHGwuvcSFbgufvmRcuh338"
-agent_registry = "8t5oSA3xrLt9rMmM7QZBFWFDgBu8qvWsrUyXFYwPYWmV"
-settlement = "2uSDxQtYLU4uSeZtA1ueJx7xg4PDYpEbkxM957T5UUm4"
+agent_vault = "4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN"
+agent_registry = "8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh"
+settlement = "GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3"
 
 [programs.devnet]
-agent_vault = "AuZc1rQBxT5Ekz84NJ7DCMuHGwuvcSFbgufvmRcuh338"
-agent_registry = "8t5oSA3xrLt9rMmM7QZBFWFDgBu8qvWsrUyXFYwPYWmV"
-settlement = "2uSDxQtYLU4uSeZtA1ueJx7xg4PDYpEbkxM957T5UUm4"
+agent_vault = "4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN"
+agent_registry = "8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh"
+settlement = "GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3"
 
 [registry]
 url = "https://api.apr.dev"

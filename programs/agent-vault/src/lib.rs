@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 
-declare_id!("AuZc1rQBxT5Ekz84NJ7DCMuHGwuvcSFbgufvmRcuh338");
+declare_id!("4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN");
 
 /// Maximum number of tokens in the allowlist.
 /// Chosen to fit within the 1024-byte allocation headroom: 10 * 32 bytes = 320 bytes.

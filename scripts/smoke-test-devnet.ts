@@ -12,9 +12,9 @@ import { AnchorProvider, Program, BN } from "@coral-xyz/anchor";
 import * as fs from "fs";
 import * as path from "path";
 
-const VAULT_PROGRAM_ID = new PublicKey("AuZc1rQBxT5Ekz84NJ7DCMuHGwuvcSFbgufvmRcuh338");
-const REGISTRY_PROGRAM_ID = new PublicKey("8t5oSA3xrLt9rMmM7QZBFWFDgBu8qvWsrUyXFYwPYWmV");
-const SETTLEMENT_PROGRAM_ID = new PublicKey("2uSDxQtYLU4uSeZtA1ueJx7xg4PDYpEbkxM957T5UUm4");
+const VAULT_PROGRAM_ID = new PublicKey("4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN");
+const REGISTRY_PROGRAM_ID = new PublicKey("8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh");
+const SETTLEMENT_PROGRAM_ID = new PublicKey("GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3");
 
 function loadIdl(name: string): any {
   const idlPath = path.resolve(__dirname, "..", "target", "idl", `${name}.json`);

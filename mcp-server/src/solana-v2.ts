@@ -19,9 +19,9 @@ import * as crypto from "crypto";
 
 // ==================== CONSTANTS ====================
 
-export const VAULT_PROGRAM_ID = "AuZc1rQBxT5Ekz84NJ7DCMuHGwuvcSFbgufvmRcuh338";
-export const REGISTRY_PROGRAM_ID = "8t5oSA3xrLt9rMmM7QZBFWFDgBu8qvWsrUyXFYwPYWmV";
-export const SETTLEMENT_PROGRAM_ID = "2uSDxQtYLU4uSeZtA1ueJx7xg4PDYpEbkxM957T5UUm4";
+export const VAULT_PROGRAM_ID = "4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN";
+export const REGISTRY_PROGRAM_ID = "8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh";
+export const SETTLEMENT_PROGRAM_ID = "GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3";
 
 export const LAMPORTS_PER_SOL = 1_000_000_000n;
 

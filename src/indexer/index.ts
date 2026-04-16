@@ -6,9 +6,9 @@ import { Connection, PublicKey, Logs, Context as SolanaContext } from "@solana/w
 const RPC_URL = process.env.SOLANA_RPC_URL || "http://127.0.0.1:8899";
 const PORT = parseInt(process.env.INDEXER_PORT || "3100", 10);
 const PROGRAM_IDS = {
-  vault: new PublicKey("AuZc1rQBxT5Ekz84NJ7DCMuHGwuvcSFbgufvmRcuh338"),
-  registry: new PublicKey("8t5oSA3xrLt9rMmM7QZBFWFDgBu8qvWsrUyXFYwPYWmV"),
-  settlement: new PublicKey("2uSDxQtYLU4uSeZtA1ueJx7xg4PDYpEbkxM957T5UUm4"),
+  vault: new PublicKey("4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN"),
+  registry: new PublicKey("8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh"),
+  settlement: new PublicKey("GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3"),
 };
 
 function initDb(dbPath: string): Database.Database {

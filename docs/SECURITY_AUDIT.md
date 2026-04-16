@@ -27,9 +27,9 @@
 
 | Program | Program ID | Instructions | Source |
 |---------|-----------|-------------|--------|
-| Agent Vault | `AuZc1rQBxT5Ekz84NJ7DCMuHGwuvcSFbgufvmRcuh338` | 9 | `programs/agent-vault/src/lib.rs` |
-| Agent Registry | `8t5oSA3xrLt9rMmM7QZBFWFDgBu8qvWsrUyXFYwPYWmV` | 5 | `programs/agent-registry/src/lib.rs` |
-| Settlement | `2uSDxQtYLU4uSeZtA1ueJx7xg4PDYpEbkxM957T5UUm4` | 8 | `programs/settlement/src/lib.rs` |
+| Agent Vault | `4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN` | 9 | `programs/agent-vault/src/lib.rs` |
+| Agent Registry | `8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh` | 5 | `programs/agent-registry/src/lib.rs` |
+| Settlement | `GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3` | 8 | `programs/settlement/src/lib.rs` |
 
 **Agent Vault instructions**: `initialize_vault`, `update_policy`, `add_token_allowlist`, `remove_token_allowlist`, `add_program_allowlist`, `remove_program_allowlist`, `execute_transfer`, `execute_program_call`, `execute_token_transfer`, `pause_vault`, `resume_vault`
 

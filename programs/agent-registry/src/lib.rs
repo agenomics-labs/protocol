@@ -13,7 +13,7 @@ use std::mem;
 /// - Instructions for registration, updates, status management, and deregistration
 /// - Reputation scoring (updated via CPI from Settlement program)
 
-declare_id!("8t5oSA3xrLt9rMmM7QZBFWFDgBu8qvWsrUyXFYwPYWmV");
+declare_id!("8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh");
 
 #[program]
 pub mod agent_registry {
@@ -728,7 +728,7 @@ pub enum AgentRegistryError {
 
 /// The Settlement program ID (will be set to actual settlement program address)
 /// This is a placeholder and should be replaced with the real Settlement program ID
-pub const SETTLEMENT_PROGRAM_ID: Pubkey = pubkey!("2uSDxQtYLU4uSeZtA1ueJx7xg4PDYpEbkxM957T5UUm4");
+pub const SETTLEMENT_PROGRAM_ID: Pubkey = pubkey!("GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3");
 
 // ============================================================================
 // UNIT TESTS
