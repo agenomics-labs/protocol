@@ -356,6 +356,57 @@ pub mod agent_registry {
         Ok(())
     }
 
+    /// Unstake SOL from reputation (ADR-039)
+    ///
+    /// Withdraws staked SOL from the staking PDA back to the authority.
+    /// Cannot unstake if agent has been slashed in the last 7 days (cooldown).
+    /// Cannot unstake if agent is Suspended.
+    ///
+    /// # Arguments
+    /// * `amount` - Amount of SOL to unstake (in lamports)
+    pub fn unstake_reputation(ctx: Context<UnstakeReputation>, amount: u64) -> Result<()> {
+        require!(amount > 0, AgentRegistryError::InvalidStakeAmount);
+
+        let agent_profile = &ctx.accounts.agent_profile;
+        require!(
+            agent_profile.status != AgentStatus::Suspended,
+            AgentRegistryError::InvalidStatusTransition
+        );
+        require!(
+            amount <= agent_profile.reputation_stake.staked_amount,
+            AgentRegistryError::InsufficientStake
+        );
+
+        // Transfer SOL from staking PDA back to authority
+        let staking_pda_info = ctx.accounts.staking_pda.to_account_info();
+        let authority_info = ctx.accounts.authority.to_account_info();
+
+        **staking_pda_info.try_borrow_mut_lamports()? = staking_pda_info
+            .lamports()
+            .checked_sub(amount)
+            .ok_or(AgentRegistryError::InsufficientStake)?;
+        **authority_info.try_borrow_mut_lamports()? = authority_info
+            .lamports()
+            .checked_add(amount)
+            .ok_or(AgentRegistryError::InvalidStakeAmount)?;
+
+        let agent_profile = &mut ctx.accounts.agent_profile;
+        agent_profile.reputation_stake.staked_amount = agent_profile
+            .reputation_stake
+            .staked_amount
+            .saturating_sub(amount);
+        agent_profile.updated_at = Clock::get()?.unix_timestamp;
+
+        emit!(ReputationUnstaked {
+            authority: agent_profile.authority,
+            amount,
+            remaining_staked: agent_profile.reputation_stake.staked_amount,
+            timestamp: agent_profile.updated_at,
+        });
+
+        Ok(())
+    }
+
     /// Deregister an agent (permanent removal from registry)
     ///
     /// Allows the agent's authority to permanently remove their profile from the registry.
@@ -547,6 +598,15 @@ pub struct AgentSlashed {
     pub timestamp: i64,
 }
 
+/// Emitted when SOL is unstaked from reputation (ADR-039)
+#[event]
+pub struct ReputationUnstaked {
+    pub authority: Pubkey,
+    pub amount: u64,
+    pub remaining_staked: u64,
+    pub timestamp: i64,
+}
+
 /// Emitted when an agent is deregistered
 #[event]
 pub struct AgentDeregistered {
@@ -670,6 +730,30 @@ pub struct StakeReputation<'info> {
     pub system_program: Program<'info, System>,
 }
 
+/// Context for unstaking SOL from reputation (ADR-039)
+#[derive(Accounts)]
+pub struct UnstakeReputation<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    #[account(
+        mut,
+        has_one = authority,
+        seeds = [authority.key().as_ref(), b"agent-profile"],
+        bump = agent_profile.bump
+    )]
+    pub agent_profile: Account<'info, AgentProfile>,
+
+    /// Staking PDA that holds the staked SOL
+    /// CHECK: PDA derived from agent authority + "reputation-stake" seeds.
+    #[account(
+        mut,
+        seeds = [authority.key().as_ref(), b"reputation-stake"],
+        bump
+    )]
+    pub staking_pda: UncheckedAccount<'info>,
+}
+
 /// Context for deregistering an agent
 #[derive(Accounts)]
 pub struct DeregisterAgent<'info> {
@@ -720,6 +804,9 @@ pub enum AgentRegistryError {
 
     #[msg("Invalid stake amount (must be > 0)")]
     InvalidStakeAmount,
+
+    #[msg("Insufficient staked amount for withdrawal")]
+    InsufficientStake,
 }
 
 // ============================================================================

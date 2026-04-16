@@ -170,26 +170,9 @@ pub struct Vault {
     pub bump: u8,
 }
 
-#[account]
-pub struct AuditEntry {
-    /// The vault this audit entry belongs to.
-    pub vault: Pubkey,
-
-    /// Timestamp of the action (Unix seconds).
-    pub timestamp: i64,
-
-    /// The action that was performed.
-    pub action: VaultAction,
-
-    /// Amount involved (in lamports or token base units), if applicable.
-    pub amount: u64,
-
-    /// Recipient or target pubkey, if applicable.
-    pub target: Pubkey,
-
-    /// Whether the action succeeded.
-    pub success: bool,
-}
+// ADR-039: AuditEntry struct removed — auditing is done via emit! events,
+// not on-chain accounts. See TransactionExecuted, ProgramCallExecuted,
+// TokenTransferExecuted events for the audit trail.
 
 /// The spending policy for a vault.
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
@@ -668,17 +651,19 @@ mod instructions {
         Ok(())
     }
 
-    /// Execute a cross-program invocation on behalf of the vault.
+    /// Execute a read-only or agent-signed cross-program invocation.
     ///
-    /// The vault PDA signs the CPI, so the target program sees the vault as the
-    /// authority. This enables AI agents to interact with any on-chain program
-    /// (DeFi, NFT, governance, etc.) through their vault, subject to policy.
+    /// # Security (ADR-038)
+    /// The vault PDA is **NOT** injected as a CPI signer. This prevents
+    /// allowlisted programs from using the vault's signing authority to
+    /// drain SOL or SPL tokens. The agent's own keypair signs the CPI
+    /// instead — financial operations must use `execute_transfer` or
+    /// `execute_token_transfer` which enforce spending limits.
     ///
-    /// # Security (ADR-024)
-    /// - The vault PDA's lamport balance is snapshot before and after CPI
-    /// - Net outflow is capped at `per_tx_limit_lamports` and counted against daily limit
-    /// - Prevents allowlisted programs from draining vault SOL via signed CPI
-    /// - Token transfers must use `execute_token_transfer` (which enforces allowlist + daily limits)
+    /// # Use cases
+    /// - Reading on-chain data via CPI (oracle queries, price feeds)
+    /// - Interacting with programs that require agent signature (not vault)
+    /// - Calling governance/voting programs with agent identity
     ///
     /// # remaining_accounts layout:
     ///   [0]   = target program (executable)
@@ -689,13 +674,9 @@ mod instructions {
         program_to_invoke: Pubkey,
     ) -> Result<()> {
         let clock = Clock::get()?;
-        let authority_key: Pubkey;
-        let bump: u8;
         let vault_key: Pubkey;
-        let per_tx_limit: u64;
-        let daily_limit: u64;
 
-        // --- CHECKS + EFFECTS (scoped mutable borrow) ---
+        // --- CHECKS + EFFECTS ---
         {
             let vault = &mut ctx.accounts.vault;
 
@@ -723,48 +704,29 @@ mod instructions {
                 vault.txs_in_current_window < vault.policy.max_txs_per_hour,
                 VaultError::RateLimitExceeded
             );
-
-            // Reset daily counter if day changed
-            let current_day = (clock.unix_timestamp / 86400) as u64;
-            if current_day > vault.last_spend_day {
-                vault.spent_today_lamports = 0;
-                vault.last_spend_day = current_day;
-            }
-
-            // Update state before CPI (checks-effects-interactions)
             vault.txs_in_current_window = vault.txs_in_current_window.saturating_add(1);
-
-            authority_key = vault.authority;
-            bump = vault.bump;
             vault_key = vault.key();
-            per_tx_limit = vault.policy.per_tx_limit_lamports;
-            daily_limit = vault.policy.daily_limit_lamports;
         }
 
-        // --- SNAPSHOT vault balance before CPI ---
-        let vault_info = ctx.accounts.vault.to_account_info();
-        let balance_before = vault_info.lamports();
-
-        // --- INTERACTIONS (CPI with vault PDA as signer) ---
+        // --- INTERACTIONS (CPI WITHOUT vault PDA signing) ---
         let remaining = ctx.remaining_accounts;
         require!(!remaining.is_empty(), VaultError::ProgramNotAllowed);
 
-        // First remaining account must be the target program
         require!(
             remaining[0].key() == program_to_invoke,
             VaultError::ProgramNotAllowed
         );
         require!(remaining[0].executable, VaultError::ProgramNotAllowed);
 
-        // Build account metas for CPI from remaining_accounts[1..]
+        // Build account metas — vault PDA is NEVER injected as signer.
+        // Only accounts that are already signers retain their signer status.
         let cpi_accounts: Vec<AccountMeta> = remaining[1..]
             .iter()
             .map(|acc| {
-                let is_vault = acc.key() == vault_key;
                 if acc.is_writable {
-                    AccountMeta::new(acc.key(), is_vault || acc.is_signer)
+                    AccountMeta::new(acc.key(), acc.is_signer)
                 } else {
-                    AccountMeta::new_readonly(acc.key(), is_vault || acc.is_signer)
+                    AccountMeta::new_readonly(acc.key(), acc.is_signer)
                 }
             })
             .collect();
@@ -775,28 +737,11 @@ mod instructions {
             data: instruction_data.clone(),
         };
 
-        let signer_seeds: &[&[u8]] = &[b"vault", authority_key.as_ref(), &[bump]];
-
-        anchor_lang::solana_program::program::invoke_signed(
+        // Use invoke (not invoke_signed) — no PDA signing authority exposed
+        anchor_lang::solana_program::program::invoke(
             &instruction,
             remaining,
-            &[signer_seeds],
         )?;
-
-        // --- POST-CPI: Enforce spending limits on SOL outflow ---
-        let balance_after = vault_info.lamports();
-        if balance_after < balance_before {
-            let outflow = balance_before - balance_after;
-
-            // Per-tx limit
-            require!(outflow <= per_tx_limit, VaultError::PerTxLimitExceeded);
-
-            // Daily limit (update spent_today)
-            let vault = &mut ctx.accounts.vault;
-            let new_daily_total = vault.spent_today_lamports.saturating_add(outflow);
-            require!(new_daily_total <= daily_limit, VaultError::DailyLimitExceeded);
-            vault.spent_today_lamports = new_daily_total;
-        }
 
         // --- EMIT AUDIT LOG ---
         let instruction_hash = {

@@ -245,11 +245,12 @@ pub mod settlement {
         if all_approved {
             escrow.status = EscrowStatus::Completed;
 
-            // CPI into Agent Registry to update provider reputation
-            // Settlement authority PDA signs the CPI, proving caller identity
+            // CPI into Agent Registry to update provider reputation (+50 for completion)
             update_provider_reputation(
                 provider_key,
                 escrow.released_amount,
+                50,   // positive reputation for successful completion
+                true, // task_completed = true
                 ctx.accounts.registry_program.to_account_info(),
                 ctx.accounts.provider_profile.to_account_info(),
                 ctx.accounts.settlement_authority.to_account_info(),
@@ -413,6 +414,22 @@ pub mod settlement {
             .and_then(|v| v.checked_add(provider_refund))
             .ok_or(SettlementError::AmountOverflow)?;
         escrow.status = EscrowStatus::Completed;
+
+        // ADR-039: Slash provider reputation on dispute resolution.
+        // If the client got a refund, the provider failed to deliver — negative reputation.
+        if client_refund > 0 {
+            // Reputation penalty proportional to client's share: -25 base
+            update_provider_reputation(
+                provider_key,
+                0,     // no earnings for provider in dispute
+                -25,   // negative reputation delta
+                false, // task NOT completed — triggers slashing in Registry
+                ctx.accounts.registry_program.to_account_info(),
+                ctx.accounts.provider_profile.to_account_info(),
+                ctx.accounts.settlement_authority.to_account_info(),
+                ctx.bumps.settlement_authority,
+            )?;
+        }
 
         emit!(DisputeResolved {
             escrow: escrow.key(),
@@ -658,9 +675,16 @@ pub mod settlement {
 ///
 /// The discriminator is computed as sha256("global:update_reputation")[..8].
 /// This is Anchor's standard discriminator for the `update_reputation` instruction.
+/// CPIs into Agent Registry to update provider reputation.
+///
+/// ADR-039: Now accepts `reputation_delta` and `task_completed` as parameters
+/// instead of hardcoding +50/true. This enables both positive reputation
+/// (task completion) and negative reputation (dispute/expiry slashing).
 fn update_provider_reputation<'info>(
     provider: Pubkey,
     earnings: u64,
+    reputation_delta: i64,
+    task_completed: bool,
     registry_program: AccountInfo<'info>,
     provider_profile: AccountInfo<'info>,
     settlement_authority: AccountInfo<'info>,
@@ -668,9 +692,7 @@ fn update_provider_reputation<'info>(
 ) -> Result<()> {
     // Anchor discriminator: sha256("global:update_reputation")[..8]
     let discriminator: [u8; 8] = [194, 220, 43, 201, 54, 209, 49, 178];
-    let reputation_delta: i64 = 50; // +50 for successful completion
-    let task_completed: bool = true;
-    let rating: u8 = 0; // No rating yet — client rates separately
+    let rating: u8 = 0; // Rating submitted separately by client
 
     let mut data = Vec::with_capacity(8 + 8 + 1 + 8 + 1);
     data.extend_from_slice(&discriminator);
@@ -970,6 +992,22 @@ pub struct ResolveDispute<'info> {
         constraint = provider_token_account.owner == escrow.provider @ SettlementError::InvalidTokenAccount,
     )]
     pub provider_token_account: Account<'info, TokenAccount>,
+
+    /// ADR-039: Registry program for slashing reputation on dispute
+    /// CHECK: Validated by constraint against AGENT_REGISTRY_PROGRAM_ID.
+    #[account(
+        executable,
+        constraint = registry_program.key() == AGENT_REGISTRY_PROGRAM_ID @ SettlementError::InvalidRegistryProgram
+    )]
+    pub registry_program: UncheckedAccount<'info>,
+
+    /// CHECK: Provider's AgentProfile PDA. Validated by Registry during CPI.
+    #[account(mut)]
+    pub provider_profile: UncheckedAccount<'info>,
+
+    /// CHECK: Settlement authority PDA for CPI signing.
+    #[account(seeds = [b"settlement_authority"], bump)]
+    pub settlement_authority: UncheckedAccount<'info>,
 
     pub token_program: Program<'info, Token>,
 }
