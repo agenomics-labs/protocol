@@ -1,8 +1,8 @@
-# Autonomous Economic Agents Protocol (AEAP) - Architecture
+# Agenomics Protocol - Architecture
 
 ## 1. Protocol Overview
 
-The Autonomous Economic Agents Protocol (AEAP) enables AI agents to operate as independent economic entities on Solana. By providing on-chain identity, programmable wallets, discovery mechanisms, and autonomous payment settlement, AEAP creates a trustless economic layer where agents can discover each other, negotiate tasks, and settle payments without human intermediation.
+The Agenomics Protocol enables AI agents to operate as independent economic entities on Solana. By providing on-chain identity, programmable wallets, discovery mechanisms, and autonomous payment settlement, AEAP creates a trustless economic layer where agents can discover each other, negotiate tasks, and settle payments without human intermediation.
 
 ### Core Vision
 

@@ -240,5 +240,5 @@ npx @claude-flow/cli@latest doctor --fix
 
 ## Support
 
-- Documentation: https://github.com/agenomics-labs/aeap
-- Issues: https://github.com/agenomics-labs/aeap/issues
+- Documentation: https://github.com/agenomics-labs/protocol
+- Issues: https://github.com/agenomics-labs/protocol/issues

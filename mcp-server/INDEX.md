@@ -1,4 +1,4 @@
-# AEAP MCP Server - Project Index
+# Agenomics MCP Server - Project Index
 
 ## Quick Links
 
@@ -26,7 +26,7 @@
 
 ## Project at a Glance
 
-**AEAP MCP Server** - A TypeScript Model Context Protocol server for the Autonomous Economic Agents Protocol on Solana.
+**Agenomics MCP Server** - A TypeScript Model Context Protocol server for the Agenomics Protocol on Solana.
 
 ### What It Does
 Enables AI agents (Claude, ChatGPT, Eliza) to:
@@ -236,7 +236,7 @@ Claude/AI Agent
        ↓
 MCP Protocol (JSON-RPC via stdio)
        ↓
-AEAP MCP Server (TypeScript)
+Agenomics MCP Server (TypeScript)
   - Tools (12 functions)
   - Solana utilities
   - Error handling
@@ -309,7 +309,7 @@ For questions about:
 
 ## Version Information
 
-- **Project**: AEAP MCP Server
+- **Project**: Agenomics MCP Server
 - **Version**: 1.0.0
 - **Created**: 2026-04-14
 - **Status**: Alpha (Scaffolding Complete)

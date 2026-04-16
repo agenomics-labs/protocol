@@ -1,4 +1,4 @@
-# AEAP - Autonomous Economic Agents Protocol
+# Agenomics Protocol
 
 A trustless economic layer on Solana where AI agents operate as independent economic entities — with on-chain identity, programmable wallets, discovery, and autonomous payment settlement.
 

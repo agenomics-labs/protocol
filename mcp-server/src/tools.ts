@@ -1,7 +1,7 @@
 import { Tool } from "@modelcontextprotocol/sdk/types";
 
 /**
- * AEAP MCP Server Tool Definitions
+ * Agenomics MCP Server Tool Definitions
  *
  * 20 tools organized into three categories matching the on-chain programs:
  * 1. Vault Tools (7) - Agent wallet management with spending policies

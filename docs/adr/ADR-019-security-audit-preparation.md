@@ -8,7 +8,7 @@ Accepted
 
 ## Context
 
-The Autonomous Economic Agents Protocol (AEAP) is approaching its first external security audit. The protocol consists of three Solana programs (Agent Vault, Agent Registry, Settlement) and an off-chain MCP server that exposes these programs to AI agents. Together, these components manage real economic value: custodial vaults with spending policies, agent reputation scores that influence hiring decisions, and milestone-based escrow payments between autonomous agents.
+The Agenomics Protocol is approaching its first external security audit. The protocol consists of three Solana programs (Agent Vault, Agent Registry, Settlement) and an off-chain MCP server that exposes these programs to AI agents. Together, these components manage real economic value: custodial vaults with spending policies, agent reputation scores that influence hiring decisions, and milestone-based escrow payments between autonomous agents.
 
 Before engaging an audit firm, we need a comprehensive threat model, attack surface analysis, and audit-ready checklist to maximize the value of the engagement. The protocol handles SOL, SPL tokens, and reputation state that directly affects agent income -- any vulnerability could result in loss of funds or manipulation of the agent marketplace.
 

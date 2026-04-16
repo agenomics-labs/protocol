@@ -1,4 +1,4 @@
-# AEAP MCP Server - Setup Guide
+# Agenomics MCP Server - Setup Guide
 
 ## Quick Start
 
@@ -246,7 +246,7 @@ Claude/Client
     ↓
 MCP Protocol (JSON-RPC over stdio)
     ↓
-AEAP MCP Server (Node.js)
+Agenomics MCP Server (Node.js)
     ↓
 Tool Handlers (TypeScript)
     ↓

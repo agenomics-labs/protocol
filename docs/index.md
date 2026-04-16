@@ -2,7 +2,7 @@
 layout: home
 hero:
   name: AEAP
-  text: Autonomous Economic Agents Protocol
+  text: Agenomics Protocol
   tagline: Programmable vaults, agent discovery, and milestone-based settlement on Solana
   actions:
     - theme: brand

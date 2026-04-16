@@ -1,6 +1,6 @@
 # AEAP External Audit Scope Document
 
-**Protocol**: Autonomous Economic Agents Protocol (AEAP)
+**Protocol**: Agenomics Protocol
 **Version**: 1.0.0 (pre-audit)
 **Date**: 2026-04-15
 **Chain**: Solana (Mainnet-Beta)
@@ -244,7 +244,7 @@ When submitting to audit firms, include:
 ```
 Subject: Audit Engagement Request - AEAP (Solana)
 
-Protocol: Autonomous Economic Agents Protocol (AEAP)
+Protocol: Agenomics Protocol
 Chain: Solana (Mainnet-Beta)
 Framework: Anchor v0.30+
 Language: Rust

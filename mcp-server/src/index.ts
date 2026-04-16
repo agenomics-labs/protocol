@@ -36,9 +36,9 @@ import {
 import { SystemProgram, SYSVAR_RENT_PUBKEY } from "@solana/web3.js";
 
 /**
- * AEAP MCP Server - Main Entry Point
+ * Agenomics MCP Server - Main Entry Point
  *
- * Exposes the Autonomous Economic Agents Protocol (AEAP) on Solana
+ * Exposes the Agenomics Protocol on Solana
  * to any AI agent through the Model Context Protocol.
  *
  * Three on-chain programs are accessible:
@@ -1267,7 +1267,7 @@ function formatMilestoneStatus(status: any): string {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("AEAP MCP Server started on stdio transport");
+  console.error("Agenomics MCP Server started on stdio transport");
   console.error(`Agent wallet: ${getWalletPublicKey().toBase58()}`);
   console.error(`RPC: ${getConnection().rpcEndpoint}`);
 }

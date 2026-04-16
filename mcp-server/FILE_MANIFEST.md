@@ -1,4 +1,4 @@
-# AEAP MCP Server - File Manifest
+# Agenomics MCP Server - File Manifest
 
 ## Project Root: `/sessions/elegant-quirky-davinci/mnt/Solana/aeap/mcp-server/`
 
@@ -93,7 +93,7 @@ Contents:
 **Complete Project Documentation**
 
 Sections:
-1. Overview - AEAP protocol components
+1. Overview - Agenomics protocol components
 2. Installation - Prerequisites and setup
 3. Configuration - Environment variables
 4. Usage with Claude - Integration examples
@@ -310,7 +310,7 @@ To extend this server:
 
 ## Summary
 
-This manifest documents all files in the AEAP MCP Server project:
+This manifest documents all files in the Agenomics MCP Server project:
 - **10 files** total
 - **3 TypeScript source files** (~1,345 lines of code)
 - **4 configuration files** (~112 lines)
@@ -321,5 +321,5 @@ The server is production-ready for integration with on-chain AEAP programs and d
 ---
 
 Last Updated: 2026-04-14
-Project: AEAP MCP Server v1.0.0
+Project: Agenomics MCP Server v1.0.0
 Author: Alejandro (Solana Developer)

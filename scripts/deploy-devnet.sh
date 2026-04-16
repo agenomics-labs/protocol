@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AEAP Devnet Deployment Script
+# Agenomics Devnet Deployment Script
 # Usage: ./scripts/deploy-devnet.sh
 #
 # Prerequisites:
@@ -24,7 +24,7 @@ VAULT_SO="$PROJECT_ROOT/target/deploy/agent_vault.so"
 REGISTRY_SO="$PROJECT_ROOT/target/deploy/agent_registry.so"
 SETTLEMENT_SO="$PROJECT_ROOT/target/deploy/settlement.so"
 
-echo "=== AEAP Devnet Deployment ==="
+echo "=== Agenomics Devnet Deployment ==="
 echo ""
 
 # Verify binaries exist

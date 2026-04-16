@@ -19,7 +19,7 @@ const PROGRAM_IDS = {
 const MONITORED_VAULT = null; // Set to a PublicKey string to monitor a specific vault
 
 // ============================================================================
-// AEAP Dashboard — Autonomous Economic Agents Protocol
+// AEAP Dashboard — Agenomics Protocol
 // Interactive overview of the 3-program Solana architecture
 // ============================================================================
 
@@ -454,7 +454,7 @@ export default function AEAPDashboard() {
             </h1>
             <DevnetBadge />
           </div>
-          <p className="text-gray-400 mt-1 text-sm">Autonomous Economic Agents Protocol — Solana/Anchor</p>
+          <p className="text-gray-400 mt-1 text-sm">Agenomics Protocol — Solana/Anchor</p>
           <p className="text-gray-500 text-xs mt-1">Colosseum Frontier Hackathon 2026</p>
           {lastUpdated && (
             <p className="text-gray-600 text-xs mt-1">

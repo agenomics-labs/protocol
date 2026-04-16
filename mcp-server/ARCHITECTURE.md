@@ -1,8 +1,8 @@
-# AEAP MCP Server Architecture
+# Agenomics MCP Server Architecture
 
 ## High-Level Overview
 
-The AEAP MCP Server is a TypeScript-based Model Context Protocol server that provides a bridge between AI agents (Claude, ChatGPT, Eliza) and the Autonomous Economic Agents Protocol on Solana.
+The Agenomics MCP Server is a TypeScript-based Model Context Protocol server that provides a bridge between AI agents (Claude, ChatGPT, Eliza) and the Agenomics Protocol on Solana.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -12,7 +12,7 @@ The AEAP MCP Server is a TypeScript-based Model Context Protocol server that pro
                      │ MCP Protocol (JSON-RPC over stdio)
                      │
 ┌─────────────────────┴────────────────────────────────────────┐
-│ AEAP MCP Server (Node.js + TypeScript)                      │
+│ Agenomics MCP Server (Node.js + TypeScript)                      │
 │                                                              │
 │ ┌─────────────────────────────────────────────────────────┐ │
 │ │ Tool Handlers (index.ts)                                │ │

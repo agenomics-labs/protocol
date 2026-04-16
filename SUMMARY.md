@@ -1,4 +1,4 @@
-# AEAP — Autonomous Economic Agents Protocol
+# AEAP — Agenomics Protocol
 
 **Colosseum Frontier Hackathon 2026** | Solana / Anchor | Grand Champion Track
 

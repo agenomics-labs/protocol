@@ -1,6 +1,6 @@
 # AEAP Mainnet Deployment Checklist
 
-**Protocol**: Autonomous Economic Agents Protocol (AEAP)
+**Protocol**: Agenomics Protocol
 **Date**: 2026-04-15
 **Target Network**: Solana Mainnet-Beta
 

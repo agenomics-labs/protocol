@@ -1,6 +1,6 @@
 # AEAP Security Audit Preparation
 
-**Protocol**: Autonomous Economic Agents Protocol (AEAP)
+**Protocol**: Agenomics Protocol
 **Date**: 2026-04-15
 **Version**: 1.0.0 (pre-audit)
 **Chain**: Solana (Devnet, targeting Mainnet-Beta)

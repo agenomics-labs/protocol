@@ -1,6 +1,6 @@
 # AEAP Integration Research
 
-Integration analysis for the Autonomous Economic Agents Protocol (AEAP) with three key Solana ecosystem tools and standards.
+Integration analysis for the Agenomics Protocol with three key Solana ecosystem tools and standards.
 
 ---
 

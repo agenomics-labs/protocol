@@ -1,10 +1,10 @@
-# AEAP MCP Server
+# Agenomics MCP Server
 
-A TypeScript Model Context Protocol (MCP) server for the Autonomous Economic Agents Protocol (AEAP) on Solana. This server enables any AI agent (Claude, ChatGPT, ElizaOS, etc.) to interact with the AEAP on-chain programs.
+A TypeScript Model Context Protocol (MCP) server for the Agenomics Protocol on Solana. This server enables any AI agent (Claude, ChatGPT, ElizaOS, etc.) to interact with the AEAP on-chain programs.
 
 ## Overview
 
-The AEAP MCP Server exposes three core components of the AEAP:
+The Agenomics MCP Server exposes three core components of the AEAP:
 
 ### 1. Agent Vault
 Programmable wallets for AI agents with customizable spending policies:

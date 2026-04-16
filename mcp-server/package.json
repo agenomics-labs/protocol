@@ -1,7 +1,7 @@
 {
   "name": "@agenomics/mcp-server",
   "version": "1.0.0",
-  "description": "MCP Server for Autonomous Economic Agents Protocol (AEAP) on Solana",
+  "description": "MCP Server for Agenomics Protocol on Solana",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {

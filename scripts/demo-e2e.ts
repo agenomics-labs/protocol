@@ -1,7 +1,7 @@
 /**
  * AEAP End-to-End Demo Script
  * ============================
- * Demonstrates the full Autonomous Economic Agents Protocol workflow:
+ * Demonstrates the full Agenomics Protocol workflow:
  *
  * 1. Agent Vault: Create a programmable wallet with spending policies
  * 2. Agent Registry: Register an AI agent with capabilities and pricing
@@ -88,7 +88,7 @@ function info(msg: string) {
 
 describe("AEAP End-to-End Demo", () => {
 it("runs the full protocol lifecycle", async () => {
-  header("AEAP — Autonomous Economic Agents Protocol: E2E Demo");
+  header("AEAP — Agenomics Protocol: E2E Demo");
 
   // Setup provider
   const provider = anchor.AnchorProvider.env();

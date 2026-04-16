@@ -172,7 +172,7 @@ const settlementActions: ElizaAction[] = [
 
 export const aeapPlugin: ElizaPlugin = {
   name: "aeap",
-  description: "Autonomous Economic Agents Protocol - vaults, discovery, and settlement for AI agents on Solana",
+  description: "Agenomics Protocol - vaults, discovery, and settlement for AI agents on Solana",
   version: "0.1.0",
   actions: [...vaultActions, ...registryActions, ...settlementActions],
 };

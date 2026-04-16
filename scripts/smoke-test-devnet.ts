@@ -1,5 +1,5 @@
 /**
- * AEAP Devnet Smoke Test
+ * Agenomics Devnet Smoke Test
  *
  * Verifies that all 3 programs are deployed and functional on devnet.
  * Tests: vault creation, agent registration, and escrow creation.
@@ -33,7 +33,7 @@ async function main() {
   const rpcUrl = process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com";
   const connection = new Connection(rpcUrl, "confirmed");
 
-  console.log(`AEAP Devnet Smoke Test`);
+  console.log(`Agenomics Devnet Smoke Test`);
   console.log(`RPC: ${rpcUrl}`);
   console.log(`Cluster version: ${await connection.getVersion().then(v => v["solana-core"])}`);
   console.log();
