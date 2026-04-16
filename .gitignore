@@ -1,0 +1,40 @@
+# Rust
+/target/
+Cargo.lock
+**/*.rs.bk
+
+# Anchor
+.anchor/
+.env
+test-ledger/
+
+# Node
+node_modules/
+dist/
+*.log
+package-lock.json
+yarn.lock
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Compiled binaries
+*.so
+*.dylib
+*.dll
+*.exe
+
+# Testing
+.mocha
+.nyc_output
+coverage/
+
+# Build artifacts
+target/
+dist/
+build/

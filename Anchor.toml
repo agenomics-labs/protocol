@@ -1,0 +1,23 @@
+[features]
+seeds = false
+skip-lint = false
+
+[programs.localnet]
+agent_vault = "AuZc1rQBxT5Ekz84NJ7DCMuHGwuvcSFbgufvmRcuh338"
+agent_registry = "8t5oSA3xrLt9rMmM7QZBFWFDgBu8qvWsrUyXFYwPYWmV"
+settlement = "2uSDxQtYLU4uSeZtA1ueJx7xg4PDYpEbkxM957T5UUm4"
+
+[programs.devnet]
+agent_vault = "AuZc1rQBxT5Ekz84NJ7DCMuHGwuvcSFbgufvmRcuh338"
+agent_registry = "8t5oSA3xrLt9rMmM7QZBFWFDgBu8qvWsrUyXFYwPYWmV"
+settlement = "2uSDxQtYLU4uSeZtA1ueJx7xg4PDYpEbkxM957T5UUm4"
+
+[registry]
+url = "https://api.apr.dev"
+
+[provider]
+cluster = "Localnet"
+wallet = "~/.config/solana/id.json"
+
+[scripts]
+test = "npx ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"

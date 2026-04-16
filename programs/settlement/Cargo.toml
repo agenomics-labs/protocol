@@ -1,0 +1,16 @@
+[package]
+name = "settlement"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anchor-lang = { version = "0.30", features = ["init-if-needed"] }
+anchor-spl = "0.30"
+solana-program = "1.18"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "settlement"
+
+[features]
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
