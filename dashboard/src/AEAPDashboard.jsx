@@ -1,5 +1,22 @@
-import { useState } from "react";
-import { Shield, Users, Coins, ArrowRight, CheckCircle, XCircle, Clock, AlertTriangle, Zap, TrendingUp, Lock, Globe } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import { Shield, Users, Coins, ArrowRight, CheckCircle, XCircle, Clock, AlertTriangle, Zap, TrendingUp, Lock, Globe, Radio } from "lucide-react";
+import { Connection, PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js";
+
+// ============================================================================
+// Devnet Configuration
+// ============================================================================
+
+const DEVNET_RPC = "https://api.devnet.solana.com";
+const connection = new Connection(DEVNET_RPC, "confirmed");
+
+const PROGRAM_IDS = {
+  vault: new PublicKey("4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN"),
+  registry: new PublicKey("8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh"),
+  settlement: new PublicKey("GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3"),
+};
+
+// Configure a wallet address to monitor (set via env or hardcode for demo)
+const MONITORED_VAULT = null; // Set to a PublicKey string to monitor a specific vault
 
 // ============================================================================
 // AEAP Dashboard — Autonomous Economic Agents Protocol
@@ -333,9 +350,91 @@ function MCPSection() {
   );
 }
 
+function DevnetBadge() {
+  return (
+    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-green-900/40 border border-green-500/30 text-green-400 text-xs font-medium">
+      <Radio className="w-3 h-3 animate-pulse" />
+      Devnet
+    </span>
+  );
+}
+
+function useDevnetData() {
+  const [vaultBalance, setVaultBalance] = useState(null);
+  const [agentProfiles, setAgentProfiles] = useState([]);
+  const [escrowAccounts, setEscrowAccounts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [lastUpdated, setLastUpdated] = useState(null);
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      // Fetch vault balance if a monitored vault is configured
+      if (MONITORED_VAULT) {
+        try {
+          const balance = await connection.getBalance(new PublicKey(MONITORED_VAULT));
+          setVaultBalance(balance / LAMPORTS_PER_SOL);
+        } catch (err) {
+          console.warn("Failed to fetch vault balance:", err.message);
+          setVaultBalance(null);
+        }
+      }
+
+      // Fetch agent profiles from registry program
+      try {
+        const registryAccounts = await connection.getProgramAccounts(PROGRAM_IDS.registry, {
+          commitment: "confirmed",
+        });
+        setAgentProfiles(registryAccounts.map((account) => ({
+          pubkey: account.pubkey.toBase58(),
+          dataSize: account.account.data.length,
+          lamports: account.account.lamports,
+        })));
+      } catch (err) {
+        console.warn("Failed to fetch registry accounts:", err.message);
+        setAgentProfiles([]);
+      }
+
+      // Fetch escrow accounts from settlement program
+      try {
+        const settlementAccounts = await connection.getProgramAccounts(PROGRAM_IDS.settlement, {
+          commitment: "confirmed",
+        });
+        setEscrowAccounts(settlementAccounts.map((account) => ({
+          pubkey: account.pubkey.toBase58(),
+          dataSize: account.account.data.length,
+          lamports: account.account.lamports,
+        })));
+      } catch (err) {
+        console.warn("Failed to fetch settlement accounts:", err.message);
+        setEscrowAccounts([]);
+      }
+
+      setLastUpdated(new Date());
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchData();
+    // Refresh every 30 seconds
+    const interval = setInterval(fetchData, 30000);
+    return () => clearInterval(interval);
+  }, [fetchData]);
+
+  return { vaultBalance, agentProfiles, escrowAccounts, loading, error, lastUpdated, refresh: fetchData };
+}
+
 export default function AEAPDashboard() {
   const [activeProgram, setActiveProgram] = useState("vault");
   const [activeTab, setActiveTab] = useState("programs");
+  const { vaultBalance, agentProfiles, escrowAccounts, loading, error, lastUpdated, refresh } = useDevnetData();
 
   const tabs = [
     { id: "programs", label: "Programs", icon: Shield },
@@ -349,19 +448,39 @@ export default function AEAPDashboard() {
       <div className="max-w-5xl mx-auto">
         {/* Header */}
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold bg-gradient-to-r from-violet-400 via-cyan-400 to-emerald-400 bg-clip-text text-transparent">
-            AEAP Dashboard
-          </h1>
+          <div className="flex items-center justify-center gap-3 mb-2">
+            <h1 className="text-3xl font-bold bg-gradient-to-r from-violet-400 via-cyan-400 to-emerald-400 bg-clip-text text-transparent">
+              AEAP Dashboard
+            </h1>
+            <DevnetBadge />
+          </div>
           <p className="text-gray-400 mt-1 text-sm">Autonomous Economic Agents Protocol — Solana/Anchor</p>
           <p className="text-gray-500 text-xs mt-1">Colosseum Frontier Hackathon 2026</p>
+          {lastUpdated && (
+            <p className="text-gray-600 text-xs mt-1">
+              Last updated: {lastUpdated.toLocaleTimeString()}
+              <button onClick={refresh} className="ml-2 text-cyan-500 hover:text-cyan-400 underline">
+                refresh
+              </button>
+            </p>
+          )}
+          {error && (
+            <p className="text-red-400 text-xs mt-1">RPC error: {error}</p>
+          )}
         </div>
 
         {/* Stats */}
         <div className="grid grid-cols-4 gap-4 mb-6">
           <StatCard label="Programs" value="3" icon={Shield} color="text-violet-400" />
+          <StatCard label="Registered Agents" value={loading ? "..." : agentProfiles.length} icon={Users} color="text-blue-400" />
+          <StatCard label="Active Escrows" value={loading ? "..." : escrowAccounts.length} icon={Coins} color="text-emerald-400" />
+          <StatCard label="Vault Balance" value={vaultBalance !== null ? `${vaultBalance.toFixed(2)} SOL` : "N/A"} icon={Lock} color="text-purple-400" />
+        </div>
+        <div className="grid grid-cols-4 gap-4 mb-6">
           <StatCard label="Tests Passing" value="114" icon={CheckCircle} color="text-green-400" />
           <StatCard label="MCP Tools" value="20" icon={Globe} color="text-cyan-400" />
           <StatCard label="CPI Flows" value="2" icon={Zap} color="text-yellow-400" />
+          <StatCard label="Network" value="Devnet" icon={Radio} color="text-green-400" />
         </div>
 
         {/* Tabs */}
@@ -462,6 +581,47 @@ export default function AEAPDashboard() {
                 </div>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Live Devnet Data */}
+        {(agentProfiles.length > 0 || escrowAccounts.length > 0) && (
+          <div className="mt-6 bg-white/5 rounded-xl border border-white/10 p-6">
+            <div className="flex items-center gap-2 mb-4">
+              <Radio className="w-4 h-4 text-green-400" />
+              <h3 className="text-sm font-semibold text-gray-300">Live Devnet Accounts</h3>
+              <DevnetBadge />
+            </div>
+
+            {agentProfiles.length > 0 && (
+              <div className="mb-4">
+                <h4 className="text-xs font-semibold text-blue-400 mb-2">Registry Accounts ({agentProfiles.length})</h4>
+                <div className="space-y-1 max-h-40 overflow-y-auto">
+                  {agentProfiles.map((profile) => (
+                    <div key={profile.pubkey} className="flex items-center gap-3 bg-white/5 rounded-lg px-3 py-2">
+                      <code className="text-xs font-mono text-cyan-300 truncate flex-1">{profile.pubkey}</code>
+                      <span className="text-xs text-gray-400">{profile.dataSize}B</span>
+                      <span className="text-xs text-gray-400">{(profile.lamports / LAMPORTS_PER_SOL).toFixed(4)} SOL</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {escrowAccounts.length > 0 && (
+              <div>
+                <h4 className="text-xs font-semibold text-emerald-400 mb-2">Settlement Accounts ({escrowAccounts.length})</h4>
+                <div className="space-y-1 max-h-40 overflow-y-auto">
+                  {escrowAccounts.map((escrow) => (
+                    <div key={escrow.pubkey} className="flex items-center gap-3 bg-white/5 rounded-lg px-3 py-2">
+                      <code className="text-xs font-mono text-cyan-300 truncate flex-1">{escrow.pubkey}</code>
+                      <span className="text-xs text-gray-400">{escrow.dataSize}B</span>
+                      <span className="text-xs text-gray-400">{(escrow.lamports / LAMPORTS_PER_SOL).toFixed(4)} SOL</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 

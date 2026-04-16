@@ -306,7 +306,6 @@ async function handleVaultTransfer(args: Record<string, unknown>) {
     .executeTransfer(new BN(solToLamports(amountSol)))
     .accounts({
       vault: vaultPDA,
-      vaultAccount: vaultPDA,
       agent: wallet.publicKey,
       recipient: recipientAddress,
       systemProgram: SystemProgram.programId,

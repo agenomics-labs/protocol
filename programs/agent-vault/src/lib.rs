@@ -333,17 +333,15 @@ pub struct ManageProgramAllowlist<'info> {
 
 #[derive(Accounts)]
 pub struct ExecuteTransfer<'info> {
+    /// The vault PDA — serves as both state account and SOL source.
+    /// ADR-029: Removed vestigial vault_account field; the vault PDA itself
+    /// holds SOL and is used directly for lamport transfers.
     #[account(
         mut,
         seeds = [b"vault", vault.authority.key().as_ref()],
         bump
     )]
     pub vault: Account<'info, Vault>,
-
-    /// The vault's SOL account (the source of funds).
-    /// CHECK: This is the vault PDA account used as SOL source; validated by seeds constraint above.
-    #[account(mut)]
-    pub vault_account: UncheckedAccount<'info>,
 
     /// The signer must be the agent authority or the vault authority.
     pub agent: Signer<'info>,

@@ -12,6 +12,17 @@ declare_id!("GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3");
 const AGENT_REGISTRY_PROGRAM_ID: Pubkey = pubkey!("8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh");
 const MAX_MILESTONES: usize = 5;
 
+/// ADR-028: Minimum escrow amount to prevent cheap reputation farming.
+/// Set to 10,000 base units (e.g., 0.01 USDC with 6 decimals).
+/// Self-dealing attacks must lock at least this much per task, making
+/// large-scale reputation inflation economically costly.
+const MIN_ESCROW_AMOUNT: u64 = 10_000;
+
+/// ADR-030: Dispute resolution timeout in seconds (7 days).
+/// If the dispute resolver doesn't act within this window,
+/// anyone can trigger auto-resolution that refunds the client.
+const DISPUTE_TIMEOUT_SECONDS: i64 = 7 * 24 * 3600;
+
 // ============================================================================
 // PROGRAM
 // ============================================================================
@@ -36,7 +47,13 @@ pub mod settlement {
             SettlementError::InvalidMilestoneCount
         );
 
-        require!(total_amount > 0, SettlementError::InvalidAmount);
+        require!(total_amount >= MIN_ESCROW_AMOUNT, SettlementError::BelowMinimumEscrow);
+
+        // ADR-028: Prevent self-dealing — client cannot be the same as provider
+        require!(
+            ctx.accounts.client.key() != ctx.accounts.provider.key(),
+            SettlementError::SelfDealingProhibited
+        );
 
         let mut total_milestone_amount: u64 = 0;
         for milestone in &milestones_data {
@@ -68,6 +85,7 @@ pub mod settlement {
         escrow.created_at = now;
         escrow.deadline = deadline;
         escrow.dispute_resolver = dispute_resolver;
+        escrow.disputed_at = 0;
         escrow.bump = ctx.bumps.escrow;
 
         escrow.milestones = milestones_data
@@ -296,6 +314,7 @@ pub mod settlement {
         require!(escrow.status != EscrowStatus::Expired, SettlementError::EscrowExpired);
 
         escrow.status = EscrowStatus::Disputed;
+        escrow.disputed_at = Clock::get()?.unix_timestamp;
 
         emit!(DisputeRaised {
             escrow: escrow.key(),
@@ -400,6 +419,72 @@ pub mod settlement {
             resolver: ctx.accounts.resolver.key(),
             client_refund,
             provider_refund,
+            task_id,
+        });
+
+        Ok(())
+    }
+
+    /// ADR-030: Auto-resolve a dispute after timeout.
+    /// Anyone can call this after DISPUTE_TIMEOUT_SECONDS has elapsed.
+    /// All remaining funds are refunded to the client as a safe default.
+    pub fn resolve_dispute_timeout(ctx: Context<ResolveDisputeTimeout>) -> Result<()> {
+        let escrow = &ctx.accounts.escrow;
+        let now = Clock::get()?.unix_timestamp;
+
+        require!(escrow.status == EscrowStatus::Disputed, SettlementError::InvalidStatus);
+        require!(escrow.disputed_at > 0, SettlementError::InvalidStatus);
+        require!(
+            now >= escrow.disputed_at + DISPUTE_TIMEOUT_SECONDS,
+            SettlementError::DisputeTimeoutNotReached
+        );
+
+        let remaining = escrow
+            .total_amount
+            .checked_sub(escrow.released_amount)
+            .ok_or(SettlementError::AmountOverflow)?;
+
+        let bump = escrow.bump;
+        let client_key = escrow.client;
+        let provider_key = escrow.provider;
+        let task_id = escrow.task_id;
+        let task_id_bytes = task_id.to_le_bytes();
+
+        // Refund all remaining to client (safe default for unresolved disputes)
+        if remaining > 0 {
+            let signer_seeds: &[&[&[u8]]] = &[&[
+                b"escrow",
+                client_key.as_ref(),
+                provider_key.as_ref(),
+                &task_id_bytes,
+                &[bump],
+            ]];
+
+            let transfer_instruction = Transfer {
+                from: ctx.accounts.escrow_token_account.to_account_info(),
+                to: ctx.accounts.client_token_account.to_account_info(),
+                authority: ctx.accounts.escrow.to_account_info(),
+            };
+
+            token::transfer(
+                CpiContext::new_with_signer(
+                    ctx.accounts.token_program.to_account_info(),
+                    transfer_instruction,
+                    signer_seeds,
+                ),
+                remaining,
+            )?;
+        }
+
+        let escrow = &mut ctx.accounts.escrow;
+        escrow.released_amount = escrow.total_amount;
+        escrow.status = EscrowStatus::Completed;
+
+        emit!(DisputeResolved {
+            escrow: escrow.key(),
+            resolver: ctx.accounts.payer.key(),
+            client_refund: remaining,
+            provider_refund: 0,
             task_id,
         });
 
@@ -642,6 +727,8 @@ pub struct TaskEscrow {
     pub created_at: i64,
     pub deadline: i64,
     pub dispute_resolver: Option<Pubkey>,
+    /// ADR-030: Timestamp when dispute was raised. Used for auto-resolution timeout.
+    pub disputed_at: i64,
     pub bump: u8,
 }
 
@@ -887,6 +974,32 @@ pub struct ResolveDispute<'info> {
     pub token_program: Program<'info, Token>,
 }
 
+/// ADR-030: Context for auto-resolving a dispute after timeout.
+#[derive(Accounts)]
+pub struct ResolveDisputeTimeout<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+
+    #[account(mut)]
+    pub escrow: Account<'info, TaskEscrow>,
+
+    #[account(
+        mut,
+        constraint = escrow_token_account.mint == escrow.token_mint @ SettlementError::InvalidTokenAccount,
+        constraint = escrow_token_account.owner == escrow.key() @ SettlementError::InvalidTokenAccount,
+    )]
+    pub escrow_token_account: Account<'info, TokenAccount>,
+
+    #[account(
+        mut,
+        constraint = client_token_account.mint == escrow.token_mint @ SettlementError::InvalidTokenAccount,
+        constraint = client_token_account.owner == escrow.client @ SettlementError::InvalidTokenAccount,
+    )]
+    pub client_token_account: Account<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token>,
+}
+
 #[derive(Accounts)]
 pub struct CancelEscrow<'info> {
     #[account(mut)]
@@ -1102,6 +1215,15 @@ pub enum SettlementError {
 
     #[msg("Invalid registry program")]
     InvalidRegistryProgram,
+
+    #[msg("Escrow amount below minimum (anti-sybil)")]
+    BelowMinimumEscrow,
+
+    #[msg("Client and provider cannot be the same account")]
+    SelfDealingProhibited,
+
+    #[msg("Dispute timeout has not been reached yet")]
+    DisputeTimeoutNotReached,
 }
 
 // ============================================================================

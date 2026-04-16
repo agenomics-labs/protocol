@@ -1,0 +1,19 @@
+{
+  "name": "@aeap/integrations",
+  "version": "1.0.0",
+  "description": "AEAP framework integration plugins",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist/**"
+  ],
+  "scripts": {
+    "build": "tsc"
+  },
+  "peerDependencies": {
+    "@modelcontextprotocol/sdk": ">=1.0.0"
+  }
+}
