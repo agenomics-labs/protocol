@@ -29,7 +29,7 @@
     "settlement"
   ],
   "author": "Alejandro",
-  "license": "MIT",
+  "license": "UNLICENSED",
   "dependencies": {
     "@coral-xyz/anchor": "^0.31.1",
     "@modelcontextprotocol/sdk": "^1.29.0",

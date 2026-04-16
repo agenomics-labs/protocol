@@ -313,7 +313,7 @@ For questions about:
 - **Version**: 1.0.0
 - **Created**: 2026-04-14
 - **Status**: Alpha (Scaffolding Complete)
-- **License**: MIT
+- **License**: TBD
 
 ---
 
