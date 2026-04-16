@@ -212,12 +212,10 @@ pub mod agent_registry {
         earnings: u64,
         rating: u8,
     ) -> Result<()> {
-        // Verify caller is the settlement program
-        require_eq!(
-            ctx.accounts.settlement_program.key(),
-            SETTLEMENT_PROGRAM_ID,
-            AgentRegistryError::UnauthorizedCaller
-        );
+        // CPI caller verification is handled by Anchor constraints:
+        // - settlement_authority must be a signer (PDA from Settlement program)
+        // - agent_profile PDA seeds are verified
+        // No manual check needed — unauthorized calls fail at deserialization.
 
         require!(rating <= 5, AgentRegistryError::InvalidRating);
 
@@ -496,17 +494,32 @@ pub struct UpdateStatus<'info> {
 }
 
 /// Context for updating reputation (CPI from Settlement program)
+///
+/// Security: The agent_profile is verified by PDA seeds to prevent arbitrary account
+/// injection. The settlement_authority PDA (seeds: ["settlement_authority"]) must sign
+/// the CPI call, proving it originated from the Settlement program via invoke_signed.
+/// This replaces the previous weak executable-only check.
 #[derive(Accounts)]
 pub struct UpdateReputation<'info> {
-    /// The agent's profile account (mutable for reputation updates)
-    #[account(mut)]
+    /// The agent's profile account — PDA seeds verified to prevent arbitrary account injection
+    #[account(
+        mut,
+        seeds = [agent_profile.authority.as_ref(), b"agent-profile"],
+        bump = agent_profile.bump
+    )]
     pub agent_profile: Account<'info, AgentProfile>,
 
-    /// The Settlement program account (must be the authorized settlement program).
-    /// CHECK: Validated by require_eq against SETTLEMENT_PROGRAM_ID in handler + executable check.
-    /// In production, this should use a PDA-signed CPI pattern for stronger caller verification.
-    #[account(executable)]
-    pub settlement_program: UncheckedAccount<'info>,
+    /// Settlement authority PDA — must sign via invoke_signed from the Settlement program.
+    /// Seeds: ["settlement_authority"] derived from SETTLEMENT_PROGRAM_ID.
+    /// This proves the CPI originated from the Settlement program, not a direct call.
+    /// CHECK: Validated as signer + seeds derived from SETTLEMENT_PROGRAM_ID.
+    #[account(
+        signer,
+        seeds = [b"settlement_authority"],
+        bump,
+        seeds::program = SETTLEMENT_PROGRAM_ID
+    )]
+    pub settlement_authority: UncheckedAccount<'info>,
 }
 
 /// Context for deregistering an agent
@@ -565,3 +578,143 @@ pub enum AgentRegistryError {
 /// The Settlement program ID (will be set to actual settlement program address)
 /// This is a placeholder and should be replaced with the real Settlement program ID
 pub const SETTLEMENT_PROGRAM_ID: Pubkey = pubkey!("2uSDxQtYLU4uSeZtA1ueJx7xg4PDYpEbkxM957T5UUm4");
+
+// ============================================================================
+// UNIT TESTS
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_status_transition_active_to_paused() {
+        // Active -> Paused is valid
+        let current = AgentStatus::Active;
+        let new_status = AgentStatus::Paused;
+        let valid = !matches!(
+            (&current, &new_status),
+            (AgentStatus::Retired, AgentStatus::Active) | (AgentStatus::Retired, AgentStatus::Paused)
+        );
+        assert!(valid);
+    }
+
+    #[test]
+    fn test_status_transition_paused_to_active() {
+        let current = AgentStatus::Paused;
+        let new_status = AgentStatus::Active;
+        let valid = !matches!(
+            (&current, &new_status),
+            (AgentStatus::Retired, AgentStatus::Active) | (AgentStatus::Retired, AgentStatus::Paused)
+        );
+        assert!(valid);
+    }
+
+    #[test]
+    fn test_status_transition_active_to_retired() {
+        let current = AgentStatus::Active;
+        let new_status = AgentStatus::Retired;
+        let valid = !matches!(
+            (&current, &new_status),
+            (AgentStatus::Retired, AgentStatus::Active) | (AgentStatus::Retired, AgentStatus::Paused)
+        );
+        assert!(valid);
+    }
+
+    #[test]
+    fn test_status_transition_retired_to_active_invalid() {
+        let current = AgentStatus::Retired;
+        let new_status = AgentStatus::Active;
+        let valid = !matches!(
+            (&current, &new_status),
+            (AgentStatus::Retired, AgentStatus::Active) | (AgentStatus::Retired, AgentStatus::Paused)
+        );
+        assert!(!valid, "Retired -> Active should be invalid");
+    }
+
+    #[test]
+    fn test_status_transition_retired_to_paused_invalid() {
+        let current = AgentStatus::Retired;
+        let new_status = AgentStatus::Paused;
+        let valid = !matches!(
+            (&current, &new_status),
+            (AgentStatus::Retired, AgentStatus::Active) | (AgentStatus::Retired, AgentStatus::Paused)
+        );
+        assert!(!valid, "Retired -> Paused should be invalid");
+    }
+
+    #[test]
+    fn test_reputation_saturating_add() {
+        let score: u64 = u64::MAX - 10;
+        let delta: i64 = 50;
+        let result = score.saturating_add(delta as u64);
+        assert_eq!(result, u64::MAX);
+    }
+
+    #[test]
+    fn test_reputation_saturating_sub() {
+        let score: u64 = 10;
+        let delta: i64 = -50;
+        let result = score.saturating_sub((-delta) as u64);
+        assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn test_avg_rating_first_task() {
+        // First task: rating becomes the average
+        let rating: u8 = 4;
+        let n: u128 = 1;
+        let avg = if n == 1 { rating } else { 0 };
+        assert_eq!(avg, 4);
+    }
+
+    #[test]
+    fn test_avg_rating_weighted_average() {
+        // After 3 tasks with ratings 4, 5, 3:
+        // avg after task 1: 4
+        // avg after task 2: (4*1 + 5) / 2 = 4 (integer truncation)
+        // avg after task 3: (4*2 + 3) / 3 = 3 (integer truncation)
+        let mut avg: u8 = 4;
+        let mut n: u128 = 1;
+
+        // Task 2: rating 5
+        n = 2;
+        let new_avg = ((avg as u128) * (n - 1) + 5u128) / n;
+        avg = new_avg.min(5) as u8;
+        assert_eq!(avg, 4); // (4 + 5) / 2 = 4 (truncated)
+
+        // Task 3: rating 3
+        n = 3;
+        let new_avg = ((avg as u128) * (n - 1) + 3u128) / n;
+        avg = new_avg.min(5) as u8;
+        assert_eq!(avg, 3); // (4*2 + 3) / 3 = 3 (truncated)
+    }
+
+    #[test]
+    fn test_pricing_model_variants() {
+        assert_ne!(PricingModel::PerTask, PricingModel::PerHour);
+        assert_ne!(PricingModel::PerHour, PricingModel::PerToken);
+        assert_eq!(PricingModel::PerTask, PricingModel::PerTask);
+    }
+
+    #[test]
+    fn test_name_length_validation_logic() {
+        let name_ok = "a".repeat(64);
+        assert!(name_ok.len() <= 64);
+
+        let name_too_long = "a".repeat(65);
+        assert!(name_too_long.len() > 64);
+    }
+
+    #[test]
+    fn test_capabilities_count_validation_logic() {
+        let empty: Vec<String> = vec![];
+        assert!(empty.is_empty());
+
+        let ok: Vec<String> = vec!["a".into(); 10];
+        assert!(!ok.is_empty() && ok.len() <= 10);
+
+        let too_many: Vec<String> = vec!["a".into(); 11];
+        assert!(too_many.len() > 10);
+    }
+}

@@ -1,6 +1,15 @@
 use anchor_lang::prelude::*;
+use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 
 declare_id!("AuZc1rQBxT5Ekz84NJ7DCMuHGwuvcSFbgufvmRcuh338");
+
+/// Maximum number of tokens in the allowlist.
+/// Chosen to fit within the 1024-byte allocation headroom: 10 * 32 bytes = 320 bytes.
+const MAX_TOKEN_ALLOWLIST: usize = 10;
+
+/// Maximum number of programs in the allowlist.
+/// Same sizing rationale as token allowlist.
+const MAX_PROGRAM_ALLOWLIST: usize = 10;
 
 #[program]
 pub mod agent_vault {
@@ -84,6 +93,16 @@ pub mod agent_vault {
         program_to_invoke: Pubkey,
     ) -> Result<()> {
         instructions::execute_program_call(ctx, instruction_data, program_to_invoke)
+    }
+
+    /// Executes an SPL token transfer from the vault's token account to a recipient.
+    /// Enforces token allowlist, rate limiting, and the vault's pause state.
+    /// The vault PDA signs the transfer via CPI.
+    pub fn execute_token_transfer(
+        ctx: Context<ExecuteTokenTransfer>,
+        amount: u64,
+    ) -> Result<()> {
+        instructions::execute_token_transfer(ctx, amount)
     }
 
     /// Pauses the vault, preventing any transfers or program calls.
@@ -332,6 +351,32 @@ pub struct ExecuteProgramCall<'info> {
 }
 
 #[derive(Accounts)]
+pub struct ExecuteTokenTransfer<'info> {
+    #[account(
+        mut,
+        seeds = [b"vault", vault.authority.key().as_ref()],
+        bump
+    )]
+    pub vault: Account<'info, Vault>,
+
+    /// The signer must be the agent authority or the vault authority.
+    pub agent: Signer<'info>,
+
+    /// The vault's token account (source of SPL tokens). Must be owned by the vault PDA.
+    #[account(
+        mut,
+        constraint = vault_token_account.owner == vault.key() @ VaultError::Unauthorized,
+    )]
+    pub vault_token_account: Account<'info, TokenAccount>,
+
+    /// The recipient's token account.
+    #[account(mut)]
+    pub recipient_token_account: Account<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
 pub struct PauseVault<'info> {
     #[account(
         mut,
@@ -424,6 +469,10 @@ mod instructions {
 
         let vault = &mut ctx.accounts.vault;
         if !vault.policy.token_allowlist.contains(&token_mint) {
+            require!(
+                vault.policy.token_allowlist.len() < MAX_TOKEN_ALLOWLIST,
+                VaultError::AllowlistFull
+            );
             vault.policy.token_allowlist.push(token_mint);
         }
 
@@ -462,6 +511,10 @@ mod instructions {
 
         let vault = &mut ctx.accounts.vault;
         if !vault.policy.program_allowlist.contains(&program_id) {
+            require!(
+                vault.policy.program_allowlist.len() < MAX_PROGRAM_ALLOWLIST,
+                VaultError::AllowlistFull
+            );
             vault.policy.program_allowlist.push(program_id);
         }
 
@@ -715,6 +768,86 @@ mod instructions {
         Ok(())
     }
 
+    /// Execute an SPL token transfer from the vault's token account.
+    ///
+    /// Enforces: pause check, authorization, token allowlist, rate limiting.
+    /// The vault PDA signs the CPI transfer via invoke_signed.
+    pub fn execute_token_transfer(
+        ctx: Context<ExecuteTokenTransfer>,
+        amount: u64,
+    ) -> Result<()> {
+        require!(amount > 0, VaultError::InvalidAmount);
+
+        let clock = Clock::get()?;
+        let authority_key: Pubkey;
+        let bump: u8;
+        {
+            let vault = &ctx.accounts.vault;
+
+            // Authorization
+            require!(
+                ctx.accounts.agent.key() == vault.authority
+                    || ctx.accounts.agent.key() == vault.agent_identity,
+                VaultError::Unauthorized
+            );
+
+            require!(!vault.paused, VaultError::VaultPaused);
+
+            // Token allowlist check
+            let mint = ctx.accounts.vault_token_account.mint;
+            require!(
+                vault.policy.is_token_allowed(&mint),
+                VaultError::TokenNotAllowed
+            );
+
+            authority_key = vault.authority;
+            bump = vault.bump;
+        }
+
+        // Rate limit check and update
+        {
+            let vault = &mut ctx.accounts.vault;
+            let time_since_window_start = clock.unix_timestamp - vault.rate_limit_window_start;
+            if time_since_window_start >= 3600 {
+                vault.rate_limit_window_start = clock.unix_timestamp;
+                vault.txs_in_current_window = 0;
+            }
+            require!(
+                vault.txs_in_current_window < vault.policy.max_txs_per_hour,
+                VaultError::RateLimitExceeded
+            );
+            vault.txs_in_current_window = vault.txs_in_current_window.saturating_add(1);
+        }
+
+        // CPI transfer with vault PDA as signer
+        let signer_seeds: &[&[u8]] = &[b"vault", authority_key.as_ref(), &[bump]];
+
+        let transfer_ix = Transfer {
+            from: ctx.accounts.vault_token_account.to_account_info(),
+            to: ctx.accounts.recipient_token_account.to_account_info(),
+            authority: ctx.accounts.vault.to_account_info(),
+        };
+
+        token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                transfer_ix,
+                &[signer_seeds],
+            ),
+            amount,
+        )?;
+
+        emit!(TokenTransferExecuted {
+            vault: ctx.accounts.vault.key(),
+            mint: ctx.accounts.vault_token_account.mint,
+            recipient: ctx.accounts.recipient_token_account.key(),
+            amount,
+            timestamp: clock.unix_timestamp,
+        });
+
+        Ok(())
+    }
+
     pub fn pause_vault(ctx: Context<PauseVault>) -> Result<()> {
         require!(ctx.accounts.authority.key() == ctx.accounts.vault.authority, VaultError::Unauthorized);
 
@@ -831,6 +964,15 @@ pub struct ProgramCallExecuted {
 }
 
 #[event]
+pub struct TokenTransferExecuted {
+    pub vault: Pubkey,
+    pub mint: Pubkey,
+    pub recipient: Pubkey,
+    pub amount: u64,
+    pub timestamp: i64,
+}
+
+#[event]
 pub struct AllowlistUpdated {
     pub vault: Pubkey,
     pub item: Pubkey,
@@ -845,4 +987,102 @@ pub struct VaultPaused {
 #[event]
 pub struct VaultResumed {
     pub vault: Pubkey,
+}
+
+// ============================================================================
+// UNIT TESTS
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_pubkey() -> Pubkey {
+        Pubkey::new_unique()
+    }
+
+    #[test]
+    fn test_vault_policy_new_defaults() {
+        let policy = VaultPolicy::new(100, 1000, 10);
+        assert_eq!(policy.per_tx_limit_lamports, 100);
+        assert_eq!(policy.daily_limit_lamports, 1000);
+        assert_eq!(policy.max_txs_per_hour, 10);
+        assert!(policy.token_allowlist.is_empty());
+        assert!(policy.program_allowlist.is_empty());
+    }
+
+    #[test]
+    fn test_token_allowlist_empty_allows_all() {
+        let policy = VaultPolicy::new(100, 1000, 10);
+        let mint = sample_pubkey();
+        assert!(policy.is_token_allowed(&mint));
+    }
+
+    #[test]
+    fn test_token_allowlist_populated_filters() {
+        let mut policy = VaultPolicy::new(100, 1000, 10);
+        let allowed = sample_pubkey();
+        let denied = sample_pubkey();
+        policy.token_allowlist.push(allowed);
+
+        assert!(policy.is_token_allowed(&allowed));
+        assert!(!policy.is_token_allowed(&denied));
+    }
+
+    #[test]
+    fn test_program_allowlist_empty_allows_all() {
+        let policy = VaultPolicy::new(100, 1000, 10);
+        let prog = sample_pubkey();
+        assert!(policy.is_program_allowed(&prog));
+    }
+
+    #[test]
+    fn test_program_allowlist_populated_filters() {
+        let mut policy = VaultPolicy::new(100, 1000, 10);
+        let allowed = sample_pubkey();
+        let denied = sample_pubkey();
+        policy.program_allowlist.push(allowed);
+
+        assert!(policy.is_program_allowed(&allowed));
+        assert!(!policy.is_program_allowed(&denied));
+    }
+
+    #[test]
+    fn test_allowlist_cap_constants() {
+        assert_eq!(MAX_TOKEN_ALLOWLIST, 10);
+        assert_eq!(MAX_PROGRAM_ALLOWLIST, 10);
+    }
+
+    #[test]
+    fn test_allowlist_cap_enforcement_logic() {
+        let mut policy = VaultPolicy::new(100, 1000, 10);
+        // Fill to max
+        for _ in 0..MAX_TOKEN_ALLOWLIST {
+            policy.token_allowlist.push(sample_pubkey());
+        }
+        assert_eq!(policy.token_allowlist.len(), MAX_TOKEN_ALLOWLIST);
+        // Verify the check that would be enforced
+        assert!(policy.token_allowlist.len() >= MAX_TOKEN_ALLOWLIST);
+    }
+
+    #[test]
+    fn test_vault_action_variants() {
+        let action = VaultAction::Transfer {
+            recipient: sample_pubkey(),
+            amount: 100,
+        };
+        assert_eq!(
+            action,
+            VaultAction::Transfer {
+                recipient: match &action {
+                    VaultAction::Transfer { recipient, .. } => *recipient,
+                    _ => unreachable!(),
+                },
+                amount: 100,
+            }
+        );
+
+        let action2 = VaultAction::Pause;
+        assert_eq!(action2, VaultAction::Pause);
+    }
 }

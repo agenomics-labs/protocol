@@ -517,6 +517,7 @@ describe("MCP Settlement Handlers", () => {
       providerProvider
     );
 
+    // @ts-ignore - Anchor deep type instantiation TS2589
     await provSettlement.methods
       .acceptTask()
       .accounts({
@@ -720,5 +721,350 @@ describe("MCP Settlement Cancel", () => {
       cancelEscrowPDA
     );
     expect(escrow.status.cancelled).to.not.be.undefined;
+  });
+});
+
+// ==================== EDGE CASE: VAULT AUTHORIZATION ====================
+
+describe("Vault Edge Cases", () => {
+  let vaultPDA: PublicKey;
+  let unauthorized: Keypair;
+
+  before(async function () {
+    this.timeout(15000);
+    unauthorized = Keypair.generate();
+    const airdrop = await connection.requestAirdrop(
+      unauthorized.publicKey,
+      2 * LAMPORTS_PER_SOL
+    );
+    await connection.confirmTransaction(airdrop, "confirmed");
+    [vaultPDA] = deriveVaultPDA(agent.publicKey);
+  });
+
+  it("rejects unauthorized policy update", async () => {
+    const unauthProvider = createProvider(unauthorized);
+    const unauthVaultProgram = new Program(loadIdl("agent_vault"), unauthProvider);
+
+    try {
+      await unauthVaultProgram.methods
+        .updatePolicy(new BN(999 * LAMPORTS_PER_SOL), new BN(999 * LAMPORTS_PER_SOL), 999)
+        .accounts({
+          vault: vaultPDA,
+          authority: unauthorized.publicKey,
+        })
+        .signers([unauthorized])
+        .rpc();
+      expect.fail("Should have thrown an error");
+    } catch (err: any) {
+      // Expected: seeds constraint failure or unauthorized error
+      expect(err).to.exist;
+    }
+  });
+
+  it("rejects transfer while paused", async () => {
+    // Pause the vault
+    await vaultProgram.methods
+      .pauseVault()
+      .accounts({ vault: vaultPDA, authority: agent.publicKey })
+      .signers([agent])
+      .rpc();
+
+    try {
+      await vaultProgram.methods
+        .executeTransfer(new BN(100))
+        .accounts({
+          vault: vaultPDA,
+          vaultAccount: vaultPDA,
+          agent: agent.publicKey,
+          recipient: unauthorized.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([agent])
+        .rpc();
+      expect.fail("Should have thrown VaultPaused error");
+    } catch (err: any) {
+      expect(err.toString()).to.include("VaultPaused");
+    }
+
+    // Resume for subsequent tests
+    await vaultProgram.methods
+      .resumeVault()
+      .accounts({ vault: vaultPDA, authority: agent.publicKey })
+      .signers([agent])
+      .rpc();
+  });
+
+  it("rejects transfer exceeding per-tx limit", async () => {
+    // Current per-tx limit is 2 SOL from earlier update
+    try {
+      await vaultProgram.methods
+        .executeTransfer(new BN(3 * LAMPORTS_PER_SOL))
+        .accounts({
+          vault: vaultPDA,
+          vaultAccount: vaultPDA,
+          agent: agent.publicKey,
+          recipient: unauthorized.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([agent])
+        .rpc();
+      expect.fail("Should have thrown PerTxLimitExceeded");
+    } catch (err: any) {
+      expect(err.toString()).to.include("PerTxLimitExceeded");
+    }
+  });
+});
+
+// ==================== EDGE CASE: REGISTRY AUTHORIZATION ====================
+
+describe("Registry Edge Cases", () => {
+  it("rejects name exceeding 64 bytes", async () => {
+    const longNameAgent = Keypair.generate();
+    const airdrop = await connection.requestAirdrop(
+      longNameAgent.publicKey,
+      2 * LAMPORTS_PER_SOL
+    );
+    await connection.confirmTransaction(airdrop, "confirmed");
+
+    const longNameProvider = createProvider(longNameAgent);
+    const longNameRegistry = new Program(loadIdl("agent_registry"), longNameProvider);
+    const [profilePDA] = deriveAgentProfilePDA(longNameAgent.publicKey);
+
+    try {
+      await longNameRegistry.methods
+        .registerAgent(
+          "A".repeat(65), // 65 bytes > 64 limit
+          "desc",
+          "category",
+          ["cap1"],
+          { perTask: {} },
+          new BN(100),
+          [tokenMint],
+          longNameAgent.publicKey
+        )
+        .accounts({
+          authority: longNameAgent.publicKey,
+          agentProfile: profilePDA,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([longNameAgent])
+        .rpc();
+      expect.fail("Should have thrown NameTooLong");
+    } catch (err: any) {
+      expect(err.toString()).to.include("NameTooLong");
+    }
+  });
+
+  it("rejects capabilities count > 10", async () => {
+    const capAgent = Keypair.generate();
+    const airdrop = await connection.requestAirdrop(
+      capAgent.publicKey,
+      2 * LAMPORTS_PER_SOL
+    );
+    await connection.confirmTransaction(airdrop, "confirmed");
+
+    const capProvider = createProvider(capAgent);
+    const capRegistry = new Program(loadIdl("agent_registry"), capProvider);
+    const [profilePDA] = deriveAgentProfilePDA(capAgent.publicKey);
+
+    try {
+      await capRegistry.methods
+        .registerAgent(
+          "CapTest",
+          "desc",
+          "category",
+          Array.from({ length: 11 }, (_, i) => `cap${i}`), // 11 > 10 limit
+          { perTask: {} },
+          new BN(100),
+          [tokenMint],
+          capAgent.publicKey
+        )
+        .accounts({
+          authority: capAgent.publicKey,
+          agentProfile: profilePDA,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([capAgent])
+        .rpc();
+      expect.fail("Should have thrown InvalidCapabilitiesCount");
+    } catch (err: any) {
+      expect(err.toString()).to.include("InvalidCapabilitiesCount");
+    }
+  });
+});
+
+// ==================== EDGE CASE: SETTLEMENT AUTHORIZATION ====================
+
+describe("Settlement Edge Cases", () => {
+  const edgeTaskId = 200;
+  let edgeEscrowPDA: PublicKey;
+  let edgeEscrowTokenAccount: PublicKey;
+
+  before(async function () {
+    this.timeout(15000);
+    [edgeEscrowPDA] = deriveEscrowPDA(
+      agent.publicKey,
+      provider.publicKey,
+      edgeTaskId
+    );
+    edgeEscrowTokenAccount = getAssociatedTokenAddressSync(
+      tokenMint,
+      edgeEscrowPDA,
+      true
+    );
+
+    // Create a fresh escrow for edge case tests
+    await settlementProgram.methods
+      .createEscrow(
+        new BN(edgeTaskId),
+        new BN(500_000),
+        hashStr("Edge case escrow"),
+        new BN(FUTURE_DEADLINE),
+        [{ descriptionHash: hashStr("Milestone 1"), amount: new BN(500_000) }],
+        null
+      )
+      .accounts({
+        client: agent.publicKey,
+        clientVault: agent.publicKey,
+        providerVault: provider.publicKey,
+        provider: provider.publicKey,
+        tokenMint: tokenMint,
+        clientTokenAccount: agentTokenAccount,
+        escrow: edgeEscrowPDA,
+        escrowTokenAccount: edgeEscrowTokenAccount,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+        rent: new PublicKey("SysvarRent111111111111111111111111111111111"),
+      })
+      .signers([agent])
+      .rpc();
+  });
+
+  it("rejects wrong provider accepting task", async () => {
+    // unauthorized tries to accept
+    const unauthorizedKp = Keypair.generate();
+    const airdrop = await connection.requestAirdrop(
+      unauthorizedKp.publicKey,
+      2 * LAMPORTS_PER_SOL
+    );
+    await connection.confirmTransaction(airdrop, "confirmed");
+
+    const unauthProvider = createProvider(unauthorizedKp);
+    const unauthSettlement = new Program(loadIdl("settlement"), unauthProvider);
+
+    try {
+      await unauthSettlement.methods
+        .acceptTask()
+        .accounts({
+          provider: unauthorizedKp.publicKey,
+          escrow: edgeEscrowPDA,
+        })
+        .signers([unauthorizedKp])
+        .rpc();
+      expect.fail("Should have thrown UnauthorizedProvider");
+    } catch (err: any) {
+      // has_one constraint should reject this
+      expect(err).to.exist;
+    }
+  });
+
+  it("rejects milestone submit on Created status (not yet accepted)", async () => {
+    const providerProvider = createProvider(provider);
+    const provSettlement = new Program(loadIdl("settlement"), providerProvider);
+
+    try {
+      await provSettlement.methods
+        .submitMilestone(0)
+        .accounts({
+          provider: provider.publicKey,
+          escrow: edgeEscrowPDA,
+        })
+        .signers([provider])
+        .rpc();
+      expect.fail("Should have thrown InvalidStatus");
+    } catch (err: any) {
+      expect(err.toString()).to.include("InvalidStatus");
+    }
+  });
+
+  it("rejects cancel after acceptance", async () => {
+    // First accept the task
+    const providerProvider = createProvider(provider);
+    const provSettlement = new Program(loadIdl("settlement"), providerProvider);
+
+    // @ts-ignore - Anchor deep type instantiation
+    await provSettlement.methods
+      .acceptTask()
+      .accounts({
+        provider: provider.publicKey,
+        escrow: edgeEscrowPDA,
+      })
+      .signers([provider])
+      .rpc();
+
+    // Now try to cancel (should fail - status is Active, not Created)
+    try {
+      await settlementProgram.methods
+        .cancelEscrow()
+        .accounts({
+          client: agent.publicKey,
+          escrow: edgeEscrowPDA,
+          escrowTokenAccount: edgeEscrowTokenAccount,
+          clientTokenAccount: agentTokenAccount,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([agent])
+        .rpc();
+      expect.fail("Should have thrown InvalidStatus");
+    } catch (err: any) {
+      expect(err.toString()).to.include("InvalidStatus");
+    }
+  });
+
+  it("rejects out-of-bounds milestone index", async () => {
+    const providerProvider = createProvider(provider);
+    const provSettlement = new Program(loadIdl("settlement"), providerProvider);
+
+    try {
+      await provSettlement.methods
+        .submitMilestone(5) // Only 1 milestone exists (index 0)
+        .accounts({
+          provider: provider.publicKey,
+          escrow: edgeEscrowPDA,
+        })
+        .signers([provider])
+        .rpc();
+      expect.fail("Should have thrown InvalidMilestoneIndex");
+    } catch (err: any) {
+      expect(err.toString()).to.include("InvalidMilestoneIndex");
+    }
+  });
+
+  it("rejects double dispute", async () => {
+    // Raise first dispute
+    await settlementProgram.methods
+      .raiseDispute()
+      .accounts({
+        requester: agent.publicKey,
+        escrow: edgeEscrowPDA,
+      })
+      .signers([agent])
+      .rpc();
+
+    // Try to raise again
+    try {
+      await settlementProgram.methods
+        .raiseDispute()
+        .accounts({
+          requester: agent.publicKey,
+          escrow: edgeEscrowPDA,
+        })
+        .signers([agent])
+        .rpc();
+      expect.fail("Should have thrown AlreadyDisputed");
+    } catch (err: any) {
+      expect(err.toString()).to.include("AlreadyDisputed");
+    }
   });
 });

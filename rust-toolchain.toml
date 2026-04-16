@@ -1,9 +1,7 @@
 [toolchain]
-# Pinned to 1.79.0 because anchor-syn 0.30.1 uses
-# proc_macro2::Span::source_file() at src/idl/defined.rs:499,
-# which was removed in proc-macro2 >= 1.0.95 and is unavailable on
-# Rust 1.94.1+. 1.79 ships a compatible proc-macro2/proc_macro API
-# so `anchor build` can generate IDL without --no-idl.
-channel = "1.79.0"
+# Updated to stable to support edition2024 transitive dependencies.
+# proc-macro2 is pinned to <1.0.95 in Cargo.toml to maintain
+# compatibility with anchor-syn 0.30.1's use of Span::source_file().
+channel = "stable"
 components = ["rustc", "cargo", "rust-std"]
 profile = "minimal"

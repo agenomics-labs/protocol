@@ -38,3 +38,4 @@ coverage/
 target/
 dist/
 build/
+*.rlib

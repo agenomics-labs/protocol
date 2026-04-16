@@ -71,6 +71,19 @@ function requirePositiveNumber(args: Record<string, unknown>, key: string): numb
   return v;
 }
 
+function requireStringArray(args: Record<string, unknown>, key: string): string[] {
+  const v = args[key];
+  if (!Array.isArray(v) || v.length === 0) {
+    throw new Error(`Missing or invalid required parameter: ${key} (expected non-empty array)`);
+  }
+  for (let i = 0; i < v.length; i++) {
+    if (typeof v[i] !== "string") {
+      throw new Error(`Parameter ${key}[${i}] must be a string`);
+    }
+  }
+  return v as string[];
+}
+
 function optionalString(args: Record<string, unknown>, key: string): string | null {
   const v = args[key];
   if (v === undefined || v === null) return null;
@@ -314,9 +327,9 @@ async function handleVaultTransfer(args: Record<string, unknown>) {
  * Update the vault's spending policy.
  */
 async function handleUpdateVaultPolicy(args: Record<string, unknown>) {
-  const dailyLimitSol = args.dailyLimitSol as number;
-  const perTxLimitSol = args.perTxLimitSol as number;
-  const maxTxsPerHour = args.maxTxsPerHour as number;
+  const dailyLimitSol = requirePositiveNumber(args, "dailyLimitSol");
+  const perTxLimitSol = requirePositiveNumber(args, "perTxLimitSol");
+  const maxTxsPerHour = requireNumber(args, "maxTxsPerHour");
 
   const wallet = loadWallet();
   const program = getVaultProgram();
@@ -397,8 +410,8 @@ async function handleResumeVault() {
  * Add/remove token or program from the vault's allowlist.
  */
 async function handleManageAllowlist(args: Record<string, unknown>) {
-  const action = args.action as string;
-  const address = parsePublicKey(args.address as string);
+  const action = requireString(args, "action");
+  const address = parsePublicKey(requireString(args, "address"));
 
   const wallet = loadWallet();
   const program = getVaultProgram();
@@ -460,16 +473,16 @@ async function handleManageAllowlist(args: Record<string, unknown>) {
  * Register this agent in the on-chain registry.
  */
 async function handleRegisterAgent(args: Record<string, unknown>) {
-  const name = args.name as string;
-  const description = args.description as string;
-  const category = args.category as string;
-  const capabilities = args.capabilities as string[];
-  const pricingModelStr = args.pricingModel as string;
-  const pricingAmountSol = args.pricingAmountSol as number;
-  const acceptedTokens = (args.acceptedTokens as string[]).map((t) =>
+  const name = requireString(args, "name");
+  const description = requireString(args, "description");
+  const category = requireString(args, "category");
+  const capabilities = requireStringArray(args, "capabilities");
+  const pricingModelStr = requireString(args, "pricingModel");
+  const pricingAmountSol = requirePositiveNumber(args, "pricingAmountSol");
+  const acceptedTokens = requireStringArray(args, "acceptedTokens").map((t) =>
     parsePublicKey(t)
   );
-  const vaultAddress = parsePublicKey(args.vaultAddress as string);
+  const vaultAddress = parsePublicKey(requireString(args, "vaultAddress"));
 
   // Map string to Anchor enum
   const pricingModel = mapPricingModel(pricingModelStr);
@@ -604,16 +617,43 @@ async function handleUpdateAgentProfile(args: Record<string, unknown>) {
 
 /**
  * Discover agents in the registry.
- * Uses getProgramAccounts with optional filters.
+ *
+ * Uses memcmp filters on the status field to push filtering to the RPC node,
+ * avoiding fetching all accounts when status filtering is requested.
+ * The status field offset is computed from the AgentProfile layout:
+ *   8 (discriminator) + 32 (authority) + 4+64 (name) + 4+256 (description)
+ *   + 4+50 (category) + 4+10*(4+32) (capabilities) + 1+7 (pricing_model pad)
+ *   + 8 (pricing_amount) + 4+5*32 (accepted_tokens) + 32 (vault_address)
+ *   = 8+32+68+260+54+364+8+8+164+32 = 998 (status offset)
+ *
+ * For exact category matching, offset is:
+ *   8 (discriminator) + 32 (authority) + 4+64 (name) + 4+256 (description)
+ *   = 8+32+68+260 = 368 (category string length prefix)
  */
 async function handleDiscoverAgents(args: Record<string, unknown>) {
   const program = getRegistryProgram();
   const limit = (args.limit as number) || 20;
 
-  // Fetch all agent profiles (on devnet, this is feasible)
-  const allProfiles = await (program.account as any).agentProfile.all();
+  // Build memcmp filters for RPC-level filtering
+  const filters: Array<{ memcmp: { offset: number; bytes: string } }> = [];
 
-  let filtered = allProfiles.map((item) => {
+  // Status filter: offset 998, Active=0x00
+  // Only add if we want to filter to active agents (default behavior)
+  if (!args.includeInactive) {
+    filters.push({
+      memcmp: { offset: 998, bytes: "1" }, // bs58 encoding of [0x00] = "1" (Active enum variant)
+    });
+  }
+
+  // Fetch profiles with filters if available, otherwise fetch all
+  let allProfiles: any[];
+  if (filters.length > 0) {
+    allProfiles = await (program.account as any).agentProfile.all(filters);
+  } else {
+    allProfiles = await (program.account as any).agentProfile.all();
+  }
+
+  let filtered = allProfiles.map((item: any) => {
     const p = item.account;
     return {
       address: item.publicKey.toBase58(),
@@ -631,14 +671,14 @@ async function handleDiscoverAgents(args: Record<string, unknown>) {
     };
   });
 
-  // Apply filters
+  // Apply client-side filters for fields that can't be efficiently memcmp'd
   if (args.category && typeof args.category === "string") {
     filtered = filtered.filter((a) => a.category === args.category);
   }
   if (args.capability && typeof args.capability === "string") {
     const cap = (args.capability as string).toLowerCase();
     filtered = filtered.filter((a) =>
-      a.capabilities.some((c) => c.toLowerCase().includes(cap))
+      a.capabilities.some((c: string) => c.toLowerCase().includes(cap))
     );
   }
   if (args.minReputation && typeof args.minReputation === "number") {
@@ -664,20 +704,21 @@ async function handleDiscoverAgents(args: Record<string, unknown>) {
  * Locks payment tokens in escrow. The escrow uses an ATA derived from the escrow PDA.
  */
 async function handleCreateEscrow(args: Record<string, unknown>) {
-  const providerAddress = parsePublicKey(args.providerAddress as string);
-  const providerVaultAddress = parsePublicKey(
-    args.providerVaultAddress as string
-  );
-  const tokenMintAddress = parsePublicKey(args.tokenMintAddress as string);
-  const taskId = args.taskId as number;
-  const totalAmountTokens = args.totalAmountTokens as number;
-  const taskDescription = args.taskDescription as string;
-  const deadlineUnix = args.deadlineUnix as number;
+  const providerAddress = parsePublicKey(requireString(args, "providerAddress"));
+  const providerVaultAddress = parsePublicKey(requireString(args, "providerVaultAddress"));
+  const tokenMintAddress = parsePublicKey(requireString(args, "tokenMintAddress"));
+  const taskId = requireNumber(args, "taskId");
+  const totalAmountTokens = requirePositiveNumber(args, "totalAmountTokens");
+  const taskDescription = requireString(args, "taskDescription");
+  const deadlineUnix = requireNumber(args, "deadlineUnix");
   const milestones = args.milestones as Array<{
     description: string;
     amount: number;
   }>;
-  const disputeResolverAddress = args.disputeResolverAddress
+  if (!Array.isArray(milestones) || milestones.length === 0 || milestones.length > 5) {
+    throw new Error("milestones must be an array with 1-5 entries");
+  }
+  const disputeResolverAddress = optionalString(args, "disputeResolverAddress")
     ? parsePublicKey(args.disputeResolverAddress as string)
     : null;
 
@@ -754,7 +795,7 @@ async function handleCreateEscrow(args: Record<string, unknown>) {
  * Accept a task as the provider.
  */
 async function handleAcceptTask(args: Record<string, unknown>) {
-  const escrowAddress = parsePublicKey(args.escrowAddress as string);
+  const escrowAddress = parsePublicKey(requireString(args, "escrowAddress"));
 
   const wallet = loadWallet();
   const program = getSettlementProgram();
@@ -781,8 +822,8 @@ async function handleAcceptTask(args: Record<string, unknown>) {
  * Submit a milestone as the provider.
  */
 async function handleSubmitMilestone(args: Record<string, unknown>) {
-  const escrowAddress = parsePublicKey(args.escrowAddress as string);
-  const milestoneIndex = args.milestoneIndex as number;
+  const escrowAddress = parsePublicKey(requireString(args, "escrowAddress"));
+  const milestoneIndex = requireNumber(args, "milestoneIndex");
 
   const wallet = loadWallet();
   const program = getSettlementProgram();
@@ -809,10 +850,10 @@ async function handleSubmitMilestone(args: Record<string, unknown>) {
  * Approve a milestone as the client. Releases payment to provider.
  */
 async function handleApproveMilestone(args: Record<string, unknown>) {
-  const escrowAddress = parsePublicKey(args.escrowAddress as string);
-  const milestoneIndex = args.milestoneIndex as number;
+  const escrowAddress = parsePublicKey(requireString(args, "escrowAddress"));
+  const milestoneIndex = requireNumber(args, "milestoneIndex");
   const providerTokenAccount = parsePublicKey(
-    args.providerTokenAccount as string
+    requireString(args, "providerTokenAccount")
   );
 
   const wallet = loadWallet();
@@ -830,6 +871,12 @@ async function handleApproveMilestone(args: Record<string, unknown>) {
   // Derive provider's AgentProfile PDA for CPI reputation update
   const [providerProfilePDA] = deriveAgentProfilePDA(provider);
 
+  // Derive settlement_authority PDA: seeds = ["settlement_authority"] from Settlement program
+  const [settlementAuthorityPDA] = PublicKey.findProgramAddressSync(
+    [Buffer.from("settlement_authority")],
+    SETTLEMENT_PROGRAM_ID
+  );
+
   const sig = await program.methods
     .approveMilestone(milestoneIndex)
     .accounts({
@@ -839,7 +886,7 @@ async function handleApproveMilestone(args: Record<string, unknown>) {
       providerTokenAccount: providerTokenAccount,
       registryProgram: REGISTRY_PROGRAM_ID,
       providerProfile: providerProfilePDA,
-      settlementSelf: SETTLEMENT_PROGRAM_ID,
+      settlementAuthority: settlementAuthorityPDA,
       tokenProgram: TOKEN_PROGRAM_ID,
     })
     .signers([wallet])
@@ -858,8 +905,8 @@ async function handleApproveMilestone(args: Record<string, unknown>) {
  * Reject a milestone as the client.
  */
 async function handleRejectMilestone(args: Record<string, unknown>) {
-  const escrowAddress = parsePublicKey(args.escrowAddress as string);
-  const milestoneIndex = args.milestoneIndex as number;
+  const escrowAddress = parsePublicKey(requireString(args, "escrowAddress"));
+  const milestoneIndex = requireNumber(args, "milestoneIndex");
 
   const wallet = loadWallet();
   const program = getSettlementProgram();
@@ -886,7 +933,7 @@ async function handleRejectMilestone(args: Record<string, unknown>) {
  * Fetch escrow account data.
  */
 async function handleGetEscrowStatus(args: Record<string, unknown>) {
-  const escrowAddress = parsePublicKey(args.escrowAddress as string);
+  const escrowAddress = parsePublicKey(requireString(args, "escrowAddress"));
   const program = getSettlementProgram();
 
   const escrow = await (program.account as any).taskEscrow.fetch(escrowAddress);
@@ -926,7 +973,7 @@ async function handleGetEscrowStatus(args: Record<string, unknown>) {
  * Cancel an escrow (client only). Returns tokens to client.
  */
 async function handleCancelEscrow(args: Record<string, unknown>) {
-  const escrowAddress = parsePublicKey(args.escrowAddress as string);
+  const escrowAddress = parsePublicKey(requireString(args, "escrowAddress"));
 
   const wallet = loadWallet();
   const program = getSettlementProgram();
@@ -967,7 +1014,7 @@ async function handleCancelEscrow(args: Record<string, unknown>) {
  * Raise a dispute on an active escrow.
  */
 async function handleRaiseDispute(args: Record<string, unknown>) {
-  const escrowAddress = parsePublicKey(args.escrowAddress as string);
+  const escrowAddress = parsePublicKey(requireString(args, "escrowAddress"));
 
   const wallet = loadWallet();
   const program = getSettlementProgram();
@@ -994,14 +1041,14 @@ async function handleRaiseDispute(args: Record<string, unknown>) {
  * Resolve a dispute by splitting escrowed funds.
  */
 async function handleResolveDispute(args: Record<string, unknown>) {
-  const escrowAddress = parsePublicKey(args.escrowAddress as string);
-  const clientRefund = new BN(args.clientRefundTokens as number);
-  const providerRefund = new BN(args.providerPaymentTokens as number);
+  const escrowAddress = parsePublicKey(requireString(args, "escrowAddress"));
+  const clientRefund = new BN(requireNumber(args, "clientRefundTokens"));
+  const providerRefund = new BN(requireNumber(args, "providerPaymentTokens"));
   const clientTokenAccount = parsePublicKey(
-    args.clientTokenAccount as string
+    requireString(args, "clientTokenAccount")
   );
   const providerTokenAccount = parsePublicKey(
-    args.providerTokenAccount as string
+    requireString(args, "providerTokenAccount")
   );
 
   const wallet = loadWallet();

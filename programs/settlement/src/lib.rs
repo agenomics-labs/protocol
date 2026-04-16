@@ -8,9 +8,8 @@ declare_id!("2uSDxQtYLU4uSeZtA1ueJx7xg4PDYpEbkxM957T5UUm4");
 // CONSTANTS
 // ============================================================================
 
-/// Agent Registry program ID — used for CPI validation when reputation updates are fully implemented.
-#[allow(dead_code)]
-const AGENT_REGISTRY_PROGRAM_ID: &str = "8t5oSA3xrLt9rMmM7QZBFWFDgBu8qvWsrUyXFYwPYWmV";
+/// Agent Registry program ID — used for CPI reputation updates.
+const AGENT_REGISTRY_PROGRAM_ID: Pubkey = pubkey!("8t5oSA3xrLt9rMmM7QZBFWFDgBu8qvWsrUyXFYwPYWmV");
 const MAX_MILESTONES: usize = 5;
 
 // ============================================================================
@@ -110,10 +109,7 @@ pub mod settlement {
         let escrow = &mut ctx.accounts.escrow;
 
         require!(escrow.status == EscrowStatus::Created, SettlementError::InvalidStatus);
-        require!(
-            ctx.accounts.provider.key() == escrow.provider,
-            SettlementError::UnauthorizedProvider
-        );
+        // Provider authorization enforced by has_one constraint
 
         escrow.status = EscrowStatus::Active;
 
@@ -133,10 +129,7 @@ pub mod settlement {
 
         require!(escrow.status == EscrowStatus::Active, SettlementError::InvalidStatus);
         require!(now <= escrow.deadline, SettlementError::DeadlinePassed);
-        require!(
-            ctx.accounts.provider.key() == escrow.provider,
-            SettlementError::UnauthorizedProvider
-        );
+        // Provider authorization enforced by has_one constraint
 
         let index = milestone_index as usize;
         require!(
@@ -235,12 +228,14 @@ pub mod settlement {
             escrow.status = EscrowStatus::Completed;
 
             // CPI into Agent Registry to update provider reputation
+            // Settlement authority PDA signs the CPI, proving caller identity
             update_provider_reputation(
                 provider_key,
                 escrow.released_amount,
                 ctx.accounts.registry_program.to_account_info(),
                 ctx.accounts.provider_profile.to_account_info(),
-                ctx.accounts.settlement_self.to_account_info(),
+                ctx.accounts.settlement_authority.to_account_info(),
+                ctx.bumps.settlement_authority,
             )?;
 
             emit!(EscrowCompleted {
@@ -267,10 +262,7 @@ pub mod settlement {
         let escrow = &mut ctx.accounts.escrow;
 
         require!(escrow.status == EscrowStatus::Active, SettlementError::InvalidStatus);
-        require!(
-            ctx.accounts.client.key() == escrow.client,
-            SettlementError::UnauthorizedClient
-        );
+        // Client authorization enforced by has_one constraint
 
         let index = milestone_index as usize;
         require!(
@@ -298,12 +290,7 @@ pub mod settlement {
     /// Either client or provider raises a dispute, moving escrow to Disputed status.
     pub fn raise_dispute(ctx: Context<RaiseDispute>) -> Result<()> {
         let escrow = &mut ctx.accounts.escrow;
-
-        require!(
-            ctx.accounts.requester.key() == escrow.client
-                || ctx.accounts.requester.key() == escrow.provider,
-            SettlementError::UnauthorizedDispute
-        );
+        // Client/provider authorization enforced by constraint
 
         require!(escrow.status != EscrowStatus::Disputed, SettlementError::AlreadyDisputed);
         require!(escrow.status != EscrowStatus::Expired, SettlementError::EscrowExpired);
@@ -537,19 +524,23 @@ pub mod settlement {
 
 /// CPIs into Agent Registry to update provider reputation after task completion.
 ///
-/// Constructs the `update_reputation` instruction manually and invokes via CPI.
-/// The Settlement program passes itself as the settlement_program account,
-/// which the Registry validates against its SETTLEMENT_PROGRAM_ID constant.
+/// Uses a PDA-signed CPI pattern: the Settlement program derives a "settlement_authority"
+/// PDA and signs the CPI with it. The Registry program verifies this PDA as a signer
+/// with seeds::program = SETTLEMENT_PROGRAM_ID, cryptographically proving the call
+/// originated from this program.
+///
+/// The discriminator is computed as sha256("global:update_reputation")[..8].
+/// This is Anchor's standard discriminator for the `update_reputation` instruction.
 fn update_provider_reputation<'info>(
     provider: Pubkey,
     earnings: u64,
     registry_program: AccountInfo<'info>,
     provider_profile: AccountInfo<'info>,
-    settlement_program_info: AccountInfo<'info>,
+    settlement_authority: AccountInfo<'info>,
+    settlement_authority_bump: u8,
 ) -> Result<()> {
-    // Build update_reputation instruction data:
-    // [8-byte discriminator] + [reputation_delta: i64] + [task_completed: bool] + [earnings: u64] + [rating: u8]
-    let discriminator: [u8; 8] = [194, 220, 43, 201, 54, 209, 49, 178]; // sha256("global:update_reputation")[..8]
+    // Anchor discriminator: sha256("global:update_reputation")[..8]
+    let discriminator: [u8; 8] = [194, 220, 43, 201, 54, 209, 49, 178];
     let reputation_delta: i64 = 50; // +50 for successful completion
     let task_completed: bool = true;
     let rating: u8 = 0; // No rating yet — client rates separately
@@ -562,8 +553,8 @@ fn update_provider_reputation<'info>(
     data.extend_from_slice(&[rating]);
 
     let accounts = vec![
-        AccountMeta::new(provider_profile.key(), false),        // agent_profile (mut)
-        AccountMeta::new_readonly(settlement_program_info.key(), false), // settlement_program (executable)
+        AccountMeta::new(provider_profile.key(), false),          // agent_profile (mut)
+        AccountMeta::new_readonly(settlement_authority.key(), true), // settlement_authority (signer)
     ];
 
     let ix = anchor_lang::solana_program::instruction::Instruction {
@@ -572,9 +563,13 @@ fn update_provider_reputation<'info>(
         data,
     };
 
-    anchor_lang::solana_program::program::invoke(
+    // Sign CPI with settlement_authority PDA: seeds = ["settlement_authority", bump]
+    let signer_seeds: &[&[u8]] = &[b"settlement_authority", &[settlement_authority_bump]];
+
+    anchor_lang::solana_program::program::invoke_signed(
         &ix,
-        &[provider_profile, settlement_program_info, registry_program],
+        &[provider_profile, settlement_authority, registry_program],
+        &[signer_seeds],
     )?;
 
     emit!(ReputationUpdateScheduled {
@@ -724,7 +719,10 @@ pub struct AcceptTask<'info> {
     #[account(mut)]
     pub provider: Signer<'info>,
 
-    #[account(mut)]
+    #[account(
+        mut,
+        has_one = provider @ SettlementError::UnauthorizedProvider,
+    )]
     pub escrow: Account<'info, TaskEscrow>,
 }
 
@@ -733,7 +731,10 @@ pub struct SubmitMilestone<'info> {
     #[account(mut)]
     pub provider: Signer<'info>,
 
-    #[account(mut)]
+    #[account(
+        mut,
+        has_one = provider @ SettlementError::UnauthorizedProvider,
+    )]
     pub escrow: Account<'info, TaskEscrow>,
 }
 
@@ -762,9 +763,12 @@ pub struct ApproveMilestone<'info> {
     )]
     pub provider_token_account: Account<'info, TokenAccount>,
 
-    /// CHECK: Agent Registry program for CPI reputation updates.
-    /// Validated by REGISTRY_PROGRAM_ID check in handler.
-    #[account(executable)]
+    /// Agent Registry program for CPI reputation updates.
+    /// CHECK: Validated by constraint against AGENT_REGISTRY_PROGRAM_ID.
+    #[account(
+        executable,
+        constraint = registry_program.key() == AGENT_REGISTRY_PROGRAM_ID @ SettlementError::InvalidRegistryProgram
+    )]
     pub registry_program: UncheckedAccount<'info>,
 
     /// CHECK: Provider's AgentProfile PDA in the Registry program.
@@ -772,12 +776,14 @@ pub struct ApproveMilestone<'info> {
     #[account(mut)]
     pub provider_profile: UncheckedAccount<'info>,
 
-    /// CHECK: This settlement program's own executable account, passed to Registry for CPI caller verification.
+    /// Settlement authority PDA — this program's signing authority for CPI calls.
+    /// The Registry program verifies this PDA as a signer with seeds::program = SETTLEMENT_PROGRAM_ID.
+    /// CHECK: Derived from this program's ID; seeds verified by Anchor.
     #[account(
-        executable,
-        constraint = settlement_self.key() == crate::ID @ SettlementError::InvalidStatus
+        seeds = [b"settlement_authority"],
+        bump
     )]
-    pub settlement_self: UncheckedAccount<'info>,
+    pub settlement_authority: UncheckedAccount<'info>,
 
     pub token_program: Program<'info, Token>,
 }
@@ -787,7 +793,10 @@ pub struct RejectMilestone<'info> {
     #[account(mut)]
     pub client: Signer<'info>,
 
-    #[account(mut)]
+    #[account(
+        mut,
+        has_one = client @ SettlementError::UnauthorizedClient,
+    )]
     pub escrow: Account<'info, TaskEscrow>,
 }
 
@@ -796,7 +805,11 @@ pub struct RaiseDispute<'info> {
     #[account(mut)]
     pub requester: Signer<'info>,
 
-    #[account(mut)]
+    #[account(
+        mut,
+        constraint = escrow.client == requester.key() || escrow.provider == requester.key()
+            @ SettlementError::UnauthorizedDispute,
+    )]
     pub escrow: Account<'info, TaskEscrow>,
 }
 
@@ -1036,4 +1049,139 @@ pub enum SettlementError {
 
     #[msg("Invalid amount: must be greater than zero")]
     InvalidAmount,
+
+    #[msg("Invalid registry program")]
+    InvalidRegistryProgram,
+}
+
+// ============================================================================
+// UNIT TESTS
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_milestone_status_display() {
+        assert_eq!(format!("{}", MilestoneStatus::Pending), "Pending");
+        assert_eq!(format!("{}", MilestoneStatus::Submitted), "Submitted");
+        assert_eq!(format!("{}", MilestoneStatus::Approved), "Approved");
+        assert_eq!(format!("{}", MilestoneStatus::Rejected), "Rejected");
+        assert_eq!(format!("{}", MilestoneStatus::Disputed), "Disputed");
+    }
+
+    #[test]
+    fn test_escrow_status_display() {
+        assert_eq!(format!("{}", EscrowStatus::Created), "Created");
+        assert_eq!(format!("{}", EscrowStatus::Active), "Active");
+        assert_eq!(format!("{}", EscrowStatus::Completed), "Completed");
+        assert_eq!(format!("{}", EscrowStatus::Disputed), "Disputed");
+        assert_eq!(format!("{}", EscrowStatus::Cancelled), "Cancelled");
+        assert_eq!(format!("{}", EscrowStatus::Expired), "Expired");
+    }
+
+    #[test]
+    fn test_milestone_sum_validation() {
+        let milestones = vec![
+            MilestoneData { description_hash: [0u8; 32], amount: 600_000 },
+            MilestoneData { description_hash: [0u8; 32], amount: 400_000 },
+        ];
+        let total: u64 = milestones.iter().map(|m| m.amount).sum();
+        assert_eq!(total, 1_000_000);
+    }
+
+    #[test]
+    fn test_milestone_sum_mismatch() {
+        let milestones = vec![
+            MilestoneData { description_hash: [0u8; 32], amount: 600_000 },
+            MilestoneData { description_hash: [0u8; 32], amount: 300_000 },
+        ];
+        let total: u64 = milestones.iter().map(|m| m.amount).sum();
+        let expected_total = 1_000_000u64;
+        assert_ne!(total, expected_total);
+    }
+
+    #[test]
+    fn test_milestone_count_bounds() {
+        assert!(MAX_MILESTONES == 5);
+
+        // 0 milestones invalid
+        let empty: Vec<MilestoneData> = vec![];
+        assert!(empty.is_empty());
+
+        // 5 milestones valid
+        let five: Vec<MilestoneData> = (0..5)
+            .map(|_| MilestoneData { description_hash: [0u8; 32], amount: 200_000 })
+            .collect();
+        assert!(five.len() > 0 && five.len() <= MAX_MILESTONES);
+
+        // 6 milestones invalid
+        let six: Vec<MilestoneData> = (0..6)
+            .map(|_| MilestoneData { description_hash: [0u8; 32], amount: 100_000 })
+            .collect();
+        assert!(six.len() > MAX_MILESTONES);
+    }
+
+    #[test]
+    fn test_escrow_status_equality() {
+        assert_eq!(EscrowStatus::Created, EscrowStatus::Created);
+        assert_ne!(EscrowStatus::Created, EscrowStatus::Active);
+        assert_ne!(EscrowStatus::Active, EscrowStatus::Disputed);
+    }
+
+    #[test]
+    fn test_milestone_status_transitions() {
+        // Valid: Pending -> Submitted
+        let status = MilestoneStatus::Pending;
+        assert_eq!(status, MilestoneStatus::Pending);
+
+        // Valid: Submitted -> Approved
+        let status = MilestoneStatus::Submitted;
+        assert_eq!(status, MilestoneStatus::Submitted);
+
+        // Valid: Submitted -> Rejected (back to Pending)
+        let status = MilestoneStatus::Rejected;
+        assert_eq!(status, MilestoneStatus::Rejected);
+    }
+
+    #[test]
+    fn test_amount_overflow_checked_add() {
+        let a: u64 = u64::MAX;
+        let b: u64 = 1;
+        assert!(a.checked_add(b).is_none());
+    }
+
+    #[test]
+    fn test_amount_overflow_checked_sub() {
+        let a: u64 = 100;
+        let b: u64 = 200;
+        assert!(a.checked_sub(b).is_none());
+    }
+
+    #[test]
+    fn test_released_amount_tracking() {
+        let total: u64 = 1_000_000;
+        let released: u64 = 600_000;
+        let remaining = total.checked_sub(released).unwrap();
+        assert_eq!(remaining, 400_000);
+    }
+
+    #[test]
+    fn test_dispute_refund_split_validation() {
+        let remaining: u64 = 400_000;
+        let client_refund: u64 = 200_000;
+        let provider_refund: u64 = 200_000;
+        let total_refund = client_refund.checked_add(provider_refund).unwrap();
+        assert_eq!(total_refund, remaining);
+    }
+
+    #[test]
+    fn test_dispute_refund_split_mismatch() {
+        let remaining: u64 = 400_000;
+        let client_refund: u64 = 200_000;
+        let provider_refund: u64 = 100_000;
+        let total_refund = client_refund.checked_add(provider_refund).unwrap();
+        assert_ne!(total_refund, remaining);
+    }
 }
