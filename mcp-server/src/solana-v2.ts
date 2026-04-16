@@ -16,6 +16,12 @@
  */
 
 import * as crypto from "crypto";
+import * as fs from "fs";
+import * as path from "path";
+import { PublicKey, Connection, Keypair } from "@solana/web3.js";
+import {
+  getAssociatedTokenAddressSync,
+} from "@solana/spl-token";
 
 // ==================== CONSTANTS ====================
 
@@ -83,6 +89,108 @@ export function assertValidAddress(address: string): string {
     throw new Error(`Invalid Solana address: ${address}`);
   }
   return address;
+}
+
+// ==================== PDA DERIVATION ====================
+
+/**
+ * Derive vault PDA (v2-style, returns string address).
+ * Seeds: ["vault", authority]
+ * Uses v1 PublicKey.findProgramAddressSync as a bridge until full v2 kit is available.
+ */
+export function deriveVaultPDAv2(authority: string): [string, number] {
+  const [pda, bump] = PublicKey.findProgramAddressSync(
+    [Buffer.from("vault"), new PublicKey(authority).toBuffer()],
+    new PublicKey(VAULT_PROGRAM_ID)
+  );
+  return [pda.toBase58(), bump];
+}
+
+/**
+ * Derive agent profile PDA (v2-style, returns string address).
+ * Seeds: [authority, "agent-profile"]
+ */
+export function deriveAgentProfilePDAv2(authority: string): [string, number] {
+  const [pda, bump] = PublicKey.findProgramAddressSync(
+    [new PublicKey(authority).toBuffer(), Buffer.from("agent-profile")],
+    new PublicKey(REGISTRY_PROGRAM_ID)
+  );
+  return [pda.toBase58(), bump];
+}
+
+/**
+ * Derive escrow PDA (v2-style, returns string address).
+ * Seeds: ["escrow", client, provider, taskId_le_bytes]
+ */
+export function deriveEscrowPDAv2(
+  client: string,
+  provider: string,
+  taskId: number
+): [string, number] {
+  const taskIdBuf = Buffer.alloc(8);
+  taskIdBuf.writeBigUInt64LE(BigInt(taskId));
+  const [pda, bump] = PublicKey.findProgramAddressSync(
+    [
+      Buffer.from("escrow"),
+      new PublicKey(client).toBuffer(),
+      new PublicKey(provider).toBuffer(),
+      taskIdBuf,
+    ],
+    new PublicKey(SETTLEMENT_PROGRAM_ID)
+  );
+  return [pda.toBase58(), bump];
+}
+
+/**
+ * Derive the escrow's associated token account (v2-style, returns string address).
+ * Uses allowOwnerOffCurve=true since the escrow is a PDA.
+ */
+export function deriveEscrowTokenAccountv2(
+  escrowPDA: string,
+  tokenMint: string
+): string {
+  const ata = getAssociatedTokenAddressSync(
+    new PublicKey(tokenMint),
+    new PublicKey(escrowPDA),
+    true
+  );
+  return ata.toBase58();
+}
+
+// ==================== CONNECTION HELPER ====================
+
+/**
+ * Create a Solana RPC connection.
+ * Defaults to devnet; override with rpcUrl param or SOLANA_RPC_URL env var.
+ */
+export function createConnection(rpcUrl?: string): Connection {
+  const url = rpcUrl || process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com";
+  return new Connection(url, "confirmed");
+}
+
+// ==================== KEYPAIR LOADING ====================
+
+/**
+ * Load a Keypair from a JSON secret-key file on disk.
+ * Checks the provided path, then SOLANA_KEYPAIR_PATH env var,
+ * then falls back to ~/.config/solana/id.json.
+ */
+export function loadKeypairv2(filePath?: string): Keypair {
+  let keypath = filePath || process.env.SOLANA_KEYPAIR_PATH;
+  if (!keypath) {
+    const home = process.env.HOME || process.env.USERPROFILE || "";
+    keypath = path.join(home, ".config", "solana", "id.json");
+  }
+
+  if (!fs.existsSync(keypath)) {
+    throw new Error(
+      `Wallet keypair not found at: ${keypath}. ` +
+        `Set SOLANA_KEYPAIR_PATH or run 'solana-keygen new'.`
+    );
+  }
+
+  const secretKey = JSON.parse(fs.readFileSync(keypath, "utf-8"));
+  return Keypair.fromSecretKey(Buffer.from(secretKey));
 }
 
 // ==================== TYPE DEFINITIONS ====================

@@ -30,3 +30,7 @@
 {"type":"edit","file":"/home/neo/dev/projects/AEAP/docs/adr/ADR-026-resolve-dispute-bookkeeping.md","timestamp":1776314957375,"sessionId":null}
 {"type":"edit","file":"/home/neo/dev/projects/AEAP/docs/adr/ADR-027-mcp-devnet-npm-packages.md","timestamp":1776314975550,"sessionId":null}
 {"type":"edit","file":"/home/neo/dev/projects/AEAP/mcp-server/.env.devnet","timestamp":1776314976191,"sessionId":null}
+{"type":"edit","file":"/home/neo/dev/projects/AEAP/docs/adr/ADR-040-account-space-calculation.md","timestamp":1776317708552,"sessionId":null}
+{"type":"edit","file":"/home/neo/dev/projects/AEAP/docs/adr/ADR-041-vault-has-one-authority.md","timestamp":1776317724022,"sessionId":null}
+{"type":"edit","file":"/home/neo/dev/projects/AEAP/docs/adr/ADR-043-category-length-validation.md","timestamp":1776317738972,"sessionId":null}
+{"type":"edit","file":"/home/neo/dev/projects/AEAP/docs/adr/ADR-044-clean-spend-records.md","timestamp":1776317753088,"sessionId":null}

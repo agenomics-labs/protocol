@@ -540,6 +540,69 @@ export const resolveDisputeTool: Tool = {
   },
 };
 
+// ==================== ADDITIONAL VAULT TOOLS ====================
+
+export const vaultTokenTransferTool: Tool = {
+  name: "vault_token_transfer",
+  description:
+    "Execute an SPL token transfer from the vault. The token mint must be on the vault's token allowlist. The agent (wallet) must be the vault authority.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      tokenMintAddress: {
+        type: "string",
+        description: "Public key of the SPL token mint",
+      },
+      recipientTokenAccount: {
+        type: "string",
+        description:
+          "Public key of the recipient's associated token account for the given mint",
+      },
+      amount: {
+        type: "number",
+        description: "Amount of tokens to transfer in base units (e.g., 1000000 for 1 USDC)",
+      },
+    },
+    required: ["tokenMintAddress", "recipientTokenAccount", "amount"],
+  },
+};
+
+// ==================== ADDITIONAL REGISTRY TOOLS ====================
+
+export const stakeReputationTool: Tool = {
+  name: "stake_reputation",
+  description:
+    "Stake SOL to back this agent's reputation. Staked SOL can be slashed for misbehaviour. Higher stake signals higher trustworthiness to other agents.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      amount: {
+        type: "number",
+        description: "Amount of SOL to stake for reputation",
+      },
+    },
+    required: ["amount"],
+  },
+};
+
+// ==================== ADDITIONAL SETTLEMENT TOOLS ====================
+
+export const resolveDisputeTimeoutTool: Tool = {
+  name: "resolve_dispute_timeout",
+  description:
+    "Auto-resolve an expired dispute. If the escrow deadline has passed and the dispute has not been resolved, anyone can call this to release funds according to the default timeout resolution policy.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      escrowAddress: {
+        type: "string",
+        description: "Public key of the escrow account with an expired dispute",
+      },
+    },
+    required: ["escrowAddress"],
+  },
+};
+
 // ==================== EXPORTS ====================
 
 export const allTools: Tool[] = [
@@ -547,6 +610,7 @@ export const allTools: Tool[] = [
   createVaultTool,
   getVaultInfoTool,
   vaultTransferTool,
+  vaultTokenTransferTool,
   updateVaultPolicyTool,
   pauseVaultTool,
   resumeVaultTool,
@@ -556,6 +620,7 @@ export const allTools: Tool[] = [
   getAgentProfileTool,
   updateAgentProfileTool,
   discoverAgentsTool,
+  stakeReputationTool,
   // Settlement
   createEscrowTool,
   acceptTaskTool,
@@ -566,12 +631,14 @@ export const allTools: Tool[] = [
   cancelEscrowTool,
   raiseDisputeTool,
   resolveDisputeTool,
+  resolveDisputeTimeoutTool,
 ];
 
 export type ToolName =
   | "create_vault"
   | "get_vault_info"
   | "vault_transfer"
+  | "vault_token_transfer"
   | "update_vault_policy"
   | "pause_vault"
   | "resume_vault"
@@ -580,6 +647,7 @@ export type ToolName =
   | "get_agent_profile"
   | "update_agent_profile"
   | "discover_agents"
+  | "stake_reputation"
   | "create_escrow"
   | "accept_task"
   | "submit_milestone"
@@ -588,4 +656,5 @@ export type ToolName =
   | "get_escrow_status"
   | "cancel_escrow"
   | "raise_dispute"
-  | "resolve_dispute";
+  | "resolve_dispute"
+  | "resolve_dispute_timeout";

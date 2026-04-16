@@ -28,6 +28,7 @@ import {
   LAMPORTS_PER_SOL,
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
+  VAULT_PROGRAM_ID,
   REGISTRY_PROGRAM_ID,
   SETTLEMENT_PROGRAM_ID,
 } from "./solana.js";
@@ -122,6 +123,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "vault_transfer":
         result = await handleVaultTransfer(args);
         break;
+      case "vault_token_transfer":
+        result = await handleVaultTokenTransfer(args);
+        break;
       case "update_vault_policy":
         result = await handleUpdateVaultPolicy(args);
         break;
@@ -146,6 +150,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       case "discover_agents":
         result = await handleDiscoverAgents(args);
+        break;
+      case "stake_reputation":
+        result = await handleStakeReputation(args);
         break;
       // Settlement
       case "create_escrow":
@@ -174,6 +181,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       case "resolve_dispute":
         result = await handleResolveDispute(args);
+        break;
+      case "resolve_dispute_timeout":
+        result = await handleResolveDisputeTimeout(args);
         break;
       default:
         throw new Error(`Unknown tool: ${toolName}`);
@@ -617,40 +627,16 @@ async function handleUpdateAgentProfile(args: Record<string, unknown>) {
 /**
  * Discover agents in the registry.
  *
- * Uses memcmp filters on the status field to push filtering to the RPC node,
- * avoiding fetching all accounts when status filtering is requested.
- * The status field offset is computed from the AgentProfile layout:
- *   8 (discriminator) + 32 (authority) + 4+64 (name) + 4+256 (description)
- *   + 4+50 (category) + 4+10*(4+32) (capabilities) + 1+7 (pricing_model pad)
- *   + 8 (pricing_amount) + 4+5*32 (accepted_tokens) + 32 (vault_address)
- *   = 8+32+68+260+54+364+8+8+164+32 = 998 (status offset)
- *
- * For exact category matching, offset is:
- *   8 (discriminator) + 32 (authority) + 4+64 (name) + 4+256 (description)
- *   = 8+32+68+260 = 368 (category string length prefix)
+ * Fetches all agent profiles and applies client-side filtering.
+ * Previous versions used a memcmp filter at offset 998 for the status field,
+ * but the offset was fragile and broke across Anchor/schema changes (ADR-042).
  */
 async function handleDiscoverAgents(args: Record<string, unknown>) {
   const program = getRegistryProgram();
   const limit = (args.limit as number) || 20;
 
-  // Build memcmp filters for RPC-level filtering
-  const filters: Array<{ memcmp: { offset: number; bytes: string } }> = [];
-
-  // Status filter: offset 998, Active=0x00
-  // Only add if we want to filter to active agents (default behavior)
-  if (!args.includeInactive) {
-    filters.push({
-      memcmp: { offset: 998, bytes: "1" }, // bs58 encoding of [0x00] = "1" (Active enum variant)
-    });
-  }
-
-  // Fetch profiles with filters if available, otherwise fetch all
-  let allProfiles: any[];
-  if (filters.length > 0) {
-    allProfiles = await (program.account as any).agentProfile.all(filters);
-  } else {
-    allProfiles = await (program.account as any).agentProfile.all();
-  }
+  // Fetch all profiles — filtering is done client-side to avoid fragile memcmp offsets
+  const allProfiles: any[] = await (program.account as any).agentProfile.all();
 
   let filtered = allProfiles.map((item: any) => {
     const p = item.account;
@@ -670,7 +656,12 @@ async function handleDiscoverAgents(args: Record<string, unknown>) {
     };
   });
 
-  // Apply client-side filters for fields that can't be efficiently memcmp'd
+  // Filter to active agents by default (client-side, no fragile memcmp)
+  if (!args.includeInactive) {
+    filtered = filtered.filter((a) => a.status === "active");
+  }
+
+  // Apply client-side filters
   if (args.category && typeof args.category === "string") {
     filtered = filtered.filter((a) => a.category === args.category);
   }
@@ -1080,6 +1071,138 @@ async function handleResolveDispute(args: Record<string, unknown>) {
     clientRefund: (args.clientRefundTokens as number),
     providerPayment: (args.providerPaymentTokens as number),
     status: "resolved",
+    transactionSignature: sig,
+  };
+}
+
+// ==================== ADDITIONAL VAULT HANDLERS ====================
+
+/**
+ * Execute an SPL token transfer from the vault.
+ * Derives the vault's ATA for the given mint and transfers tokens to the recipient.
+ */
+async function handleVaultTokenTransfer(args: Record<string, unknown>) {
+  const tokenMintAddress = parsePublicKey(requireString(args, "tokenMintAddress"));
+  const recipientTokenAccount = parsePublicKey(requireString(args, "recipientTokenAccount"));
+  const amount = requirePositiveNumber(args, "amount");
+
+  const wallet = loadWallet();
+  const program = getVaultProgram();
+  const [vaultPDA] = deriveVaultPDA(wallet.publicKey);
+
+  // Derive the vault's ATA for this token mint
+  const { getAssociatedTokenAddressSync: getAta } = await import(
+    "@solana/spl-token"
+  );
+  const vaultTokenAccount = getAta(tokenMintAddress, vaultPDA, true);
+
+  const sig = await program.methods
+    .executeTokenTransfer(new BN(amount))
+    .accounts({
+      vault: vaultPDA,
+      agent: wallet.publicKey,
+      vaultTokenAccount: vaultTokenAccount,
+      recipientTokenAccount: recipientTokenAccount,
+      tokenMint: tokenMintAddress,
+      tokenProgram: TOKEN_PROGRAM_ID,
+    })
+    .signers([wallet])
+    .rpc();
+
+  return {
+    success: true,
+    vaultAddress: vaultPDA.toBase58(),
+    tokenMint: tokenMintAddress.toBase58(),
+    recipientTokenAccount: recipientTokenAccount.toBase58(),
+    amount,
+    transactionSignature: sig,
+  };
+}
+
+// ==================== ADDITIONAL REGISTRY HANDLERS ====================
+
+/**
+ * Stake SOL for agent reputation.
+ * Derives a staking PDA from seeds=[authority, "reputation-stake"].
+ */
+async function handleStakeReputation(args: Record<string, unknown>) {
+  const amount = requirePositiveNumber(args, "amount");
+
+  const wallet = loadWallet();
+  const program = getRegistryProgram();
+  const [agentProfilePDA] = deriveAgentProfilePDA(wallet.publicKey);
+
+  // Derive staking PDA: seeds=[authority, "reputation-stake"]
+  const [stakingPDA] = PublicKey.findProgramAddressSync(
+    [wallet.publicKey.toBuffer(), Buffer.from("reputation-stake")],
+    REGISTRY_PROGRAM_ID
+  );
+
+  const sig = await program.methods
+    .stakeReputation(new BN(solToLamports(amount)))
+    .accounts({
+      authority: wallet.publicKey,
+      agentProfile: agentProfilePDA,
+      stakingAccount: stakingPDA,
+      systemProgram: SystemProgram.programId,
+    })
+    .signers([wallet])
+    .rpc();
+
+  return {
+    success: true,
+    agentProfileAddress: agentProfilePDA.toBase58(),
+    stakingAccount: stakingPDA.toBase58(),
+    amountSol: amount,
+    transactionSignature: sig,
+  };
+}
+
+// ==================== ADDITIONAL SETTLEMENT HANDLERS ====================
+
+/**
+ * Auto-resolve a dispute that has exceeded the escrow deadline.
+ * Anyone can call this once the timeout has elapsed.
+ */
+async function handleResolveDisputeTimeout(args: Record<string, unknown>) {
+  const escrowAddress = parsePublicKey(requireString(args, "escrowAddress"));
+
+  const wallet = loadWallet();
+  const program = getSettlementProgram();
+
+  // Fetch escrow to get token accounts and parties
+  const escrow = await (program.account as any).taskEscrow.fetch(escrowAddress);
+  const tokenMint = escrow.tokenMint as PublicKey;
+  const client = escrow.client as PublicKey;
+  const provider = escrow.provider as PublicKey;
+  const escrowTokenAccount = deriveEscrowTokenAccount(escrowAddress, tokenMint);
+
+  // Derive ATAs for client and provider
+  const { getAssociatedTokenAddressSync: getAta } = await import(
+    "@solana/spl-token"
+  );
+  const clientTokenAccount = getAta(tokenMint, client);
+  const providerTokenAccount = getAta(tokenMint, provider);
+
+  const sig = await program.methods
+    .resolveDisputeTimeout()
+    .accounts({
+      caller: wallet.publicKey,
+      escrow: escrowAddress,
+      escrowTokenAccount: escrowTokenAccount,
+      clientTokenAccount: clientTokenAccount,
+      providerTokenAccount: providerTokenAccount,
+      tokenProgram: TOKEN_PROGRAM_ID,
+    })
+    .signers([wallet])
+    .rpc();
+
+  return {
+    success: true,
+    escrowAddress: escrowAddress.toBase58(),
+    client: client.toBase58(),
+    provider: provider.toBase58(),
+    status: "resolved_timeout",
     transactionSignature: sig,
   };
 }

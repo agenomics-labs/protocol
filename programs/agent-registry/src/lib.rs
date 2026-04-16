@@ -1,5 +1,4 @@
 use anchor_lang::prelude::*;
-use std::mem;
 
 /// Agent Registry Program
 ///
@@ -57,6 +56,8 @@ pub mod agent_registry {
             !accepted_tokens.is_empty() && accepted_tokens.len() <= 5,
             AgentRegistryError::InvalidTokensCount
         );
+        // ADR-043: Validate category length to prevent account space exhaustion
+        require!(category.len() <= 50, AgentRegistryError::CategoryTooLong);
 
         let agent_profile = &mut ctx.accounts.agent_profile;
         agent_profile.authority = ctx.accounts.authority.key();
@@ -126,6 +127,7 @@ pub mod agent_registry {
         }
 
         if let Some(c) = category {
+            require!(c.len() <= 50, AgentRegistryError::CategoryTooLong);
             agent_profile.category = c;
         }
 
@@ -253,16 +255,16 @@ pub mod agent_registry {
                 .total_earnings
                 .saturating_add(earnings);
 
-            // Update average rating using weighted running average
-            // Formula: new_avg = (old_avg * (n-1) + new_rating) / n
+            // Update average rating using weighted running average with rounding
+            // ADR-047: Formula: new_avg = (old_avg * (n-1) + new_rating + n/2) / n
+            // The + n/2 term provides proper rounding instead of truncation.
             if rating > 0 {
                 let n = agent_profile.total_tasks_completed as u128;
                 if n == 1 {
-                    // First rated task — rating becomes the average
                     agent_profile.avg_rating = rating;
                 } else {
                     let old_avg = agent_profile.avg_rating as u128;
-                    let new_avg = (old_avg * (n - 1) + rating as u128) / n;
+                    let new_avg = (old_avg * (n - 1) + rating as u128 + n / 2) / n;
                     agent_profile.avg_rating = new_avg.min(5) as u8;
                 }
             }
@@ -627,10 +629,20 @@ pub struct RegisterAgent<'info> {
     pub authority: Signer<'info>,
 
     /// The agent's profile account (PDA)
+    ///
+    /// ADR-040: Explicit serialized size calculation (replaces mem::size_of which
+    /// returns stack size, not Borsh serialized size for types with Vec/String):
+    ///   8 (discriminator) + 32 (authority) + 68 (name: 4+64) + 260 (desc: 4+256)
+    ///   + 54 (category: 4+50) + 364 (capabilities: 4+10*(4+32))
+    ///   + 1 (pricing_model) + 8 (pricing_amount) + 164 (accepted_tokens: 4+5*32)
+    ///   + 32 (vault_address) + 1 (status) + 8 (reputation_score)
+    ///   + 8 (total_tasks_completed) + 8 (total_earnings) + 1 (avg_rating)
+    ///   + 8 (created_at) + 8 (updated_at) + 9 (reputation_stake: 8+1)
+    ///   + 1 (bump) = 1043 bytes + 200 safety margin = 1243 bytes
     #[account(
         init,
         payer = authority,
-        space = 8 + mem::size_of::<AgentProfile>() + 500, // Extra space for dynamic Vec growth
+        space = 1243,
         seeds = [authority.key().as_ref(), b"agent-profile"],
         bump
     )]
@@ -807,6 +819,9 @@ pub enum AgentRegistryError {
 
     #[msg("Insufficient staked amount for withdrawal")]
     InsufficientStake,
+
+    #[msg("Category exceeds maximum length of 50 bytes")]
+    CategoryTooLong,
 }
 
 // ============================================================================

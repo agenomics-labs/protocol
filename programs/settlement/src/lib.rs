@@ -85,7 +85,7 @@ pub mod settlement {
         escrow.created_at = now;
         escrow.deadline = deadline;
         escrow.dispute_resolver = dispute_resolver;
-        escrow.disputed_at = 0;
+        escrow.disputed_at = None;
         escrow.bump = ctx.bumps.escrow;
 
         escrow.milestones = milestones_data
@@ -315,7 +315,7 @@ pub mod settlement {
         require!(escrow.status != EscrowStatus::Expired, SettlementError::EscrowExpired);
 
         escrow.status = EscrowStatus::Disputed;
-        escrow.disputed_at = Clock::get()?.unix_timestamp;
+        escrow.disputed_at = Some(Clock::get()?.unix_timestamp);
 
         emit!(DisputeRaised {
             escrow: escrow.key(),
@@ -450,9 +450,9 @@ pub mod settlement {
         let now = Clock::get()?.unix_timestamp;
 
         require!(escrow.status == EscrowStatus::Disputed, SettlementError::InvalidStatus);
-        require!(escrow.disputed_at > 0, SettlementError::InvalidStatus);
+        let disputed_at = escrow.disputed_at.ok_or(SettlementError::InvalidStatus)?;
         require!(
-            now >= escrow.disputed_at + DISPUTE_TIMEOUT_SECONDS,
+            now >= disputed_at + DISPUTE_TIMEOUT_SECONDS,
             SettlementError::DisputeTimeoutNotReached
         );
 
@@ -749,8 +749,9 @@ pub struct TaskEscrow {
     pub created_at: i64,
     pub deadline: i64,
     pub dispute_resolver: Option<Pubkey>,
-    /// ADR-030: Timestamp when dispute was raised. Used for auto-resolution timeout.
-    pub disputed_at: i64,
+    /// ADR-047: Timestamp when dispute was raised. None if not disputed.
+    /// Uses Option<i64> instead of sentinel 0 for proper null semantics.
+    pub disputed_at: Option<i64>,
     pub bump: u8,
 }
 

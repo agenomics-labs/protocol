@@ -278,10 +278,12 @@ pub struct InitializeVault<'info> {
     pub system_program: Program<'info, System>,
 }
 
+/// ADR-041: All vault mutation contexts use has_one=authority for defense-in-depth.
 #[derive(Accounts)]
 pub struct UpdatePolicy<'info> {
     #[account(
         mut,
+        has_one = authority @ VaultError::Unauthorized,
         seeds = [b"vault", authority.key().as_ref()],
         bump
     )]
@@ -294,6 +296,7 @@ pub struct UpdatePolicy<'info> {
 pub struct ManageAllowlist<'info> {
     #[account(
         mut,
+        has_one = authority @ VaultError::Unauthorized,
         seeds = [b"vault", authority.key().as_ref()],
         bump
     )]
@@ -306,6 +309,7 @@ pub struct ManageAllowlist<'info> {
 pub struct ManageProgramAllowlist<'info> {
     #[account(
         mut,
+        has_one = authority @ VaultError::Unauthorized,
         seeds = [b"vault", authority.key().as_ref()],
         bump
     )]
@@ -379,6 +383,7 @@ pub struct ExecuteTokenTransfer<'info> {
 pub struct PauseVault<'info> {
     #[account(
         mut,
+        has_one = authority @ VaultError::Unauthorized,
         seeds = [b"vault", authority.key().as_ref()],
         bump
     )]
@@ -391,6 +396,7 @@ pub struct PauseVault<'info> {
 pub struct ResumeVault<'info> {
     #[account(
         mut,
+        has_one = authority @ VaultError::Unauthorized,
         seeds = [b"vault", authority.key().as_ref()],
         bump
     )]
@@ -444,8 +450,7 @@ mod instructions {
         per_tx_limit_lamports: u64,
         max_txs_per_hour: u32,
     ) -> Result<()> {
-        require!(ctx.accounts.authority.key() == ctx.accounts.vault.authority, VaultError::Unauthorized);
-
+        // Authority verified by has_one constraint (ADR-041)
         let vault = &mut ctx.accounts.vault;
         vault.policy.daily_limit_lamports = daily_limit_lamports;
         vault.policy.per_tx_limit_lamports = per_tx_limit_lamports;
@@ -465,7 +470,7 @@ mod instructions {
         ctx: Context<ManageAllowlist>,
         token_mint: Pubkey,
     ) -> Result<()> {
-        require!(ctx.accounts.authority.key() == ctx.accounts.vault.authority, VaultError::Unauthorized);
+        // Authority verified by has_one constraint (ADR-041)
 
         let vault = &mut ctx.accounts.vault;
         if !vault.policy.token_allowlist.contains(&token_mint) {
@@ -489,10 +494,12 @@ mod instructions {
         ctx: Context<ManageAllowlist>,
         token_mint: Pubkey,
     ) -> Result<()> {
-        require!(ctx.accounts.authority.key() == ctx.accounts.vault.authority, VaultError::Unauthorized);
+        // Authority verified by has_one constraint (ADR-041)
 
         let vault = &mut ctx.accounts.vault;
         vault.policy.token_allowlist.retain(|&t| t != token_mint);
+        // ADR-044: Clean up spend records for removed tokens
+        vault.token_spend_records.retain(|r| r.mint != token_mint);
 
         emit!(AllowlistUpdated {
             vault: ctx.accounts.vault.key(),
@@ -507,7 +514,7 @@ mod instructions {
         ctx: Context<ManageProgramAllowlist>,
         program_id: Pubkey,
     ) -> Result<()> {
-        require!(ctx.accounts.authority.key() == ctx.accounts.vault.authority, VaultError::Unauthorized);
+        // Authority verified by has_one constraint (ADR-041)
 
         let vault = &mut ctx.accounts.vault;
         if !vault.policy.program_allowlist.contains(&program_id) {
@@ -531,7 +538,7 @@ mod instructions {
         ctx: Context<ManageProgramAllowlist>,
         program_id: Pubkey,
     ) -> Result<()> {
-        require!(ctx.accounts.authority.key() == ctx.accounts.vault.authority, VaultError::Unauthorized);
+        // Authority verified by has_one constraint (ADR-041)
 
         let vault = &mut ctx.accounts.vault;
         vault.policy.program_allowlist.retain(|&p| p != program_id);
@@ -884,7 +891,7 @@ mod instructions {
     }
 
     pub fn pause_vault(ctx: Context<PauseVault>) -> Result<()> {
-        require!(ctx.accounts.authority.key() == ctx.accounts.vault.authority, VaultError::Unauthorized);
+        // Authority verified by has_one constraint (ADR-041)
 
         let vault = &mut ctx.accounts.vault;
         vault.paused = true;
@@ -897,7 +904,7 @@ mod instructions {
     }
 
     pub fn resume_vault(ctx: Context<ResumeVault>) -> Result<()> {
-        require!(ctx.accounts.authority.key() == ctx.accounts.vault.authority, VaultError::Unauthorized);
+        // Authority verified by has_one constraint (ADR-041)
 
         let vault = &mut ctx.accounts.vault;
         vault.paused = false;
