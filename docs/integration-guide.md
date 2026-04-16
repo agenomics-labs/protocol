@@ -4,18 +4,18 @@ AEAP provides integration plugins for popular AI agent frameworks and works nati
 
 ## ElizaOS
 
-The `@aeap/integrations` package exports an ElizaOS plugin that wraps all 20 MCP tools as ElizaOS actions.
+The `@agenomics/integrations` package exports an ElizaOS plugin that wraps all 20 MCP tools as ElizaOS actions.
 
 ### Installation
 
 ```bash
-npm install @aeap/integrations
+npm install @agenomics/integrations
 ```
 
 ### Usage
 
 ```typescript
-import { aeapPlugin, setMcpClient } from '@aeap/integrations';
+import { aeapPlugin, setMcpClient } from '@agenomics/integrations';
 
 // Initialize with your MCP client
 setMcpClient(myMcpClient);
@@ -41,8 +41,8 @@ The Solana Agent Kit plugin exports tools in SAK-compatible format.
 ### Usage
 
 ```typescript
-import { aeapTools } from '@aeap/integrations';
-import { setMcpClient } from '@aeap/integrations';
+import { aeapTools } from '@agenomics/integrations';
+import { setMcpClient } from '@agenomics/integrations';
 
 // Initialize MCP connection
 setMcpClient(myMcpClient);
@@ -79,7 +79,7 @@ Add to your `claude_desktop_config.json`:
   "mcpServers": {
     "aeap": {
       "command": "npx",
-      "args": ["@aeap/mcp-server"],
+      "args": ["@agenomics/mcp-server"],
       "env": {
         "SOLANA_RPC_URL": "https://api.devnet.solana.com",
         "SOLANA_PRIVATE_KEY": "<your-base58-key>"
@@ -94,7 +94,7 @@ Once configured, Claude can directly call any of the 20 AEAP tools to create vau
 ### Claude Code
 
 ```bash
-claude mcp add aeap -- npx @aeap/mcp-server
+claude mcp add aeap -- npx @agenomics/mcp-server
 ```
 
 Set environment variables:
@@ -109,7 +109,7 @@ export SOLANA_PRIVATE_KEY=<your-base58-key>
 Use an MCP-to-OpenAI bridge to connect AEAP tools to ChatGPT:
 
 ```bash
-npx mcp-bridge --server "npx @aeap/mcp-server" --port 3000
+npx mcp-bridge --server "npx @agenomics/mcp-server" --port 3000
 ```
 
 Then configure your ChatGPT plugin or function calling to point to the bridge endpoint.
@@ -124,7 +124,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 
 const transport = new StdioClientTransport({
   command: 'npx',
-  args: ['@aeap/mcp-server'],
+  args: ['@agenomics/mcp-server'],
   env: {
     SOLANA_RPC_URL: 'https://api.devnet.solana.com',
     SOLANA_PRIVATE_KEY: process.env.SOLANA_PRIVATE_KEY,

@@ -35,3 +35,16 @@
 {"type":"edit","file":"/home/neo/dev/projects/AEAP/docs/adr/ADR-043-category-length-validation.md","timestamp":1776317738972,"sessionId":null}
 {"type":"edit","file":"/home/neo/dev/projects/AEAP/docs/adr/ADR-044-clean-spend-records.md","timestamp":1776317753088,"sessionId":null}
 {"type":"edit","file":"/home/neo/dev/projects/AEAP/docs/adr/ADR-047-disputed-at-option-avg-rating.md","timestamp":1776317820639,"sessionId":null}
+{"type":"edit","file":"/home/neo/dev/projects/AEAP/mcp-server/src/solana.ts","timestamp":1776319722944,"sessionId":null}
+{"type":"edit","file":"/home/neo/dev/projects/AEAP/mcp-server/src/solana.ts","timestamp":1776319735870,"sessionId":null}
+{"type":"edit","file":"/home/neo/dev/projects/AEAP/mcp-server/src/solana.ts","timestamp":1776319742253,"sessionId":null}
+{"type":"edit","file":"/home/neo/dev/projects/AEAP/mcp-server/src/solana.ts","timestamp":1776319770964,"sessionId":null}
+{"type":"edit","file":"/home/neo/dev/projects/AEAP/mcp-server/src/index.ts","timestamp":1776319785997,"sessionId":null}
+{"type":"edit","file":"/home/neo/dev/projects/AEAP/mcp-server/src/index.ts","timestamp":1776319795451,"sessionId":null}
+{"type":"edit","file":"/home/neo/dev/projects/AEAP/mcp-server/src/index.ts","timestamp":1776319807720,"sessionId":null}
+{"type":"edit","file":"/home/neo/dev/projects/AEAP/mcp-server/src/index.ts","timestamp":1776319814768,"sessionId":null}
+{"type":"edit","file":"/home/neo/dev/projects/AEAP/mcp-server/src/index.ts","timestamp":1776319821458,"sessionId":null}
+{"type":"edit","file":"/home/neo/dev/projects/AEAP/mcp-server/package.json","timestamp":1776319835773,"sessionId":null}
+{"type":"edit","file":"/home/neo/dev/projects/AEAP/mcp-server/src/solana-v2.ts","timestamp":1776319860010,"sessionId":null}
+{"type":"edit","file":"/home/neo/dev/projects/AEAP/mcp-server/src/solana-v2.ts","timestamp":1776319898978,"sessionId":null}
+{"type":"edit","file":"/home/neo/dev/projects/AEAP/mcp-server/test/mcp-handlers.test.ts","timestamp":1776321634597,"sessionId":null}

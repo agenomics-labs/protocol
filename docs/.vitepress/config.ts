@@ -46,7 +46,7 @@ export default defineConfig({
       },
     ],
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/k2jac9/AEAP' },
+      { icon: 'github', link: 'https://github.com/agenomics-labs/aeap' },
     ],
   },
 });

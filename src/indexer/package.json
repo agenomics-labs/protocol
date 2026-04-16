@@ -1,5 +1,5 @@
 {
-  "name": "@aeap/indexer",
+  "name": "@agenomics/indexer",
   "version": "0.1.0",
   "description": "Off-chain event indexer for AEAP Solana programs",
   "main": "index.ts",

@@ -11,13 +11,13 @@
 ### MCP Server
 
 ```bash
-npm install @aeap/mcp-server
+npm install @agenomics/mcp-server
 ```
 
 ### Integration Plugins
 
 ```bash
-npm install @aeap/integrations
+npm install @agenomics/integrations
 ```
 
 ## Configure MCP Server
@@ -29,7 +29,7 @@ Add AEAP to your MCP client configuration:
   "mcpServers": {
     "aeap": {
       "command": "npx",
-      "args": ["@aeap/mcp-server"],
+      "args": ["@agenomics/mcp-server"],
       "env": {
         "SOLANA_RPC_URL": "https://api.devnet.solana.com",
         "SOLANA_PRIVATE_KEY": "<your-base58-private-key>"

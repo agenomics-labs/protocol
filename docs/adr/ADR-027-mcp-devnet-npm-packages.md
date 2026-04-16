@@ -16,9 +16,9 @@ The MCP server, ElizaOS plugin, and Solana Agent Kit plugin have been developed 
    The MCP server loads this file when `NODE_ENV=devnet` or when explicitly passed via `--env-file .env.devnet`.
 
 2. **npm package configurations**: Prepare `package.json` files for three publishable packages:
-   - `@aeap/mcp-server` -- Model Context Protocol server exposing AEAP Solana instructions as MCP tools. Entry point: `dist/index.js`. Peer dependency on `@solana/web3.js ^2.0`.
-   - `@aeap/elizaos-plugin` -- ElizaOS plugin wrapping MCP tools for agent integration. Peer dependency on `@elizaos/core`.
-   - `@aeap/solana-agent-kit-plugin` -- Solana Agent Kit plugin providing AEAP actions. Peer dependency on `solana-agent-kit`.
+   - `@agenomics/mcp-server` -- Model Context Protocol server exposing AEAP Solana instructions as MCP tools. Entry point: `dist/index.js`. Peer dependency on `@solana/web3.js ^2.0`.
+   - `@agenomics/elizaos-plugin` -- ElizaOS plugin wrapping MCP tools for agent integration. Peer dependency on `@elizaos/core`.
+   - `@agenomics/solana-agent-kit-plugin` -- Solana Agent Kit plugin providing AEAP actions. Peer dependency on `solana-agent-kit`.
 
 3. **Build and publish workflow**: Each package includes `build`, `test`, and `prepublishOnly` scripts. A root-level `scripts/publish-packages.sh` orchestrates version bumping and `npm publish --access public` for all three packages.
 
@@ -38,7 +38,7 @@ The MCP server, ElizaOS plugin, and Solana Agent Kit plugin have been developed 
 ## Files Changed
 
 - `mcp-server/.env.devnet` -- new devnet environment configuration
-- `mcp-server/package.json` -- add `@aeap/mcp-server` name, build/publish scripts
-- `integrations/elizaos-plugin/package.json` -- add `@aeap/elizaos-plugin` name, peer deps
-- `integrations/solana-agent-kit-plugin/package.json` -- add `@aeap/solana-agent-kit-plugin` name, peer deps
+- `mcp-server/package.json` -- add `@agenomics/mcp-server` name, build/publish scripts
+- `integrations/elizaos-plugin/package.json` -- add `@agenomics/elizaos-plugin` name, peer deps
+- `integrations/solana-agent-kit-plugin/package.json` -- add `@agenomics/solana-agent-kit-plugin` name, peer deps
 - `scripts/publish-packages.sh` -- new multi-package publish orchestration script

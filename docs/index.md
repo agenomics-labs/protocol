@@ -26,13 +26,13 @@ features:
 
 ```bash
 # Install the MCP server
-npm install @aeap/mcp-server
+npm install @agenomics/mcp-server
 
 # Or run directly
-npx @aeap/mcp-server
+npx @agenomics/mcp-server
 
 # Install integration plugins
-npm install @aeap/integrations
+npm install @agenomics/integrations
 ```
 
 ## Architecture

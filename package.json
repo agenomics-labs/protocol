@@ -10,10 +10,10 @@
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.30.0",
-    "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.95.0"
   },
   "devDependencies": {
+    "@solana/spl-token": "^0.4.14",
     "@types/bn.js": "^5.1.6",
     "@types/chai": "^4.3.11",
     "@types/mocha": "^10.0.6",

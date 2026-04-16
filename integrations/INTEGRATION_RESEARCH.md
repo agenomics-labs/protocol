@@ -230,7 +230,7 @@ interface ProviderResult {
 **Plugin Structure**:
 
 ```
-@aeap/eliza-plugin
+@agenomics/eliza-plugin
 ├── src/
 │   ├── index.ts                 # Plugin export
 │   ├── actions/

@@ -1,5 +1,5 @@
 {
-  "name": "@aeap/integrations",
+  "name": "@agenomics/integrations",
   "version": "1.0.0",
   "description": "AEAP framework integration plugins",
   "main": "dist/index.js",
