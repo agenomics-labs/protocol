@@ -388,6 +388,11 @@ pub mod settlement {
 
         // Now mutably borrow for state update
         let escrow = &mut ctx.accounts.escrow;
+        escrow.released_amount = escrow
+            .released_amount
+            .checked_add(client_refund)
+            .and_then(|v| v.checked_add(provider_refund))
+            .ok_or(SettlementError::AmountOverflow)?;
         escrow.status = EscrowStatus::Completed;
 
         emit!(DisputeResolved {
@@ -458,7 +463,10 @@ pub mod settlement {
     }
 
     /// Anyone can expire an escrow that has passed its deadline.
-    /// Refunds all remaining funds to the client.
+    ///
+    /// Approved milestones are honored: their funds go to the provider.
+    /// Remaining funds (unapproved milestones) are refunded to the client.
+    /// This prevents loss of work that was already approved before expiry.
     pub fn expire_escrow(ctx: Context<ExpireEscrow>) -> Result<()> {
         let escrow = &ctx.accounts.escrow;
         let now = Clock::get()?.unix_timestamp;
@@ -469,9 +477,25 @@ pub mod settlement {
             SettlementError::InvalidStatus
         );
 
+        // Calculate provider's earned amount (approved but not yet released milestones)
+        let mut provider_earned: u64 = 0;
+        for milestone in &escrow.milestones {
+            if milestone.status == MilestoneStatus::Approved {
+                provider_earned = provider_earned
+                    .checked_add(milestone.amount)
+                    .ok_or(SettlementError::AmountOverflow)?;
+            }
+        }
+        // Subtract already-released funds (from approve_milestone calls)
+        provider_earned = provider_earned.saturating_sub(escrow.released_amount);
+
         let remaining = escrow
             .total_amount
             .checked_sub(escrow.released_amount)
+            .ok_or(SettlementError::AmountOverflow)?;
+
+        let client_refund = remaining
+            .checked_sub(provider_earned)
             .ok_or(SettlementError::AmountOverflow)?;
 
         let bump = escrow.bump;
@@ -480,38 +504,56 @@ pub mod settlement {
         let task_id = escrow.task_id;
         let task_id_bytes = task_id.to_le_bytes();
 
-        if remaining > 0 {
-            let signer_seeds: &[&[&[u8]]] = &[&[
-                b"escrow",
-                client_key.as_ref(),
-                provider_key.as_ref(),
-                &task_id_bytes,
-                &[bump],
-            ]];
+        let signer_seeds: &[&[&[u8]]] = &[&[
+            b"escrow",
+            client_key.as_ref(),
+            provider_key.as_ref(),
+            &task_id_bytes,
+            &[bump],
+        ]];
 
-            let transfer_instruction = Transfer {
+        // Transfer earned funds to provider (if any unreleased approved milestones)
+        if provider_earned > 0 {
+            let transfer_to_provider = Transfer {
+                from: ctx.accounts.escrow_token_account.to_account_info(),
+                to: ctx.accounts.provider_token_account.to_account_info(),
+                authority: ctx.accounts.escrow.to_account_info(),
+            };
+            token::transfer(
+                CpiContext::new_with_signer(
+                    ctx.accounts.token_program.to_account_info(),
+                    transfer_to_provider,
+                    signer_seeds,
+                ),
+                provider_earned,
+            )?;
+        }
+
+        // Refund remaining to client
+        if client_refund > 0 {
+            let transfer_to_client = Transfer {
                 from: ctx.accounts.escrow_token_account.to_account_info(),
                 to: ctx.accounts.client_token_account.to_account_info(),
                 authority: ctx.accounts.escrow.to_account_info(),
             };
-
             token::transfer(
                 CpiContext::new_with_signer(
                     ctx.accounts.token_program.to_account_info(),
-                    transfer_instruction,
+                    transfer_to_client,
                     signer_seeds,
                 ),
-                remaining,
+                client_refund,
             )?;
         }
 
         let escrow = &mut ctx.accounts.escrow;
+        escrow.released_amount = escrow.total_amount; // All funds distributed
         escrow.status = EscrowStatus::Expired;
 
         emit!(EscrowExpired {
             escrow: escrow.key(),
             task_id,
-            refunded_amount: remaining,
+            refunded_amount: client_refund,
         });
 
         Ok(())
@@ -894,6 +936,14 @@ pub struct ExpireEscrow<'info> {
         constraint = client_token_account.owner == escrow.client @ SettlementError::InvalidTokenAccount,
     )]
     pub client_token_account: Account<'info, TokenAccount>,
+
+    /// Provider's token account for releasing earned milestone funds on expiry.
+    #[account(
+        mut,
+        constraint = provider_token_account.mint == escrow.token_mint @ SettlementError::InvalidTokenAccount,
+        constraint = provider_token_account.owner == escrow.provider @ SettlementError::InvalidTokenAccount,
+    )]
+    pub provider_token_account: Account<'info, TokenAccount>,
 
     pub token_program: Program<'info, Token>,
 }

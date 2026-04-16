@@ -22,7 +22,8 @@ function loadIdl(name: string): any {
 }
 
 class KeypairWallet {
-  constructor(readonly payer: Keypair) {}
+  payer: Keypair;
+  constructor(payer: Keypair) { this.payer = payer; }
   get publicKey() { return this.payer.publicKey; }
   async signTransaction<T>(tx: T): Promise<T> { (tx as any).partialSign(this.payer); return tx; }
   async signAllTransactions<T>(txs: T[]): Promise<T[]> { txs.forEach(tx => (tx as any).partialSign(this.payer)); return txs; }

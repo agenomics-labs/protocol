@@ -676,11 +676,15 @@ mod instructions {
     /// authority. This enables AI agents to interact with any on-chain program
     /// (DeFi, NFT, governance, etc.) through their vault, subject to policy.
     ///
+    /// # Security (ADR-024)
+    /// - The vault PDA's lamport balance is snapshot before and after CPI
+    /// - Net outflow is capped at `per_tx_limit_lamports` and counted against daily limit
+    /// - Prevents allowlisted programs from draining vault SOL via signed CPI
+    /// - Token transfers must use `execute_token_transfer` (which enforces allowlist + daily limits)
+    ///
     /// # remaining_accounts layout:
     ///   [0]   = target program (executable)
     ///   [1..] = accounts required by the target instruction
-    ///
-    /// The vault PDA is automatically injected as signer for the CPI.
     pub fn execute_program_call<'info>(
         ctx: Context<'_, '_, 'info, 'info, ExecuteProgramCall<'info>>,
         instruction_data: Vec<u8>,
@@ -690,6 +694,8 @@ mod instructions {
         let authority_key: Pubkey;
         let bump: u8;
         let vault_key: Pubkey;
+        let per_tx_limit: u64;
+        let daily_limit: u64;
 
         // --- CHECKS + EFFECTS (scoped mutable borrow) ---
         {
@@ -720,13 +726,26 @@ mod instructions {
                 VaultError::RateLimitExceeded
             );
 
+            // Reset daily counter if day changed
+            let current_day = (clock.unix_timestamp / 86400) as u64;
+            if current_day > vault.last_spend_day {
+                vault.spent_today_lamports = 0;
+                vault.last_spend_day = current_day;
+            }
+
             // Update state before CPI (checks-effects-interactions)
             vault.txs_in_current_window = vault.txs_in_current_window.saturating_add(1);
 
             authority_key = vault.authority;
             bump = vault.bump;
             vault_key = vault.key();
+            per_tx_limit = vault.policy.per_tx_limit_lamports;
+            daily_limit = vault.policy.daily_limit_lamports;
         }
+
+        // --- SNAPSHOT vault balance before CPI ---
+        let vault_info = ctx.accounts.vault.to_account_info();
+        let balance_before = vault_info.lamports();
 
         // --- INTERACTIONS (CPI with vault PDA as signer) ---
         let remaining = ctx.remaining_accounts;
@@ -760,12 +779,26 @@ mod instructions {
 
         let signer_seeds: &[&[u8]] = &[b"vault", authority_key.as_ref(), &[bump]];
 
-        // Pass remaining_accounts directly to avoid lifetime issues
         anchor_lang::solana_program::program::invoke_signed(
             &instruction,
             remaining,
             &[signer_seeds],
         )?;
+
+        // --- POST-CPI: Enforce spending limits on SOL outflow ---
+        let balance_after = vault_info.lamports();
+        if balance_after < balance_before {
+            let outflow = balance_before - balance_after;
+
+            // Per-tx limit
+            require!(outflow <= per_tx_limit, VaultError::PerTxLimitExceeded);
+
+            // Daily limit (update spent_today)
+            let vault = &mut ctx.accounts.vault;
+            let new_daily_total = vault.spent_today_lamports.saturating_add(outflow);
+            require!(new_daily_total <= daily_limit, VaultError::DailyLimitExceeded);
+            vault.spent_today_lamports = new_daily_total;
+        }
 
         // --- EMIT AUDIT LOG ---
         let instruction_hash = {
