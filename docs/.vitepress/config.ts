@@ -3,6 +3,7 @@ import { defineConfig } from 'vitepress';
 export default defineConfig({
   title: 'AEAP Documentation',
   description: 'Autonomous Economic Agents Protocol on Solana',
+  srcExclude: ['ARCHITECTURE.md', 'SECURITY_AUDIT.md', 'MAINNET_CHECKLIST.md', 'AUDIT_SCOPE.md', 'WEB3_V2_MIGRATION.md', 'adr/ADR-0*.md'],
   themeConfig: {
     nav: [
       { text: 'Home', link: '/' },
