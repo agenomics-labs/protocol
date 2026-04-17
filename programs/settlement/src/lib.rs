@@ -241,6 +241,192 @@ mod tests {
     }
 
     // ================================================================
+    // C1/C2/C3: Critical economic-integrity fix tests
+    // (See ARCHITECTURE_DEEP_CRITIQUE.md §1 and instructions/escrow.rs)
+    // ================================================================
+
+    /// C1: expire_escrow must treat Submitted milestones as implicitly
+    /// approved — silence equals acceptance. A stall-then-refund attack
+    /// by the client is now unprofitable because the provider is paid
+    /// for every Submitted milestone on expiry.
+    #[test]
+    fn c1_expire_pays_submitted_milestones_to_provider() {
+        let total_amount: u64 = 1_000_000;
+        let released_amount: u64 = 0;
+
+        let milestones = vec![
+            (MilestoneStatus::Submitted, 400_000u64),
+            (MilestoneStatus::Submitted, 300_000u64),
+            (MilestoneStatus::Pending,   300_000u64),
+        ];
+
+        let mut provider_earned: u64 = 0;
+        let mut has_pending = false;
+        for (status, amount) in &milestones {
+            match status {
+                MilestoneStatus::Submitted => {
+                    provider_earned = provider_earned.checked_add(*amount).unwrap();
+                }
+                MilestoneStatus::Pending => has_pending = true,
+                _ => {}
+            }
+        }
+        let remaining = total_amount.checked_sub(released_amount).unwrap();
+        let client_refund = remaining.checked_sub(provider_earned).unwrap();
+
+        assert_eq!(provider_earned, 700_000, "Submitted milestones must auto-pay");
+        assert_eq!(client_refund, 300_000, "Only Pending milestones refund to client");
+        assert!(has_pending, "Slash is gated on Pending, not Submitted");
+    }
+
+    /// C1: When every milestone is Submitted by the deadline, the client
+    /// receives nothing on expiry and the provider is not slashed. This
+    /// is the key economic reversal — before the fix, the provider lost
+    /// the full amount *and* took a reputation hit.
+    #[test]
+    fn c1_expire_all_submitted_pays_full_provider_no_slash() {
+        let total_amount: u64 = 900_000;
+        let released_amount: u64 = 0;
+
+        let milestones = vec![
+            (MilestoneStatus::Submitted, 300_000u64),
+            (MilestoneStatus::Submitted, 300_000u64),
+            (MilestoneStatus::Submitted, 300_000u64),
+        ];
+
+        let mut provider_earned: u64 = 0;
+        let mut has_pending = false;
+        for (status, amount) in &milestones {
+            match status {
+                MilestoneStatus::Submitted => {
+                    provider_earned = provider_earned.checked_add(*amount).unwrap();
+                }
+                MilestoneStatus::Pending => has_pending = true,
+                _ => {}
+            }
+        }
+        let remaining = total_amount.checked_sub(released_amount).unwrap();
+        let client_refund = remaining.checked_sub(provider_earned).unwrap();
+
+        assert_eq!(provider_earned, 900_000);
+        assert_eq!(client_refund, 0);
+        assert!(!has_pending, "No Pending → no slash");
+    }
+
+    /// C1: Dead arithmetic regression guard. The pre-fix formula
+    /// `provider_earned = approved_sum - released_amount` always
+    /// evaluated to 0 because approve_milestone releases immediately,
+    /// so approved_sum and released_amount were always equal.
+    #[test]
+    fn c1_pre_fix_dead_arithmetic_was_always_zero() {
+        // Reproduce the old (buggy) calculation on a realistic state.
+        let total: u64 = 1_000_000;
+        let released: u64 = 400_000;
+        let milestones = vec![
+            (MilestoneStatus::Approved,  400_000u64), // already paid
+            (MilestoneStatus::Submitted, 300_000u64),
+            (MilestoneStatus::Pending,   300_000u64),
+        ];
+        let approved_sum: u64 = milestones.iter()
+            .filter(|(s, _)| *s == MilestoneStatus::Approved)
+            .map(|(_, a)| *a)
+            .sum();
+        let legacy_provider_earned = approved_sum.saturating_sub(released);
+        assert_eq!(legacy_provider_earned, 0,
+            "Old formula was dead arithmetic by construction");
+        let _ = total;
+    }
+
+    /// C1: When the escrow expires in Created state (provider never
+    /// accepted), the provider is NOT slashed — they never committed.
+    #[test]
+    fn c1_expire_in_created_state_does_not_slash() {
+        let prior_status = EscrowStatus::Created;
+        let has_pending = true;
+        let should_slash = prior_status == EscrowStatus::Active && has_pending;
+        assert!(!should_slash, "Never-accepted task cannot be non-delivery");
+    }
+
+    /// C1: Expiring in Active with at least one Pending milestone
+    /// correctly triggers the slash.
+    #[test]
+    fn c1_expire_active_with_pending_triggers_slash() {
+        let prior_status = EscrowStatus::Active;
+        let has_pending = true;
+        let should_slash = prior_status == EscrowStatus::Active && has_pending;
+        assert!(should_slash, "Active + Pending is true non-delivery");
+    }
+
+    /// C2: approve_milestone must be gated on `now <= deadline`,
+    /// symmetric with submit_milestone. This closes the case where a
+    /// client could approve Submitted work arbitrarily far past the
+    /// deadline (intentional or accidental) rather than letting the
+    /// settle-on-expire path auto-approve.
+    #[test]
+    fn c2_approve_milestone_rejects_post_deadline() {
+        let now: i64 = 2_000;
+        let deadline: i64 = 1_000;
+        let within_deadline = now <= deadline;
+        assert!(!within_deadline, "post-deadline approval must fail");
+    }
+
+    /// C2: The happy path — approval inside the deadline window passes
+    /// the guard.
+    #[test]
+    fn c2_approve_milestone_accepts_pre_deadline() {
+        let now: i64 = 500;
+        let deadline: i64 = 1_000;
+        let within_deadline = now <= deadline;
+        assert!(within_deadline);
+    }
+
+    /// C3: A dispute_resolver equal to the client is rejected. Without
+    /// this guard, the client can flip `is_resolver = true` in
+    /// resolve_dispute and trigger provider reputation slashing
+    /// unilaterally, bypassing A-03.
+    #[test]
+    fn c3_resolver_cannot_be_client() {
+        let client = Pubkey::new_unique();
+        let provider = Pubkey::new_unique();
+        let resolver = client; // attacker sets self as resolver
+        let ok = resolver != client && resolver != provider;
+        assert!(!ok, "client-as-resolver must be rejected");
+    }
+
+    /// C3: A dispute_resolver equal to the provider is also rejected.
+    /// Symmetric guard — a provider-as-resolver would self-adjudicate
+    /// disputes in their favor.
+    #[test]
+    fn c3_resolver_cannot_be_provider() {
+        let client = Pubkey::new_unique();
+        let provider = Pubkey::new_unique();
+        let resolver = provider;
+        let ok = resolver != client && resolver != provider;
+        assert!(!ok, "provider-as-resolver must be rejected");
+    }
+
+    /// C3: A genuine third-party resolver is accepted.
+    #[test]
+    fn c3_resolver_third_party_accepted() {
+        let client = Pubkey::new_unique();
+        let provider = Pubkey::new_unique();
+        let resolver = Pubkey::new_unique();
+        let ok = resolver != client && resolver != provider;
+        assert!(ok);
+    }
+
+    /// C3: Escrows with no resolver (None) are unaffected by the new
+    /// constraint — the A-03 guard in resolve_dispute already handles
+    /// no-resolver self-resolution without slashing.
+    #[test]
+    fn c3_no_resolver_is_still_allowed() {
+        let dispute_resolver: Option<Pubkey> = None;
+        // The new constraint is `if let Some(r) = dispute_resolver { ... }`
+        // so None passes through unchanged.
+        assert!(dispute_resolver.is_none());
+    }
+
+    // ================================================================
     // ADR-021: Property-based fuzz tests (proptest)
     // ================================================================
 

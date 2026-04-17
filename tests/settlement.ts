@@ -1562,7 +1562,7 @@ describe("Settlement Protocol Tests", () => {
         .signers([expProvider]).rpc();
     });
 
-    it("should expire escrow after deadline, refunding unapproved milestones to client", async () => {
+    it("C1: should auto-pay Submitted milestones to provider on expiry (silence = acceptance)", async () => {
       // Wait for deadline to pass
       await new Promise((resolve) => setTimeout(resolve, 6000));
 
@@ -1585,14 +1585,19 @@ describe("Settlement Protocol Tests", () => {
       const escrow = await program.account.taskEscrow.fetch(expEscrowPDA);
       expect(escrow.status.expired).to.be.ok;
 
-      // Client should have received the unapproved milestone 1 amount (500K)
+      // C1: Milestone 1 was Submitted-but-not-Approved at deadline.
+      // Under the fixed semantics, silence = acceptance: the provider
+      // is paid for submitted work rather than the client being refunded.
+      // This closes the stall-then-refund economic attack.
       const clientBalance = await connection.getTokenAccountBalance(expClientTA);
-      // Client started with 10M, locked 1M, got back 500K refund = 9.5M
-      expect(BigInt(clientBalance.value.amount)).to.equal(9500000n);
+      // Client started with 10M, locked 1M, no refund (both milestones were
+      // either Approved or Submitted) = 9M.
+      expect(BigInt(clientBalance.value.amount)).to.equal(9000000n);
 
-      // Provider already received 500K from milestone 0 approval
+      // Provider received 500K from M0 approval + 500K auto-paid from M1
+      // Submitted-on-expiry = 1M total.
       const providerBalance = await connection.getTokenAccountBalance(expProviderTA);
-      expect(BigInt(providerBalance.value.amount)).to.equal(500000n);
+      expect(BigInt(providerBalance.value.amount)).to.equal(1000000n);
     });
   });
 
