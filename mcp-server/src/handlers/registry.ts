@@ -264,7 +264,7 @@ export async function handleStakeReputation(args: Record<string, unknown>) {
     .accounts({
       authority: wallet.publicKey,
       agentProfile: agentProfilePDA,
-      stakingAccount: stakingPDA,
+      stakingPda: stakingPDA,
       systemProgram: SystemProgram.programId,
     })
     .signers([wallet])
@@ -273,7 +273,7 @@ export async function handleStakeReputation(args: Record<string, unknown>) {
   return {
     success: true,
     agentProfileAddress: agentProfilePDA.toBase58(),
-    stakingAccount: stakingPDA.toBase58(),
+    stakingPda: stakingPDA.toBase58(),
     amountSol: amount,
     transactionSignature: sig,
   };
