@@ -63,3 +63,10 @@ pub struct AgentDeregistered {
     pub name: String,
     pub timestamp: i64,
 }
+
+#[event]
+pub struct SuspensionCleared {
+    pub authority: Pubkey,
+    pub new_reputation_score: u64,
+    pub timestamp: i64,
+}
