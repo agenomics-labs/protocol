@@ -108,7 +108,10 @@ pub fn resolve_dispute(
         .ok_or(SettlementError::AmountOverflow)?;
     escrow.status = EscrowStatus::Completed;
 
-    if client_refund > 0 {
+    // A-03: Only slash provider reputation if an external resolver adjudicated.
+    // Client self-resolution (no resolver set) is not a neutral judgment —
+    // slashing would let clients exploit providers by disputing and self-resolving.
+    if client_refund > 0 && is_resolver {
         update_provider_reputation(
             provider_key,
             0,

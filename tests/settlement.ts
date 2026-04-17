@@ -630,6 +630,29 @@ describe("Settlement Protocol Tests", () => {
         .signers([client])
         .rpc();
 
+      // Register provider in Agent Registry (required for CPI reputation updates)
+      const registryProgram = anchor.workspace.AgentRegistry as Program;
+      const [profilePDA] = deriveAgentProfilePDA(provider_account.publicKey);
+
+      await registryProgram.methods
+        .registerAgent(
+          "Dispute Test Provider",
+          "Provider for dispute flow tests",
+          "dispute-testing",
+          ["task-execution"],
+          { perTask: {} },
+          new BN(100000),
+          [tokenMint],
+          Keypair.generate().publicKey
+        )
+        .accounts({
+          authority: provider_account.publicKey,
+          agentProfile: profilePDA,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([provider_account])
+        .rpc();
+
       // Accept task
       await program.methods
         .acceptTask()
@@ -659,6 +682,7 @@ describe("Settlement Protocol Tests", () => {
       const clientRefund = new BN(500000);
       const providerRefund = new BN(500000);
 
+      const [providerProfilePDA] = deriveAgentProfilePDA(provider_account.publicKey);
       const tx = await program.methods
         .resolveDispute(clientRefund, providerRefund)
         .accounts({
@@ -667,6 +691,9 @@ describe("Settlement Protocol Tests", () => {
           escrowTokenAccount: escrowTokenAccount,
           clientTokenAccount: clientTokenAccount,
           providerTokenAccount: providerTokenAccount,
+          registryProgram: REGISTRY_PROGRAM_ID,
+          providerProfile: providerProfilePDA,
+          settlementSelf: SETTLEMENT_PROGRAM_ID,
           tokenProgram: TOKEN_PROGRAM_ID,
         })
         .signers([resolver_account])
@@ -1348,6 +1375,401 @@ describe("Settlement Protocol Tests", () => {
           })
           .signers([client])
           .rpc();
+        expect.fail("Should have thrown InvalidStatus error");
+      } catch (error: any) {
+        expect(error).to.exist;
+      }
+    });
+  });
+
+  // ============================================================================
+  // T-03: SELF-DEALING PREVENTION
+  // ============================================================================
+
+  describe("Self-dealing prevention (T-03)", () => {
+    it("should reject escrow where client equals provider", async () => {
+      const samePerson = Keypair.generate();
+      const sig = await connection.requestAirdrop(samePerson.publicKey, 10 * LAMPORTS_PER_SOL);
+      await connection.confirmTransaction(sig);
+
+      const samePersonTA = await getOrCreateTokenAccount(samePerson.publicKey, samePerson);
+      await mintTo(connection, mintAuthority, tokenMint, samePersonTA, mintAuthority.publicKey, 10000000n);
+
+      const selfTaskId = new BN(900);
+      const [selfEscrowPDA] = await anchor.web3.PublicKey.findProgramAddress(
+        [
+          Buffer.from("escrow"),
+          samePerson.publicKey.toBuffer(),
+          samePerson.publicKey.toBuffer(),
+          selfTaskId.toArrayLike(Buffer, "le", 8),
+        ],
+        program.programId
+      );
+      const selfEscrowTA = getAssociatedTokenAddressSync(tokenMint, selfEscrowPDA, true);
+
+      const milestonesData = [createMilestoneData(1000000n)];
+
+      try {
+        await program.methods
+          .createEscrow(
+            selfTaskId,
+            new BN(1000000),
+            Buffer.alloc(32),
+            FUTURE_DEADLINE,
+            milestonesData,
+            null
+          )
+          .accounts({
+            client: samePerson.publicKey,
+            clientVault: samePerson.publicKey,
+            providerVault: samePerson.publicKey,
+            provider: samePerson.publicKey,
+            tokenMint: tokenMint,
+            clientTokenAccount: samePersonTA,
+            escrow: selfEscrowPDA,
+            escrowTokenAccount: selfEscrowTA,
+            tokenProgram: TOKEN_PROGRAM_ID,
+            associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+            systemProgram: SystemProgram.programId,
+            rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+          })
+          .signers([samePerson])
+          .rpc();
+        expect.fail("Should have thrown SelfDealingProhibited error");
+      } catch (error: any) {
+        expect(error).to.exist;
+        expect(error.toString()).to.include("SelfDealingProhibited");
+      }
+    });
+  });
+
+  // ============================================================================
+  // T-02: EXPIRE ESCROW WITH APPROVED MILESTONES
+  // ============================================================================
+
+  describe("Expire escrow with approved milestones (T-02)", () => {
+    let expClient: Keypair;
+    let expProvider: Keypair;
+    let expEscrowPDA: PublicKey;
+    let expEscrowTA: PublicKey;
+    let expClientTA: PublicKey;
+    let expProviderTA: PublicKey;
+    const expTaskId = new BN(901);
+
+    before(async () => {
+      expClient = Keypair.generate();
+      expProvider = Keypair.generate();
+
+      const airdropAmount = 10 * LAMPORTS_PER_SOL;
+      for (const kp of [expClient, expProvider]) {
+        const sig = await connection.requestAirdrop(kp.publicKey, airdropAmount);
+        await connection.confirmTransaction(sig);
+      }
+
+      expClientTA = await getOrCreateTokenAccount(expClient.publicKey, expClient);
+      expProviderTA = await getOrCreateTokenAccount(expProvider.publicKey, expClient);
+      await mintTo(connection, mintAuthority, tokenMint, expClientTA, mintAuthority.publicKey, 10000000n);
+
+      // Register provider for CPI
+      const registryProgram = anchor.workspace.AgentRegistry as Program;
+      const [profilePDA] = deriveAgentProfilePDA(expProvider.publicKey);
+      await registryProgram.methods
+        .registerAgent(
+          "Expire Test Provider",
+          "Provider for expire tests",
+          "expire-testing",
+          ["task-execution"],
+          { perTask: {} },
+          new BN(100000),
+          [tokenMint],
+          Keypair.generate().publicKey
+        )
+        .accounts({
+          authority: expProvider.publicKey,
+          agentProfile: profilePDA,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([expProvider])
+        .rpc();
+
+      // Short deadline: 5 seconds from now
+      const shortDeadline = new BN(Math.floor(Date.now() / 1000) + 5);
+
+      const milestonesData = [
+        createMilestoneData(500000n, Buffer.alloc(32, 1)),
+        createMilestoneData(500000n, Buffer.alloc(32, 2)),
+      ];
+
+      [expEscrowPDA] = await anchor.web3.PublicKey.findProgramAddress(
+        [
+          Buffer.from("escrow"),
+          expClient.publicKey.toBuffer(),
+          expProvider.publicKey.toBuffer(),
+          expTaskId.toArrayLike(Buffer, "le", 8),
+        ],
+        program.programId
+      );
+      expEscrowTA = getAssociatedTokenAddressSync(tokenMint, expEscrowPDA, true);
+
+      // Create escrow with short deadline
+      await program.methods
+        .createEscrow(expTaskId, new BN(1000000), Buffer.alloc(32), shortDeadline, milestonesData, null)
+        .accounts({
+          client: expClient.publicKey,
+          clientVault: expClient.publicKey,
+          providerVault: expProvider.publicKey,
+          provider: expProvider.publicKey,
+          tokenMint: tokenMint,
+          clientTokenAccount: expClientTA,
+          escrow: expEscrowPDA,
+          escrowTokenAccount: expEscrowTA,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        })
+        .signers([expClient])
+        .rpc();
+
+      // Accept task
+      await program.methods.acceptTask()
+        .accounts({ provider: expProvider.publicKey, escrow: expEscrowPDA })
+        .signers([expProvider]).rpc();
+
+      // Submit milestone 0
+      await program.methods.submitMilestone(new BN(0))
+        .accounts({ provider: expProvider.publicKey, escrow: expEscrowPDA })
+        .signers([expProvider]).rpc();
+
+      // Approve milestone 0 (releases 500K to provider)
+      const [provProfilePDA] = deriveAgentProfilePDA(expProvider.publicKey);
+      await program.methods.approveMilestone(new BN(0))
+        .accounts({
+          client: expClient.publicKey,
+          escrow: expEscrowPDA,
+          escrowTokenAccount: expEscrowTA,
+          providerTokenAccount: expProviderTA,
+          registryProgram: REGISTRY_PROGRAM_ID,
+          providerProfile: provProfilePDA,
+          settlementSelf: SETTLEMENT_PROGRAM_ID,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([expClient]).rpc();
+
+      // Submit milestone 1 (leave as Submitted — not approved)
+      await program.methods.submitMilestone(new BN(1))
+        .accounts({ provider: expProvider.publicKey, escrow: expEscrowPDA })
+        .signers([expProvider]).rpc();
+    });
+
+    it("should expire escrow after deadline, refunding unapproved milestones to client", async () => {
+      // Wait for deadline to pass
+      await new Promise((resolve) => setTimeout(resolve, 6000));
+
+      const [provProfilePDA] = deriveAgentProfilePDA(expProvider.publicKey);
+
+      await program.methods.expireEscrow()
+        .accounts({
+          payer: expClient.publicKey,
+          escrow: expEscrowPDA,
+          escrowTokenAccount: expEscrowTA,
+          clientTokenAccount: expClientTA,
+          providerTokenAccount: expProviderTA,
+          registryProgram: REGISTRY_PROGRAM_ID,
+          providerProfile: provProfilePDA,
+          settlementSelf: SETTLEMENT_PROGRAM_ID,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([expClient]).rpc();
+
+      const escrow = await program.account.taskEscrow.fetch(expEscrowPDA);
+      expect(escrow.status.expired).to.be.ok;
+
+      // Client should have received the unapproved milestone 1 amount (500K)
+      const clientBalance = await connection.getTokenAccountBalance(expClientTA);
+      // Client started with 10M, locked 1M, got back 500K refund = 9.5M
+      expect(BigInt(clientBalance.value.amount)).to.equal(9500000n);
+
+      // Provider already received 500K from milestone 0 approval
+      const providerBalance = await connection.getTokenAccountBalance(expProviderTA);
+      expect(BigInt(providerBalance.value.amount)).to.equal(500000n);
+    });
+  });
+
+  // ============================================================================
+  // T-01: DISPUTE TIMEOUT RESOLUTION (NEGATIVE PATHS)
+  // ============================================================================
+
+  describe("Dispute timeout resolution (T-01)", () => {
+    let toClient: Keypair;
+    let toProvider: Keypair;
+    let toEscrowPDA: PublicKey;
+    let toEscrowTA: PublicKey;
+    let toClientTA: PublicKey;
+    let toProviderTA: PublicKey;
+    const toTaskId = new BN(902);
+
+    before(async () => {
+      toClient = Keypair.generate();
+      toProvider = Keypair.generate();
+
+      const airdropAmount = 10 * LAMPORTS_PER_SOL;
+      for (const kp of [toClient, toProvider]) {
+        const sig = await connection.requestAirdrop(kp.publicKey, airdropAmount);
+        await connection.confirmTransaction(sig);
+      }
+
+      toClientTA = await getOrCreateTokenAccount(toClient.publicKey, toClient);
+      toProviderTA = await getOrCreateTokenAccount(toProvider.publicKey, toClient);
+      await mintTo(connection, mintAuthority, tokenMint, toClientTA, mintAuthority.publicKey, 10000000n);
+
+      // Register provider for CPI
+      const registryProgram = anchor.workspace.AgentRegistry as Program;
+      const [profilePDA] = deriveAgentProfilePDA(toProvider.publicKey);
+      await registryProgram.methods
+        .registerAgent(
+          "Timeout Test Provider",
+          "Provider for timeout tests",
+          "timeout-testing",
+          ["task-execution"],
+          { perTask: {} },
+          new BN(100000),
+          [tokenMint],
+          Keypair.generate().publicKey
+        )
+        .accounts({
+          authority: toProvider.publicKey,
+          agentProfile: profilePDA,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([toProvider])
+        .rpc();
+
+      const milestonesData = [createMilestoneData(1000000n)];
+
+      [toEscrowPDA] = await anchor.web3.PublicKey.findProgramAddress(
+        [
+          Buffer.from("escrow"),
+          toClient.publicKey.toBuffer(),
+          toProvider.publicKey.toBuffer(),
+          toTaskId.toArrayLike(Buffer, "le", 8),
+        ],
+        program.programId
+      );
+      toEscrowTA = getAssociatedTokenAddressSync(tokenMint, toEscrowPDA, true);
+
+      await program.methods
+        .createEscrow(toTaskId, new BN(1000000), Buffer.alloc(32), FUTURE_DEADLINE, milestonesData, null)
+        .accounts({
+          client: toClient.publicKey,
+          clientVault: toClient.publicKey,
+          providerVault: toProvider.publicKey,
+          provider: toProvider.publicKey,
+          tokenMint: tokenMint,
+          clientTokenAccount: toClientTA,
+          escrow: toEscrowPDA,
+          escrowTokenAccount: toEscrowTA,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        })
+        .signers([toClient])
+        .rpc();
+
+      // Accept task and raise dispute
+      await program.methods.acceptTask()
+        .accounts({ provider: toProvider.publicKey, escrow: toEscrowPDA })
+        .signers([toProvider]).rpc();
+
+      await program.methods.raiseDispute()
+        .accounts({ requester: toClient.publicKey, escrow: toEscrowPDA })
+        .signers([toClient]).rpc();
+    });
+
+    it("should reject timeout resolution when timeout has not elapsed", async () => {
+      const [provProfilePDA] = deriveAgentProfilePDA(toProvider.publicKey);
+
+      try {
+        await program.methods.resolveDisputeTimeout()
+          .accounts({
+            payer: toClient.publicKey,
+            escrow: toEscrowPDA,
+            escrowTokenAccount: toEscrowTA,
+            clientTokenAccount: toClientTA,
+            registryProgram: REGISTRY_PROGRAM_ID,
+            providerProfile: provProfilePDA,
+            settlementSelf: SETTLEMENT_PROGRAM_ID,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .signers([toClient]).rpc();
+        expect.fail("Should have thrown DisputeTimeoutNotReached error");
+      } catch (error: any) {
+        expect(error).to.exist;
+        expect(error.toString()).to.include("DisputeTimeoutNotReached");
+      }
+    });
+
+    // TODO: Positive path test (timeout actually elapsed) requires anchor-bankrun
+    // or a test feature flag to override DISPUTE_TIMEOUT_SECONDS (7 days).
+    // The negative path above validates the critical code path.
+
+    it("should reject timeout resolution on non-disputed escrow", async () => {
+      // Create a separate Active (non-disputed) escrow
+      const ndTaskId = new BN(903);
+      const [ndEscrowPDA] = await anchor.web3.PublicKey.findProgramAddress(
+        [
+          Buffer.from("escrow"),
+          toClient.publicKey.toBuffer(),
+          toProvider.publicKey.toBuffer(),
+          ndTaskId.toArrayLike(Buffer, "le", 8),
+        ],
+        program.programId
+      );
+      const ndEscrowTA = getAssociatedTokenAddressSync(tokenMint, ndEscrowPDA, true);
+
+      await mintTo(connection, mintAuthority, tokenMint, toClientTA, mintAuthority.publicKey, 10000000n);
+
+      const milestonesData = [createMilestoneData(1000000n)];
+      await program.methods
+        .createEscrow(ndTaskId, new BN(1000000), Buffer.alloc(32), FUTURE_DEADLINE, milestonesData, null)
+        .accounts({
+          client: toClient.publicKey,
+          clientVault: toClient.publicKey,
+          providerVault: toProvider.publicKey,
+          provider: toProvider.publicKey,
+          tokenMint: tokenMint,
+          clientTokenAccount: toClientTA,
+          escrow: ndEscrowPDA,
+          escrowTokenAccount: ndEscrowTA,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        })
+        .signers([toClient])
+        .rpc();
+
+      await program.methods.acceptTask()
+        .accounts({ provider: toProvider.publicKey, escrow: ndEscrowPDA })
+        .signers([toProvider]).rpc();
+
+      // Try timeout resolution on Active (non-disputed) escrow
+      const [provProfilePDA] = deriveAgentProfilePDA(toProvider.publicKey);
+
+      try {
+        await program.methods.resolveDisputeTimeout()
+          .accounts({
+            payer: toClient.publicKey,
+            escrow: ndEscrowPDA,
+            escrowTokenAccount: ndEscrowTA,
+            clientTokenAccount: toClientTA,
+            registryProgram: REGISTRY_PROGRAM_ID,
+            providerProfile: provProfilePDA,
+            settlementSelf: SETTLEMENT_PROGRAM_ID,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .signers([toClient]).rpc();
         expect.fail("Should have thrown InvalidStatus error");
       } catch (error: any) {
         expect(error).to.exist;
