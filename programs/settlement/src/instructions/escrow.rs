@@ -28,6 +28,18 @@ pub fn create_escrow(
         SettlementError::SelfDealingProhibited
     );
 
+    // C3: Dispute resolver must be a neutral third party. A client who names
+    // themselves as resolver can flip `is_resolver = true` in resolve_dispute
+    // and trigger provider reputation slashing unilaterally, bypassing the
+    // A-03 guard. Similarly, provider-as-resolver is self-judgment.
+    if let Some(resolver) = dispute_resolver {
+        require!(
+            resolver != ctx.accounts.client.key()
+                && resolver != ctx.accounts.provider.key(),
+            SettlementError::InvalidDisputeResolver
+        );
+    }
+
     let mut total_milestone_amount: u64 = 0;
     for milestone in &milestones_data {
         require!(milestone.amount > 0, SettlementError::InvalidAmount);
@@ -147,9 +159,16 @@ pub fn approve_milestone(ctx: Context<ApproveMilestone>, milestone_index: u32) -
     let client_key: Pubkey;
     let provider_key: Pubkey;
     let task_id: u64;
+    let now = Clock::get()?.unix_timestamp;
     {
         let escrow = &ctx.accounts.escrow;
         require!(escrow.status == EscrowStatus::Active, SettlementError::InvalidStatus);
+        // C2: Approval must happen before deadline, symmetric with submit_milestone.
+        // After deadline, Submitted milestones are auto-paid by expire_escrow
+        // (silence = acceptance), so provider still gets paid without a manual
+        // approval path. This prevents a client from ratifying a Submitted
+        // milestone well past the deadline to bypass the expire flow.
+        require!(now <= escrow.deadline, SettlementError::DeadlinePassed);
         require!(
             ctx.accounts.client.key() == escrow.client,
             SettlementError::UnauthorizedClient
@@ -327,15 +346,36 @@ pub fn expire_escrow(ctx: Context<ExpireEscrow>) -> Result<()> {
         SettlementError::InvalidStatus
     );
 
+    // C1: On expiry, a Submitted milestone is implicitly approved — "silence
+    // equals acceptance." This closes the attack where a client accepts
+    // submitted work but stalls on approval to extract a full refund after
+    // the deadline, while also slashing the provider's reputation.
+    //
+    // Settlement on expiry:
+    //   * Approved   → already paid (counted in released_amount, skipped here)
+    //   * Submitted  → paid to provider (auto-approve)
+    //   * Pending    → refunded to client; counts as non-delivery
+    //   * Rejected   → refunded to client; not a non-delivery signal (client
+    //                   explicitly rejected, provider had a chance to re-submit)
+    //   * Disputed   → unreachable: RaiseDispute transitions escrow.status to
+    //                   Disputed, which fails the EscrowStatus guard above.
     let mut provider_earned: u64 = 0;
+    let mut has_pending: bool = false;
     for milestone in &escrow.milestones {
-        if milestone.status == MilestoneStatus::Approved {
-            provider_earned = provider_earned
-                .checked_add(milestone.amount)
-                .ok_or(SettlementError::AmountOverflow)?;
+        match milestone.status {
+            MilestoneStatus::Submitted => {
+                provider_earned = provider_earned
+                    .checked_add(milestone.amount)
+                    .ok_or(SettlementError::AmountOverflow)?;
+            }
+            MilestoneStatus::Pending => {
+                has_pending = true;
+            }
+            MilestoneStatus::Approved
+            | MilestoneStatus::Rejected
+            | MilestoneStatus::Disputed => {}
         }
     }
-    provider_earned = provider_earned.saturating_sub(escrow.released_amount);
 
     let remaining = escrow
         .total_amount
@@ -351,6 +391,11 @@ pub fn expire_escrow(ctx: Context<ExpireEscrow>) -> Result<()> {
     let provider_key = escrow.provider;
     let task_id = escrow.task_id;
     let task_id_bytes = task_id.to_le_bytes();
+    // Slash the provider only when they accepted the task (status == Active)
+    // and then failed to submit work for at least one milestone by the
+    // deadline. A never-accepted task (status == Created) is not a
+    // non-delivery — the provider never committed.
+    let prior_status = escrow.status.clone();
 
     let signer_seeds: &[&[&[u8]]] = &[&[
         b"escrow",
@@ -392,16 +437,25 @@ pub fn expire_escrow(ctx: Context<ExpireEscrow>) -> Result<()> {
         )?;
     }
 
-    let has_undelivered = escrow.milestones.iter().any(|m| m.status == MilestoneStatus::Submitted);
-    let provider_key_for_slash = escrow.provider;
+    let should_slash = prior_status == EscrowStatus::Active && has_pending;
 
     let escrow = &mut ctx.accounts.escrow;
-    escrow.released_amount = escrow.total_amount;
+    escrow.released_amount = escrow
+        .released_amount
+        .checked_add(provider_earned)
+        .and_then(|v| v.checked_add(client_refund))
+        .ok_or(SettlementError::AmountOverflow)?;
     escrow.status = EscrowStatus::Expired;
+    // Mark auto-paid Submitted milestones as Approved for audit clarity.
+    for milestone in escrow.milestones.iter_mut() {
+        if milestone.status == MilestoneStatus::Submitted {
+            milestone.status = MilestoneStatus::Approved;
+        }
+    }
 
-    if has_undelivered {
+    if should_slash {
         update_provider_reputation(
-            provider_key_for_slash,
+            provider_key,
             0,
             REPUTATION_DELTA_EXPIRY_UNDELIVERED,
             false,

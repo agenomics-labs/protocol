@@ -67,4 +67,7 @@ pub enum SettlementError {
 
     #[msg("Dispute timeout has not been reached yet")]
     DisputeTimeoutNotReached,
+
+    #[msg("Dispute resolver must be a neutral third party — not the client or provider")]
+    InvalidDisputeResolver,
 }
