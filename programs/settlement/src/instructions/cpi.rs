@@ -15,11 +15,20 @@ use crate::events::*;
 /// ADR-039: Accepts `reputation_delta` and `task_completed` as parameters,
 /// enabling both positive reputation (task completion) and negative reputation
 /// (dispute/expiry slashing).
+///
+/// Finding #8 (ARCHITECTURE_DEEP_CRITIQUE): pre-fix, `rating` was hard-coded to 0
+/// here, and `update_reputation` in the registry only folds rating into
+/// `avg_rating` when it's non-zero — so `avg_rating` was always 0 for every
+/// agent. The CPI now surfaces `rating` as a real caller argument; only
+/// `approve_milestone` (the client's explicit ratification step) supplies a
+/// non-zero value. Slash/expire/dispute paths pass 0 because no rating
+/// judgment exists on those paths.
 pub fn update_provider_reputation<'info>(
     provider: Pubkey,
     earnings: u64,
     reputation_delta: i64,
     task_completed: bool,
+    rating: u8,
     registry_program: AccountInfo<'info>,
     provider_profile: AccountInfo<'info>,
     settlement_authority: AccountInfo<'info>,
@@ -29,7 +38,6 @@ pub fn update_provider_reputation<'info>(
     use anchor_lang::solana_program::program::invoke_signed;
 
     let discriminator: [u8; 8] = [194, 220, 43, 201, 54, 209, 49, 178];
-    let rating: u8 = 0;
 
     let mut data = Vec::with_capacity(8 + 8 + 1 + 8 + 1);
     data.extend_from_slice(&discriminator);

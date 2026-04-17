@@ -53,27 +53,176 @@ interface ParsedEvent {
 }
 
 /**
- * Map of known 8-byte Anchor event discriminator hex prefixes to event names.
- * Discriminators are the first 8 bytes of sha256("event:<EventName>").
+ * Real Anchor event discriminators, computed as sha256("event:<EventName>")[..8].
+ *
+ * Pre-fix (finding #6), this map held 15 fabricated hex values that never matched
+ * any real on-chain event. Every log fell through to the `event_<hex>` fallback
+ * and the classifier was effectively off. The values below were produced by:
+ *
+ *     sha256("event:AgentRegistered").subarray(0, 8)
+ *
+ * matching Anchor 0.30+ `#[event]` macro output. If an event is renamed in the
+ * Rust source, regenerate and update this table.
  */
 const DISCRIMINATOR_MAP: Record<string, string> = {
-  "40de3a87fb1a2b49": "EscrowCreated",
-  "5b3a79c0e8f1d264": "TaskAccepted",
-  "6c4b8ad1f9e2c375": "MilestoneSubmitted",
-  "7d5c9be2a0f3d486": "MilestoneApproved",
-  "8e6dacf3b104e597": "MilestoneRejected",
-  "9f7ebd04c215f6a8": "EscrowCancelled",
-  "a08fce15d326a7b9": "DisputeRaised",
-  "b190df26e437b8ca": "DisputeResolved",
-  "c2a1e037f548c9db": "VaultCreated",
-  "d3b2f148a659daec": "VaultTransfer",
-  "e4c3a259b76aebfd": "VaultPaused",
-  "f5d4b36ac87bfc0e": "VaultResumed",
-  "a6e5c47bd98c0d1f": "PolicyUpdated",
-  "b7f6d58cea9d1e20": "AllowlistUpdated",
-  "c8a7e69dfbae2f31": "AgentRegistered",
-  "d9b8f7ae0cbf3a42": "AgentProfileUpdated",
-  "eac9a8bf1dc04b53": "ReputationUpdated",
+  // agent-registry
+  bf4ed936e864bd55: "AgentRegistered",
+  "255624473bed06f7": "AgentProfileUpdated",
+  c4d1b14343dfe10a: "AgentStatusUpdated",
+  "1a24bb96eb5a6a59": "ReputationUpdated",
+  "0c46497d1e7d060a": "ReputationStaked",
+  "7897274de30de5b9": "AgentSlashed",
+  "92ad47a0816f2aa2": "ReputationUnstaked",
+  "8445f61387411c86": "AgentDeregistered",
+  "59294014abdd32d7": "SuspensionCleared",
+
+  // agent-vault
+  b42bcf021247034b: "VaultInitialized",
+  e17070435fecf5a1: "PolicyUpdated",
+  d3e3a80e206fbdd2: "TransactionExecuted",
+  d2d9456a8479016c: "ProgramCallExecuted",
+  "46fb7d915b2ec652": "TokenTransferExecuted",
+  "58ef5d414a8c53d5": "AllowlistUpdated",
+  c69d16974464a223: "VaultPaused",
+  d0adee40213fe297: "VaultResumed",
+
+  // settlement
+  "467f69665c6107ad": "EscrowCreated",
+  "7da42467c174421b": "TaskAccepted",
+  f2134b630c1c1321: "MilestoneSubmitted",
+  "286d9f90a9e623e5": "MilestoneApproved",
+  c2f2509338e4c3f5: "MilestoneRejected",
+  e51a00ca8ca76abb: "EscrowCompleted",
+  f6a76d258e2d26b0: "DisputeRaised",
+  "7940f9998b80ecbb": "DisputeResolved",
+  "62f1c37ad500a2a1": "EscrowCancelled",
+  bd16aafa4bda3a70: "EscrowExpired",
+  "611134c2e8133ec3": "ReputationUpdateScheduled",
+};
+
+/**
+ * Minimal borsh reader for Anchor event payloads.
+ *
+ * Anchor serializes `#[event]` structs with borsh:
+ *   - Pubkey        → 32 raw bytes
+ *   - u8/u32/u64    → little-endian
+ *   - i64           → little-endian, two's complement
+ *   - bool          → 1 byte (0/1)
+ *   - String        → u32 length prefix (LE) + UTF-8 bytes
+ *   - enum<A,B,...> → 1-byte variant tag, then variant payload
+ *
+ * We only decode the events that drive downstream state. Other events stay
+ * classified (name is right) but keep the raw payload for later inspection.
+ */
+class BorshReader {
+  private offset = 0;
+
+  constructor(private readonly buf: Buffer) {}
+
+  get done(): boolean {
+    return this.offset >= this.buf.length;
+  }
+
+  u8(): number {
+    const v = this.buf.readUInt8(this.offset);
+    this.offset += 1;
+    return v;
+  }
+
+  u32(): number {
+    const v = this.buf.readUInt32LE(this.offset);
+    this.offset += 4;
+    return v;
+  }
+
+  u64(): bigint {
+    const v = this.buf.readBigUInt64LE(this.offset);
+    this.offset += 8;
+    return v;
+  }
+
+  i64(): bigint {
+    const v = this.buf.readBigInt64LE(this.offset);
+    this.offset += 8;
+    return v;
+  }
+
+  bool(): boolean {
+    return this.u8() !== 0;
+  }
+
+  pubkey(): string {
+    const slice = this.buf.subarray(this.offset, this.offset + 32);
+    this.offset += 32;
+    return new PublicKey(Buffer.from(slice)).toBase58();
+  }
+
+  string(): string {
+    const len = this.u32();
+    const s = this.buf.subarray(this.offset, this.offset + len).toString("utf8");
+    this.offset += len;
+    return s;
+  }
+}
+
+// u64 can exceed Number.MAX_SAFE_INTEGER; the SQLite column is INTEGER (i64)
+// so we preserve precision by returning the bigint string when it's out of
+// safe range. Consumers who need arithmetic cast explicitly.
+function u64ToJson(v: bigint): number | string {
+  return v <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(v) : v.toString();
+}
+function i64ToJson(v: bigint): number | string {
+  return v >= BigInt(Number.MIN_SAFE_INTEGER) && v <= BigInt(Number.MAX_SAFE_INTEGER)
+    ? Number(v)
+    : v.toString();
+}
+
+type EventDecoder = (r: BorshReader) => Record<string, unknown>;
+
+const AGENT_STATUS_VARIANTS = ["Active", "Paused", "Retired", "Suspended"] as const;
+
+/**
+ * Decoders for events that update the `agents` projection. Anything not in
+ * this map keeps its classified name but stores `{discriminator, rawData}`
+ * so the event log remains useful for forensics without us taking on the
+ * decode surface for every field.
+ */
+const EVENT_DECODERS: Record<string, EventDecoder> = {
+  AgentRegistered: (r) => ({
+    authority: r.pubkey(),
+    name: r.string(),
+    category: r.string(),
+    vault_address: r.pubkey(),
+    timestamp: i64ToJson(r.i64()),
+  }),
+  AgentProfileUpdated: (r) => ({
+    authority: r.pubkey(),
+    name: r.string(),
+    timestamp: i64ToJson(r.i64()),
+  }),
+  AgentStatusUpdated: (r) => {
+    const authority = r.pubkey();
+    const tag = r.u8();
+    const new_status = AGENT_STATUS_VARIANTS[tag] ?? `Unknown(${tag})`;
+    return { authority, new_status, timestamp: i64ToJson(r.i64()) };
+  },
+  ReputationUpdated: (r) => ({
+    authority: r.pubkey(),
+    new_reputation_score: u64ToJson(r.u64()),
+    reputation_delta: i64ToJson(r.i64()),
+    task_completed: r.bool(),
+    timestamp: i64ToJson(r.i64()),
+  }),
+  AgentDeregistered: (r) => ({
+    authority: r.pubkey(),
+    name: r.string(),
+    timestamp: i64ToJson(r.i64()),
+  }),
+  SuspensionCleared: (r) => ({
+    authority: r.pubkey(),
+    new_reputation_score: u64ToJson(r.u64()),
+    timestamp: i64ToJson(r.i64()),
+  }),
 };
 
 function parseLogsForEvents(logs: string[], _programLabel: string): ParsedEvent[] {
@@ -92,12 +241,44 @@ function parseLogsForEvents(logs: string[], _programLabel: string): ParsedEvent[
 
     try {
       const decoded = Buffer.from(match[1], "base64");
+      if (decoded.length < 8) {
+        continue;
+      }
       const discriminator = decoded.subarray(0, 8).toString("hex");
-      const rawData = decoded.subarray(8).toString("hex");
-      const eventName = DISCRIMINATOR_MAP[discriminator] || `event_${discriminator.substring(0, 8)}`;
+      const eventName = DISCRIMINATOR_MAP[discriminator];
+
+      if (eventName) {
+        const decoder = EVENT_DECODERS[eventName];
+        if (decoder) {
+          try {
+            const data = decoder(new BorshReader(decoded.subarray(8)));
+            events.push({ name: eventName, data });
+            continue;
+          } catch (decodeErr) {
+            // Field-level decode failure: keep the classification but preserve
+            // the raw bytes so a later investigator can see what went wrong.
+            events.push({
+              name: eventName,
+              data: {
+                discriminator,
+                rawData: decoded.subarray(8).toString("hex"),
+                decodeError: (decodeErr as Error).message,
+              },
+            });
+            continue;
+          }
+        }
+        events.push({
+          name: eventName,
+          data: { discriminator, rawData: decoded.subarray(8).toString("hex") },
+        });
+        continue;
+      }
+
+      // Unknown discriminator — fall back to raw classification.
       events.push({
-        name: eventName,
-        data: { discriminator, rawData },
+        name: `event_${discriminator.substring(0, 8)}`,
+        data: { discriminator, rawData: decoded.subarray(8).toString("hex") },
       });
     } catch {
       // Skip unparseable base64 data
@@ -108,9 +289,11 @@ function parseLogsForEvents(logs: string[], _programLabel: string): ParsedEvent[
 }
 
 function updateAgentFromEvent(db: Database.Database, event: ParsedEvent): void {
-  const data = event.data as Record<string, string>;
+  const data = event.data as Record<string, unknown>;
+  const authority = typeof data.authority === "string" ? data.authority : undefined;
 
   if (event.name === "AgentRegistered") {
+    if (!authority) return;
     const stmt = db.prepare(`
       INSERT INTO agents (authority, name, category, last_updated)
       VALUES (?, ?, ?, datetime('now'))
@@ -120,25 +303,70 @@ function updateAgentFromEvent(db: Database.Database, event: ParsedEvent): void {
         last_updated = datetime('now')
     `);
     stmt.run(
-      data.authority || "unknown",
-      data.name || null,
-      data.category || null
+      authority,
+      typeof data.name === "string" ? data.name : null,
+      typeof data.category === "string" ? data.category : null
     );
+    return;
   }
 
-  if (event.name === "ReputationUpdated") {
+  if (event.name === "AgentProfileUpdated") {
+    if (!authority) return;
     const stmt = db.prepare(`
       UPDATE agents SET
-        reputation_score = ?,
-        tasks_completed = tasks_completed + 1,
+        name = COALESCE(?, name),
         last_updated = datetime('now')
       WHERE authority = ?
     `);
-    stmt.run(
-      parseInt(data.new_score || "0", 10),
-      data.authority || "unknown"
-    );
+    stmt.run(typeof data.name === "string" ? data.name : null, authority);
+    return;
   }
+
+  if (event.name === "ReputationUpdated") {
+    if (!authority) return;
+    const score = coerceScore(data.new_reputation_score);
+    const taskCompleted = data.task_completed === true ? 1 : 0;
+    const stmt = db.prepare(`
+      UPDATE agents SET
+        reputation_score = ?,
+        tasks_completed = tasks_completed + ?,
+        last_updated = datetime('now')
+      WHERE authority = ?
+    `);
+    stmt.run(score, taskCompleted, authority);
+    return;
+  }
+
+  if (event.name === "SuspensionCleared") {
+    if (!authority) return;
+    const score = coerceScore(data.new_reputation_score);
+    const stmt = db.prepare(`
+      UPDATE agents SET
+        reputation_score = ?,
+        last_updated = datetime('now')
+      WHERE authority = ?
+    `);
+    stmt.run(score, authority);
+    return;
+  }
+
+  if (event.name === "AgentDeregistered") {
+    if (!authority) return;
+    db.prepare(`DELETE FROM agents WHERE authority = ?`).run(authority);
+    return;
+  }
+}
+
+function coerceScore(v: unknown): number {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  }
+  if (typeof v === "bigint") {
+    return v <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(v) : Number.MAX_SAFE_INTEGER;
+  }
+  return 0;
 }
 
 const RECONNECT_DELAY_MS = 3000;
@@ -330,9 +558,20 @@ async function main(): Promise<void> {
   });
 }
 
-main().catch((err) => {
-  console.error("Fatal error:", err);
-  process.exit(1);
-});
+// When imported by the test runner, `main()` must not auto-run; guard on
+// direct execution only.
+if (require.main === module) {
+  main().catch((err) => {
+    console.error("Fatal error:", err);
+    process.exit(1);
+  });
+}
 
-export { initDb, parseLogsForEvents, updateAgentFromEvent, createApi, PROGRAM_IDS };
+export {
+  initDb,
+  parseLogsForEvents,
+  updateAgentFromEvent,
+  createApi,
+  PROGRAM_IDS,
+  DISCRIMINATOR_MAP,
+};

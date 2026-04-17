@@ -11,6 +11,14 @@ anchor.setProvider(provider);
 // PDA seed constants
 const AGENT_PROFILE_SEED = "agent-profile";
 
+// Finding #9: Canonical Agent Vault program ID; `register_agent` now
+// validates `AgentProfile.vault_address` matches the PDA derived from
+// `[b"vault", authority]` under this program. No more caller-supplied
+// impostor vault addresses.
+const VAULT_PROGRAM_ID = new web3.PublicKey(
+  "4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN"
+);
+
 // Helper function to derive agent profile PDA
 function deriveAgentProfilePDA(authority: web3.PublicKey): [web3.PublicKey, number] {
   return web3.PublicKey.findProgramAddressSync(
@@ -18,6 +26,15 @@ function deriveAgentProfilePDA(authority: web3.PublicKey): [web3.PublicKey, numb
     program.programId
   );
 }
+
+// Finding #9: canonical vault PDA helper for registry tests.
+function deriveVaultPDA(authority: web3.PublicKey): [web3.PublicKey, number] {
+  return web3.PublicKey.findProgramAddressSync(
+    [Buffer.from("vault"), authority.toBuffer()],
+    VAULT_PROGRAM_ID
+  );
+}
+const vaultFor = (pk: web3.PublicKey) => deriveVaultPDA(pk)[0];
 
 describe("Agent Registry Program Tests", () => {
   // Test accounts
@@ -32,15 +49,18 @@ describe("Agent Registry Program Tests", () => {
   const testCategory = "data-analysis";
   const testCapabilities = ["data-cleaning", "statistical-analysis", "visualization"];
   const testPricingAmount = web3.LAMPORTS_PER_SOL;
-  const testVaultAddress = web3.PublicKey.default;
+  // Finding #9: computed post-keypair-generation in `before()` — must match
+  // the canonical vault PDA for the happy-path authority.
+  let testVaultAddress: web3.PublicKey;
 
   before(async () => {
     // Generate test keypairs
     agentAuthority = web3.Keypair.generate();
     otherUser = web3.Keypair.generate();
 
-    // Derive PDA
+    // Derive PDAs
     [agentProfilePDA, agentProfileBump] = deriveAgentProfilePDA(agentAuthority.publicKey);
+    testVaultAddress = vaultFor(agentAuthority.publicKey);
 
     // Airdrop SOL to test accounts
     const airdropAmount = 2 * web3.LAMPORTS_PER_SOL;
@@ -63,12 +83,12 @@ describe("Agent Registry Program Tests", () => {
           testCapabilities,
           { perTask: {} }, // PricingModel::PerTask
           new BN(testPricingAmount),
-          acceptedTokens,
-          testVaultAddress
+          acceptedTokens
         )
         .accounts({
           authority: agentAuthority.publicKey,
           agentProfile: agentProfilePDA,
+          vault: testVaultAddress,
           systemProgram: web3.SystemProgram.programId,
         })
         .signers([agentAuthority])
@@ -116,6 +136,96 @@ describe("Agent Registry Program Tests", () => {
       expect(agentProfile.updatedAt.toNumber()).to.be.closeTo(currentTime, 5);
       expect(agentProfile.createdAt.toNumber()).to.equal(agentProfile.updatedAt.toNumber());
     });
+
+    // Finding #9: vault_address must be the canonical PDA
+    // `[b"vault", authority]` under the Agent Vault program. Supplying any
+    // other pubkey is rejected by Anchor's seeds constraint at
+    // deserialization — long before any instruction handler runs.
+    it("should reject register_agent if vault is not the canonical vault PDA", async () => {
+      const mismatchAuthority = web3.Keypair.generate();
+      const airdrop = await provider.connection.requestAirdrop(
+        mismatchAuthority.publicKey,
+        web3.LAMPORTS_PER_SOL
+      );
+      await provider.connection.confirmTransaction(airdrop);
+
+      const [mismatchProfilePDA] = deriveAgentProfilePDA(mismatchAuthority.publicKey);
+      const acceptedTokens = [new web3.PublicKey("11111111111111111111111111111112")];
+
+      // Use the vault PDA of an UNRELATED authority — the seeds constraint
+      // binds vault seeds to *this* authority, so the runtime must reject it.
+      const impostorVault = vaultFor(web3.Keypair.generate().publicKey);
+
+      try {
+        await program.methods
+          .registerAgent(
+            "Impostor",
+            testDescription,
+            testCategory,
+            testCapabilities,
+            { perTask: {} },
+            new BN(testPricingAmount),
+            acceptedTokens
+          )
+          .accounts({
+            authority: mismatchAuthority.publicKey,
+            agentProfile: mismatchProfilePDA,
+            vault: impostorVault,
+            systemProgram: web3.SystemProgram.programId,
+          })
+          .signers([mismatchAuthority])
+          .rpc();
+
+        expect.fail("Should have rejected a non-canonical vault PDA");
+      } catch (err: any) {
+        // Anchor raises ConstraintSeeds (code 2006) when seeds::program +
+        // seeds don't re-derive the supplied account key.
+        const msg = (err?.toString?.() ?? "") + JSON.stringify(err?.logs ?? "");
+        expect(msg).to.match(/ConstraintSeeds|A seeds constraint was violated|2006/);
+      }
+    });
+
+    // Finding #9: an arbitrary (off-curve) pubkey is just as invalid — the
+    // Anchor seed check doesn't care whether it's on curve, only whether
+    // `findProgramAddress([b"vault", authority], vault_program_id)` matches.
+    it("should reject register_agent if vault is an arbitrary pubkey", async () => {
+      const randomAuthority = web3.Keypair.generate();
+      const airdrop = await provider.connection.requestAirdrop(
+        randomAuthority.publicKey,
+        web3.LAMPORTS_PER_SOL
+      );
+      await provider.connection.confirmTransaction(airdrop);
+
+      const [randomProfilePDA] = deriveAgentProfilePDA(randomAuthority.publicKey);
+      const acceptedTokens = [new web3.PublicKey("11111111111111111111111111111112")];
+
+      try {
+        await program.methods
+          .registerAgent(
+            "Arbitrary",
+            testDescription,
+            testCategory,
+            testCapabilities,
+            { perTask: {} },
+            new BN(testPricingAmount),
+            acceptedTokens
+          )
+          .accounts({
+            authority: randomAuthority.publicKey,
+            agentProfile: randomProfilePDA,
+            // System Program is a known, definitely-not-a-vault pubkey.
+            vault: web3.SystemProgram.programId,
+            systemProgram: web3.SystemProgram.programId,
+          })
+          .signers([randomAuthority])
+          .rpc();
+
+        expect.fail("Should have rejected an arbitrary pubkey as vault");
+      } catch (err: any) {
+        const msg = (err?.toString?.() ?? "") + JSON.stringify(err?.logs ?? "");
+        expect(msg).to.match(/ConstraintSeeds|A seeds constraint was violated|2006/);
+      }
+    });
   });
 
   describe("update_profile - Happy Path", () => {
@@ -131,8 +241,7 @@ describe("Agent Registry Program Tests", () => {
           null, // capabilities
           null, // pricing_model
           new BN(newPricingAmount), // pricing_amount
-          null, // accepted_tokens
-          null // vault_address
+          null // accepted_tokens
         )
         .accounts({
           authority: agentAuthority.publicKey,
@@ -161,8 +270,7 @@ describe("Agent Registry Program Tests", () => {
           newCapabilities, // capabilities
           null, // pricing_model
           null, // pricing_amount
-          null, // accepted_tokens
-          null // vault_address
+          null // accepted_tokens
         )
         .accounts({
           authority: agentAuthority.publicKey,
@@ -189,8 +297,7 @@ describe("Agent Registry Program Tests", () => {
           null, // capabilities
           null, // pricing_model
           null, // pricing_amount
-          newTokens, // accepted_tokens
-          null // vault_address
+          newTokens // accepted_tokens
         )
         .accounts({
           authority: agentAuthority.publicKey,
@@ -221,8 +328,7 @@ describe("Agent Registry Program Tests", () => {
           null, // capabilities
           null, // pricing_model
           null, // pricing_amount
-          null, // accepted_tokens
-          null // vault_address
+          null // accepted_tokens
         )
         .accounts({
           authority: agentAuthority.publicKey,
@@ -335,12 +441,12 @@ describe("Agent Registry Program Tests", () => {
             testCategory,
             testCapabilities,
             { perTask: {} }, new BN(testPricingAmount),
-            acceptedTokens,
-            testVaultAddress
+            acceptedTokens
           )
           .accounts({
             authority: testAuthority.publicKey,
             agentProfile: testPDA,
+            vault: vaultFor(testAuthority.publicKey),
             systemProgram: web3.SystemProgram.programId,
           })
           .signers([testAuthority])
@@ -369,12 +475,12 @@ describe("Agent Registry Program Tests", () => {
           testCategory,
           testCapabilities,
           { perTask: {} }, new BN(testPricingAmount),
-          acceptedTokens,
-          testVaultAddress
+          acceptedTokens
         )
         .accounts({
           authority: testAuthority.publicKey,
           agentProfile: testPDA,
+          vault: vaultFor(testAuthority.publicKey),
           systemProgram: web3.SystemProgram.programId,
         })
         .signers([testAuthority])
@@ -404,12 +510,12 @@ describe("Agent Registry Program Tests", () => {
             testCategory,
             testCapabilities,
             { perTask: {} }, new BN(testPricingAmount),
-            acceptedTokens,
-            testVaultAddress
+            acceptedTokens
           )
           .accounts({
             authority: testAuthority.publicKey,
             agentProfile: testPDA,
+            vault: vaultFor(testAuthority.publicKey),
             systemProgram: web3.SystemProgram.programId,
           })
           .signers([testAuthority])
@@ -438,12 +544,12 @@ describe("Agent Registry Program Tests", () => {
           testCategory,
           testCapabilities,
           { perTask: {} }, new BN(testPricingAmount),
-          acceptedTokens,
-          testVaultAddress
+          acceptedTokens
         )
         .accounts({
           authority: testAuthority.publicKey,
           agentProfile: testPDA,
+          vault: vaultFor(testAuthority.publicKey),
           systemProgram: web3.SystemProgram.programId,
         })
         .signers([testAuthority])
@@ -471,12 +577,12 @@ describe("Agent Registry Program Tests", () => {
             testCategory,
             [], // Empty capabilities
             { perTask: {} }, new BN(testPricingAmount),
-            acceptedTokens,
-            testVaultAddress
+            acceptedTokens
           )
           .accounts({
             authority: testAuthority.publicKey,
             agentProfile: testPDA,
+            vault: vaultFor(testAuthority.publicKey),
             systemProgram: web3.SystemProgram.programId,
           })
           .signers([testAuthority])
@@ -506,12 +612,12 @@ describe("Agent Registry Program Tests", () => {
             testCategory,
             tooManyCapabilities,
             { perTask: {} }, new BN(testPricingAmount),
-            acceptedTokens,
-            testVaultAddress
+            acceptedTokens
           )
           .accounts({
             authority: testAuthority.publicKey,
             agentProfile: testPDA,
+            vault: vaultFor(testAuthority.publicKey),
             systemProgram: web3.SystemProgram.programId,
           })
           .signers([testAuthority])
@@ -540,12 +646,12 @@ describe("Agent Registry Program Tests", () => {
           testCategory,
           tenCapabilities,
           { perTask: {} }, new BN(testPricingAmount),
-          acceptedTokens,
-          testVaultAddress
+          acceptedTokens
         )
         .accounts({
           authority: testAuthority.publicKey,
           agentProfile: testPDA,
+          vault: vaultFor(testAuthority.publicKey),
           systemProgram: web3.SystemProgram.programId,
         })
         .signers([testAuthority])
@@ -572,12 +678,12 @@ describe("Agent Registry Program Tests", () => {
           testCategory,
           singleCapability,
           { perTask: {} }, new BN(testPricingAmount),
-          acceptedTokens,
-          testVaultAddress
+          acceptedTokens
         )
         .accounts({
           authority: testAuthority.publicKey,
           agentProfile: testPDA,
+          vault: vaultFor(testAuthority.publicKey),
           systemProgram: web3.SystemProgram.programId,
         })
         .signers([testAuthority])
@@ -605,12 +711,12 @@ describe("Agent Registry Program Tests", () => {
             testCategory,
             testCapabilities,
             { perTask: {} }, new BN(testPricingAmount),
-            [], // Empty accepted_tokens
-            testVaultAddress
+            [] // Empty accepted_tokens
           )
           .accounts({
             authority: testAuthority.publicKey,
             agentProfile: testPDA,
+            vault: vaultFor(testAuthority.publicKey),
             systemProgram: web3.SystemProgram.programId,
           })
           .signers([testAuthority])
@@ -641,12 +747,12 @@ describe("Agent Registry Program Tests", () => {
             testCategory,
             testCapabilities,
             { perTask: {} }, new BN(testPricingAmount),
-            tooManyTokens,
-            testVaultAddress
+            tooManyTokens
           )
           .accounts({
             authority: testAuthority.publicKey,
             agentProfile: testPDA,
+            vault: vaultFor(testAuthority.publicKey),
             systemProgram: web3.SystemProgram.programId,
           })
           .signers([testAuthority])
@@ -676,12 +782,12 @@ describe("Agent Registry Program Tests", () => {
           testCategory,
           testCapabilities,
           { perTask: {} }, new BN(testPricingAmount),
-          fiveTokens,
-          testVaultAddress
+          fiveTokens
         )
         .accounts({
           authority: testAuthority.publicKey,
           agentProfile: testPDA,
+          vault: vaultFor(testAuthority.publicKey),
           systemProgram: web3.SystemProgram.programId,
         })
         .signers([testAuthority])
@@ -707,12 +813,12 @@ describe("Agent Registry Program Tests", () => {
           testCategory,
           testCapabilities,
           { perTask: {} }, new BN(testPricingAmount),
-          singleToken,
-          testVaultAddress
+          singleToken
         )
         .accounts({
           authority: testAuthority.publicKey,
           agentProfile: testPDA,
+          vault: vaultFor(testAuthority.publicKey),
           systemProgram: web3.SystemProgram.programId,
         })
         .signers([testAuthority])
@@ -744,12 +850,12 @@ describe("Agent Registry Program Tests", () => {
           ["auth-testing"],
           { perTask: {} },
           new BN(100000),
-          acceptedTokens,
-          web3.Keypair.generate().publicKey
+          acceptedTokens
         )
         .accounts({
           authority: authTestAuthority.publicKey,
           agentProfile: authTestPDA,
+          vault: vaultFor(authTestAuthority.publicKey),
           systemProgram: web3.SystemProgram.programId,
         })
         .signers([authTestAuthority])
@@ -761,7 +867,6 @@ describe("Agent Registry Program Tests", () => {
         await program.methods
           .updateProfile(
             "Hacked Name",
-            null,
             null,
             null,
             null,
@@ -823,12 +928,12 @@ describe("Agent Registry Program Tests", () => {
           testCategory,
           testCapabilities,
           { perTask: {} }, new BN(testPricingAmount),
-          acceptedTokens,
-          testVaultAddress
+          acceptedTokens
         )
         .accounts({
           authority: deregisterAuthority.publicKey,
           agentProfile: deregisterPDA,
+          vault: vaultFor(deregisterAuthority.publicKey),
           systemProgram: web3.SystemProgram.programId,
         })
         .signers([deregisterAuthority])
@@ -879,12 +984,12 @@ describe("Agent Registry Program Tests", () => {
           testCategory,
           testCapabilities,
           { perTask: {} }, new BN(testPricingAmount),
-          acceptedTokens,
-          testVaultAddress
+          acceptedTokens
         )
         .accounts({
           authority: deregisterAuthority.publicKey,
           agentProfile: deregisterPDA,
+          vault: vaultFor(deregisterAuthority.publicKey),
           systemProgram: web3.SystemProgram.programId,
         })
         .signers([deregisterAuthority])
@@ -930,12 +1035,12 @@ describe("Agent Registry Program Tests", () => {
           testCategory,
           testCapabilities,
           { perTask: {} }, new BN(testPricingAmount),
-          acceptedTokens,
-          testVaultAddress
+          acceptedTokens
         )
         .accounts({
           authority: deregisterAuthority.publicKey,
           agentProfile: deregisterPDA,
+          vault: vaultFor(deregisterAuthority.publicKey),
           systemProgram: web3.SystemProgram.programId,
         })
         .signers([deregisterAuthority])
@@ -987,12 +1092,12 @@ describe("Agent Registry Program Tests", () => {
             categories[i],
             [`capability-${i}-1`, `capability-${i}-2`],
             { perTask: {} }, new BN(testPricingAmount),
-            acceptedTokens,
-            testVaultAddress
+            acceptedTokens
           )
           .accounts({
             authority: newAuthority.publicKey,
             agentProfile: newPDA,
+            vault: vaultFor(newAuthority.publicKey),
             systemProgram: web3.SystemProgram.programId,
           })
           .signers([newAuthority])
@@ -1082,12 +1187,12 @@ describe("Agent Registry Program Tests", () => {
           testCategory,
           testCapabilities,
           { perTask: {} }, new BN(testPricingAmount),
-          acceptedTokens,
-          testVaultAddress
+          acceptedTokens
         )
         .accounts({
           authority: testAuthority.publicKey,
           agentProfile: testPDA,
+          vault: vaultFor(testAuthority.publicKey),
           systemProgram: web3.SystemProgram.programId,
         })
         .signers([testAuthority])
@@ -1112,12 +1217,12 @@ describe("Agent Registry Program Tests", () => {
           testCategory,
           testCapabilities,
           { perHour: {} }, new BN(testPricingAmount),
-          acceptedTokens,
-          testVaultAddress
+          acceptedTokens
         )
         .accounts({
           authority: testAuthority.publicKey,
           agentProfile: testPDA,
+          vault: vaultFor(testAuthority.publicKey),
           systemProgram: web3.SystemProgram.programId,
         })
         .signers([testAuthority])
@@ -1142,12 +1247,12 @@ describe("Agent Registry Program Tests", () => {
           testCategory,
           testCapabilities,
           { perToken: {} }, new BN(testPricingAmount),
-          acceptedTokens,
-          testVaultAddress
+          acceptedTokens
         )
         .accounts({
           authority: testAuthority.publicKey,
           agentProfile: testPDA,
+          vault: vaultFor(testAuthority.publicKey),
           systemProgram: web3.SystemProgram.programId,
         })
         .signers([testAuthority])
@@ -1176,12 +1281,12 @@ describe("Agent Registry Program Tests", () => {
           testCapabilities,
           { perTask: {} },
           maxU64,
-          acceptedTokens,
-          testVaultAddress
+          acceptedTokens
         )
         .accounts({
           authority: testAuthority.publicKey,
           agentProfile: testPDA,
+          vault: vaultFor(testAuthority.publicKey),
           systemProgram: web3.SystemProgram.programId,
         })
         .signers([testAuthority])
@@ -1208,12 +1313,12 @@ describe("Agent Registry Program Tests", () => {
           ["orig-cap-1", "orig-cap-2"],
           { perTask: {} },
           new BN(web3.LAMPORTS_PER_SOL),
-          acceptedTokens,
-          testVaultAddress
+          acceptedTokens
         )
         .accounts({
           authority: testAuthority.publicKey,
           agentProfile: testPDA,
+          vault: vaultFor(testAuthority.publicKey),
           systemProgram: web3.SystemProgram.programId,
         })
         .signers([testAuthority])
@@ -1225,7 +1330,6 @@ describe("Agent Registry Program Tests", () => {
       await program.methods
         .updateProfile(
           "Updated Name",
-          null,
           null,
           null,
           null,

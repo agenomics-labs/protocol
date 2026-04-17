@@ -3,11 +3,88 @@
  *
  * Tests the pure functions: parseLogsForEvents, initDb, updateAgentFromEvent, createApi.
  * Uses an in-memory SQLite database for isolation.
+ *
+ * Covers architecture critique findings #6 (real Anchor discriminators) and
+ * #7 (updateAgentFromEvent reads fields the parser actually produces).
  */
 
 import { expect } from "chai";
+import { PublicKey, Keypair } from "@solana/web3.js";
 import Database from "better-sqlite3";
-import { initDb, parseLogsForEvents, updateAgentFromEvent, createApi } from "../src/indexer/index";
+import {
+  initDb,
+  parseLogsForEvents,
+  updateAgentFromEvent,
+  createApi,
+} from "../src/indexer/index";
+
+// Real Anchor discriminators = sha256("event:<Name>")[..8]. These were
+// computed from the Rust #[event] structs; see the discriminator map in
+// src/indexer/index.ts for the full table.
+const DISC_AGENT_REGISTERED = "bf4ed936e864bd55";
+const DISC_ESCROW_CREATED = "467f69665c6107ad";
+const DISC_REPUTATION_UPDATED = "1a24bb96eb5a6a59";
+
+// --- Helpers for encoding borsh-wire-compatible event payloads. ---
+function encString(s: string): Buffer {
+  const utf8 = Buffer.from(s, "utf8");
+  const len = Buffer.alloc(4);
+  len.writeUInt32LE(utf8.length, 0);
+  return Buffer.concat([len, utf8]);
+}
+function encU64(n: bigint | number): Buffer {
+  const b = Buffer.alloc(8);
+  b.writeBigUInt64LE(BigInt(n), 0);
+  return b;
+}
+function encI64(n: bigint | number): Buffer {
+  const b = Buffer.alloc(8);
+  b.writeBigInt64LE(BigInt(n), 0);
+  return b;
+}
+function encBool(v: boolean): Buffer {
+  return Buffer.from([v ? 1 : 0]);
+}
+function encPubkey(pk: PublicKey): Buffer {
+  return Buffer.from(pk.toBytes());
+}
+
+function encodeAgentRegistered(args: {
+  authority: PublicKey;
+  name: string;
+  category: string;
+  vaultAddress: PublicKey;
+  timestamp: number | bigint;
+}): Buffer {
+  return Buffer.concat([
+    encPubkey(args.authority),
+    encString(args.name),
+    encString(args.category),
+    encPubkey(args.vaultAddress),
+    encI64(args.timestamp),
+  ]);
+}
+
+function encodeReputationUpdated(args: {
+  authority: PublicKey;
+  newScore: bigint | number;
+  delta: bigint | number;
+  taskCompleted: boolean;
+  timestamp: number | bigint;
+}): Buffer {
+  return Buffer.concat([
+    encPubkey(args.authority),
+    encU64(args.newScore),
+    encI64(args.delta),
+    encBool(args.taskCompleted),
+    encI64(args.timestamp),
+  ]);
+}
+
+function makeLog(discriminatorHex: string, payload: Buffer): string {
+  const disc = Buffer.from(discriminatorHex, "hex");
+  return `Program data: ${Buffer.concat([disc, payload]).toString("base64")}`;
+}
 
 describe("Indexer - parseLogsForEvents", () => {
   it("should return an empty array for empty logs", () => {
@@ -24,61 +101,87 @@ describe("Indexer - parseLogsForEvents", () => {
     expect(events).to.be.an("array").that.is.empty;
   });
 
-  it("should parse a 'Program data:' line into a base64-decoded event", () => {
-    // Create valid base64 data: 8-byte discriminator + some payload
-    const payload = Buffer.from("0011223344556677aabbccdd", "hex");
-    const b64 = payload.toString("base64");
-    const logs = [`Program data: ${b64}`];
-    const events = parseLogsForEvents(logs, "vault");
-
-    expect(events).to.have.length(1);
-    // Discriminator is first 8 bytes = "0011223344556677"
-    expect(events[0].data).to.have.property("discriminator", "0011223344556677");
-    expect(events[0].data).to.have.property("rawData", "aabbccdd");
-    // This discriminator is not in the known map, so name should be fallback
-    expect(events[0].name).to.match(/^event_/);
-  });
-
-  it("should map a known discriminator to its event name", () => {
-    // The discriminator for AgentRegistered is "c8a7e69dfbae2f31"
-    const discriminatorHex = "c8a7e69dfbae2f31";
-    const rawPayload = "deadbeef";
-    const fullPayload = Buffer.from(discriminatorHex + rawPayload, "hex");
-    const b64 = fullPayload.toString("base64");
-    const logs = [`Program data: ${b64}`];
-    const events = parseLogsForEvents(logs, "registry");
+  it("should map a known discriminator to its event name (AgentRegistered)", () => {
+    const authority = Keypair.generate().publicKey;
+    const vault = Keypair.generate().publicKey;
+    const payload = encodeAgentRegistered({
+      authority,
+      name: "TestAgent",
+      category: "security",
+      vaultAddress: vault,
+      timestamp: 1_700_000_000,
+    });
+    const events = parseLogsForEvents(
+      [makeLog(DISC_AGENT_REGISTERED, payload)],
+      "registry"
+    );
 
     expect(events).to.have.length(1);
     expect(events[0].name).to.equal("AgentRegistered");
+    expect(events[0].data.authority).to.equal(authority.toBase58());
+    expect(events[0].data.name).to.equal("TestAgent");
+    expect(events[0].data.category).to.equal("security");
+    expect(events[0].data.vault_address).to.equal(vault.toBase58());
+    expect(events[0].data.timestamp).to.equal(1_700_000_000);
   });
 
   it("should map EscrowCreated discriminator correctly", () => {
-    const discriminatorHex = "40de3a87fb1a2b49";
-    const fullPayload = Buffer.from(discriminatorHex + "00", "hex");
+    // EscrowCreated is classified but we don't decode its fields; the name
+    // is what matters for the event log.
+    const fullPayload = Buffer.from(DISC_ESCROW_CREATED + "00", "hex");
     const b64 = fullPayload.toString("base64");
-    const logs = [`Program data: ${b64}`];
-    const events = parseLogsForEvents(logs, "settlement");
+    const events = parseLogsForEvents([`Program data: ${b64}`], "settlement");
 
     expect(events).to.have.length(1);
     expect(events[0].name).to.equal("EscrowCreated");
+  });
+
+  it("should decode ReputationUpdated fields", () => {
+    const authority = Keypair.generate().publicKey;
+    const payload = encodeReputationUpdated({
+      authority,
+      newScore: 1234,
+      delta: -25,
+      taskCompleted: false,
+      timestamp: 1_700_000_001,
+    });
+    const events = parseLogsForEvents(
+      [makeLog(DISC_REPUTATION_UPDATED, payload)],
+      "registry"
+    );
+
+    expect(events).to.have.length(1);
+    expect(events[0].name).to.equal("ReputationUpdated");
+    expect(events[0].data.authority).to.equal(authority.toBase58());
+    expect(events[0].data.new_reputation_score).to.equal(1234);
+    expect(events[0].data.reputation_delta).to.equal(-25);
+    expect(events[0].data.task_completed).to.equal(false);
   });
 
   it("should use fallback name for unknown discriminators", () => {
     const unknownDiscriminator = "aaaaaaaaaaaaaaaa";
     const fullPayload = Buffer.from(unknownDiscriminator + "ff", "hex");
     const b64 = fullPayload.toString("base64");
-    const logs = [`Program data: ${b64}`];
-    const events = parseLogsForEvents(logs, "vault");
+    const events = parseLogsForEvents([`Program data: ${b64}`], "vault");
 
     expect(events).to.have.length(1);
     expect(events[0].name).to.equal("event_aaaaaaaa");
+    expect(events[0].data).to.have.property("discriminator", unknownDiscriminator);
+    expect(events[0].data).to.have.property("rawData", "ff");
+  });
+
+  it("should skip payloads shorter than the discriminator", () => {
+    // A sub-8-byte payload cannot carry a discriminator; must not throw
+    // and must not emit an event.
+    const shortPayload = Buffer.from("deadbeef", "hex");
+    const logs = [`Program data: ${shortPayload.toString("base64")}`];
+    const events = parseLogsForEvents(logs, "vault");
+    expect(events).to.be.an("array").that.is.empty;
   });
 
   it("should skip unparseable base64 data gracefully", () => {
     const logs = ["Program data: !!"];
     const events = parseLogsForEvents(logs, "vault");
-    // Should not throw; Buffer.from with invalid base64 may produce
-    // an empty or short buffer, but the function should handle it
     expect(events).to.be.an("array");
   });
 
@@ -93,6 +196,21 @@ describe("Indexer - parseLogsForEvents", () => {
     const events = parseLogsForEvents(logs, "vault");
 
     expect(events).to.have.length(2);
+  });
+
+  it("should preserve classification but flag decode errors on truncated payloads", () => {
+    // AgentRegistered discriminator but payload too short to contain the
+    // first Pubkey (32 bytes). Parser must not crash; it should return the
+    // classified name with a `decodeError` marker.
+    const shortPayload = Buffer.alloc(5, 0xab);
+    const events = parseLogsForEvents(
+      [makeLog(DISC_AGENT_REGISTERED, shortPayload)],
+      "registry"
+    );
+
+    expect(events).to.have.length(1);
+    expect(events[0].name).to.equal("AgentRegistered");
+    expect(events[0].data).to.have.property("decodeError");
   });
 });
 
@@ -229,7 +347,7 @@ describe("Indexer - updateAgentFromEvent", () => {
     expect(agents[0].category).to.equal("cat2");
   });
 
-  it("should update reputation on ReputationUpdated event", () => {
+  it("should update reputation on ReputationUpdated event (new_reputation_score field)", () => {
     updateAgentFromEvent(db, {
       name: "AgentRegistered",
       data: { authority: "RepAgent", name: "RepBot", category: "security" },
@@ -237,7 +355,12 @@ describe("Indexer - updateAgentFromEvent", () => {
 
     updateAgentFromEvent(db, {
       name: "ReputationUpdated",
-      data: { authority: "RepAgent", new_score: "85" },
+      data: {
+        authority: "RepAgent",
+        new_reputation_score: 85,
+        reputation_delta: 50,
+        task_completed: true,
+      },
     });
 
     const agent = db
@@ -248,31 +371,99 @@ describe("Indexer - updateAgentFromEvent", () => {
     expect(agent.tasks_completed).to.equal(1);
   });
 
-  it("should increment tasks_completed on each ReputationUpdated", () => {
+  it("should only increment tasks_completed when task_completed=true", () => {
     updateAgentFromEvent(db, {
       name: "AgentRegistered",
       data: { authority: "Worker1", name: "Worker", category: "general" },
     });
 
+    // Slash event: task_completed=false → tasks_completed must not bump.
     updateAgentFromEvent(db, {
       name: "ReputationUpdated",
-      data: { authority: "Worker1", new_score: "10" },
+      data: {
+        authority: "Worker1",
+        new_reputation_score: 5,
+        reputation_delta: -10,
+        task_completed: false,
+      },
     });
     updateAgentFromEvent(db, {
       name: "ReputationUpdated",
-      data: { authority: "Worker1", new_score: "20" },
-    });
-    updateAgentFromEvent(db, {
-      name: "ReputationUpdated",
-      data: { authority: "Worker1", new_score: "30" },
+      data: {
+        authority: "Worker1",
+        new_reputation_score: 55,
+        reputation_delta: 50,
+        task_completed: true,
+      },
     });
 
     const agent = db
       .prepare("SELECT * FROM agents WHERE authority = ?")
       .get("Worker1") as Record<string, unknown>;
 
-    expect(agent.reputation_score).to.equal(30);
-    expect(agent.tasks_completed).to.equal(3);
+    expect(agent.reputation_score).to.equal(55);
+    expect(agent.tasks_completed).to.equal(1);
+  });
+
+  it("should update name on AgentProfileUpdated", () => {
+    updateAgentFromEvent(db, {
+      name: "AgentRegistered",
+      data: { authority: "Profiler", name: "Old", category: "general" },
+    });
+    updateAgentFromEvent(db, {
+      name: "AgentProfileUpdated",
+      data: { authority: "Profiler", name: "New" },
+    });
+
+    const agent = db
+      .prepare("SELECT * FROM agents WHERE authority = ?")
+      .get("Profiler") as Record<string, unknown>;
+
+    expect(agent.name).to.equal("New");
+  });
+
+  it("should halve score via SuspensionCleared without touching tasks_completed", () => {
+    updateAgentFromEvent(db, {
+      name: "AgentRegistered",
+      data: { authority: "Appealer", name: "A", category: "g" },
+    });
+    updateAgentFromEvent(db, {
+      name: "ReputationUpdated",
+      data: {
+        authority: "Appealer",
+        new_reputation_score: 100,
+        reputation_delta: 100,
+        task_completed: true,
+      },
+    });
+    updateAgentFromEvent(db, {
+      name: "SuspensionCleared",
+      data: { authority: "Appealer", new_reputation_score: 50 },
+    });
+
+    const agent = db
+      .prepare("SELECT * FROM agents WHERE authority = ?")
+      .get("Appealer") as Record<string, unknown>;
+
+    expect(agent.reputation_score).to.equal(50);
+    expect(agent.tasks_completed).to.equal(1);
+  });
+
+  it("should delete the agent row on AgentDeregistered", () => {
+    updateAgentFromEvent(db, {
+      name: "AgentRegistered",
+      data: { authority: "LeavingAgent", name: "Bye", category: "g" },
+    });
+    updateAgentFromEvent(db, {
+      name: "AgentDeregistered",
+      data: { authority: "LeavingAgent", name: "Bye" },
+    });
+
+    const agent = db
+      .prepare("SELECT * FROM agents WHERE authority = ?")
+      .get("LeavingAgent");
+
+    expect(agent).to.be.undefined;
   });
 
   it("should handle AgentRegistered with missing optional fields", () => {
@@ -294,7 +485,7 @@ describe("Indexer - updateAgentFromEvent", () => {
 
   it("should ignore unrelated event names", () => {
     updateAgentFromEvent(db, {
-      name: "VaultCreated",
+      name: "VaultInitialized",
       data: { vault: "abc" },
     });
 
@@ -303,6 +494,28 @@ describe("Indexer - updateAgentFromEvent", () => {
       .get() as { total: number };
 
     expect(count.total).to.equal(0);
+  });
+
+  it("should handle u64 reputation_score given as string (preserves big-int precision)", () => {
+    updateAgentFromEvent(db, {
+      name: "AgentRegistered",
+      data: { authority: "BigAgent", name: "B", category: "g" },
+    });
+    updateAgentFromEvent(db, {
+      name: "ReputationUpdated",
+      data: {
+        authority: "BigAgent",
+        new_reputation_score: "42",
+        reputation_delta: 0,
+        task_completed: true,
+      },
+    });
+
+    const agent = db
+      .prepare("SELECT * FROM agents WHERE authority = ?")
+      .get("BigAgent") as Record<string, unknown>;
+
+    expect(agent.reputation_score).to.equal(42);
   });
 });
 
@@ -327,16 +540,19 @@ describe("Indexer - createApi", () => {
   it("should have registered GET routes for health, events, agents, and stats", () => {
     const app = createApi(db);
 
-    // In Express 5.x, the internal router is accessed via app.router (not app._router)
+    // Express 5.x exposes the internal router as `app.router`; 4.x via
+    // `app._router`. Prefer the private accessor if present (tolerates
+    // either version so the test isn't pinned to a single major).
     type RouterStack = {
       stack: Array<{
         route?: { path: string; methods: Record<string, boolean> };
       }>;
     };
-    const router = (app as unknown as { router: RouterStack }).router;
+    const appAny = app as unknown as { router?: RouterStack; _router?: RouterStack };
+    const router = appAny._router ?? appAny.router;
     expect(router).to.not.be.undefined;
 
-    const routes = router.stack
+    const routes = router!.stack
       .filter((layer) => layer.route)
       .map((layer) => ({
         path: layer.route!.path,

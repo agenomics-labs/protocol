@@ -25,6 +25,7 @@ import {
   requireNumber,
   requirePositiveNumber,
   optionalString,
+  optionalNumber,
 } from "./validation.js";
 import {
   formatEscrowStatus,
@@ -184,6 +185,14 @@ export async function handleApproveMilestone(args: Record<string, unknown>) {
   const providerTokenAccount = parsePublicKey(
     requireString(args, "providerTokenAccount")
   );
+  // Finding #8: rating is plumbed into the reputation CPI so the registry's
+  // avg_rating actually updates. Defaults to 0 (no rating) to keep the old
+  // "approve without scoring" flow working.
+  const ratingNum = optionalNumber(args, "rating") ?? 0;
+  if (!Number.isInteger(ratingNum) || ratingNum < 0 || ratingNum > 5) {
+    throw new Error("rating must be an integer in 0..=5 (0 = no rating)");
+  }
+  const rating = ratingNum;
 
   const wallet = loadWallet();
   const program = getSettlementProgram();
@@ -207,7 +216,7 @@ export async function handleApproveMilestone(args: Record<string, unknown>) {
   );
 
   const sig = await program.methods
-    .approveMilestone(milestoneIndex)
+    .approveMilestone(milestoneIndex, rating)
     .accounts({
       client: wallet.publicKey,
       escrow: escrowAddress,
@@ -225,6 +234,7 @@ export async function handleApproveMilestone(args: Record<string, unknown>) {
     success: true,
     escrowAddress: escrowAddress.toBase58(),
     milestoneIndex,
+    rating,
     status: "approved",
     transactionSignature: sig,
   };

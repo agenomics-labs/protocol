@@ -8,6 +8,7 @@ import {
   getWalletPublicKey,
   getRegistryProgram,
   deriveAgentProfilePDA,
+  deriveVaultPDA,
   parsePublicKey,
   solToLamports,
   lamportsToSol,
@@ -40,7 +41,6 @@ export async function handleRegisterAgent(args: Record<string, unknown>) {
   const acceptedTokens = requireStringArray(args, "acceptedTokens").map((t) =>
     parsePublicKey(t)
   );
-  const vaultAddress = parsePublicKey(requireString(args, "vaultAddress"));
 
   // Map string to Anchor enum
   const pricingModel = mapPricingModel(pricingModelStr);
@@ -48,6 +48,12 @@ export async function handleRegisterAgent(args: Record<string, unknown>) {
   const wallet = loadWallet();
   const program = getRegistryProgram();
   const [agentProfilePDA] = deriveAgentProfilePDA(wallet.publicKey);
+
+  // Finding #9: Derive the canonical vault PDA from the authority. The
+  // registry program validates this matches seeds `[b"vault", authority]`
+  // under the Agent Vault program. The caller no longer supplies an
+  // arbitrary pubkey.
+  const [vaultPDA] = deriveVaultPDA(wallet.publicKey);
 
   const sig = await program.methods
     .registerAgent(
@@ -57,12 +63,12 @@ export async function handleRegisterAgent(args: Record<string, unknown>) {
       capabilities,
       pricingModel,
       new BN(solToLamports(pricingAmountSol)),
-      acceptedTokens,
-      vaultAddress
+      acceptedTokens
     )
     .accounts({
       authority: wallet.publicKey,
       agentProfile: agentProfilePDA,
+      vault: vaultPDA,
       systemProgram: SystemProgram.programId,
     })
     .signers([wallet])
@@ -72,6 +78,7 @@ export async function handleRegisterAgent(args: Record<string, unknown>) {
     success: true,
     agentProfileAddress: agentProfilePDA.toBase58(),
     authority: wallet.publicKey.toBase58(),
+    vaultAddress: vaultPDA.toBase58(),
     name,
     category,
     capabilities,
@@ -144,9 +151,9 @@ export async function handleUpdateAgentProfile(args: Record<string, unknown>) {
   const acceptedTokens = args.acceptedTokens
     ? (args.acceptedTokens as string[]).map((t) => parsePublicKey(t))
     : null;
-  const vaultAddress = args.vaultAddress
-    ? parsePublicKey(args.vaultAddress as string)
-    : null;
+
+  // Finding #9: vault_address is no longer updatable — it is pinned to the
+  // authority's canonical Agent Vault PDA at register time.
 
   const sig = await program.methods
     .updateProfile(
@@ -156,8 +163,7 @@ export async function handleUpdateAgentProfile(args: Record<string, unknown>) {
       capabilities,
       pricingModel,
       pricingAmount,
-      acceptedTokens,
-      vaultAddress
+      acceptedTokens
     )
     .accounts({
       authority: wallet.publicKey,

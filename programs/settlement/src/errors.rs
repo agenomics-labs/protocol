@@ -70,4 +70,7 @@ pub enum SettlementError {
 
     #[msg("Dispute resolver must be a neutral third party — not the client or provider")]
     InvalidDisputeResolver,
+
+    #[msg("Rating must be in 0..=5 (0 = no rating)")]
+    InvalidRating,
 }

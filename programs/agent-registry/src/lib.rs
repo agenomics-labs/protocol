@@ -25,7 +25,6 @@ pub mod agent_registry {
         pricing_model: PricingModel,
         pricing_amount: u64,
         accepted_tokens: Vec<Pubkey>,
-        vault_address: Pubkey,
     ) -> Result<()> {
         require!(name.len() <= 64, AgentRegistryError::NameTooLong);
         require!(description.len() <= 256, AgentRegistryError::DescriptionTooLong);
@@ -42,7 +41,10 @@ pub mod agent_registry {
         agent_profile.pricing_model = pricing_model;
         agent_profile.pricing_amount = pricing_amount;
         agent_profile.accepted_tokens = accepted_tokens;
-        agent_profile.vault_address = vault_address;
+        // Finding #9: vault_address is no longer a client-supplied field; it
+        // is bound to the canonical Agent Vault PDA for this authority, as
+        // validated by the `vault` account's seed constraint.
+        agent_profile.vault_address = ctx.accounts.vault.key();
         agent_profile.status = AgentStatus::Active;
         agent_profile.reputation_score = 0;
         agent_profile.total_tasks_completed = 0;
@@ -72,8 +74,10 @@ pub mod agent_registry {
         pricing_model: Option<PricingModel>,
         pricing_amount: Option<u64>,
         accepted_tokens: Option<Vec<Pubkey>>,
-        vault_address: Option<Pubkey>,
     ) -> Result<()> {
+        // Finding #9: vault_address is no longer mutable. It was set to the
+        // canonical vault PDA at register time and changing it would defeat
+        // the purpose of binding it to a seed-validated account.
         let agent_profile = &mut ctx.accounts.agent_profile;
         require!(agent_profile.status != AgentStatus::Retired, AgentRegistryError::InvalidStatusTransition);
 
@@ -84,7 +88,6 @@ pub mod agent_registry {
         if let Some(pm) = pricing_model { agent_profile.pricing_model = pm; }
         if let Some(pa) = pricing_amount { agent_profile.pricing_amount = pa; }
         if let Some(at) = accepted_tokens { require!(!at.is_empty() && at.len() <= 5, AgentRegistryError::InvalidTokensCount); agent_profile.accepted_tokens = at; }
-        if let Some(va) = vault_address { agent_profile.vault_address = va; }
 
         agent_profile.updated_at = Clock::get()?.unix_timestamp;
         emit!(AgentProfileUpdated { authority: agent_profile.authority, name: agent_profile.name.clone(), timestamp: agent_profile.updated_at });

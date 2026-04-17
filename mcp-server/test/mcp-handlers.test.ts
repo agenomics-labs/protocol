@@ -345,6 +345,7 @@ describe("MCP Registry Handlers", () => {
   it("register_agent: registers agent with full profile", async () => {
     [agentProfilePDA] = deriveAgentProfilePDA(agent.publicKey);
 
+    const [agentVaultPDA] = deriveVaultPDA(agent.publicKey);
     const sig = await registryProgram.methods
       .registerAgent(
         "TestAgent",
@@ -353,12 +354,12 @@ describe("MCP Registry Handlers", () => {
         ["analysis", "trading"],
         { perTask: {} },
         new BN(100_000),
-        [tokenMint],
-        agent.publicKey
+        [tokenMint]
       )
       .accounts({
         authority: agent.publicKey,
         agentProfile: agentProfilePDA,
+        vault: agentVaultPDA,
         systemProgram: SystemProgram.programId,
       })
       .signers([agent])
@@ -398,7 +399,6 @@ describe("MCP Registry Handlers", () => {
         null,
         null,
         new BN(200_000),
-        null,
         null
       )
       .accounts({
@@ -437,6 +437,7 @@ describe("Provider Registration", () => {
     const provRegistry = new Program(loadIdl("agent_registry"), providerProvider);
     const [provProfilePDA] = deriveAgentProfilePDA(provider.publicKey);
 
+    const [provVaultPDA] = deriveVaultPDA(provider.publicKey);
     await provRegistry.methods
       .registerAgent(
         "TestProvider",
@@ -445,12 +446,12 @@ describe("Provider Registration", () => {
         ["provider"],
         { perTask: {} },
         new BN(50_000),
-        [tokenMint],
-        provider.publicKey
+        [tokenMint]
       )
       .accounts({
         authority: provider.publicKey,
         agentProfile: provProfilePDA,
+        vault: provVaultPDA,
         systemProgram: SystemProgram.programId,
       })
       .signers([provider])
@@ -590,7 +591,7 @@ describe("MCP Settlement Handlers", () => {
   it("approve_milestone: client approves milestone 0, releases payment", async () => {
     const [providerProfilePDA] = deriveAgentProfilePDA(provider.publicKey);
     await settlementProgram.methods
-      .approveMilestone(0)
+      .approveMilestone(0, 0)
       .accounts({
         client: agent.publicKey,
         escrow: escrowPDA,
@@ -872,6 +873,7 @@ describe("Registry Edge Cases", () => {
     const longNameRegistry = new Program(loadIdl("agent_registry"), longNameProvider);
     const [profilePDA] = deriveAgentProfilePDA(longNameAgent.publicKey);
 
+    const [longNameVaultPDA] = deriveVaultPDA(longNameAgent.publicKey);
     try {
       await longNameRegistry.methods
         .registerAgent(
@@ -881,12 +883,12 @@ describe("Registry Edge Cases", () => {
           ["cap1"],
           { perTask: {} },
           new BN(100),
-          [tokenMint],
-          longNameAgent.publicKey
+          [tokenMint]
         )
         .accounts({
           authority: longNameAgent.publicKey,
           agentProfile: profilePDA,
+          vault: longNameVaultPDA,
           systemProgram: SystemProgram.programId,
         })
         .signers([longNameAgent])
@@ -908,6 +910,7 @@ describe("Registry Edge Cases", () => {
     const capProvider = createProvider(capAgent);
     const capRegistry = new Program(loadIdl("agent_registry"), capProvider);
     const [profilePDA] = deriveAgentProfilePDA(capAgent.publicKey);
+    const [capVaultPDA] = deriveVaultPDA(capAgent.publicKey);
 
     try {
       await capRegistry.methods
@@ -918,12 +921,12 @@ describe("Registry Edge Cases", () => {
           Array.from({ length: 11 }, (_, i) => `cap${i}`), // 11 > 10 limit
           { perTask: {} },
           new BN(100),
-          [tokenMint],
-          capAgent.publicKey
+          [tokenMint]
         )
         .accounts({
           authority: capAgent.publicKey,
           agentProfile: profilePDA,
+          vault: capVaultPDA,
           systemProgram: SystemProgram.programId,
         })
         .signers([capAgent])

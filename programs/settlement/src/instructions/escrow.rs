@@ -152,7 +152,18 @@ pub fn submit_milestone(ctx: Context<SubmitMilestone>, milestone_index: u32) -> 
     Ok(())
 }
 
-pub fn approve_milestone(ctx: Context<ApproveMilestone>, milestone_index: u32) -> Result<()> {
+pub fn approve_milestone(
+    ctx: Context<ApproveMilestone>,
+    milestone_index: u32,
+    rating: u8,
+) -> Result<()> {
+    // Finding #8: rating is plumbed to the registry CPI so `avg_rating` is
+    // actually populated. 0 means "no rating given" (backward-compatible with
+    // callers that don't want to score) and the registry skips the avg
+    // update when rating == 0. Anything over 5 is a user error, not a
+    // domain-level truth, so we reject it here rather than silently clamping.
+    require!(rating <= 5, SettlementError::InvalidRating);
+
     let index = milestone_index as usize;
     let amount: u64;
     let bump: u8;
@@ -231,6 +242,7 @@ pub fn approve_milestone(ctx: Context<ApproveMilestone>, milestone_index: u32) -
             escrow.released_amount,
             REPUTATION_DELTA_TASK_COMPLETED,
             true,
+            rating,
             ctx.accounts.registry_program.to_account_info(),
             ctx.accounts.provider_profile.to_account_info(),
             ctx.accounts.settlement_authority.to_account_info(),
@@ -454,11 +466,13 @@ pub fn expire_escrow(ctx: Context<ExpireEscrow>) -> Result<()> {
     }
 
     if should_slash {
+        // rating=0: expiry is an auto-slash path, no user judgment.
         update_provider_reputation(
             provider_key,
             0,
             REPUTATION_DELTA_EXPIRY_UNDELIVERED,
             false,
+            0,
             ctx.accounts.registry_program.to_account_info(),
             ctx.accounts.provider_profile.to_account_info(),
             ctx.accounts.settlement_authority.to_account_info(),
