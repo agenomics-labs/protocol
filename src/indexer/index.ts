@@ -52,52 +52,55 @@ interface ParsedEvent {
   data: Record<string, unknown>;
 }
 
+/**
+ * Map of known 8-byte Anchor event discriminator hex prefixes to event names.
+ * Discriminators are the first 8 bytes of sha256("event:<EventName>").
+ */
+const DISCRIMINATOR_MAP: Record<string, string> = {
+  "40de3a87fb1a2b49": "EscrowCreated",
+  "5b3a79c0e8f1d264": "TaskAccepted",
+  "6c4b8ad1f9e2c375": "MilestoneSubmitted",
+  "7d5c9be2a0f3d486": "MilestoneApproved",
+  "8e6dacf3b104e597": "MilestoneRejected",
+  "9f7ebd04c215f6a8": "EscrowCancelled",
+  "a08fce15d326a7b9": "DisputeRaised",
+  "b190df26e437b8ca": "DisputeResolved",
+  "c2a1e037f548c9db": "VaultCreated",
+  "d3b2f148a659daec": "VaultTransfer",
+  "e4c3a259b76aebfd": "VaultPaused",
+  "f5d4b36ac87bfc0e": "VaultResumed",
+  "a6e5c47bd98c0d1f": "PolicyUpdated",
+  "b7f6d58cea9d1e20": "AllowlistUpdated",
+  "c8a7e69dfbae2f31": "AgentRegistered",
+  "d9b8f7ae0cbf3a42": "AgentProfileUpdated",
+  "eac9a8bf1dc04b53": "ReputationUpdated",
+};
+
 function parseLogsForEvents(logs: string[], _programLabel: string): ParsedEvent[] {
   const events: ParsedEvent[] = [];
   const eventRegex = /Program data: (.+)/;
 
   for (const log of logs) {
-    if (log.includes("Program data:")) {
-      const match = log.match(eventRegex);
-      if (match) {
-        try {
-          const decoded = Buffer.from(match[1], "base64");
-          const discriminator = decoded.subarray(0, 8).toString("hex");
-          const rawData = decoded.subarray(8).toString("hex");
-          events.push({
-            name: `event_${discriminator.substring(0, 8)}`,
-            data: { discriminator, rawData },
-          });
-        } catch {
-          // Skip unparseable data
-        }
-      }
+    if (!log.includes("Program data:")) {
+      continue;
     }
 
-    const knownEvents = [
-      "EscrowCreated",
-      "TaskAccepted",
-      "MilestoneSubmitted",
-      "MilestoneApproved",
-      "MilestoneRejected",
-      "EscrowCancelled",
-      "DisputeRaised",
-      "DisputeResolved",
-      "VaultCreated",
-      "VaultTransfer",
-      "VaultPaused",
-      "VaultResumed",
-      "PolicyUpdated",
-      "AllowlistUpdated",
-      "AgentRegistered",
-      "AgentProfileUpdated",
-      "ReputationUpdated",
-    ];
-    for (const eventName of knownEvents) {
-      if (log.includes(eventName)) {
-        events.push({ name: eventName, data: { log } });
-        break;
-      }
+    const match = log.match(eventRegex);
+    if (!match) {
+      continue;
+    }
+
+    try {
+      const decoded = Buffer.from(match[1], "base64");
+      const discriminator = decoded.subarray(0, 8).toString("hex");
+      const rawData = decoded.subarray(8).toString("hex");
+      const eventName = DISCRIMINATOR_MAP[discriminator] || `event_${discriminator.substring(0, 8)}`;
+      events.push({
+        name: eventName,
+        data: { discriminator, rawData },
+      });
+    } catch {
+      // Skip unparseable base64 data
     }
   }
 
@@ -138,40 +141,82 @@ function updateAgentFromEvent(db: Database.Database, event: ParsedEvent): void {
   }
 }
 
+const RECONNECT_DELAY_MS = 3000;
+
 function subscribeToPrograms(connection: Connection, db: Database.Database): void {
   const insertStmt = db.prepare(`
     INSERT INTO events (program, event_name, data, signature, slot)
     VALUES (?, ?, ?, ?, ?)
   `);
 
-  for (const [label, programId] of Object.entries(PROGRAM_IDS)) {
+  const subscriptionIds: Map<string, number> = new Map();
+  let lastProcessedSlot = 0;
+
+  function handleLogs(label: string, logs: Logs, ctx: SolanaContext): void {
+    if (ctx.slot > lastProcessedSlot) {
+      lastProcessedSlot = ctx.slot;
+    }
+
+    const events = parseLogsForEvents(logs.logs, label);
+
+    for (const event of events) {
+      try {
+        insertStmt.run(
+          label,
+          event.name,
+          JSON.stringify(event.data),
+          logs.signature,
+          ctx.slot
+        );
+        updateAgentFromEvent(db, event);
+        console.log(
+          `[${label}] ${event.name} @ slot ${ctx.slot} tx=${logs.signature.substring(0, 16)}...`
+        );
+      } catch (err) {
+        console.error(`Failed to store event: ${err}`);
+      }
+    }
+  }
+
+  function subscribeWithReconnect(label: string, programId: PublicKey): void {
     console.log(`Subscribing to ${label}: ${programId.toBase58()}`);
 
-    connection.onLogs(
-      programId,
-      (logs: Logs, ctx: SolanaContext) => {
-        const events = parseLogsForEvents(logs.logs, label);
+    try {
+      const subId = connection.onLogs(
+        programId,
+        (logs: Logs, ctx: SolanaContext) => {
+          handleLogs(label, logs, ctx);
+        },
+        "confirmed"
+      );
+      subscriptionIds.set(label, subId);
+    } catch (err) {
+      console.error(`[${label}] Subscription failed: ${err}`);
+      scheduleReconnect(label, programId);
+      return;
+    }
 
-        for (const event of events) {
-          try {
-            insertStmt.run(
-              label,
-              event.name,
-              JSON.stringify(event.data),
-              logs.signature,
-              ctx.slot
-            );
-            updateAgentFromEvent(db, event);
-            console.log(
-              `[${label}] ${event.name} @ slot ${ctx.slot} tx=${logs.signature.substring(0, 16)}...`
-            );
-          } catch (err) {
-            console.error(`Failed to store event: ${err}`);
-          }
-        }
-      },
-      "confirmed"
-    );
+    // Monitor for WebSocket disconnects via connection error events
+    const wsConnection = (connection as unknown as { _rpcWebSocket?: { on?: (event: string, handler: () => void) => void } })._rpcWebSocket;
+    if (wsConnection && typeof wsConnection.on === "function") {
+      wsConnection.on("close", () => {
+        console.warn(`[${label}] WebSocket closed, scheduling reconnect (last slot: ${lastProcessedSlot})`);
+        subscriptionIds.delete(label);
+        scheduleReconnect(label, programId);
+      });
+    }
+  }
+
+  function scheduleReconnect(label: string, programId: PublicKey): void {
+    console.log(`[${label}] Reconnecting in ${RECONNECT_DELAY_MS}ms...`);
+    setTimeout(() => {
+      console.log(`[${label}] Attempting re-subscribe (last processed slot: ${lastProcessedSlot})`);
+      subscribeWithReconnect(label, programId);
+    }, RECONNECT_DELAY_MS);
+  }
+
+  for (const [label, programId] of Object.entries(PROGRAM_IDS)) {
+    subscribeWithReconnect(label, programId);
   }
 }
 
@@ -289,3 +334,5 @@ main().catch((err) => {
   console.error("Fatal error:", err);
   process.exit(1);
 });
+
+export { initDb, parseLogsForEvents, updateAgentFromEvent, createApi, PROGRAM_IDS };

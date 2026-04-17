@@ -33,6 +33,11 @@ yarn.lock
 .mocha
 .nyc_output
 coverage/
+aeap-events.db*
+
+# Claude Code runtime artifacts
+.claude-flow/
+.claude/local/
 
 # Build artifacts
 target/

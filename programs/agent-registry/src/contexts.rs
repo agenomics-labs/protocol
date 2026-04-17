@@ -76,7 +76,9 @@ pub struct StakeReputation<'info> {
     )]
     pub agent_profile: Account<'info, AgentProfile>,
 
-    /// CHECK: Staking PDA; validated by seeds.
+    /// CHECK: Staking PDA; validated by seeds. Not initialized with `init` —
+    /// the system program transfer implicitly creates it. Minimum stake must
+    /// exceed rent exemption (~0.00089 SOL) to avoid garbage collection.
     #[account(
         mut,
         seeds = [authority.key().as_ref(), b"reputation-stake"],
