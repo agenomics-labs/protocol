@@ -38,6 +38,7 @@ aeap-events.db*
 # Claude Code runtime artifacts
 .claude-flow/
 .claude/local/
+.swarm/
 
 # Build artifacts
 target/
