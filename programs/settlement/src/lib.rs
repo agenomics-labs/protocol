@@ -41,8 +41,19 @@ pub mod settlement {
     }
 
     /// Client approves a submitted milestone, releasing funds.
-    pub fn approve_milestone(ctx: Context<ApproveMilestone>, milestone_index: u32) -> Result<()> {
-        instructions::approve_milestone(ctx, milestone_index)
+    ///
+    /// `rating` (0..=5) is the client's per-task rating of the provider's
+    /// work. It is folded into `avg_rating` in the registry via the
+    /// reputation CPI when the final milestone of the escrow is approved.
+    /// Pass 0 when no rating is given; non-zero values below or above the
+    /// 0..=5 band are rejected with `InvalidRating`. See finding #8 in
+    /// ARCHITECTURE_DEEP_CRITIQUE.md for the pre-fix dead-state behavior.
+    pub fn approve_milestone(
+        ctx: Context<ApproveMilestone>,
+        milestone_index: u32,
+        rating: u8,
+    ) -> Result<()> {
+        instructions::approve_milestone(ctx, milestone_index, rating)
     }
 
     /// Client rejects a milestone, setting it back to Pending for re-work.

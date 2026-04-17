@@ -31,11 +31,21 @@ describe("Settlement Protocol Tests", () => {
   // Program IDs for CPI
   const REGISTRY_PROGRAM_ID = new PublicKey("8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh");
   const SETTLEMENT_PROGRAM_ID = new PublicKey("GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3");
+  // Finding #9: register_agent now validates the vault argument matches the
+  // canonical Agent Vault PDA seeded by `[b"vault", authority]`.
+  const VAULT_PROGRAM_ID = new PublicKey("4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN");
 
   function deriveAgentProfilePDA(authority: PublicKey): [PublicKey, number] {
     return PublicKey.findProgramAddressSync(
       [authority.toBuffer(), Buffer.from("agent-profile")],
       REGISTRY_PROGRAM_ID
+    );
+  }
+
+  function deriveVaultPDA(authority: PublicKey): [PublicKey, number] {
+    return PublicKey.findProgramAddressSync(
+      [Buffer.from("vault"), authority.toBuffer()],
+      VAULT_PROGRAM_ID
     );
   }
 
@@ -196,12 +206,12 @@ describe("Settlement Protocol Tests", () => {
           ["task-execution"],
           { perTask: {} },
           new BN(100000),
-          [tokenMint],
-          Keypair.generate().publicKey
+          [tokenMint]
         )
         .accounts({
           authority: provider_account.publicKey,
           agentProfile: profilePDA,
+          vault: deriveVaultPDA(provider_account.publicKey)[0],
           systemProgram: SystemProgram.programId,
         })
         .signers([provider_account])
@@ -275,12 +285,12 @@ describe("Settlement Protocol Tests", () => {
           ["task-execution"],
           { perTask: {} },
           new BN(100000),
-          [tokenMint],
-          Keypair.generate().publicKey
+          [tokenMint]
         )
         .accounts({
           authority: provider_account.publicKey,
           agentProfile: profilePDA,
+          vault: deriveVaultPDA(provider_account.publicKey)[0],
           systemProgram: SystemProgram.programId,
         })
         .signers([provider_account])
@@ -380,8 +390,10 @@ describe("Settlement Protocol Tests", () => {
       expect(escrowTokenAccountInfo).to.be.ok;
 
       const [providerProfilePDA] = deriveAgentProfilePDA(provider_account.publicKey);
+      // Finding #8: rating arg is required; pass 4 so avg_rating is exercised
+      // end-to-end. The final milestone will then fold this into the registry.
       const tx = await program.methods
-        .approveMilestone(new BN(0))
+        .approveMilestone(new BN(0), 4)
         .accounts({
           client: client.publicKey,
           escrow: escrowPDA,
@@ -422,8 +434,10 @@ describe("Settlement Protocol Tests", () => {
 
     it("should approve milestone 1, auto-completing escrow", async () => {
       const [providerProfilePDA] = deriveAgentProfilePDA(provider_account.publicKey);
+      // Final milestone: rating=5 triggers the avg_rating CPI fold in
+      // update_provider_reputation (see finding #8).
       const tx = await program.methods
-        .approveMilestone(new BN(1))
+        .approveMilestone(new BN(1), 5)
         .accounts({
           client: client.publicKey,
           escrow: escrowPDA,
@@ -642,12 +656,12 @@ describe("Settlement Protocol Tests", () => {
           ["task-execution"],
           { perTask: {} },
           new BN(100000),
-          [tokenMint],
-          Keypair.generate().publicKey
+          [tokenMint]
         )
         .accounts({
           authority: provider_account.publicKey,
           agentProfile: profilePDA,
+          vault: deriveVaultPDA(provider_account.publicKey)[0],
           systemProgram: SystemProgram.programId,
         })
         .signers([provider_account])
@@ -805,12 +819,12 @@ describe("Settlement Protocol Tests", () => {
           ["task-execution"],
           { perTask: {} },
           new BN(100000),
-          [tokenMint],
-          Keypair.generate().publicKey
+          [tokenMint]
         )
         .accounts({
           authority: provider_account.publicKey,
           agentProfile: profilePDA,
+          vault: deriveVaultPDA(provider_account.publicKey)[0],
           systemProgram: SystemProgram.programId,
         })
         .signers([provider_account])
@@ -872,7 +886,7 @@ describe("Settlement Protocol Tests", () => {
     it("should approve after rework", async () => {
       const [providerProfilePDA] = deriveAgentProfilePDA(provider_account.publicKey);
       await program.methods
-        .approveMilestone(new BN(0))
+        .approveMilestone(new BN(0), 0)
         .accounts({
           client: client.publicKey,
           escrow: escrowPDA,
@@ -1156,7 +1170,7 @@ describe("Settlement Protocol Tests", () => {
       const [providerProfilePDA] = deriveAgentProfilePDA(provider_account.publicKey);
       try {
         await program.methods
-          .approveMilestone(new BN(0))
+          .approveMilestone(new BN(0), 0)
           .accounts({
             client: otherAccount.publicKey,
             escrow: escrowPDA,
@@ -1481,12 +1495,12 @@ describe("Settlement Protocol Tests", () => {
           ["task-execution"],
           { perTask: {} },
           new BN(100000),
-          [tokenMint],
-          Keypair.generate().publicKey
+          [tokenMint]
         )
         .accounts({
           authority: expProvider.publicKey,
           agentProfile: profilePDA,
+          vault: deriveVaultPDA(expProvider.publicKey)[0],
           systemProgram: SystemProgram.programId,
         })
         .signers([expProvider])
@@ -1543,7 +1557,7 @@ describe("Settlement Protocol Tests", () => {
 
       // Approve milestone 0 (releases 500K to provider)
       const [provProfilePDA] = deriveAgentProfilePDA(expProvider.publicKey);
-      await program.methods.approveMilestone(new BN(0))
+      await program.methods.approveMilestone(new BN(0), 0)
         .accounts({
           client: expClient.publicKey,
           escrow: expEscrowPDA,
@@ -1639,12 +1653,12 @@ describe("Settlement Protocol Tests", () => {
           ["task-execution"],
           { perTask: {} },
           new BN(100000),
-          [tokenMint],
-          Keypair.generate().publicKey
+          [tokenMint]
         )
         .accounts({
           authority: toProvider.publicKey,
           agentProfile: profilePDA,
+          vault: deriveVaultPDA(toProvider.publicKey)[0],
           systemProgram: SystemProgram.programId,
         })
         .signers([toProvider])

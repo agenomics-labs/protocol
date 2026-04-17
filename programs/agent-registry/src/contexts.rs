@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use crate::state::{AgentProfile, SETTLEMENT_PROGRAM_ID};
+use crate::state::{AgentProfile, AGENT_VAULT_PROGRAM_ID, SETTLEMENT_PROGRAM_ID};
 
 #[derive(Accounts)]
 pub struct RegisterAgent<'info> {
@@ -14,6 +14,24 @@ pub struct RegisterAgent<'info> {
         bump
     )]
     pub agent_profile: Account<'info, AgentProfile>,
+
+    /// Finding #9: The agent's canonical vault PDA, owned by the Agent Vault
+    /// program. Seeds `[b"vault", authority]` match `InitializeVault` in the
+    /// vault program. Anchor enforces the seed constraint at deserialization,
+    /// so an attacker cannot substitute an unrelated Pubkey. The account is
+    /// passed as `UncheckedAccount` because the registry doesn't need to read
+    /// its state — it only needs the runtime to prove the address is the
+    /// correct cross-program derivation.
+    ///
+    /// CHECK: address is validated by the seeds + seeds::program constraint.
+    /// The vault does not need to exist (initialize_vault may run later or
+    /// never); we only bind the stored vault_address to the canonical PDA.
+    #[account(
+        seeds = [b"vault", authority.key().as_ref()],
+        bump,
+        seeds::program = AGENT_VAULT_PROGRAM_ID,
+    )]
+    pub vault: UncheckedAccount<'info>,
 
     pub system_program: Program<'info, System>,
 }

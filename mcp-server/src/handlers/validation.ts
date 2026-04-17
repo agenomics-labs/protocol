@@ -45,3 +45,12 @@ export function optionalString(args: Record<string, unknown>, key: string): stri
   if (typeof v !== "string") throw new Error(`Parameter ${key} must be a string if provided`);
   return v;
 }
+
+export function optionalNumber(args: Record<string, unknown>, key: string): number | null {
+  const v = args[key];
+  if (v === undefined || v === null) return null;
+  if (typeof v !== "number" || isNaN(v)) {
+    throw new Error(`Parameter ${key} must be a number if provided`);
+  }
+  return v;
+}

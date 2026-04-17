@@ -117,7 +117,7 @@ export const submitMilestoneTool: Tool = {
 export const approveMilestoneTool: Tool = {
   name: "approve_milestone",
   description:
-    "Approve a submitted milestone as the client. Releases the milestone payment to the provider's token account.",
+    "Approve a submitted milestone as the client. Releases the milestone payment to the provider's token account. An optional `rating` (0..=5) is folded into the provider's avg_rating in the registry when the final milestone is approved.",
   inputSchema: {
     type: "object",
     properties: {
@@ -133,6 +133,13 @@ export const approveMilestoneTool: Tool = {
         type: "string",
         description:
           "Provider's token account to receive the milestone payment",
+      },
+      rating: {
+        type: "number",
+        description:
+          "Optional 0..=5 star rating. 0 means no rating (default). Applied to the provider's avg_rating when the final milestone completes.",
+        minimum: 0,
+        maximum: 5,
       },
     },
     required: ["escrowAddress", "milestoneIndex", "providerTokenAccount"],

@@ -112,11 +112,13 @@ pub fn resolve_dispute(
     // Client self-resolution (no resolver set) is not a neutral judgment —
     // slashing would let clients exploit providers by disputing and self-resolving.
     if client_refund > 0 && is_resolver {
+        // rating=0: dispute-loss slash, no user rating applies.
         update_provider_reputation(
             provider_key,
             0,
             REPUTATION_DELTA_DISPUTE_LOSS,
             false,
+            0,
             ctx.accounts.registry_program.to_account_info(),
             ctx.accounts.provider_profile.to_account_info(),
             ctx.accounts.settlement_authority.to_account_info(),
@@ -186,11 +188,13 @@ pub fn resolve_dispute_timeout(ctx: Context<ResolveDisputeTimeout>) -> Result<()
     escrow.released_amount = escrow.total_amount;
     escrow.status = EscrowStatus::Completed;
 
+    // rating=0: dispute-timeout slash, no user rating applies.
     update_provider_reputation(
         provider_key,
         0,
         REPUTATION_DELTA_DISPUTE_LOSS,
         false,
+        0,
         ctx.accounts.registry_program.to_account_info(),
         ctx.accounts.provider_profile.to_account_info(),
         ctx.accounts.settlement_authority.to_account_info(),

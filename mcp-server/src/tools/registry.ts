@@ -7,7 +7,7 @@ import { Tool } from "@modelcontextprotocol/sdk/types";
 export const registerAgentTool: Tool = {
   name: "register_agent",
   description:
-    "Register this agent in the on-chain registry with a name, capabilities, pricing, and vault address. Enables discovery by other agents.",
+    "Register this agent in the on-chain registry with a name, capabilities, and pricing. The canonical vault PDA (seeds: [\"vault\", authority] under the Agent Vault program) is derived and bound to the profile on-chain. Enables discovery by other agents.",
   inputSchema: {
     type: "object",
     properties: {
@@ -44,10 +44,6 @@ export const registerAgentTool: Tool = {
         description:
           "Mint addresses of accepted payment tokens (1-5 tokens)",
       },
-      vaultAddress: {
-        type: "string",
-        description: "Public key of the agent's vault for receiving payments",
-      },
     },
     required: [
       "name",
@@ -57,7 +53,6 @@ export const registerAgentTool: Tool = {
       "pricingModel",
       "pricingAmountSol",
       "acceptedTokens",
-      "vaultAddress",
     ],
   },
 };
@@ -106,10 +101,6 @@ export const updateAgentProfileTool: Tool = {
         type: "array",
         items: { type: "string" },
         description: "New accepted token mint addresses",
-      },
-      vaultAddress: {
-        type: "string",
-        description: "New vault address",
       },
     },
   },
