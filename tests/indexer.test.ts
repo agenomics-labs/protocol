@@ -327,14 +327,13 @@ describe("Indexer - createApi", () => {
   it("should have registered GET routes for health, events, agents, and stats", () => {
     const app = createApi(db);
 
-    // Express stores routes in the internal router stack
-    const router = (app as unknown as {
-      _router: {
-        stack: Array<{
-          route?: { path: string; methods: Record<string, boolean> };
-        }>;
-      };
-    })._router;
+    // In Express 5.x, the internal router is accessed via app.router (not app._router)
+    type RouterStack = {
+      stack: Array<{
+        route?: { path: string; methods: Record<string, boolean> };
+      }>;
+    };
+    const router = (app as unknown as { router: RouterStack }).router;
     expect(router).to.not.be.undefined;
 
     const routes = router.stack
