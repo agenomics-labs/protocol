@@ -108,8 +108,11 @@ pub struct ExecuteTokenTransfer<'info> {
     )]
     pub vault_token_account: Account<'info, TokenAccount>,
 
-    /// The recipient's token account.
-    #[account(mut)]
+    /// The recipient's token account. Must match the source mint.
+    #[account(
+        mut,
+        constraint = recipient_token_account.mint == vault_token_account.mint @ VaultError::TokenNotAllowed,
+    )]
     pub recipient_token_account: Account<'info, TokenAccount>,
 
     pub token_program: Program<'info, Token>,

@@ -19,6 +19,12 @@ pub const MIN_ESCROW_AMOUNT: u64 = 10_000;
 /// anyone can trigger auto-resolution that refunds the client.
 pub const DISPUTE_TIMEOUT_SECONDS: i64 = 7 * 24 * 3600;
 
+/// Reputation deltas for CPI updates to the Agent Registry.
+/// Extracted as named constants to avoid magic numbers and enable future governance.
+pub const REPUTATION_DELTA_TASK_COMPLETED: i64 = 50;
+pub const REPUTATION_DELTA_DISPUTE_LOSS: i64 = -25;
+pub const REPUTATION_DELTA_EXPIRY_UNDELIVERED: i64 = -10;
+
 // ============================================================================
 // ACCOUNT STRUCTS
 // ============================================================================

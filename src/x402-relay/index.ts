@@ -149,8 +149,33 @@ function requirePayment(req: Request, res: Response, next: NextFunction): void {
   next();
 }
 
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_MAX_REQUESTS = 10;
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+
+function rateLimit(req: Request, res: Response, next: NextFunction): void {
+  const ip = req.ip || req.socket.remoteAddress || "unknown";
+  const now = Date.now();
+  const entry = rateLimitMap.get(ip);
+
+  if (!entry || now >= entry.resetAt) {
+    rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+    next();
+    return;
+  }
+
+  if (entry.count >= RATE_LIMIT_MAX_REQUESTS) {
+    res.status(429).json({ error: "Too many requests. Try again later." });
+    return;
+  }
+
+  entry.count++;
+  next();
+}
+
 const app = express();
 app.use(express.json());
+app.use("/pay", rateLimit);
 
 app.get("/health", (_req: Request, res: Response) => {
   res.json({
