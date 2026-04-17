@@ -5,7 +5,7 @@ import {
   ListToolsRequestSchema,
   TextContent,
 } from "@modelcontextprotocol/sdk/types.js";
-import { allTools, ToolName } from "./tools.js";
+import { allTools, ToolName } from "./tools/index.js";
 import {
   getConnection,
   getWalletPublicKey,

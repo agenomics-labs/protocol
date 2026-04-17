@@ -12,11 +12,13 @@ pub struct CreateEscrow<'info> {
     pub client: Signer<'info>,
 
     /// Client's vault (from Agent Vault program)
-    /// CHECK: Stored as reference; not deserialized. Validated off-chain.
+    /// CHECK: Informational-only metadata. MUST NOT be used for on-chain logic,
+    /// fund routing, or authorization. Stored for off-chain reference only.
     pub client_vault: UncheckedAccount<'info>,
 
     /// Provider's vault (from Agent Vault program)
-    /// CHECK: Stored as reference; not deserialized. Validated off-chain.
+    /// CHECK: Informational-only metadata. MUST NOT be used for on-chain logic,
+    /// fund routing, or authorization. Stored for off-chain reference only.
     pub provider_vault: UncheckedAccount<'info>,
 
     /// The provider's public key
