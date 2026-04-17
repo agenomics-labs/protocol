@@ -118,9 +118,14 @@ pub struct ApproveMilestone<'info> {
     )]
     pub registry_program: UncheckedAccount<'info>,
 
-    /// CHECK: Provider's AgentProfile PDA in the Registry program.
-    /// Seeds: [provider.key(), b"agent-profile"]. Validated by Registry program during CPI.
-    #[account(mut)]
+    /// CHECK: Provider's AgentProfile PDA — validated via cross-program PDA derivation.
+    /// Must match seeds [escrow.provider, "agent-profile"] under the Registry program.
+    #[account(
+        mut,
+        seeds = [escrow.provider.as_ref(), b"agent-profile"],
+        bump,
+        seeds::program = AGENT_REGISTRY_PROGRAM_ID
+    )]
     pub provider_profile: UncheckedAccount<'info>,
 
     /// Settlement authority PDA — this program's signing authority for CPI calls.
@@ -197,8 +202,14 @@ pub struct ResolveDispute<'info> {
     )]
     pub registry_program: UncheckedAccount<'info>,
 
-    /// CHECK: Provider's AgentProfile PDA. Validated by Registry during CPI.
-    #[account(mut)]
+    /// CHECK: Provider's AgentProfile PDA — validated via cross-program PDA derivation.
+    /// Must match seeds [escrow.provider, "agent-profile"] under the Registry program.
+    #[account(
+        mut,
+        seeds = [escrow.provider.as_ref(), b"agent-profile"],
+        bump,
+        seeds::program = AGENT_REGISTRY_PROGRAM_ID
+    )]
     pub provider_profile: UncheckedAccount<'info>,
 
     /// CHECK: Settlement authority PDA for CPI signing.
@@ -240,8 +251,13 @@ pub struct ResolveDisputeTimeout<'info> {
     )]
     pub registry_program: UncheckedAccount<'info>,
 
-    /// CHECK: Provider's AgentProfile PDA. Validated by Registry during CPI.
-    #[account(mut)]
+    /// CHECK: Provider's AgentProfile PDA — validated via cross-program PDA derivation.
+    #[account(
+        mut,
+        seeds = [escrow.provider.as_ref(), b"agent-profile"],
+        bump,
+        seeds::program = AGENT_REGISTRY_PROGRAM_ID
+    )]
     pub provider_profile: UncheckedAccount<'info>,
 
     /// CHECK: Settlement authority PDA for CPI signing.
@@ -317,8 +333,13 @@ pub struct ExpireEscrow<'info> {
     )]
     pub registry_program: UncheckedAccount<'info>,
 
-    /// CHECK: Provider's AgentProfile PDA. Validated by Registry during CPI.
-    #[account(mut)]
+    /// CHECK: Provider's AgentProfile PDA — validated via cross-program PDA derivation.
+    #[account(
+        mut,
+        seeds = [escrow.provider.as_ref(), b"agent-profile"],
+        bump,
+        seeds::program = AGENT_REGISTRY_PROGRAM_ID
+    )]
     pub provider_profile: UncheckedAccount<'info>,
 
     /// CHECK: Settlement authority PDA for CPI signing.
@@ -326,4 +347,22 @@ pub struct ExpireEscrow<'info> {
     pub settlement_authority: UncheckedAccount<'info>,
 
     pub token_program: Program<'info, Token>,
+}
+
+/// Close a terminal-state escrow account and reclaim rent to the client.
+#[derive(Accounts)]
+pub struct CloseEscrow<'info> {
+    #[account(mut)]
+    pub client: Signer<'info>,
+
+    #[account(
+        mut,
+        has_one = client @ SettlementError::UnauthorizedClient,
+        close = client,
+        constraint = escrow.status == EscrowStatus::Completed
+            || escrow.status == EscrowStatus::Cancelled
+            || escrow.status == EscrowStatus::Expired
+            @ SettlementError::InvalidStatus
+    )]
+    pub escrow: Account<'info, TaskEscrow>,
 }

@@ -286,8 +286,7 @@ pub fn raise_dispute(ctx: Context<RaiseDispute>) -> Result<()> {
     let escrow = &mut ctx.accounts.escrow;
     // Client/provider authorization enforced by constraint
 
-    require!(escrow.status != EscrowStatus::Disputed, SettlementError::AlreadyDisputed);
-    require!(escrow.status != EscrowStatus::Expired, SettlementError::EscrowExpired);
+    require!(escrow.status == EscrowStatus::Active, SettlementError::InvalidStatus);
 
     escrow.status = EscrowStatus::Disputed;
     escrow.disputed_at = Some(Clock::get()?.unix_timestamp);
@@ -732,5 +731,11 @@ pub fn update_provider_reputation<'info>(
         delta: reputation_delta,
     });
 
+    Ok(())
+}
+
+/// Close a terminal-state escrow and return rent to the client.
+/// All validation is handled by Anchor constraints in CloseEscrow context.
+pub fn close_escrow(_ctx: Context<CloseEscrow>) -> Result<()> {
     Ok(())
 }

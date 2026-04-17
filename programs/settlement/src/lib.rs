@@ -78,6 +78,11 @@ pub mod settlement {
     pub fn expire_escrow(ctx: Context<ExpireEscrow>) -> Result<()> {
         instructions::expire_escrow(ctx)
     }
+
+    /// Close a terminal-state escrow and reclaim rent to the client.
+    pub fn close_escrow(ctx: Context<CloseEscrow>) -> Result<()> {
+        instructions::close_escrow(ctx)
+    }
 }
 
 // ============================================================================

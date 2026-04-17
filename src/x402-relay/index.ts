@@ -5,11 +5,25 @@ import { Connection, LAMPORTS_PER_SOL } from "@solana/web3.js";
 
 const RPC_URL = process.env.SOLANA_RPC_URL || "http://127.0.0.1:8899";
 const PORT = parseInt(process.env.RELAY_PORT || "3200", 10);
-const JWT_SECRET = process.env.JWT_SECRET || "aeap-x402-dev-secret-change-in-production";
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  console.error("FATAL: JWT_SECRET environment variable must be set");
+  process.exit(1);
+}
 const TOKEN_EXPIRY_SECONDS = parseInt(process.env.TOKEN_EXPIRY || "3600", 10);
 const PAYMENT_RECIPIENT = process.env.PAYMENT_RECIPIENT || "";
 const REQUIRED_AMOUNT_SOL = parseFloat(process.env.REQUIRED_AMOUNT_SOL || "0.01");
 const connection = new Connection(RPC_URL, "confirmed");
+
+const redeemedSignatures = new Set<string>();
+const SIGNATURE_TTL_MS = (TOKEN_EXPIRY_SECONDS + 300) * 1000;
+
+function pruneRedeemedSignatures(): void {
+  if (redeemedSignatures.size > 10000) {
+    redeemedSignatures.clear();
+  }
+}
+setInterval(pruneRedeemedSignatures, SIGNATURE_TTL_MS);
 
 interface PaymentVerification {
   valid: boolean;
@@ -156,6 +170,11 @@ app.post("/pay", async (req: Request, res: Response) => {
     return;
   }
 
+  if (redeemedSignatures.has(txSignature)) {
+    res.status(409).json({ error: "Transaction signature already redeemed" });
+    return;
+  }
+
   if (!PAYMENT_RECIPIENT) {
     res.status(500).json({ error: "Relay not configured: PAYMENT_RECIPIENT not set" });
     return;
@@ -175,6 +194,8 @@ app.post("/pay", async (req: Request, res: Response) => {
     });
     return;
   }
+
+  redeemedSignatures.add(txSignature);
 
   const accessToken = issueAccessToken(
     verification.sender,
