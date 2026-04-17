@@ -24,4 +24,13 @@ pub enum AgentRegistryError {
     InsufficientStake,
     #[msg("Category exceeds maximum length of 50 bytes")]
     CategoryTooLong,
+
+    #[msg("Unstake would leave the stake account with a non-zero sub-rent-exempt balance, which would be garbage-collected and strand funds")]
+    WouldOrphanStakeAccount,
+
+    #[msg("Stake amount is below the rent-exempt minimum for the staking PDA")]
+    StakeBelowRentExempt,
+
+    #[msg("clear_suspension requires status == Suspended and slash_count >= 3")]
+    NotSuspended,
 }
