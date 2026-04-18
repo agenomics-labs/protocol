@@ -61,7 +61,13 @@ pub fn update_protocol_config(
         config.min_escrow_amount = v;
     }
     if let Some(v) = dispute_timeout_seconds {
-        require!(v > 0, SettlementError::InvalidProtocolConfigValue);
+        // S-onchain-01: enforce an upper bound so downstream `disputed_at +
+        // dispute_timeout_seconds` arithmetic in `resolve_dispute_timeout`
+        // cannot overflow. See `MAX_DISPUTE_TIMEOUT_SECONDS` in state.rs.
+        require!(
+            v > 0 && v <= MAX_DISPUTE_TIMEOUT_SECONDS,
+            SettlementError::InvalidProtocolConfigValue
+        );
         config.dispute_timeout_seconds = v;
     }
     if let Some(v) = reputation_delta_task_completed {
