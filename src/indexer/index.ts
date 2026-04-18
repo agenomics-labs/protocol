@@ -1,7 +1,14 @@
 /** AEAP Off-chain Event Indexer - subscribes to program logs, stores in SQLite, exposes REST API */
 import express, { Request, Response } from "express";
 import Database from "better-sqlite3";
-import { Connection, PublicKey, Logs, Context as SolanaContext } from "@solana/web3.js";
+import {
+  Connection,
+  PublicKey,
+  Logs,
+  Context as SolanaContext,
+  ConfirmedSignatureInfo,
+  Finality,
+} from "@solana/web3.js";
 
 const RPC_URL = process.env.SOLANA_RPC_URL || "http://127.0.0.1:8899";
 const PORT = parseInt(process.env.INDEXER_PORT || "3100", 10);
@@ -10,6 +17,26 @@ const PROGRAM_IDS = {
   registry: new PublicKey("8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh"),
   settlement: new PublicKey("GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3"),
 };
+
+// Finding #23: "confirmed" can be rolled back by a fork. Use "finalized"
+// so the indexer never persists an event from a transaction that might
+// later be dropped. This adds ~10-20s latency versus "confirmed" but is
+// the correct tradeoff for an authoritative event log.
+// Typed as `Finality` (not `Commitment`) because the narrower union is
+// what `getSignaturesForAddress` and `getTransaction` accept. "finalized"
+// is a valid Finality, and `new Connection(..., "finalized")` accepts it
+// as a Commitment too.
+const COMMITMENT: Finality = "finalized";
+
+// Backfill paging constants — `getSignaturesForAddress` returns at most
+// 1000 entries per call. We page head → cursor, then process oldest-first
+// so the cursor advances monotonically and a mid-backfill crash resumes
+// cleanly.
+const BACKFILL_PAGE_SIZE = 1000;
+// Small delay between `getTransaction` calls to avoid overwhelming the
+// validator when catching up from a long downtime. 25ms = ~40 tx/s worst
+// case, well under public RPC limits.
+const BACKFILL_TX_DELAY_MS = 25;
 
 function initDb(dbPath: string): Database.Database {
   const db = new Database(dbPath);
@@ -23,6 +50,7 @@ function initDb(dbPath: string): Database.Database {
       data TEXT NOT NULL,
       signature TEXT NOT NULL,
       slot INTEGER NOT NULL,
+      event_ordinal INTEGER NOT NULL DEFAULT 0,
       timestamp TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -42,7 +70,34 @@ function initDb(dbPath: string): Database.Database {
 
     CREATE INDEX IF NOT EXISTS idx_agents_category ON agents(category);
     CREATE INDEX IF NOT EXISTS idx_agents_reputation ON agents(reputation_score);
+
+    -- Finding #23: per-program checkpoint. Without this, restarting the
+    -- indexer silently drops every event emitted during downtime because
+    -- websocket subscriptions only deliver live logs.
+    CREATE TABLE IF NOT EXISTS cursor (
+      program TEXT PRIMARY KEY,
+      last_processed_slot INTEGER NOT NULL DEFAULT 0,
+      last_signature TEXT,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
+
+  // Migration: older databases were created without `event_ordinal`.
+  // SQLite lacks portable `ADD COLUMN IF NOT EXISTS`, so introspect and
+  // add the column only when missing. Default 0 is safe because every
+  // pre-existing row predates the ordinal concept.
+  const cols = db.prepare("PRAGMA table_info(events)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "event_ordinal")) {
+    db.exec("ALTER TABLE events ADD COLUMN event_ordinal INTEGER NOT NULL DEFAULT 0");
+  }
+
+  // Finding #23: idempotency. A websocket reconnect can replay recent
+  // logs, and backfill can overlap with a live subscription. The UNIQUE
+  // index + `INSERT OR IGNORE` makes event insertion idempotent on the
+  // natural key (program, tx signature, per-tx ordinal).
+  db.exec(
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_events_unique ON events(program, signature, event_ordinal)"
+  );
 
   return db;
 }
@@ -371,42 +426,302 @@ function coerceScore(v: unknown): number {
 
 const RECONNECT_DELAY_MS = 3000;
 
-function subscribeToPrograms(connection: Connection, db: Database.Database): void {
+/**
+ * Per-program live view of subscription health. Exposed through `/health`
+ * and `/metrics` so operators can see which feeds are behind, disconnected,
+ * or flapping without tailing logs.
+ */
+export interface SubscriptionState {
+  label: string;
+  programId: string;
+  connected: boolean;
+  lastProcessedSlot: number;
+  lastSignature: string | null;
+  reconnectAttempts: number;
+  lastError: string | null;
+}
+
+/**
+ * Counters covering the full indexer lifecycle. Finding #24: before this,
+ * the only runtime signal was `console.log` lines; there was no way to ask
+ * "how many events did we store", "how many duplicates did we skip", or
+ * "how many parse errors have there been". These are exported through
+ * `/metrics` for scraping.
+ */
+export interface IndexerMetrics {
+  eventsInserted: number;
+  eventsDuplicateSkipped: number;
+  eventsBackfilled: number;
+  subscriptionReconnects: number;
+  parseErrors: number;
+  backfillErrors: number;
+  startedAt: string;
+}
+
+function createInitialMetrics(): IndexerMetrics {
+  return {
+    eventsInserted: 0,
+    eventsDuplicateSkipped: 0,
+    eventsBackfilled: 0,
+    subscriptionReconnects: 0,
+    parseErrors: 0,
+    backfillErrors: 0,
+    startedAt: new Date().toISOString(),
+  };
+}
+
+function readCursor(
+  db: Database.Database,
+  label: string
+): { slot: number; signature: string | null } | null {
+  const row = db
+    .prepare("SELECT last_processed_slot, last_signature FROM cursor WHERE program = ?")
+    .get(label) as { last_processed_slot: number; last_signature: string | null } | undefined;
+  if (!row) return null;
+  return { slot: row.last_processed_slot, signature: row.last_signature };
+}
+
+function upsertCursor(
+  db: Database.Database,
+  label: string,
+  slot: number,
+  signature: string
+): void {
+  db.prepare(`
+    INSERT INTO cursor (program, last_processed_slot, last_signature, updated_at)
+    VALUES (?, ?, ?, datetime('now'))
+    ON CONFLICT(program) DO UPDATE SET
+      last_processed_slot = excluded.last_processed_slot,
+      last_signature = excluded.last_signature,
+      updated_at = datetime('now')
+  `).run(label, slot, signature);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Persist the parsed events for a single transaction and advance the
+ * cursor. Uses `INSERT OR IGNORE` against the UNIQUE(program, signature,
+ * event_ordinal) index so a duplicate log (websocket replay, backfill
+ * overlap) is silently skipped rather than raising.
+ */
+function persistEventsForTx(
+  db: Database.Database,
+  label: string,
+  signature: string,
+  slot: number,
+  events: ParsedEvent[],
+  metrics: IndexerMetrics
+): { inserted: number; skipped: number } {
   const insertStmt = db.prepare(`
-    INSERT INTO events (program, event_name, data, signature, slot)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT OR IGNORE INTO events (program, event_name, data, signature, slot, event_ordinal)
+    VALUES (?, ?, ?, ?, ?, ?)
   `);
 
+  let inserted = 0;
+  let skipped = 0;
+  let ordinal = 0;
+
+  for (const event of events) {
+    try {
+      const result = insertStmt.run(
+        label,
+        event.name,
+        JSON.stringify(event.data),
+        signature,
+        slot,
+        ordinal
+      );
+      if (result.changes > 0) {
+        inserted++;
+        metrics.eventsInserted++;
+        updateAgentFromEvent(db, event);
+      } else {
+        skipped++;
+        metrics.eventsDuplicateSkipped++;
+      }
+    } catch (err) {
+      metrics.parseErrors++;
+      console.error(`[${label}] Failed to store event: ${err}`);
+    }
+    ordinal++;
+  }
+
+  if (inserted > 0 || skipped > 0) {
+    upsertCursor(db, label, slot, signature);
+  }
+
+  return { inserted, skipped };
+}
+
+/**
+ * Finding #23: backfill missed events after downtime. Pages
+ * `getSignaturesForAddress` from the chain head back to the persisted
+ * cursor, then walks oldest-first so the cursor advances monotonically.
+ * If the indexer crashes mid-backfill, the next run resumes from the
+ * last committed cursor.
+ *
+ * First-run behaviour: if no cursor exists yet, record the current head
+ * and skip history — operators who need historic replay can use a
+ * one-shot reindex tool instead of paying the cost on every cold start.
+ */
+async function backfillProgram(
+  connection: Connection,
+  db: Database.Database,
+  label: string,
+  programId: PublicKey,
+  state: SubscriptionState,
+  metrics: IndexerMetrics
+): Promise<number> {
+  const cursor = readCursor(db, label);
+
+  if (!cursor || !cursor.signature) {
+    try {
+      const head = await connection.getSignaturesForAddress(
+        programId,
+        { limit: 1 },
+        COMMITMENT
+      );
+      if (head.length > 0) {
+        upsertCursor(db, label, head[0].slot, head[0].signature);
+        state.lastProcessedSlot = head[0].slot;
+        state.lastSignature = head[0].signature;
+        console.log(
+          `[${label}] No cursor — seeded at slot ${head[0].slot} (sig ${head[0].signature.substring(0, 16)}...)`
+        );
+      }
+    } catch (err) {
+      metrics.backfillErrors++;
+      state.lastError = `cursor seed failed: ${(err as Error).message}`;
+      console.error(`[${label}] Cursor seed failed: ${err}`);
+    }
+    return 0;
+  }
+
+  const until = cursor.signature;
+  const collected: ConfirmedSignatureInfo[] = [];
+  let before: string | undefined;
+
+  try {
+    while (true) {
+      const page = await connection.getSignaturesForAddress(
+        programId,
+        { limit: BACKFILL_PAGE_SIZE, before, until },
+        COMMITMENT
+      );
+      if (page.length === 0) break;
+      collected.push(...page);
+      if (page.length < BACKFILL_PAGE_SIZE) break;
+      before = page[page.length - 1].signature;
+    }
+  } catch (err) {
+    metrics.backfillErrors++;
+    state.lastError = `backfill page fetch failed: ${(err as Error).message}`;
+    console.error(`[${label}] Backfill page fetch failed: ${err}`);
+    return 0;
+  }
+
+  if (collected.length === 0) {
+    return 0;
+  }
+
+  console.log(`[${label}] Backfilling ${collected.length} signature(s) since cursor ${until.substring(0, 16)}...`);
+
+  let totalInserted = 0;
+  // Reverse to oldest-first so the cursor advances monotonically. A crash
+  // mid-loop leaves the cursor at the last fully-processed signature.
+  for (const info of collected.reverse()) {
+    try {
+      const tx = await connection.getTransaction(info.signature, {
+        commitment: COMMITMENT,
+        maxSupportedTransactionVersion: 0,
+      });
+      if (tx?.meta?.logMessages) {
+        const parsed = parseLogsForEvents(tx.meta.logMessages, label);
+        const { inserted } = persistEventsForTx(db, label, info.signature, info.slot, parsed, metrics);
+        totalInserted += inserted;
+        metrics.eventsBackfilled += inserted;
+      } else {
+        // Tx has no logs or couldn't be fetched at finalized commitment —
+        // still advance cursor so we don't re-fetch it forever.
+        upsertCursor(db, label, info.slot, info.signature);
+      }
+      state.lastProcessedSlot = Math.max(state.lastProcessedSlot, info.slot);
+      state.lastSignature = info.signature;
+    } catch (err) {
+      metrics.backfillErrors++;
+      state.lastError = `backfill tx ${info.signature.substring(0, 8)}... failed: ${(err as Error).message}`;
+      console.error(`[${label}] Backfill tx ${info.signature.substring(0, 16)} failed: ${err}`);
+    }
+    await sleep(BACKFILL_TX_DELAY_MS);
+  }
+
+  console.log(`[${label}] Backfill complete: ${totalInserted} new event(s) inserted`);
+  return totalInserted;
+}
+
+function subscribeToPrograms(
+  connection: Connection,
+  db: Database.Database,
+  states?: Map<string, SubscriptionState>,
+  metrics?: IndexerMetrics
+): { states: Map<string, SubscriptionState>; metrics: IndexerMetrics } {
+  const activeStates = states ?? new Map<string, SubscriptionState>();
+  const activeMetrics = metrics ?? createInitialMetrics();
+
   const subscriptionIds: Map<string, number> = new Map();
-  let lastProcessedSlot = 0;
+
+  function getOrCreateState(label: string, programId: PublicKey): SubscriptionState {
+    let state = activeStates.get(label);
+    if (!state) {
+      state = {
+        label,
+        programId: programId.toBase58(),
+        connected: false,
+        lastProcessedSlot: 0,
+        lastSignature: null,
+        reconnectAttempts: 0,
+        lastError: null,
+      };
+      activeStates.set(label, state);
+    }
+    return state;
+  }
 
   function handleLogs(label: string, logs: Logs, ctx: SolanaContext): void {
-    if (ctx.slot > lastProcessedSlot) {
-      lastProcessedSlot = ctx.slot;
+    const state = activeStates.get(label);
+    if (state && ctx.slot > state.lastProcessedSlot) {
+      state.lastProcessedSlot = ctx.slot;
+      state.lastSignature = logs.signature;
     }
 
-    const events = parseLogsForEvents(logs.logs, label);
+    const parsed = parseLogsForEvents(logs.logs, label);
+    if (parsed.length === 0) return;
 
-    for (const event of events) {
-      try {
-        insertStmt.run(
-          label,
-          event.name,
-          JSON.stringify(event.data),
-          logs.signature,
-          ctx.slot
-        );
-        updateAgentFromEvent(db, event);
+    const { inserted, skipped } = persistEventsForTx(
+      db,
+      label,
+      logs.signature,
+      ctx.slot,
+      parsed,
+      activeMetrics
+    );
+    if (inserted > 0) {
+      for (const event of parsed) {
         console.log(
           `[${label}] ${event.name} @ slot ${ctx.slot} tx=${logs.signature.substring(0, 16)}...`
         );
-      } catch (err) {
-        console.error(`Failed to store event: ${err}`);
       }
+    }
+    if (skipped > 0) {
+      console.log(`[${label}] Skipped ${skipped} duplicate event(s) in tx ${logs.signature.substring(0, 16)}...`);
     }
   }
 
   function subscribeWithReconnect(label: string, programId: PublicKey): void {
+    const state = getOrCreateState(label, programId);
     console.log(`Subscribing to ${label}: ${programId.toBase58()}`);
 
     try {
@@ -415,20 +730,33 @@ function subscribeToPrograms(connection: Connection, db: Database.Database): voi
         (logs: Logs, ctx: SolanaContext) => {
           handleLogs(label, logs, ctx);
         },
-        "confirmed"
+        COMMITMENT
       );
       subscriptionIds.set(label, subId);
+      state.connected = true;
+      state.lastError = null;
     } catch (err) {
+      state.connected = false;
+      state.lastError = `subscribe failed: ${(err as Error).message}`;
       console.error(`[${label}] Subscription failed: ${err}`);
       scheduleReconnect(label, programId);
       return;
     }
 
+    // Kick off backfill after subscribe so live events queue while
+    // history is catching up; `INSERT OR IGNORE` handles any overlap.
+    backfillProgram(connection, db, label, programId, state, activeMetrics).catch((err) => {
+      activeMetrics.backfillErrors++;
+      state.lastError = `backfill threw: ${(err as Error).message}`;
+      console.error(`[${label}] Backfill threw: ${err}`);
+    });
+
     // Monitor for WebSocket disconnects via connection error events
     const wsConnection = (connection as unknown as { _rpcWebSocket?: { on?: (event: string, handler: () => void) => void } })._rpcWebSocket;
     if (wsConnection && typeof wsConnection.on === "function") {
       wsConnection.on("close", () => {
-        console.warn(`[${label}] WebSocket closed, scheduling reconnect (last slot: ${lastProcessedSlot})`);
+        console.warn(`[${label}] WebSocket closed, scheduling reconnect (last slot: ${state.lastProcessedSlot})`);
+        state.connected = false;
         subscriptionIds.delete(label);
         scheduleReconnect(label, programId);
       });
@@ -436,24 +764,95 @@ function subscribeToPrograms(connection: Connection, db: Database.Database): voi
   }
 
   function scheduleReconnect(label: string, programId: PublicKey): void {
+    const state = getOrCreateState(label, programId);
+    state.reconnectAttempts++;
+    activeMetrics.subscriptionReconnects++;
     console.log(`[${label}] Reconnecting in ${RECONNECT_DELAY_MS}ms...`);
     setTimeout(() => {
-      console.log(`[${label}] Attempting re-subscribe (last processed slot: ${lastProcessedSlot})`);
+      console.log(`[${label}] Attempting re-subscribe (last processed slot: ${state.lastProcessedSlot})`);
       subscribeWithReconnect(label, programId);
     }, RECONNECT_DELAY_MS);
   }
 
   for (const [label, programId] of Object.entries(PROGRAM_IDS)) {
+    getOrCreateState(label, programId);
+    // Rehydrate lastProcessedSlot from persisted cursor so restart state
+    // is visible to /health immediately, not just after first new event.
+    const cursor = readCursor(db, label);
+    if (cursor) {
+      const state = activeStates.get(label)!;
+      state.lastProcessedSlot = cursor.slot;
+      state.lastSignature = cursor.signature;
+    }
     subscribeWithReconnect(label, programId);
   }
+
+  return { states: activeStates, metrics: activeMetrics };
 }
 
-function createApi(db: Database.Database): express.Application {
+function createApi(
+  db: Database.Database,
+  states?: Map<string, SubscriptionState>,
+  metrics?: IndexerMetrics
+): express.Application {
   const app = express();
   app.use(express.json());
 
+  // Finding #24: richer health signal. The old /health returned a static
+  // "ok" regardless of whether any subscription was actually connected.
+  // Now it reports per-program connection state, cursor position, and
+  // degrades the top-level status when any subscription is down.
   app.get("/health", (_req: Request, res: Response) => {
-    res.json({ status: "ok", programs: Object.keys(PROGRAM_IDS) });
+    const subscriptions: Array<{
+      program: string;
+      programId: string;
+      connected: boolean;
+      lastProcessedSlot: number;
+      lastSignature: string | null;
+      reconnectAttempts: number;
+      lastError: string | null;
+    }> = [];
+
+    // If we were given a live state map, surface it; otherwise fall back
+    // to the cursor table so a read-only process (e.g. tests) still gets
+    // meaningful output.
+    if (states) {
+      for (const state of states.values()) {
+        subscriptions.push({
+          program: state.label,
+          programId: state.programId,
+          connected: state.connected,
+          lastProcessedSlot: state.lastProcessedSlot,
+          lastSignature: state.lastSignature,
+          reconnectAttempts: state.reconnectAttempts,
+          lastError: state.lastError,
+        });
+      }
+    } else {
+      for (const [label, programId] of Object.entries(PROGRAM_IDS)) {
+        const cursor = readCursor(db, label);
+        subscriptions.push({
+          program: label,
+          programId: programId.toBase58(),
+          connected: false,
+          lastProcessedSlot: cursor?.slot ?? 0,
+          lastSignature: cursor?.signature ?? null,
+          reconnectAttempts: 0,
+          lastError: null,
+        });
+      }
+    }
+
+    const anyDisconnected = states
+      ? subscriptions.some((s) => !s.connected)
+      : false;
+    const status = states && anyDisconnected ? "degraded" : "ok";
+
+    res.json({
+      status,
+      programs: Object.keys(PROGRAM_IDS),
+      subscriptions,
+    });
   });
 
   app.get("/events", (req: Request, res: Response) => {
@@ -534,21 +933,86 @@ function createApi(db: Database.Database): express.Application {
     res.json({ totalEvents: eventCount.total, totalAgents: agentCount.total, byProgram, topEvents: byEvent });
   });
 
+  // Finding #24: structured metrics. Returns process-lifetime counters
+  // (inserts, duplicate skips, backfilled events, reconnects, parse/
+  // backfill errors), per-program cursor positions, and per-event-name
+  // tallies. Scrape-friendly JSON rather than Prometheus text — the
+  // relay-deployer wires this to whatever monitor they run.
+  app.get("/metrics", (_req: Request, res: Response) => {
+    const lifetime = metrics ?? {
+      eventsInserted: 0,
+      eventsDuplicateSkipped: 0,
+      eventsBackfilled: 0,
+      subscriptionReconnects: 0,
+      parseErrors: 0,
+      backfillErrors: 0,
+      startedAt: new Date().toISOString(),
+    };
+
+    const cursorRows = db
+      .prepare("SELECT program, last_processed_slot, last_signature, updated_at FROM cursor")
+      .all() as Array<{
+        program: string;
+        last_processed_slot: number;
+        last_signature: string | null;
+        updated_at: string;
+      }>;
+
+    const byProgram = db
+      .prepare("SELECT program, COUNT(*) as count FROM events GROUP BY program")
+      .all() as Array<{ program: string; count: number }>;
+
+    const byEventName = db
+      .prepare(
+        "SELECT program, event_name, COUNT(*) as count FROM events GROUP BY program, event_name ORDER BY count DESC"
+      )
+      .all() as Array<{ program: string; event_name: string; count: number }>;
+
+    const subscriptions = states
+      ? Array.from(states.values()).map((s) => ({
+          program: s.label,
+          connected: s.connected,
+          lastProcessedSlot: s.lastProcessedSlot,
+          reconnectAttempts: s.reconnectAttempts,
+        }))
+      : [];
+
+    res.json({
+      startedAt: lifetime.startedAt,
+      uptimeSeconds: Math.floor(
+        (Date.now() - new Date(lifetime.startedAt).getTime()) / 1000
+      ),
+      counters: {
+        eventsInserted: lifetime.eventsInserted,
+        eventsDuplicateSkipped: lifetime.eventsDuplicateSkipped,
+        eventsBackfilled: lifetime.eventsBackfilled,
+        subscriptionReconnects: lifetime.subscriptionReconnects,
+        parseErrors: lifetime.parseErrors,
+        backfillErrors: lifetime.backfillErrors,
+      },
+      cursors: cursorRows,
+      subscriptions,
+      eventsByProgram: byProgram,
+      eventsByName: byEventName,
+    });
+  });
+
   return app;
 }
 
 async function main(): Promise<void> {
   console.log("AEAP Event Indexer starting...");
   console.log(`RPC: ${RPC_URL}`);
+  console.log(`Commitment: ${COMMITMENT}`);
 
-  const connection = new Connection(RPC_URL, "confirmed");
+  const connection = new Connection(RPC_URL, COMMITMENT);
   const db = initDb(process.env.DB_PATH || "./aeap-events.db");
 
-  subscribeToPrograms(connection, db);
-  const app = createApi(db);
+  const { states, metrics } = subscribeToPrograms(connection, db);
+  const app = createApi(db, states, metrics);
   app.listen(PORT, () => {
     console.log(`Indexer API listening on http://localhost:${PORT}`);
-    console.log("Endpoints: GET /events, GET /events/:program, GET /agents, GET /stats");
+    console.log("Endpoints: GET /health, /events, /events/:program, /agents, /stats, /metrics");
   });
 
   process.on("SIGINT", () => {
@@ -572,6 +1036,13 @@ export {
   parseLogsForEvents,
   updateAgentFromEvent,
   createApi,
+  subscribeToPrograms,
+  readCursor,
+  upsertCursor,
+  persistEventsForTx,
+  backfillProgram,
+  createInitialMetrics,
   PROGRAM_IDS,
   DISCRIMINATOR_MAP,
+  COMMITMENT,
 };

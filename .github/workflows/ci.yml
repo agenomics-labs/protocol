@@ -15,6 +15,8 @@ jobs:
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
       - name: Cache cargo registry & build
         uses: actions/cache@v4
@@ -32,8 +34,45 @@ jobs:
       - name: Cargo test (unit + fuzz)
         run: cargo test --workspace
 
-  typescript-check:
-    name: TypeScript Check
+      # Finding #22: clippy runs advisory-only for now. The workspace has
+      # ~30 pre-existing warnings (mostly from anchor-generated code) that
+      # would flood CI if clippy was gated on -D warnings. Emit the lint
+      # report visibly; tighten the gate once the known-clean baseline lands.
+      - name: Cargo clippy (advisory)
+        run: cargo clippy --workspace --all-targets
+        continue-on-error: true
+
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin
+          key: ${{ runner.os }}-cargo-audit-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-audit-
+
+      # Finding #22: cargo-audit scans Cargo.lock against the RustSec
+      # advisory DB. Runs advisory-only so a new advisory against a
+      # transitive dep doesn't block unrelated PRs — but is visible.
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked || true
+
+      - name: Run cargo audit
+        run: cargo audit
+        continue-on-error: true
+
+  typescript-check-mcp:
+    name: TypeScript Check (mcp-server)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -49,3 +88,59 @@ jobs:
 
       - name: Type check
         run: npx tsc --noEmit
+
+      # Finding #22: npm audit at `high` severity. Runs advisory-only for
+      # the same reason cargo-audit does — a newly disclosed issue should
+      # be visible without torpedoing unrelated PRs.
+      - name: npm audit (high)
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
+  # Finding #22: the indexer lives in `src/indexer/` with its own package.json
+  # and was not type-checked by CI. Discriminator regressions and event
+  # decoder bugs surfaced as runtime failures because nothing caught them
+  # at build time.
+  typescript-check-indexer:
+    name: TypeScript Check (indexer)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/indexer
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - run: npm install
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: npm audit (high)
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
+  # Finding #22: same gap for the x402 relay.
+  typescript-check-x402-relay:
+    name: TypeScript Check (x402-relay)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/x402-relay
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - run: npm install
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: npm audit (high)
+        run: npm audit --audit-level=high
+        continue-on-error: true

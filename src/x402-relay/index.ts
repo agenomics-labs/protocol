@@ -5,11 +5,15 @@ import { Connection, LAMPORTS_PER_SOL } from "@solana/web3.js";
 
 const RPC_URL = process.env.SOLANA_RPC_URL || "http://127.0.0.1:8899";
 const PORT = parseInt(process.env.RELAY_PORT || "3200", 10);
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
+const JWT_SECRET_RAW = process.env.JWT_SECRET;
+if (!JWT_SECRET_RAW) {
   console.error("FATAL: JWT_SECRET environment variable must be set");
   process.exit(1);
 }
+// The guard above narrows JWT_SECRET_RAW to `string` at runtime but closures
+// below still see the original union. Bind to a `string`-typed local so
+// `jwt.sign`/`jwt.verify` overloads resolve without `!` non-null assertions.
+const JWT_SECRET: string = JWT_SECRET_RAW;
 const TOKEN_EXPIRY_SECONDS = parseInt(process.env.TOKEN_EXPIRY || "3600", 10);
 const PAYMENT_RECIPIENT = process.env.PAYMENT_RECIPIENT || "";
 const REQUIRED_AMOUNT_SOL = parseFloat(process.env.REQUIRED_AMOUNT_SOL || "0.01");
@@ -136,7 +140,9 @@ function issueAccessToken(sender: string, txSignature: string, amountSol: number
 
 function verifyAccessToken(token: string): TokenPayload | null {
   try {
-    return jwt.verify(token, JWT_SECRET) as TokenPayload;
+    // Cast through `unknown` because the default `jwt.verify` return type
+    // is `Jwt & JwtPayload & void` (union with `void` for the string form).
+    return jwt.verify(token, JWT_SECRET) as unknown as TokenPayload;
   } catch {
     return null;
   }
