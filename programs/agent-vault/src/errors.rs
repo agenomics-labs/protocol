@@ -49,4 +49,23 @@ pub enum VaultError {
 
     #[msg("Token spend records full (max 10)")]
     TokenSpendRecordsFull,
+
+    /// Finding #13: A single-tx amount exceeded the mint's configured per-tx cap.
+    #[msg("Per-transaction limit for this token exceeded")]
+    PerTxTokenLimitExceeded,
+
+    /// Finding #13/#14: A token transfer was attempted for a mint that
+    /// has no configured per-mint limits. Call add_token_allowlist first.
+    #[msg("Token not configured: call add_token_allowlist with per-tx/daily limits")]
+    TokenNotConfigured,
+
+    /// Finding #13/#14: add_token_allowlist was called with invalid limits
+    /// (zero, or per_tx_limit greater than daily_limit).
+    #[msg("Invalid token limits: must have 0 < per_tx_limit <= daily_limit")]
+    InvalidTokenLimits,
+
+    /// Finding #15: The SOL transfer would leave the vault PDA below the
+    /// rent-exempt minimum, risking garbage collection by the Solana runtime.
+    #[msg("Transfer would leave vault below rent-exempt minimum")]
+    BelowRentExemption,
 }

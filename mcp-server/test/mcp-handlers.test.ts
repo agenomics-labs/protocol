@@ -264,8 +264,9 @@ describe("MCP Vault Handlers", () => {
   });
 
   it("manage_allowlist: adds token to allowlist", async () => {
+    // Findings #13/#14: per-mint per-tx and daily limits in base units.
     await vaultProgram.methods
-      .addTokenAllowlist(tokenMint)
+      .addTokenAllowlist(tokenMint, new BN(1_000_000), new BN(10_000_000))
       .accounts({
         vault: vaultPDA,
         authority: agent.publicKey,

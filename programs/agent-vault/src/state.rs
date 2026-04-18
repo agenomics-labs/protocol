@@ -13,10 +13,20 @@ pub const MAX_PROGRAM_ALLOWLIST: usize = 10;
 pub const MAX_TOKEN_SPEND_RECORDS: usize = 10;
 
 /// Tracks per-token daily spending for a specific mint.
+///
+/// Findings #13/#14: Each record now carries its own `per_tx_limit` and
+/// `daily_limit` expressed in the token's base units. This replaces the
+/// previous scheme where the vault's SOL-lamport `daily_limit_lamports`
+/// was reused as the cap for every mint, conflating decimal schemes
+/// (0.01 SOL = 10M lamports vs. 10M USDC base units = 10 USDC).
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
 pub struct TokenSpendRecord {
     /// The SPL token mint this record tracks.
     pub mint: Pubkey,
+    /// Maximum amount of this token transferable in a single tx (base units).
+    pub per_tx_limit: u64,
+    /// Maximum amount of this token transferable per day (base units).
+    pub daily_limit: u64,
     /// Amount of this token spent today (in base units).
     pub spent_today: u64,
     /// The day for which spent_today is tracked (Unix timestamp / 86400).

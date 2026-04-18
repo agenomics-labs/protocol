@@ -152,7 +152,7 @@ it("runs the full protocol lifecycle", async () => {
   );
 
   await vaultProgram.methods
-    .addTokenAllowlist(tokenMint)
+    .addTokenAllowlist(tokenMint, new BN(1_000_000), new BN(10_000_000))
     .accounts({
       vault: clientVaultPDA,
       authority: clientAgent.publicKey,

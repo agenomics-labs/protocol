@@ -264,6 +264,11 @@ export async function handleResumeVault() {
 
 /**
  * Add/remove token or program from the vault's allowlist.
+ *
+ * Findings #13/#14: When action is "add_token", callers MUST supply
+ * `perTxLimit` and `dailyLimit` in the mint's base units (e.g. 6-decimal
+ * USDC → 1_000_000 base units = 1 USDC). The chain now rejects token
+ * transfers for any mint without explicit per-mint limits.
  */
 export async function handleManageAllowlist(args: Record<string, unknown>) {
   const action = requireString(args, "action");
@@ -280,20 +285,24 @@ export async function handleManageAllowlist(args: Record<string, unknown>) {
   };
 
   switch (action) {
-    case "add_token":
+    case "add_token": {
+      const perTxLimit = requirePositiveNumber(args, "perTxLimit");
+      const dailyLimit = requirePositiveNumber(args, "dailyLimit");
       sig = await program.methods
-        .addTokenAllowlist(address)
+        .addTokenAllowlist(address, new BN(perTxLimit), new BN(dailyLimit))
         .accounts(accounts)
         .signers([wallet])
         .rpc();
       break;
-    case "remove_token":
+    }
+    case "remove_token": {
       sig = await program.methods
         .removeTokenAllowlist(address)
         .accounts(accounts)
         .signers([wallet])
         .rpc();
       break;
+    }
     case "add_program":
       sig = await program.methods
         .addProgramAllowlist(address)

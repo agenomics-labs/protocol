@@ -121,7 +121,7 @@ export const resumeVaultTool: Tool = {
 export const manageAllowlistTool: Tool = {
   name: "manage_allowlist",
   description:
-    "Add or remove a token mint or program from the vault's allowlist. Tokens in the allowlist can be transferred; programs in the allowlist can be invoked.",
+    "Add or remove a token mint or program from the vault's allowlist. For action=add_token, per-mint per-tx and daily caps MUST be supplied in the mint's base units (findings #13/#14: e.g. 1_000_000 for 1 USDC at 6 decimals). Tokens without configured limits cannot be transferred. Programs in the allowlist can be invoked.",
   inputSchema: {
     type: "object",
     properties: {
@@ -139,6 +139,16 @@ export const manageAllowlistTool: Tool = {
         type: "string",
         description:
           "Public key of the token mint or program to add/remove",
+      },
+      perTxLimit: {
+        type: "number",
+        description:
+          "REQUIRED for add_token. Max per-tx amount in the mint's base units.",
+      },
+      dailyLimit: {
+        type: "number",
+        description:
+          "REQUIRED for add_token. Max daily amount in the mint's base units. Must be >= perTxLimit.",
       },
     },
     required: ["action", "address"],
