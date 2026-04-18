@@ -73,4 +73,14 @@ pub enum SettlementError {
 
     #[msg("Rating must be in 0..=5 (0 = no rating)")]
     InvalidRating,
+
+    /// Finding #19: `update_protocol_config` called by a key other than
+    /// `ProtocolConfig.authority`.
+    #[msg("Unauthorized: must be ProtocolConfig authority")]
+    UnauthorizedConfigAuthority,
+
+    /// Finding #19: `update_protocol_config` tried to set an invalid tunable
+    /// (zero min_escrow, non-positive timeout, positive slash delta, etc.).
+    #[msg("Invalid ProtocolConfig value: violates sanity bounds")]
+    InvalidProtocolConfigValue,
 }

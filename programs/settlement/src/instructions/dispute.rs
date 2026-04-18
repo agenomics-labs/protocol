@@ -33,13 +33,15 @@ pub fn resolve_dispute(
 
     require!(escrow.status == EscrowStatus::Disputed, SettlementError::InvalidStatus);
 
+    // Finding #20: The `(is_resolver || is_client)` authorization gate has
+    // been hoisted to `ResolveDispute`'s account-level constraint (see
+    // contexts.rs). We still compute `is_resolver` here to drive the A-03
+    // slash decision below (client self-resolution must NOT slash provider
+    // reputation). Anchor has already rejected the tx if neither role matched.
     let is_resolver = escrow
         .dispute_resolver
         .map(|resolver| ctx.accounts.resolver.key() == resolver)
         .unwrap_or(false);
-    let is_client = ctx.accounts.resolver.key() == escrow.client;
-
-    require!(is_resolver || is_client, SettlementError::UnauthorizedResolver);
 
     let remaining = escrow
         .total_amount
@@ -112,11 +114,13 @@ pub fn resolve_dispute(
     // Client self-resolution (no resolver set) is not a neutral judgment —
     // slashing would let clients exploit providers by disputing and self-resolving.
     if client_refund > 0 && is_resolver {
+        // Finding #19: governance-owned delta, not the compile-time const.
         // rating=0: dispute-loss slash, no user rating applies.
+        let delta = ctx.accounts.protocol_config.reputation_delta_dispute_loss;
         update_provider_reputation(
             provider_key,
             0,
-            REPUTATION_DELTA_DISPUTE_LOSS,
+            delta,
             false,
             0,
             ctx.accounts.registry_program.to_account_info(),
@@ -143,8 +147,9 @@ pub fn resolve_dispute_timeout(ctx: Context<ResolveDisputeTimeout>) -> Result<()
 
     require!(escrow.status == EscrowStatus::Disputed, SettlementError::InvalidStatus);
     let disputed_at = escrow.disputed_at.ok_or(SettlementError::InvalidStatus)?;
+    // Finding #19: governance-owned timeout, not the compile-time const.
     require!(
-        now >= disputed_at + DISPUTE_TIMEOUT_SECONDS,
+        now >= disputed_at + ctx.accounts.protocol_config.dispute_timeout_seconds,
         SettlementError::DisputeTimeoutNotReached
     );
 
@@ -184,15 +189,17 @@ pub fn resolve_dispute_timeout(ctx: Context<ResolveDisputeTimeout>) -> Result<()
         )?;
     }
 
+    let reputation_delta_dispute_loss =
+        ctx.accounts.protocol_config.reputation_delta_dispute_loss;
     let escrow = &mut ctx.accounts.escrow;
     escrow.released_amount = escrow.total_amount;
     escrow.status = EscrowStatus::Completed;
 
-    // rating=0: dispute-timeout slash, no user rating applies.
+    // Finding #19: governance-owned delta; rating=0 — timeout slash, no user rating.
     update_provider_reputation(
         provider_key,
         0,
-        REPUTATION_DELTA_DISPUTE_LOSS,
+        reputation_delta_dispute_loss,
         false,
         0,
         ctx.accounts.registry_program.to_account_info(),

@@ -9,6 +9,8 @@ import {
   deriveEscrowPDA,
   deriveEscrowTokenAccount,
   deriveAgentProfilePDA,
+  deriveProtocolConfigPDA,
+  deriveVaultPDA,
   getAssociatedTokenAddressSync,
   parsePublicKey,
   hashDescription,
@@ -38,7 +40,9 @@ import {
  */
 export async function handleCreateEscrow(args: Record<string, unknown>) {
   const providerAddress = parsePublicKey(requireString(args, "providerAddress"));
-  const providerVaultAddress = parsePublicKey(requireString(args, "providerVaultAddress"));
+  // Finding #21: providerVaultAddress is no longer accepted from callers.
+  // The vault is canonically derived from the provider pubkey and validated
+  // on-chain via seeds::program = AGENT_VAULT_PROGRAM_ID.
   const tokenMintAddress = parsePublicKey(requireString(args, "tokenMintAddress"));
   const taskId = requireNumber(args, "taskId");
   const totalAmountTokens = requirePositiveNumber(args, "totalAmountTokens");
@@ -81,6 +85,15 @@ export async function handleCreateEscrow(args: Record<string, unknown>) {
   // Derive client's ATA for the token mint
   const clientTokenAccount = getAssociatedTokenAddressSync(tokenMintAddress, wallet.publicKey);
 
+  // Finding #21: clientVault/providerVault must now be the canonical vault
+  // PDAs derived from the Agent Vault program. Anchor's seeds::program
+  // constraint will reject anything else — substituting the client pubkey
+  // (the pre-fix placeholder) breaks here.
+  const [clientVaultPDA] = deriveVaultPDA(wallet.publicKey);
+  const [providerVaultPDA] = deriveVaultPDA(providerAddress);
+  // Finding #19: pass the governance-owned ProtocolConfig PDA.
+  const [protocolConfigPDA] = deriveProtocolConfigPDA();
+
   const sig = await program.methods
     .createEscrow(
       new BN(taskId),
@@ -92,13 +105,14 @@ export async function handleCreateEscrow(args: Record<string, unknown>) {
     )
     .accounts({
       client: wallet.publicKey,
-      clientVault: wallet.publicKey,
-      providerVault: providerVaultAddress,
+      clientVault: clientVaultPDA,
+      providerVault: providerVaultPDA,
       provider: providerAddress,
       tokenMint: tokenMintAddress,
       clientTokenAccount: clientTokenAccount,
       escrow: escrowPDA,
       escrowTokenAccount: escrowTokenAccount,
+      protocolConfig: protocolConfigPDA,
       tokenProgram: TOKEN_PROGRAM_ID,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
@@ -215,6 +229,9 @@ export async function handleApproveMilestone(args: Record<string, unknown>) {
     SETTLEMENT_PROGRAM_ID
   );
 
+  // Finding #19: governance-owned ProtocolConfig PDA.
+  const [protocolConfigPDA] = deriveProtocolConfigPDA();
+
   const sig = await program.methods
     .approveMilestone(milestoneIndex, rating)
     .accounts({
@@ -225,6 +242,7 @@ export async function handleApproveMilestone(args: Record<string, unknown>) {
       registryProgram: REGISTRY_PROGRAM_ID,
       providerProfile: providerProfilePDA,
       settlementAuthority: settlementAuthorityPDA,
+      protocolConfig: protocolConfigPDA,
       tokenProgram: TOKEN_PROGRAM_ID,
     })
     .signers([wallet])
@@ -411,6 +429,9 @@ export async function handleResolveDispute(args: Record<string, unknown>) {
     SETTLEMENT_PROGRAM_ID
   );
 
+  // Finding #19: governance-owned ProtocolConfig PDA.
+  const [protocolConfigPDA] = deriveProtocolConfigPDA();
+
   const sig = await program.methods
     .resolveDispute(clientRefund, providerRefund)
     .accounts({
@@ -422,6 +443,7 @@ export async function handleResolveDispute(args: Record<string, unknown>) {
       registryProgram: REGISTRY_PROGRAM_ID,
       providerProfile: providerProfilePDA,
       settlementAuthority: settlementAuthorityPDA,
+      protocolConfig: protocolConfigPDA,
       tokenProgram: TOKEN_PROGRAM_ID,
     })
     .signers([wallet])
@@ -466,6 +488,9 @@ export async function handleResolveDisputeTimeout(args: Record<string, unknown>)
     SETTLEMENT_PROGRAM_ID
   );
 
+  // Finding #19: governance-owned ProtocolConfig PDA.
+  const [protocolConfigPDA] = deriveProtocolConfigPDA();
+
   const sig = await program.methods
     .resolveDisputeTimeout()
     .accounts({
@@ -476,6 +501,7 @@ export async function handleResolveDisputeTimeout(args: Record<string, unknown>)
       registryProgram: REGISTRY_PROGRAM_ID,
       providerProfile: providerProfilePDA,
       settlementAuthority: settlementAuthorityPDA,
+      protocolConfig: protocolConfigPDA,
       tokenProgram: TOKEN_PROGRAM_ID,
     })
     .signers([wallet])

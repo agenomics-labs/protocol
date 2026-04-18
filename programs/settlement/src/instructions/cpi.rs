@@ -9,8 +9,14 @@ use crate::events::*;
 /// with seeds::program = SETTLEMENT_PROGRAM_ID, cryptographically proving the call
 /// originated from this program.
 ///
-/// The discriminator is computed as sha256("global:update_reputation")[..8].
-/// This is Anchor's standard discriminator for the `update_reputation` instruction.
+/// Finding #17 (ARCHITECTURE_DEEP_CRITIQUE): the previous implementation built the
+/// `Instruction` by hand with a hard-coded discriminator
+/// `[194, 220, 43, 201, 54, 209, 49, 178]` and manually-encoded args. If the
+/// registry renamed `update_reputation` or reordered its arguments, the
+/// discriminator would silently mismatch at runtime. This version uses the
+/// Anchor-generated `agent_registry::cpi::update_reputation` helper, which is
+/// regenerated from the Registry's `#[program]` module on every build — any
+/// rename/reorder becomes a compile error, not a runtime break.
 ///
 /// ADR-039: Accepts `reputation_delta` and `task_completed` as parameters,
 /// enabling both positive reputation (task completion) and negative reputation
@@ -34,35 +40,22 @@ pub fn update_provider_reputation<'info>(
     settlement_authority: AccountInfo<'info>,
     settlement_authority_bump: u8,
 ) -> Result<()> {
-    use anchor_lang::solana_program::instruction::Instruction;
-    use anchor_lang::solana_program::program::invoke_signed;
+    let signer_seeds: &[&[u8]] = &[b"settlement_authority", &[settlement_authority_bump]];
+    let cpi_signer: &[&[&[u8]]] = &[signer_seeds];
 
-    let discriminator: [u8; 8] = [194, 220, 43, 201, 54, 209, 49, 178];
-
-    let mut data = Vec::with_capacity(8 + 8 + 1 + 8 + 1);
-    data.extend_from_slice(&discriminator);
-    data.extend_from_slice(&reputation_delta.to_le_bytes());
-    data.extend_from_slice(&[task_completed as u8]);
-    data.extend_from_slice(&earnings.to_le_bytes());
-    data.extend_from_slice(&[rating]);
-
-    let accounts = vec![
-        AccountMeta::new(provider_profile.key(), false),
-        AccountMeta::new_readonly(settlement_authority.key(), true),
-    ];
-
-    let ix = Instruction {
-        program_id: registry_program.key(),
-        accounts,
-        data,
+    let cpi_accounts = agent_registry::cpi::accounts::UpdateReputation {
+        agent_profile: provider_profile,
+        settlement_authority,
     };
 
-    let signer_seeds: &[&[u8]] = &[b"settlement_authority", &[settlement_authority_bump]];
+    let cpi_ctx = CpiContext::new_with_signer(registry_program, cpi_accounts, cpi_signer);
 
-    invoke_signed(
-        &ix,
-        &[provider_profile, settlement_authority, registry_program],
-        &[signer_seeds],
+    agent_registry::cpi::update_reputation(
+        cpi_ctx,
+        reputation_delta,
+        task_completed,
+        earnings,
+        rating,
     )?;
 
     emit!(ReputationUpdateScheduled {

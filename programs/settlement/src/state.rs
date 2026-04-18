@@ -6,24 +6,49 @@ use anchor_lang::prelude::*;
 
 /// Agent Registry program ID — used for CPI reputation updates.
 pub const AGENT_REGISTRY_PROGRAM_ID: Pubkey = pubkey!("8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh");
+
+/// Finding #21: Agent Vault program ID — used to validate that
+/// `client_vault`/`provider_vault` in `CreateEscrow` are genuine
+/// vault PDAs derived under the vault program, not arbitrary
+/// 32-byte keys. Must match `declare_id!` in programs/agent-vault/src/lib.rs.
+pub const AGENT_VAULT_PROGRAM_ID: Pubkey = pubkey!("4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN");
+
 pub const MAX_MILESTONES: usize = 5;
 
 /// ADR-028: Minimum escrow amount to prevent cheap reputation farming.
 /// Set to 10,000 base units (e.g., 0.01 USDC with 6 decimals).
 /// Self-dealing attacks must lock at least this much per task, making
 /// large-scale reputation inflation economically costly.
-pub const MIN_ESCROW_AMOUNT: u64 = 10_000;
+///
+/// Finding #19: This is now a DEFAULT value. The authoritative runtime
+/// value lives in `ProtocolConfig.min_escrow_amount` and is supplied as an
+/// account to `create_escrow`. `initialize_protocol_config` seeds the
+/// config with this constant; `update_protocol_config` lets governance
+/// change it without a program upgrade.
+pub const DEFAULT_MIN_ESCROW_AMOUNT: u64 = 10_000;
 
 /// ADR-030: Dispute resolution timeout in seconds (7 days).
-/// If the dispute resolver doesn't act within this window,
-/// anyone can trigger auto-resolution that refunds the client.
-pub const DISPUTE_TIMEOUT_SECONDS: i64 = 7 * 24 * 3600;
+/// Finding #19: Default for the governance-owned `ProtocolConfig.dispute_timeout_seconds`.
+pub const DEFAULT_DISPUTE_TIMEOUT_SECONDS: i64 = 7 * 24 * 3600;
 
 /// Reputation deltas for CPI updates to the Agent Registry.
-/// Extracted as named constants to avoid magic numbers and enable future governance.
-pub const REPUTATION_DELTA_TASK_COMPLETED: i64 = 50;
-pub const REPUTATION_DELTA_DISPUTE_LOSS: i64 = -25;
-pub const REPUTATION_DELTA_EXPIRY_UNDELIVERED: i64 = -10;
+/// Finding #19: Defaults for the governance-owned `ProtocolConfig` fields
+/// `reputation_delta_task_completed`, `_dispute_loss`, `_expiry_undelivered`.
+pub const DEFAULT_REPUTATION_DELTA_TASK_COMPLETED: i64 = 50;
+pub const DEFAULT_REPUTATION_DELTA_DISPUTE_LOSS: i64 = -25;
+pub const DEFAULT_REPUTATION_DELTA_EXPIRY_UNDELIVERED: i64 = -10;
+
+/// Finding #19: Seed for the single-instance `ProtocolConfig` PDA.
+/// Derived as `[b"protocol_config"]` under this program's ID.
+pub const PROTOCOL_CONFIG_SEED: &[u8] = b"protocol_config";
+
+// Finding #19: Back-compat aliases — downstream modules still reference
+// these names. They resolve to the default constants above.
+pub const MIN_ESCROW_AMOUNT: u64 = DEFAULT_MIN_ESCROW_AMOUNT;
+pub const DISPUTE_TIMEOUT_SECONDS: i64 = DEFAULT_DISPUTE_TIMEOUT_SECONDS;
+pub const REPUTATION_DELTA_TASK_COMPLETED: i64 = DEFAULT_REPUTATION_DELTA_TASK_COMPLETED;
+pub const REPUTATION_DELTA_DISPUTE_LOSS: i64 = DEFAULT_REPUTATION_DELTA_DISPUTE_LOSS;
+pub const REPUTATION_DELTA_EXPIRY_UNDELIVERED: i64 = DEFAULT_REPUTATION_DELTA_EXPIRY_UNDELIVERED;
 
 // ============================================================================
 // ACCOUNT STRUCTS
@@ -49,6 +74,48 @@ pub struct TaskEscrow {
     /// Uses Option<i64> instead of sentinel 0 for proper null semantics.
     pub disputed_at: Option<i64>,
     pub bump: u8,
+}
+
+/// Finding #19 (ARCHITECTURE_DEEP_CRITIQUE): On-chain governance parameters
+/// for the Settlement program. Before this account existed, the economic
+/// tunables (minimum escrow, dispute timeout, reputation deltas) were
+/// compile-time constants — changing any of them required a full program
+/// redeploy. Now they live in a single PDA owned by this program and can
+/// be updated by `update_protocol_config` from an authority-gated tx.
+///
+/// This is an *interim* governance path. A richer DAO/multisig scheme is
+/// out of scope; the `authority` field can be rotated to any key — a
+/// timelock or multisig program's PDA would be a natural upgrade target.
+#[account]
+pub struct ProtocolConfig {
+    /// Key authorized to run `update_protocol_config`. Can be rotated.
+    pub authority: Pubkey,
+
+    /// ADR-028: minimum escrow amount in token base units. Anti-sybil floor.
+    pub min_escrow_amount: u64,
+
+    /// ADR-030: seconds between `raise_dispute` and the earliest timestamp
+    /// at which `resolve_dispute_timeout` may auto-resolve.
+    pub dispute_timeout_seconds: i64,
+
+    /// ADR-039: positive delta applied via CPI when the final milestone is approved.
+    pub reputation_delta_task_completed: i64,
+
+    /// ADR-039: negative delta applied via CPI when a dispute resolves against the provider.
+    pub reputation_delta_dispute_loss: i64,
+
+    /// ADR-050: negative delta applied via CPI when an escrow expires with undelivered milestones.
+    pub reputation_delta_expiry_undelivered: i64,
+
+    /// PDA bump for re-derivation.
+    pub bump: u8,
+}
+
+impl ProtocolConfig {
+    /// Explicit serialized size (8 disc + fields + margin).
+    /// 8 (disc) + 32 (authority) + 8 (min_escrow) + 8 (timeout)
+    /// + 8*3 (3 deltas) + 1 (bump) + 7 (margin) = 88 bytes.
+    pub const SPACE: usize = 88;
 }
 
 #[derive(Clone, Debug, PartialEq, AnchorSerialize, AnchorDeserialize)]

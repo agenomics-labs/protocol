@@ -87,3 +87,27 @@ pub struct ReputationUpdateScheduled {
     pub provider: Pubkey,
     pub delta: i64,
 }
+
+/// Finding #19: emitted when `ProtocolConfig` is first created. The initial
+/// values are a snapshot of the compile-time defaults.
+#[event]
+pub struct ProtocolConfigInitialized {
+    pub authority: Pubkey,
+    pub min_escrow_amount: u64,
+    pub dispute_timeout_seconds: i64,
+    pub reputation_delta_task_completed: i64,
+    pub reputation_delta_dispute_loss: i64,
+    pub reputation_delta_expiry_undelivered: i64,
+}
+
+/// Finding #19: emitted when `update_protocol_config` successfully mutates
+/// the on-chain tunables. Indexers should key off this to drive dashboards.
+#[event]
+pub struct ProtocolConfigUpdated {
+    pub authority: Pubkey,
+    pub min_escrow_amount: u64,
+    pub dispute_timeout_seconds: i64,
+    pub reputation_delta_task_completed: i64,
+    pub reputation_delta_dispute_loss: i64,
+    pub reputation_delta_expiry_undelivered: i64,
+}

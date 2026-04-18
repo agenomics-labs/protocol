@@ -21,7 +21,11 @@ pub fn create_escrow(
         SettlementError::InvalidMilestoneCount
     );
 
-    require!(total_amount >= MIN_ESCROW_AMOUNT, SettlementError::BelowMinimumEscrow);
+    // Finding #19: read the governance-owned floor instead of the compile-time const.
+    require!(
+        total_amount >= ctx.accounts.protocol_config.min_escrow_amount,
+        SettlementError::BelowMinimumEscrow
+    );
 
     require!(
         ctx.accounts.client.key() != ctx.accounts.provider.key(),
@@ -232,15 +236,18 @@ pub fn approve_milestone(
         amount,
     )?;
 
+    let reputation_delta_task_completed =
+        ctx.accounts.protocol_config.reputation_delta_task_completed;
     let escrow = &mut ctx.accounts.escrow;
     let all_approved = escrow.milestones.iter().all(|m| m.status == MilestoneStatus::Approved);
     if all_approved {
         escrow.status = EscrowStatus::Completed;
 
+        // Finding #19: use governance-owned delta, not the compile-time const.
         update_provider_reputation(
             provider_key,
             escrow.released_amount,
-            REPUTATION_DELTA_TASK_COMPLETED,
+            reputation_delta_task_completed,
             true,
             rating,
             ctx.accounts.registry_program.to_account_info(),
@@ -450,6 +457,8 @@ pub fn expire_escrow(ctx: Context<ExpireEscrow>) -> Result<()> {
     }
 
     let should_slash = prior_status == EscrowStatus::Active && has_pending;
+    let reputation_delta_expiry_undelivered =
+        ctx.accounts.protocol_config.reputation_delta_expiry_undelivered;
 
     let escrow = &mut ctx.accounts.escrow;
     escrow.released_amount = escrow
@@ -466,11 +475,11 @@ pub fn expire_escrow(ctx: Context<ExpireEscrow>) -> Result<()> {
     }
 
     if should_slash {
-        // rating=0: expiry is an auto-slash path, no user judgment.
+        // Finding #19: governance-owned delta; rating=0 — expiry is an auto-slash.
         update_provider_reputation(
             provider_key,
             0,
-            REPUTATION_DELTA_EXPIRY_UNDELIVERED,
+            reputation_delta_expiry_undelivered,
             false,
             0,
             ctx.accounts.registry_program.to_account_info(),
