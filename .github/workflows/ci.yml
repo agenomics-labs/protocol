@@ -173,3 +173,153 @@ jobs:
         with:
           path: ./
           extra_args: --results=verified,unknown
+
+  # S-xcut-03: anchor build + IDL diff gate.
+  #
+  # `cargo check` does not exercise Anchor IDL codegen. H1 from the prior
+  # critique (fabricated discriminators in the indexer) was an IDL-drift
+  # failure that a mandatory anchor build + committed-IDL diff would have
+  # caught. This job rebuilds every program, diffs the generated IDL
+  # against `idl/*.json` in the tree, and uploads the IDL as an artifact
+  # so maintainers can seed the baseline on first run.
+  anchor-build:
+    name: Anchor Build & IDL Diff
+    runs-on: ubuntu-latest
+    env:
+      SOLANA_VERSION: v1.18.26
+      ANCHOR_VERSION: 0.31.1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry & target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-anchor-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-anchor-cargo-
+
+      - name: Cache solana CLI
+        id: cache-solana
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/solana
+          key: ${{ runner.os }}-solana-${{ env.SOLANA_VERSION }}
+
+      - name: Install Solana CLI
+        if: steps.cache-solana.outputs.cache-hit != 'true'
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/${SOLANA_VERSION}/install)"
+
+      - name: Add Solana to PATH
+        run: echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Cache anchor CLI
+        id: cache-anchor
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/anchor
+          key: ${{ runner.os }}-anchor-${{ env.ANCHOR_VERSION }}
+
+      - name: Install Anchor CLI
+        if: steps.cache-anchor.outputs.cache-hit != 'true'
+        run: |
+          cargo install --git https://github.com/coral-xyz/anchor \
+            --tag "v${ANCHOR_VERSION}" anchor-cli --locked
+
+      - name: Anchor build
+        run: anchor build
+
+      - name: Upload generated IDL
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: anchor-idl
+          path: target/idl/*.json
+          if-no-files-found: error
+
+      - name: Check IDL matches committed baseline
+        run: ./scripts/check-idl.sh
+
+  # S-xcut-04: integration test job against a local solana-test-validator.
+  #
+  # `tests/settlement.ts`, `tests/agent-registry.ts`, and
+  # `tests/agent-vault.ts` are full Anchor integration suites but CI never
+  # invoked them, so handler/program shape drift (the H5/H6/H7 class of
+  # bugs) could only be caught post-merge. `anchor test` builds, starts a
+  # validator, deploys all three programs, and runs the mocha suite.
+  anchor-integration:
+    name: Anchor Integration Tests
+    runs-on: ubuntu-latest
+    needs: anchor-build
+    env:
+      SOLANA_VERSION: v1.18.26
+      ANCHOR_VERSION: 0.31.1
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry & target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-anchor-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-anchor-cargo-
+
+      - name: Cache solana CLI
+        id: cache-solana
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/solana
+          key: ${{ runner.os }}-solana-${{ env.SOLANA_VERSION }}
+
+      - name: Install Solana CLI
+        if: steps.cache-solana.outputs.cache-hit != 'true'
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/${SOLANA_VERSION}/install)"
+
+      - name: Add Solana to PATH
+        run: echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Cache anchor CLI
+        id: cache-anchor
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/anchor
+          key: ${{ runner.os }}-anchor-${{ env.ANCHOR_VERSION }}
+
+      - name: Install Anchor CLI
+        if: steps.cache-anchor.outputs.cache-hit != 'true'
+        run: |
+          cargo install --git https://github.com/coral-xyz/anchor \
+            --tag "v${ANCHOR_VERSION}" anchor-cli --locked
+
+      - name: Generate local validator keypair
+        run: |
+          mkdir -p ~/.config/solana
+          solana-keygen new --no-bip39-passphrase --silent --outfile ~/.config/solana/id.json
+          solana config set --url localhost
+
+      - name: Install workspace JS deps
+        run: npm install
+
+      # `anchor test` builds programs, starts a local validator, deploys,
+      # and runs the mocha suite defined in Anchor.toml's [scripts.test].
+      # Timeout is generous because the first-run build is slow.
+      - name: Anchor test
+        run: anchor test
+        timeout-minutes: 30
