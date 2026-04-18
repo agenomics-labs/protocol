@@ -219,6 +219,11 @@ jobs:
       - name: Add Solana to PATH
         run: echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
 
+      - name: Verify Solana toolchain
+        run: |
+          solana --version
+          cargo-build-sbf --version
+
       - name: Cache anchor CLI
         id: cache-anchor
         uses: actions/cache@v4
@@ -232,8 +237,17 @@ jobs:
           cargo install --git https://github.com/coral-xyz/anchor \
             --tag "v${ANCHOR_VERSION}" anchor-cli --locked
 
+      - name: Verify Anchor
+        run: anchor --version
+
       - name: Anchor build
-        run: anchor build
+        env:
+          RUST_BACKTRACE: full
+        run: |
+          set -x
+          anchor build
+          echo "--- target/idl contents after build ---"
+          ls -la target/idl || echo "(no target/idl directory)"
 
       - name: Upload generated IDL
         if: always()
@@ -241,7 +255,7 @@ jobs:
         with:
           name: anchor-idl
           path: target/idl/*.json
-          if-no-files-found: error
+          if-no-files-found: warn
 
       - name: Check IDL matches committed baseline
         run: ./scripts/check-idl.sh
