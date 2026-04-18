@@ -454,18 +454,28 @@ export async function handleResolveDisputeTimeout(args: Record<string, unknown>)
   const provider = escrow.provider as PublicKey;
   const escrowTokenAccount = deriveEscrowTokenAccount(escrowAddress, tokenMint);
 
-  // Derive ATAs for client and provider
+  // ResolveDisputeTimeout refunds the client and slashes the provider's
+  // reputation via CPI — it does NOT pay the provider, so no providerTokenAccount.
   const clientTokenAccount = getAssociatedTokenAddressSync(tokenMint, client);
-  const providerTokenAccount = getAssociatedTokenAddressSync(tokenMint, provider);
+
+  // Provider's AgentProfile PDA and settlement_authority PDA are required
+  // by the on-chain context (ADR-050 slashing CPI).
+  const [providerProfilePDA] = deriveAgentProfilePDA(provider);
+  const [settlementAuthorityPDA] = PublicKey.findProgramAddressSync(
+    [Buffer.from("settlement_authority")],
+    SETTLEMENT_PROGRAM_ID
+  );
 
   const sig = await program.methods
     .resolveDisputeTimeout()
     .accounts({
-      caller: wallet.publicKey,
+      payer: wallet.publicKey,
       escrow: escrowAddress,
       escrowTokenAccount: escrowTokenAccount,
       clientTokenAccount: clientTokenAccount,
-      providerTokenAccount: providerTokenAccount,
+      registryProgram: REGISTRY_PROGRAM_ID,
+      providerProfile: providerProfilePDA,
+      settlementAuthority: settlementAuthorityPDA,
       tokenProgram: TOKEN_PROGRAM_ID,
     })
     .signers([wallet])

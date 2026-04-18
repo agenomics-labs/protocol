@@ -164,7 +164,6 @@ export async function handleVaultTokenTransfer(args: Record<string, unknown>) {
       agent: wallet.publicKey,
       vaultTokenAccount: vaultTokenAccount,
       recipientTokenAccount: recipientTokenAccount,
-      tokenMint: tokenMintAddress,
       tokenProgram: TOKEN_PROGRAM_ID,
     })
     .signers([wallet])
