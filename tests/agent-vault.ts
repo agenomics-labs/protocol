@@ -117,7 +117,7 @@ describe("Agent Vault Tests", () => {
       const tokenMint = Keypair.generate().publicKey;
 
       const tx = await program.methods
-        .addTokenAllowlist(tokenMint)
+        .addTokenAllowlist(tokenMint, new BN(1_000_000), new BN(10_000_000))
         .accounts({
           vault: vaultPda,
           authority: authority.publicKey,
@@ -140,7 +140,7 @@ describe("Agent Vault Tests", () => {
       const token2 = Keypair.generate().publicKey;
 
       await program.methods
-        .addTokenAllowlist(token1)
+        .addTokenAllowlist(token1, new BN(1_000_000), new BN(10_000_000))
         .accounts({
           vault: vaultPda,
           authority: authority.publicKey,
@@ -149,7 +149,7 @@ describe("Agent Vault Tests", () => {
         .rpc();
 
       await program.methods
-        .addTokenAllowlist(token2)
+        .addTokenAllowlist(token2, new BN(1_000_000), new BN(10_000_000))
         .accounts({
           vault: vaultPda,
           authority: authority.publicKey,
@@ -969,7 +969,7 @@ describe("Agent Vault Tests", () => {
 
       try {
         await program.methods
-          .addTokenAllowlist(tokenMint)
+          .addTokenAllowlist(tokenMint, new BN(1_000_000), new BN(10_000_000))
           .accounts({
             vault: allowlistAuthVaultPda,
             authority: allowlistUnauthorizedSigner.publicKey,
@@ -989,7 +989,7 @@ describe("Agent Vault Tests", () => {
 
       // Add token
       await program.methods
-        .addTokenAllowlist(tokenMint)
+        .addTokenAllowlist(tokenMint, new BN(1_000_000), new BN(10_000_000))
         .accounts({
           vault: allowlistAuthVaultPda,
           authority: allowlistAuthVaultAuthority.publicKey,

@@ -13,14 +13,39 @@ if (!JWT_SECRET) {
 const TOKEN_EXPIRY_SECONDS = parseInt(process.env.TOKEN_EXPIRY || "3600", 10);
 const PAYMENT_RECIPIENT = process.env.PAYMENT_RECIPIENT || "";
 const REQUIRED_AMOUNT_SOL = parseFloat(process.env.REQUIRED_AMOUNT_SOL || "0.01");
-const connection = new Connection(RPC_URL, "confirmed");
+// Finding #16: Use "finalized" — the highest Solana commitment level — so
+// the relay never grants access on a transaction that could still be dropped
+// by a fork. "confirmed" (the old default) is ~2/3 stake and can reorg.
+const connection = new Connection(RPC_URL, "finalized");
 
-const redeemedSignatures = new Set<string>();
+// Finding #16: Track each redeemed signature together with the timestamp at
+// which it becomes safe to evict (the JWT TTL window + a small grace buffer).
+// The old code replaced this with a naive `Set<string>` that was *cleared*
+// entirely when it hit 10k entries — an attacker who flooded 10k unique
+// signatures could unlock replay of every previously-redeemed signature
+// that was still within its JWT TTL. Bounded TTL eviction fixes the flood
+// escape hatch; no entry is removed until it is genuinely expired.
+const redeemedSignatures = new Map<string, number>();
 const SIGNATURE_TTL_MS = (TOKEN_EXPIRY_SECONDS + 300) * 1000;
+const MAX_REDEEMED_SIGNATURES = 100_000;
 
 function pruneRedeemedSignatures(): void {
-  if (redeemedSignatures.size > 10000) {
-    redeemedSignatures.clear();
+  const now = Date.now();
+  for (const [sig, expiresAt] of redeemedSignatures) {
+    if (now >= expiresAt) {
+      redeemedSignatures.delete(sig);
+    }
+  }
+  // Safety cap: if TTL eviction hasn't kept pace (which would require
+  // ~100k unique signatures per TTL window — i.e. ~30 signatures/second
+  // for the default 3600s token), drop the oldest entries in insertion
+  // order. Map iteration order IS insertion order. Critically, this does
+  // NOT wipe the set — at most it evicts entries that have been held
+  // far longer than normal usage requires.
+  while (redeemedSignatures.size > MAX_REDEEMED_SIGNATURES) {
+    const oldest = redeemedSignatures.keys().next().value;
+    if (oldest === undefined) break;
+    redeemedSignatures.delete(oldest);
   }
 }
 setInterval(pruneRedeemedSignatures, SIGNATURE_TTL_MS);
@@ -40,8 +65,10 @@ async function verifyPaymentOnChain(
   minAmountSol: number
 ): Promise<PaymentVerification> {
   try {
+    // Finding #16: "finalized" guarantees the tx is past the fork-choice
+    // window. Accepting "confirmed" here would let a reorged tx issue a JWT.
     const tx = await connection.getTransaction(txSignature, {
-      commitment: "confirmed",
+      commitment: "finalized",
       maxSupportedTransactionVersion: 0,
     });
 
@@ -195,7 +222,8 @@ app.post("/pay", async (req: Request, res: Response) => {
     return;
   }
 
-  if (redeemedSignatures.has(txSignature)) {
+  const existingExpiry = redeemedSignatures.get(txSignature);
+  if (existingExpiry !== undefined && Date.now() < existingExpiry) {
     res.status(409).json({ error: "Transaction signature already redeemed" });
     return;
   }
@@ -220,7 +248,7 @@ app.post("/pay", async (req: Request, res: Response) => {
     return;
   }
 
-  redeemedSignatures.add(txSignature);
+  redeemedSignatures.set(txSignature, Date.now() + SIGNATURE_TTL_MS);
 
   const accessToken = issueAccessToken(
     verification.sender,

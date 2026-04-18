@@ -60,14 +60,26 @@ pub fn update_policy(
     Ok(())
 }
 
+/// Finding #13/#14: per-mint limits are now set at allowlist-add time.
+/// `per_tx_limit` and `daily_limit` are in the token's base units, resolving
+/// the old SOL-lamport conflation. Calling with an already-allowlisted mint
+/// updates its limits (without resetting `spent_today`).
 pub fn add_token_allowlist(
     ctx: Context<ManageAllowlist>,
     token_mint: Pubkey,
+    per_tx_limit: u64,
+    daily_limit: u64,
 ) -> Result<()> {
     // Authority verified by has_one constraint (ADR-041)
 
+    require!(
+        per_tx_limit > 0 && daily_limit > 0 && per_tx_limit <= daily_limit,
+        VaultError::InvalidTokenLimits
+    );
+
     let vault = &mut ctx.accounts.vault;
-    if !vault.policy.token_allowlist.contains(&token_mint) {
+    let newly_added = !vault.policy.token_allowlist.contains(&token_mint);
+    if newly_added {
         require!(
             vault.policy.token_allowlist.len() < MAX_TOKEN_ALLOWLIST,
             VaultError::AllowlistFull
@@ -75,10 +87,32 @@ pub fn add_token_allowlist(
         vault.policy.token_allowlist.push(token_mint);
     }
 
+    // Upsert the TokenSpendRecord carrying the per-mint limits.
+    match vault.token_spend_records.iter().position(|r| r.mint == token_mint) {
+        Some(idx) => {
+            let record = &mut vault.token_spend_records[idx];
+            record.per_tx_limit = per_tx_limit;
+            record.daily_limit = daily_limit;
+        }
+        None => {
+            require!(
+                vault.token_spend_records.len() < MAX_TOKEN_SPEND_RECORDS,
+                VaultError::TokenSpendRecordsFull
+            );
+            vault.token_spend_records.push(TokenSpendRecord {
+                mint: token_mint,
+                per_tx_limit,
+                daily_limit,
+                spent_today: 0,
+                last_spend_day: 0,
+            });
+        }
+    }
+
     emit!(AllowlistUpdated {
         vault: ctx.accounts.vault.key(),
         item: token_mint,
-        action: "token_add".to_string(),
+        action: if newly_added { "token_add" } else { "token_limits_update" }.to_string(),
     });
 
     Ok(())
@@ -220,10 +254,22 @@ pub fn execute_transfer(
     let vault_info = ctx.accounts.vault.to_account_info();
     let recipient_info = ctx.accounts.recipient.to_account_info();
 
-    **vault_info.try_borrow_mut_lamports()? = vault_info
+    // Finding #15: The vault PDA is program-owned, so we can mutate lamports
+    // directly — but draining below the rent-exempt minimum would mark the
+    // account as rent-bearing, letting the runtime garbage-collect it on the
+    // next epoch. Pre-validate the post-transfer balance against Rent before
+    // applying the mutation so the whole tx reverts on insufficient funds.
+    let rent_minimum = Rent::get()?.minimum_balance(vault_info.data_len());
+    let post_transfer_balance = vault_info
         .lamports()
         .checked_sub(amount_lamports)
         .ok_or(VaultError::InsufficientFunds)?;
+    require!(
+        post_transfer_balance >= rent_minimum,
+        VaultError::BelowRentExemption
+    );
+
+    **vault_info.try_borrow_mut_lamports()? = post_transfer_balance;
     **recipient_info.try_borrow_mut_lamports()? = recipient_info
         .lamports()
         .checked_add(amount_lamports)
@@ -305,45 +351,36 @@ pub fn execute_token_transfer(
         );
         vault.txs_in_current_window = vault.txs_in_current_window.saturating_add(1);
 
-        // Per-token daily spending limit enforcement (ADR-015)
+        // Findings #13/#14: Per-mint per-tx + daily enforcement in the token's
+        // own base units. The record MUST exist — add_token_allowlist is now
+        // the only way to authorize a mint for transfers, and it always
+        // creates/updates the TokenSpendRecord with explicit limits.
         let mint = ctx.accounts.vault_token_account.mint;
         let current_day = (clock.unix_timestamp / 86400) as u64;
-        let daily_limit = vault.policy.daily_limit_lamports;
 
-        // Find existing record for this mint, or create one
-        let record_idx = vault.token_spend_records.iter().position(|r| r.mint == mint);
-        match record_idx {
-            Some(idx) => {
-                let record = &mut vault.token_spend_records[idx];
-                // Reset if day changed
-                if current_day > record.last_spend_day {
-                    record.spent_today = 0;
-                    record.last_spend_day = current_day;
-                }
-                require!(
-                    record.spent_today.saturating_add(amount) <= daily_limit,
-                    VaultError::TokenDailyLimitExceeded
-                );
-                record.spent_today = record.spent_today.saturating_add(amount);
-            }
-            None => {
-                // New token -- check capacity
-                require!(
-                    vault.token_spend_records.len() < MAX_TOKEN_SPEND_RECORDS,
-                    VaultError::TokenSpendRecordsFull
-                );
-                // First spend of the day for this token
-                require!(
-                    amount <= daily_limit,
-                    VaultError::TokenDailyLimitExceeded
-                );
-                vault.token_spend_records.push(TokenSpendRecord {
-                    mint,
-                    spent_today: amount,
-                    last_spend_day: current_day,
-                });
-            }
+        let record_idx = vault
+            .token_spend_records
+            .iter()
+            .position(|r| r.mint == mint)
+            .ok_or(VaultError::TokenNotConfigured)?;
+        let record = &mut vault.token_spend_records[record_idx];
+
+        // Per-tx limit (#13) — enforced in the mint's base units.
+        require!(
+            amount <= record.per_tx_limit,
+            VaultError::PerTxTokenLimitExceeded
+        );
+
+        // Daily limit (#14) — reset the window if the day rolled over.
+        if current_day > record.last_spend_day {
+            record.spent_today = 0;
+            record.last_spend_day = current_day;
         }
+        require!(
+            record.spent_today.saturating_add(amount) <= record.daily_limit,
+            VaultError::TokenDailyLimitExceeded
+        );
+        record.spent_today = record.spent_today.saturating_add(amount);
     }
 
     // CPI transfer with vault PDA as signer

@@ -53,10 +53,17 @@ pub mod agent_vault {
         )
     }
 
-    /// Adds a token to the vault's allowlist. Only tokens in this list can be transferred.
-    /// Calling with a token already in the allowlist is idempotent.
-    pub fn add_token_allowlist(ctx: Context<ManageAllowlist>, token_mint: Pubkey) -> Result<()> {
-        instructions::add_token_allowlist(ctx, token_mint)
+    /// Adds a token to the vault's allowlist with per-mint `per_tx_limit` and
+    /// `daily_limit` expressed in the token's base units (findings #13/#14).
+    /// Calling with an already-listed mint updates its limits without
+    /// resetting the current day's spent counter.
+    pub fn add_token_allowlist(
+        ctx: Context<ManageAllowlist>,
+        token_mint: Pubkey,
+        per_tx_limit: u64,
+        daily_limit: u64,
+    ) -> Result<()> {
+        instructions::add_token_allowlist(ctx, token_mint, per_tx_limit, daily_limit)
     }
 
     /// Removes a token from the vault's allowlist.
@@ -200,6 +207,8 @@ mod tests {
         let mint = sample_pubkey();
         let mut record = TokenSpendRecord {
             mint,
+            per_tx_limit: 1000,
+            daily_limit: 2000,
             spent_today: 500,
             last_spend_day: 100,
         };
@@ -218,17 +227,18 @@ mod tests {
         let mint = sample_pubkey();
         let mut record = TokenSpendRecord {
             mint,
+            per_tx_limit: 500,
+            daily_limit: 1000,
             spent_today: 300,
             last_spend_day: 100,
         };
         let amount: u64 = 200;
-        let daily_limit: u64 = 1000;
         let current_day: u64 = 100; // same day
         if current_day > record.last_spend_day {
             record.spent_today = 0;
             record.last_spend_day = current_day;
         }
-        assert!(record.spent_today.saturating_add(amount) <= daily_limit);
+        assert!(record.spent_today.saturating_add(amount) <= record.daily_limit);
         record.spent_today = record.spent_today.saturating_add(amount);
         assert_eq!(record.spent_today, 500);
     }
@@ -238,13 +248,14 @@ mod tests {
         let mint = sample_pubkey();
         let record = TokenSpendRecord {
             mint,
+            per_tx_limit: 500,
+            daily_limit: 1000,
             spent_today: 900,
             last_spend_day: 100,
         };
         let amount: u64 = 200;
-        let daily_limit: u64 = 1000;
         // 900 + 200 = 1100 > 1000 -- should be rejected
-        assert!(record.spent_today.saturating_add(amount) > daily_limit);
+        assert!(record.spent_today.saturating_add(amount) > record.daily_limit);
     }
 
     #[test]
@@ -252,13 +263,33 @@ mod tests {
         let mint = sample_pubkey();
         let record = TokenSpendRecord {
             mint,
+            per_tx_limit: 500,
+            daily_limit: 1000,
             spent_today: 800,
             last_spend_day: 100,
         };
         let amount: u64 = 200;
-        let daily_limit: u64 = 1000;
         // 800 + 200 = 1000 == 1000 -- should pass (<=)
-        assert!(record.spent_today.saturating_add(amount) <= daily_limit);
+        assert!(record.spent_today.saturating_add(amount) <= record.daily_limit);
+    }
+
+    /// Finding #13: per-tx limit is enforced per mint, in the token's
+    /// own base units — not reused from the SOL-lamport policy.
+    #[test]
+    fn test_token_spend_record_per_tx_limit_blocks_whale_tx() {
+        let mint = sample_pubkey();
+        let record = TokenSpendRecord {
+            mint,
+            per_tx_limit: 100,
+            daily_limit: 10_000,
+            spent_today: 0,
+            last_spend_day: 0,
+        };
+        // A single 500-unit transfer is well under the daily cap but
+        // above the per-tx cap — must be rejected.
+        let amount: u64 = 500;
+        assert!(amount > record.per_tx_limit);
+        assert!(record.spent_today.saturating_add(amount) <= record.daily_limit);
     }
 
     #[test]
@@ -267,6 +298,8 @@ mod tests {
         for _ in 0..MAX_TOKEN_SPEND_RECORDS {
             records.push(TokenSpendRecord {
                 mint: sample_pubkey(),
+                per_tx_limit: 100,
+                daily_limit: 1000,
                 spent_today: 0,
                 last_spend_day: 0,
             });
@@ -281,13 +314,47 @@ mod tests {
         let mint_a = sample_pubkey();
         let mint_b = sample_pubkey();
         let records = vec![
-            TokenSpendRecord { mint: mint_a, spent_today: 100, last_spend_day: 50 },
-            TokenSpendRecord { mint: mint_b, spent_today: 200, last_spend_day: 50 },
+            TokenSpendRecord {
+                mint: mint_a, per_tx_limit: 50, daily_limit: 500,
+                spent_today: 100, last_spend_day: 50,
+            },
+            TokenSpendRecord {
+                mint: mint_b, per_tx_limit: 50, daily_limit: 500,
+                spent_today: 200, last_spend_day: 50,
+            },
         ];
         let found = records.iter().position(|r| r.mint == mint_b);
         assert_eq!(found, Some(1));
         let not_found = records.iter().position(|r| r.mint == sample_pubkey());
         assert!(not_found.is_none());
+    }
+
+    /// Finding #14: with per-mint limits, two mints with different decimal
+    /// schemes can have limits expressed in their own base units without
+    /// conflation. A record configured for USDC (6 decimals) is independent
+    /// of a record configured for a 9-decimal token — neither inherits
+    /// the vault's SOL-lamport daily limit.
+    #[test]
+    fn test_token_spend_record_decimal_independence() {
+        let usdc = sample_pubkey();
+        let other = sample_pubkey();
+        let usdc_record = TokenSpendRecord {
+            mint: usdc,
+            per_tx_limit: 100_000_000,      // 100 USDC at 6 decimals
+            daily_limit: 1_000_000_000,     // 1000 USDC at 6 decimals
+            spent_today: 0,
+            last_spend_day: 0,
+        };
+        let other_record = TokenSpendRecord {
+            mint: other,
+            per_tx_limit: 100_000_000_000,   // 100 tokens at 9 decimals
+            daily_limit: 1_000_000_000_000,  // 1000 tokens at 9 decimals
+            spent_today: 0,
+            last_spend_day: 0,
+        };
+        // The same "100 tokens" have wildly different base-unit values,
+        // which was exactly the bug #14 was about.
+        assert_ne!(usdc_record.per_tx_limit, other_record.per_tx_limit);
     }
 
     // ADR-050: VaultAction test removed — enum was orphaned dead code

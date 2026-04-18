@@ -4,16 +4,17 @@ use anchor_spl::token::{Token, TokenAccount};
 use crate::state::Vault;
 use crate::errors::VaultError;
 
-/// ADR-050: Explicit serialized size replaces mem::size_of (which returns stack size).
+/// ADR-050 + findings #13/#14: Explicit serialized size.
 /// 8 (disc) + 32 (agent_id) + 32 (authority) + 1 (paused) + 8 (spent_today) + 8 (last_day)
 /// + VaultPolicy: 8+8+4+324+324=668 + 4 (txs_window) + 8 (rate_start)
-/// + 4+(10*(32+8+8))=484 (token_spend_records) + 1 (bump) = 1254 + 200 margin = 1454
+/// + 4+(10*(32+8+8+8+8))=644 (token_spend_records, now carrying per-mint limits)
+/// + 1 (bump) = 1414 + 200 margin = 1614
 #[derive(Accounts)]
 pub struct InitializeVault<'info> {
     #[account(
         init,
         payer = authority,
-        space = 1454,
+        space = 1614,
         seeds = [b"vault", authority.key().as_ref()],
         bump
     )]
