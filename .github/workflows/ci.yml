@@ -173,3 +173,108 @@ jobs:
         with:
           path: ./
           extra_args: --results=verified,unknown
+
+  # S-xcut-03: anchor build + IDL diff gate.
+  #
+  # `cargo check` does not exercise Anchor IDL codegen. H1 from the prior
+  # critique (fabricated discriminators in the indexer) was an IDL-drift
+  # failure that a mandatory anchor build + committed-IDL diff would have
+  # caught. This job rebuilds every program, diffs the generated IDL
+  # against `idl/*.json` in the tree, and uploads the IDL as an artifact
+  # so maintainers can seed the baseline on first run.
+  anchor-build:
+    name: Anchor Build & IDL Diff
+    runs-on: ubuntu-latest
+    env:
+      # Agave 3.1.13 ships platform-tools v1.52 (Rust 1.89 + cargo 1.89),
+      # which is the first Solana/Agave release whose bundled cargo can
+      # parse v4 lockfiles and handle `edition2024` transitive deps that
+      # appear in our current tree. Anchor 0.31.1 builds cleanly against
+      # it (verified locally). Older 1.18 / 2.x releases ship cargo 1.75
+      # and fail at `anchor build` with either `lock file version 4
+      # requires -Znext-lockfile-bump` or `feature edition2024 is
+      # required`.
+      SOLANA_VERSION: v3.1.13
+      ANCHOR_VERSION: 0.31.1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry & target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-anchor-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-anchor-cargo-
+
+      - name: Cache solana CLI
+        id: cache-solana
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/solana
+          key: ${{ runner.os }}-solana-${{ env.SOLANA_VERSION }}
+
+      - name: Install Solana CLI
+        if: steps.cache-solana.outputs.cache-hit != 'true'
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/${SOLANA_VERSION}/install)"
+
+      - name: Add Solana to PATH
+        run: echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Verify Solana toolchain
+        run: |
+          solana --version
+          cargo-build-sbf --version
+
+      - name: Cache anchor CLI
+        id: cache-anchor
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/anchor
+          key: ${{ runner.os }}-anchor-${{ env.ANCHOR_VERSION }}
+
+      - name: Install Anchor CLI
+        if: steps.cache-anchor.outputs.cache-hit != 'true'
+        run: |
+          cargo install --git https://github.com/coral-xyz/anchor \
+            --tag "v${ANCHOR_VERSION}" anchor-cli --locked
+
+      - name: Verify Anchor
+        run: anchor --version
+
+      - name: Anchor build
+        env:
+          RUST_BACKTRACE: full
+        run: |
+          set -x
+          anchor build
+          echo "--- target/idl contents after build ---"
+          ls -la target/idl || echo "(no target/idl directory)"
+
+      - name: Upload generated IDL
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: anchor-idl
+          path: target/idl/*.json
+          if-no-files-found: warn
+
+      - name: Check IDL matches committed baseline
+        run: ./scripts/check-idl.sh
+
+  # S-xcut-04: integration test job against a local solana-test-validator —
+  # intentionally not added in this PR.
+  #
+  # The Anchor suites under `tests/` (settlement / agent-registry /
+  # agent-vault) predate the C1..C4 refactors that rewrote escrow, dispute,
+  # reputation, and registry CPIs. 14 of 99 tests currently fail against
+  # the post-refactor programs. Gating CI on them right now would wedge
+  # every unrelated PR. Fix is tracked separately; see the S-xcut-04
+  # follow-up issue. Once the tests are current, re-add this job with
+  # `needs: anchor-build` and `anchor test` as the final step.

@@ -1,0 +1,1369 @@
+{
+  "address": "8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh",
+  "metadata": {
+    "name": "agent_registry",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Agent Registry - Discovery and identity component for the Autonomous Economic Agents Protocol (AEAP) on Solana"
+  },
+  "instructions": [
+    {
+      "name": "clear_suspension",
+      "docs": [
+        "C5: Appeal path out of the permanent-suspension trap. Before this",
+        "instruction existed, a 3-strike slash sequence would `Suspend` the",
+        "agent and `update_status` refused every outbound transition except",
+        "`Retired`, leaving no way back into productive state. This is an",
+        "interim, self-service governance path — a richer on-chain",
+        "governance authority is deferred to a future ADR.",
+        "",
+        "The cost is non-trivial: the agent's reputation_score is halved,",
+        "slash_count is reset to 0, and status moves to `Paused` (not",
+        "`Active`) so re-entry is a deliberate second action."
+      ],
+      "discriminator": [
+        156,
+        37,
+        95,
+        180,
+        249,
+        61,
+        229,
+        76
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "agent_profile"
+          ]
+        },
+        {
+          "name": "agent_profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "deregister_agent",
+      "discriminator": [
+        227,
+        208,
+        166,
+        164,
+        48,
+        69,
+        111,
+        1
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "agent_profile"
+          ]
+        },
+        {
+          "name": "agent_profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "register_agent",
+      "discriminator": [
+        135,
+        157,
+        66,
+        195,
+        2,
+        113,
+        175,
+        30
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "agent_profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "docs": [
+            "Finding #9: The agent's canonical vault PDA, owned by the Agent Vault",
+            "program. Seeds `[b\"vault\", authority]` match `InitializeVault` in the",
+            "vault program. Anchor enforces the seed constraint at deserialization,",
+            "so an attacker cannot substitute an unrelated Pubkey. The account is",
+            "passed as `UncheckedAccount` because the registry doesn't need to read",
+            "its state — it only needs the runtime to prove the address is the",
+            "correct cross-program derivation.",
+            "",
+            "The vault does not need to exist (initialize_vault may run later or",
+            "never); we only bind the stored vault_address to the canonical PDA."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "authority"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                58,
+                152,
+                159,
+                38,
+                133,
+                79,
+                251,
+                15,
+                87,
+                50,
+                154,
+                60,
+                143,
+                112,
+                72,
+                173,
+                150,
+                146,
+                57,
+                236,
+                63,
+                162,
+                74,
+                120,
+                90,
+                248,
+                41,
+                19,
+                87,
+                106,
+                1,
+                253
+              ]
+            }
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "description",
+          "type": "string"
+        },
+        {
+          "name": "category",
+          "type": "string"
+        },
+        {
+          "name": "capabilities",
+          "type": {
+            "vec": "string"
+          }
+        },
+        {
+          "name": "pricing_model",
+          "type": {
+            "defined": {
+              "name": "PricingModel"
+            }
+          }
+        },
+        {
+          "name": "pricing_amount",
+          "type": "u64"
+        },
+        {
+          "name": "accepted_tokens",
+          "type": {
+            "vec": "pubkey"
+          }
+        }
+      ]
+    },
+    {
+      "name": "stake_reputation",
+      "discriminator": [
+        104,
+        250,
+        157,
+        87,
+        16,
+        190,
+        180,
+        238
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "agent_profile"
+          ]
+        },
+        {
+          "name": "agent_profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "staking_pda",
+          "docs": [
+            "the system program transfer implicitly creates it. Minimum stake must",
+            "exceed rent exemption (~0.00089 SOL) to avoid garbage collection."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  112,
+                  117,
+                  116,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110,
+                  45,
+                  115,
+                  116,
+                  97,
+                  107,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "unstake_reputation",
+      "discriminator": [
+        221,
+        129,
+        253,
+        42,
+        124,
+        107,
+        139,
+        106
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "agent_profile"
+          ]
+        },
+        {
+          "name": "agent_profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "staking_pda",
+          "docs": [
+            "C4: Withdrawals use `invoke_signed(system_program::transfer)` with",
+            "these seeds as the signer. Direct lamport manipulation is illegal",
+            "here because the account is owned by the System Program, not this",
+            "program — only the owner can subtract lamports."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  112,
+                  117,
+                  116,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110,
+                  45,
+                  115,
+                  116,
+                  97,
+                  107,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "update_profile",
+      "discriminator": [
+        98,
+        67,
+        99,
+        206,
+        86,
+        115,
+        175,
+        1
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "agent_profile"
+          ]
+        },
+        {
+          "name": "agent_profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "name",
+          "type": {
+            "option": "string"
+          }
+        },
+        {
+          "name": "description",
+          "type": {
+            "option": "string"
+          }
+        },
+        {
+          "name": "category",
+          "type": {
+            "option": "string"
+          }
+        },
+        {
+          "name": "capabilities",
+          "type": {
+            "option": {
+              "vec": "string"
+            }
+          }
+        },
+        {
+          "name": "pricing_model",
+          "type": {
+            "option": {
+              "defined": {
+                "name": "PricingModel"
+              }
+            }
+          }
+        },
+        {
+          "name": "pricing_amount",
+          "type": {
+            "option": "u64"
+          }
+        },
+        {
+          "name": "accepted_tokens",
+          "type": {
+            "option": {
+              "vec": "pubkey"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "update_reputation",
+      "discriminator": [
+        194,
+        220,
+        43,
+        201,
+        54,
+        209,
+        49,
+        178
+      ],
+      "accounts": [
+        {
+          "name": "agent_profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "agent_profile.authority",
+                "account": "AgentProfile"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "settlement_authority",
+          "signer": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  116,
+                  116,
+                  108,
+                  101,
+                  109,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                227,
+                132,
+                12,
+                30,
+                9,
+                78,
+                44,
+                188,
+                135,
+                187,
+                145,
+                68,
+                5,
+                84,
+                82,
+                239,
+                90,
+                255,
+                29,
+                178,
+                208,
+                214,
+                104,
+                25,
+                104,
+                107,
+                82,
+                183,
+                124,
+                88,
+                179,
+                116
+              ]
+            }
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "reputation_delta",
+          "type": "i64"
+        },
+        {
+          "name": "task_completed",
+          "type": "bool"
+        },
+        {
+          "name": "earnings",
+          "type": "u64"
+        },
+        {
+          "name": "rating",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "update_status",
+      "discriminator": [
+        147,
+        215,
+        74,
+        174,
+        55,
+        191,
+        42,
+        0
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "agent_profile"
+          ]
+        },
+        {
+          "name": "agent_profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "new_status",
+          "type": {
+            "defined": {
+              "name": "AgentStatus"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "AgentProfile",
+      "discriminator": [
+        60,
+        227,
+        42,
+        24,
+        0,
+        87,
+        86,
+        205
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "AgentDeregistered",
+      "discriminator": [
+        132,
+        69,
+        246,
+        19,
+        135,
+        65,
+        28,
+        134
+      ]
+    },
+    {
+      "name": "AgentProfileUpdated",
+      "discriminator": [
+        37,
+        86,
+        36,
+        71,
+        59,
+        237,
+        6,
+        247
+      ]
+    },
+    {
+      "name": "AgentRegistered",
+      "discriminator": [
+        191,
+        78,
+        217,
+        54,
+        232,
+        100,
+        189,
+        85
+      ]
+    },
+    {
+      "name": "AgentSlashed",
+      "discriminator": [
+        120,
+        151,
+        39,
+        77,
+        227,
+        13,
+        229,
+        185
+      ]
+    },
+    {
+      "name": "AgentStatusUpdated",
+      "discriminator": [
+        196,
+        209,
+        177,
+        67,
+        67,
+        223,
+        225,
+        10
+      ]
+    },
+    {
+      "name": "ReputationStaked",
+      "discriminator": [
+        12,
+        70,
+        73,
+        125,
+        30,
+        125,
+        6,
+        10
+      ]
+    },
+    {
+      "name": "ReputationUnstaked",
+      "discriminator": [
+        146,
+        173,
+        71,
+        160,
+        129,
+        111,
+        42,
+        162
+      ]
+    },
+    {
+      "name": "ReputationUpdated",
+      "discriminator": [
+        26,
+        36,
+        187,
+        150,
+        235,
+        90,
+        106,
+        89
+      ]
+    },
+    {
+      "name": "SuspensionCleared",
+      "discriminator": [
+        89,
+        41,
+        64,
+        20,
+        171,
+        221,
+        50,
+        215
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "NameTooLong",
+      "msg": "Agent name exceeds maximum length of 64 bytes"
+    },
+    {
+      "code": 6001,
+      "name": "DescriptionTooLong",
+      "msg": "Description exceeds maximum length of 256 bytes"
+    },
+    {
+      "code": 6002,
+      "name": "InvalidCapabilitiesCount",
+      "msg": "Invalid number of capabilities (must be 1-10)"
+    },
+    {
+      "code": 6003,
+      "name": "InvalidTokensCount",
+      "msg": "Invalid number of accepted tokens (must be 1-5)"
+    },
+    {
+      "code": 6004,
+      "name": "InvalidRating",
+      "msg": "Invalid rating (must be 0-5)"
+    },
+    {
+      "code": 6005,
+      "name": "UnauthorizedCaller",
+      "msg": "Unauthorized caller (must be settlement program for reputation updates)"
+    },
+    {
+      "code": 6006,
+      "name": "InvalidPDA",
+      "msg": "Invalid PDA derivation"
+    },
+    {
+      "code": 6007,
+      "name": "InvalidStatusTransition",
+      "msg": "Invalid status transition: Retired agents cannot be reactivated"
+    },
+    {
+      "code": 6008,
+      "name": "InvalidStakeAmount",
+      "msg": "Invalid stake amount (must be > 0)"
+    },
+    {
+      "code": 6009,
+      "name": "InsufficientStake",
+      "msg": "Insufficient staked amount for withdrawal"
+    },
+    {
+      "code": 6010,
+      "name": "CategoryTooLong",
+      "msg": "Category exceeds maximum length of 50 bytes"
+    },
+    {
+      "code": 6011,
+      "name": "WouldOrphanStakeAccount",
+      "msg": "Unstake would leave the stake account with a non-zero sub-rent-exempt balance, which would be garbage-collected and strand funds"
+    },
+    {
+      "code": 6012,
+      "name": "StakeBelowRentExempt",
+      "msg": "Stake amount is below the rent-exempt minimum for the staking PDA"
+    },
+    {
+      "code": 6013,
+      "name": "NotSuspended",
+      "msg": "clear_suspension requires status == Suspended and slash_count >= 3"
+    }
+  ],
+  "types": [
+    {
+      "name": "AgentDeregistered",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AgentProfile",
+      "docs": [
+        "AgentProfile: The core account representing a registered agent.",
+        "",
+        "ADR-040: Account space is explicitly calculated as 1243 bytes",
+        "(1043 serialized max + 200 safety margin)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "description",
+            "type": "string"
+          },
+          {
+            "name": "category",
+            "type": "string"
+          },
+          {
+            "name": "capabilities",
+            "type": {
+              "vec": "string"
+            }
+          },
+          {
+            "name": "pricing_model",
+            "type": {
+              "defined": {
+                "name": "PricingModel"
+              }
+            }
+          },
+          {
+            "name": "pricing_amount",
+            "type": "u64"
+          },
+          {
+            "name": "accepted_tokens",
+            "type": {
+              "vec": "pubkey"
+            }
+          },
+          {
+            "name": "vault_address",
+            "type": "pubkey"
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "AgentStatus"
+              }
+            }
+          },
+          {
+            "name": "reputation_score",
+            "type": "u64"
+          },
+          {
+            "name": "total_tasks_completed",
+            "type": "u64"
+          },
+          {
+            "name": "total_earnings",
+            "type": "u64"
+          },
+          {
+            "name": "avg_rating",
+            "type": "u8"
+          },
+          {
+            "name": "created_at",
+            "type": "i64"
+          },
+          {
+            "name": "updated_at",
+            "type": "i64"
+          },
+          {
+            "name": "reputation_stake",
+            "type": {
+              "defined": {
+                "name": "ReputationStake"
+              }
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AgentProfileUpdated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AgentRegistered",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "category",
+            "type": "string"
+          },
+          {
+            "name": "vault_address",
+            "type": "pubkey"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AgentSlashed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "slash_count",
+            "type": "u8"
+          },
+          {
+            "name": "suspended",
+            "type": "bool"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AgentStatus",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Active"
+          },
+          {
+            "name": "Paused"
+          },
+          {
+            "name": "Retired"
+          },
+          {
+            "name": "Suspended"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AgentStatusUpdated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "new_status",
+            "type": {
+              "defined": {
+                "name": "AgentStatus"
+              }
+            }
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PricingModel",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "PerTask"
+          },
+          {
+            "name": "PerHour"
+          },
+          {
+            "name": "PerToken"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ReputationStake",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "staked_amount",
+            "type": "u64"
+          },
+          {
+            "name": "slash_count",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ReputationStaked",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "total_staked",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ReputationUnstaked",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "remaining_staked",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ReputationUpdated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "new_reputation_score",
+            "type": "u64"
+          },
+          {
+            "name": "reputation_delta",
+            "type": "i64"
+          },
+          {
+            "name": "task_completed",
+            "type": "bool"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SuspensionCleared",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "new_reputation_score",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    }
+  ]
+}
