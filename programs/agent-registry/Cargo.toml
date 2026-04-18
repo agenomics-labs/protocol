@@ -14,6 +14,14 @@ name = "agent_registry"
 
 [features]
 idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+# Finding #17: Enables typed CPI generation from this program's `#[program]`
+# module when consumed as a path dependency. Settlement depends on this with
+# `features = ["cpi"]` so it can call `update_reputation` with compile-time
+# type safety instead of a hard-coded discriminator byte array.
+no-entrypoint = []
+no-idl = []
+cpi = ["no-entrypoint"]
+default = []
 
 [dev-dependencies]
 proptest = "1"

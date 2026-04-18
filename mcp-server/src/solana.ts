@@ -270,6 +270,20 @@ export function deriveEscrowTokenAccount(
   return getAssociatedTokenAddressSync(tokenMint, escrowPDA, true);
 }
 
+/**
+ * Finding #19: Derive the singleton ProtocolConfig PDA.
+ * Seeds: [b"protocol_config"] under the Settlement program.
+ * Every escrow/dispute/approve/expire path now takes this account so the
+ * governance-owned tunables (min_escrow, dispute_timeout, reputation
+ * deltas) are read at runtime instead of baked into the binary.
+ */
+export function deriveProtocolConfigPDA(): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("protocol_config")],
+    SETTLEMENT_PROGRAM_ID
+  );
+}
+
 // ==================== UTILITY FUNCTIONS ====================
 
 /**

@@ -182,63 +182,202 @@ export async function handleUpdateAgentProfile(args: Record<string, unknown>) {
 /**
  * Discover agents in the registry.
  *
- * Fetches all agent profiles and applies client-side filtering.
- * Previous versions used a memcmp filter at offset 998 for the status field,
- * but the offset was fragile and broke across Anchor/schema changes (ADR-042).
+ * Finding #18: Uses the off-chain indexer's `/agents` HTTP endpoint to
+ * narrow candidates (filter by category / min reputation server-side,
+ * SQL-indexed), then hydrates the top `limit` candidates from on-chain
+ * profile accounts. This replaces the previous `agentProfile.all()` call
+ * that fetched every profile account via `getProgramAccounts` — an O(N)
+ * unbounded RPC hit that doesn't scale past a few hundred agents.
+ *
+ * If `AEAP_INDEXER_URL` is unset or the request fails, the handler falls
+ * back to the old `agentProfile.all()` path so the MCP server stays
+ * usable in local development and during indexer outages.
  */
 export async function handleDiscoverAgents(args: Record<string, unknown>) {
   const program = getRegistryProgram();
   const limit = (args.limit as number) || 20;
+  const category =
+    typeof args.category === "string" ? (args.category as string) : undefined;
+  const capability =
+    typeof args.capability === "string"
+      ? (args.capability as string).toLowerCase()
+      : undefined;
+  const minReputation =
+    typeof args.minReputation === "number"
+      ? (args.minReputation as number)
+      : 0;
 
-  // Fetch all profiles — filtering is done client-side to avoid fragile memcmp offsets
-  const allProfiles: any[] = await (program.account as any).agentProfile.all();
+  const indexerUrl = process.env.AEAP_INDEXER_URL;
+  if (indexerUrl) {
+    try {
+      const hydrated = await discoverViaIndexer(
+        program,
+        indexerUrl,
+        limit,
+        category,
+        capability,
+        minReputation,
+        args.includeInactive === true
+      );
+      if (hydrated) {
+        return hydrated;
+      }
+    } catch (err) {
+      console.warn(
+        `[discoverAgents] indexer path failed (${(err as Error).message}); ` +
+          `falling back to on-chain scan.`
+      );
+    }
+  }
 
-  let filtered = allProfiles.map((item: any) => {
-    const p = item.account;
-    return {
-      address: item.publicKey.toBase58(),
-      authority: (p.authority as PublicKey).toBase58(),
-      name: p.name as string,
-      description: p.description as string,
-      category: p.category as string,
-      capabilities: p.capabilities as string[],
-      pricingModel: formatPricingModel(p.pricingModel),
-      pricingAmountSol: lamportsToSol((p.pricingAmount as any).toNumber()),
-      status: formatAgentStatus(p.status),
-      reputationScore: (p.reputationScore as any).toNumber(),
-      totalTasksCompleted: (p.totalTasksCompleted as any).toNumber(),
-      avgRating: p.avgRating as number,
-    };
-  });
+  return discoverViaOnChainScan(
+    program,
+    limit,
+    category,
+    capability,
+    minReputation,
+    args.includeInactive === true
+  );
+}
 
-  // Filter to active agents by default (client-side, no fragile memcmp)
-  if (!args.includeInactive) {
+/**
+ * Indexer path: fetch candidate list from `/agents` with server-side
+ * filters, then hydrate full profile details from on-chain PDAs for the
+ * `limit` best candidates. This is O(limit) RPC round trips instead of
+ * O(totalRegisteredAgents).
+ */
+async function discoverViaIndexer(
+  program: ReturnType<typeof getRegistryProgram>,
+  indexerUrl: string,
+  limit: number,
+  category: string | undefined,
+  capability: string | undefined,
+  minReputation: number,
+  includeInactive: boolean
+): Promise<{ agents: unknown[]; totalFound: number; limit: number } | null> {
+  const url = new URL(`${indexerUrl.replace(/\/+$/, "")}/agents`);
+  if (category) url.searchParams.set("category", category);
+  if (minReputation > 0)
+    url.searchParams.set("min_reputation", String(minReputation));
+  // Over-fetch from the indexer: the on-chain hydration step may exclude
+  // entries whose status is non-active or whose capabilities don't match.
+  url.searchParams.set("limit", String(Math.min(Math.max(limit * 4, 50), 200)));
+
+  const resp = await fetch(url.toString());
+  if (!resp.ok) {
+    throw new Error(`indexer HTTP ${resp.status}`);
+  }
+  const payload = (await resp.json()) as {
+    agents?: Array<{ authority: string; reputation_score?: number }>;
+  };
+  const candidates = payload.agents ?? [];
+  if (candidates.length === 0) {
+    return { agents: [], totalFound: 0, limit };
+  }
+
+  // Hydrate on-chain profile accounts in parallel. `fetchMultiple` does this
+  // in one RPC call if available; fall back to per-PDA fetches otherwise.
+  const profilePDAs = candidates.map(
+    (c) => deriveAgentProfilePDA(parsePublicKey(c.authority))[0]
+  );
+  const accountsNs = (program.account as any).agentProfile;
+  let fetched: Array<any | null>;
+  if (typeof accountsNs.fetchMultiple === "function") {
+    fetched = await accountsNs.fetchMultiple(profilePDAs);
+  } else {
+    fetched = await Promise.all(
+      profilePDAs.map((pda) =>
+        accountsNs.fetch(pda).catch(() => null)
+      )
+    );
+  }
+
+  const agents = fetched
+    .map((p, i) => {
+      if (!p) return null;
+      return hydrateAgent(profilePDAs[i], p);
+    })
+    .filter((a): a is NonNullable<typeof a> => a !== null);
+
+  let filtered = agents;
+  if (!includeInactive) {
     filtered = filtered.filter((a) => a.status === "active");
   }
-
-  // Apply client-side filters
-  if (args.category && typeof args.category === "string") {
-    filtered = filtered.filter((a) => a.category === args.category);
-  }
-  if (args.capability && typeof args.capability === "string") {
-    const cap = (args.capability as string).toLowerCase();
+  if (capability) {
     filtered = filtered.filter((a) =>
-      a.capabilities.some((c: string) => c.toLowerCase().includes(cap))
+      a.capabilities.some((c: string) => c.toLowerCase().includes(capability))
     );
   }
-  if (args.minReputation && typeof args.minReputation === "number") {
-    filtered = filtered.filter(
-      (a) => a.reputationScore >= (args.minReputation as number)
-    );
-  }
-
-  // Sort by reputation descending
   filtered.sort((a, b) => b.reputationScore - a.reputationScore);
 
   return {
     agents: filtered.slice(0, limit),
     totalFound: filtered.length,
     limit,
+  };
+}
+
+/**
+ * Fallback path: preserved from the original implementation so local
+ * development and indexer outages don't break discovery outright. Incurs
+ * the O(N) `getProgramAccounts` cost.
+ */
+async function discoverViaOnChainScan(
+  program: ReturnType<typeof getRegistryProgram>,
+  limit: number,
+  category: string | undefined,
+  capability: string | undefined,
+  minReputation: number,
+  includeInactive: boolean
+): Promise<{ agents: unknown[]; totalFound: number; limit: number }> {
+  const allProfiles: any[] = await (program.account as any).agentProfile.all();
+
+  let filtered = allProfiles.map((item: any) =>
+    hydrateAgent(item.publicKey, item.account)
+  );
+
+  if (!includeInactive) {
+    filtered = filtered.filter((a) => a.status === "active");
+  }
+  if (category) {
+    filtered = filtered.filter((a) => a.category === category);
+  }
+  if (capability) {
+    filtered = filtered.filter((a) =>
+      a.capabilities.some((c: string) => c.toLowerCase().includes(capability))
+    );
+  }
+  if (minReputation > 0) {
+    filtered = filtered.filter((a) => a.reputationScore >= minReputation);
+  }
+  filtered.sort((a, b) => b.reputationScore - a.reputationScore);
+
+  return {
+    agents: filtered.slice(0, limit),
+    totalFound: filtered.length,
+    limit,
+  };
+}
+
+/**
+ * Normalize an on-chain `AgentProfile` account into the MCP wire format.
+ * Shared between the indexer-hydrated path and the fallback scan so they
+ * return identical shapes.
+ */
+function hydrateAgent(address: PublicKey, p: any) {
+  return {
+    address: address.toBase58(),
+    authority: (p.authority as PublicKey).toBase58(),
+    name: p.name as string,
+    description: p.description as string,
+    category: p.category as string,
+    capabilities: p.capabilities as string[],
+    pricingModel: formatPricingModel(p.pricingModel),
+    pricingAmountSol: lamportsToSol((p.pricingAmount as any).toNumber()),
+    status: formatAgentStatus(p.status),
+    reputationScore: (p.reputationScore as any).toNumber(),
+    totalTasksCompleted: (p.totalTasksCompleted as any).toNumber(),
+    avgRating: p.avgRating as number,
   };
 }
 

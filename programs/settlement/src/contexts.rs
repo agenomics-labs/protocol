@@ -11,14 +11,32 @@ pub struct CreateEscrow<'info> {
     #[account(mut)]
     pub client: Signer<'info>,
 
-    /// Client's vault (from Agent Vault program)
-    /// CHECK: Informational-only metadata. MUST NOT be used for on-chain logic,
-    /// fund routing, or authorization. Stored for off-chain reference only.
+    /// Finding #21: Client's canonical vault PDA, owned by the Agent Vault
+    /// program. Seeds `[b"vault", client]` match `InitializeVault` in the
+    /// vault program. Anchor enforces the seed constraint, so an attacker
+    /// cannot substitute an unrelated Pubkey. The account need not exist
+    /// (no `init`, no data read) — we only bind the stored `client_vault`
+    /// address to the canonical cross-program derivation.
+    ///
+    /// CHECK: address is validated by the seeds + seeds::program constraint.
+    #[account(
+        seeds = [b"vault", client.key().as_ref()],
+        bump,
+        seeds::program = AGENT_VAULT_PROGRAM_ID,
+    )]
     pub client_vault: UncheckedAccount<'info>,
 
-    /// Provider's vault (from Agent Vault program)
-    /// CHECK: Informational-only metadata. MUST NOT be used for on-chain logic,
-    /// fund routing, or authorization. Stored for off-chain reference only.
+    /// Finding #21: Provider's canonical vault PDA, owned by the Agent Vault
+    /// program. Same rationale as `client_vault` — off-chain consumers (MCP,
+    /// discovery, indexer) can trust the stored `provider_vault` address
+    /// because the runtime enforced its derivation at escrow creation.
+    ///
+    /// CHECK: address is validated by the seeds + seeds::program constraint.
+    #[account(
+        seeds = [b"vault", provider.key().as_ref()],
+        bump,
+        seeds::program = AGENT_VAULT_PROGRAM_ID,
+    )]
     pub provider_vault: UncheckedAccount<'info>,
 
     /// The provider's public key
@@ -57,6 +75,15 @@ pub struct CreateEscrow<'info> {
         associated_token::authority = escrow
     )]
     pub escrow_token_account: Account<'info, TokenAccount>,
+
+    /// Finding #19: Singleton protocol config. Read to enforce
+    /// `min_escrow_amount` without a program upgrade. Must be initialized
+    /// via `initialize_protocol_config` before any escrow can be created.
+    #[account(
+        seeds = [PROTOCOL_CONFIG_SEED],
+        bump = protocol_config.bump,
+    )]
+    pub protocol_config: Account<'info, ProtocolConfig>,
 
     pub token_program: Program<'info, Token>,
     pub associated_token_program: Program<'info, AssociatedToken>,
@@ -140,6 +167,13 @@ pub struct ApproveMilestone<'info> {
     )]
     pub settlement_authority: UncheckedAccount<'info>,
 
+    /// Finding #19: Reads the governance-owned `reputation_delta_task_completed`.
+    #[account(
+        seeds = [PROTOCOL_CONFIG_SEED],
+        bump = protocol_config.bump,
+    )]
+    pub protocol_config: Account<'info, ProtocolConfig>,
+
     pub token_program: Program<'info, Token>,
 }
 
@@ -173,7 +207,18 @@ pub struct ResolveDispute<'info> {
     #[account(mut)]
     pub resolver: Signer<'info>,
 
-    #[account(mut)]
+    /// Finding #20: Authorization hoisted from handler to account-level
+    /// constraint for visibility parity with Registry's `has_one = authority`
+    /// pattern. Anchor's `has_one` cannot express OR-logic against an
+    /// `Option<Pubkey>`, so a `constraint` clause is used. The dispute.rs
+    /// handler still derives `is_resolver` for the slash decision (A-03),
+    /// but the authorization gate itself is enforced here.
+    #[account(
+        mut,
+        constraint = escrow.dispute_resolver.map(|r| r == resolver.key()).unwrap_or(false)
+            || resolver.key() == escrow.client
+            @ SettlementError::UnauthorizedResolver,
+    )]
     pub escrow: Account<'info, TaskEscrow>,
 
     #[account(
@@ -218,6 +263,13 @@ pub struct ResolveDispute<'info> {
     /// CHECK: Settlement authority PDA for CPI signing.
     #[account(seeds = [b"settlement_authority"], bump)]
     pub settlement_authority: UncheckedAccount<'info>,
+
+    /// Finding #19: Reads the governance-owned `reputation_delta_dispute_loss`.
+    #[account(
+        seeds = [PROTOCOL_CONFIG_SEED],
+        bump = protocol_config.bump,
+    )]
+    pub protocol_config: Account<'info, ProtocolConfig>,
 
     pub token_program: Program<'info, Token>,
 }
@@ -266,6 +318,14 @@ pub struct ResolveDisputeTimeout<'info> {
     /// CHECK: Settlement authority PDA for CPI signing.
     #[account(seeds = [b"settlement_authority"], bump)]
     pub settlement_authority: UncheckedAccount<'info>,
+
+    /// Finding #19: Reads the governance-owned `dispute_timeout_seconds`
+    /// and `reputation_delta_dispute_loss` used here.
+    #[account(
+        seeds = [PROTOCOL_CONFIG_SEED],
+        bump = protocol_config.bump,
+    )]
+    pub protocol_config: Account<'info, ProtocolConfig>,
 
     pub token_program: Program<'info, Token>,
 }
@@ -349,7 +409,50 @@ pub struct ExpireEscrow<'info> {
     #[account(seeds = [b"settlement_authority"], bump)]
     pub settlement_authority: UncheckedAccount<'info>,
 
+    /// Finding #19: Reads the governance-owned
+    /// `reputation_delta_expiry_undelivered` when an expiry slashes.
+    #[account(
+        seeds = [PROTOCOL_CONFIG_SEED],
+        bump = protocol_config.bump,
+    )]
+    pub protocol_config: Account<'info, ProtocolConfig>,
+
     pub token_program: Program<'info, Token>,
+}
+
+/// Finding #19: One-shot context to create the singleton `ProtocolConfig`
+/// PDA. Any key may pay for initialization — `authority` is set to the
+/// `payer`. After this, only `UpdateProtocolConfig` can mutate the fields.
+#[derive(Accounts)]
+pub struct InitializeProtocolConfig<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+
+    #[account(
+        init,
+        payer = payer,
+        space = ProtocolConfig::SPACE,
+        seeds = [PROTOCOL_CONFIG_SEED],
+        bump,
+    )]
+    pub protocol_config: Account<'info, ProtocolConfig>,
+
+    pub system_program: Program<'info, System>,
+}
+
+/// Finding #19: Authority-gated update. `has_one = authority` enforces the
+/// constraint at the account-deserialization layer, not the handler.
+#[derive(Accounts)]
+pub struct UpdateProtocolConfig<'info> {
+    pub authority: Signer<'info>,
+
+    #[account(
+        mut,
+        has_one = authority @ SettlementError::UnauthorizedConfigAuthority,
+        seeds = [PROTOCOL_CONFIG_SEED],
+        bump = protocol_config.bump,
+    )]
+    pub protocol_config: Account<'info, ProtocolConfig>,
 }
 
 /// Close a terminal-state escrow account and reclaim rent to the client.
