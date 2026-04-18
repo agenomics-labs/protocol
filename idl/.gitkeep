@@ -1,3 +1,0 @@
-# S-xcut-03: this directory holds the committed Anchor IDL baseline.
-# `scripts/sync-idl.sh` populates it from `anchor build` output.
-# `scripts/check-idl.sh` (run in CI) asserts it matches the fresh build.

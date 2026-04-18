@@ -186,7 +186,15 @@ jobs:
     name: Anchor Build & IDL Diff
     runs-on: ubuntu-latest
     env:
-      SOLANA_VERSION: v1.18.26
+      # Agave 3.1.13 ships platform-tools v1.52 (Rust 1.89 + cargo 1.89),
+      # which is the first Solana/Agave release whose bundled cargo can
+      # parse v4 lockfiles and handle `edition2024` transitive deps that
+      # appear in our current tree. Anchor 0.31.1 builds cleanly against
+      # it (verified locally). Older 1.18 / 2.x releases ship cargo 1.75
+      # and fail at `anchor build` with either `lock file version 4
+      # requires -Znext-lockfile-bump` or `feature edition2024 is
+      # required`.
+      SOLANA_VERSION: v3.1.13
       ANCHOR_VERSION: 0.31.1
     steps:
       - uses: actions/checkout@v4
@@ -272,7 +280,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: anchor-build
     env:
-      SOLANA_VERSION: v1.18.26
+      # See SOLANA_VERSION note in the anchor-build job above.
+      SOLANA_VERSION: v3.1.13
       ANCHOR_VERSION: 0.31.1
     steps:
       - uses: actions/checkout@v4
