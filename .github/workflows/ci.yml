@@ -144,3 +144,32 @@ jobs:
       - name: npm audit (high)
         run: npm audit --audit-level=high
         continue-on-error: true
+
+  # S-xcut-05: mandatory secret-scan gate. A leaked on-chain private key
+  # has direct blast radius against the protocol's authorities, so this
+  # is blocking (no `continue-on-error`). Full-history scan on push to
+  # main; diff-only on PRs to keep PR latency low.
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # TruffleHog needs the commit history to diff against `base`.
+          fetch-depth: 0
+
+      - name: TruffleHog (PR diff)
+        if: github.event_name == 'pull_request'
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.pull_request.base.sha }}
+          head: ${{ github.event.pull_request.head.sha }}
+          extra_args: --results=verified,unknown
+
+      - name: TruffleHog (full history on main)
+        if: github.event_name == 'push'
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          extra_args: --results=verified,unknown
