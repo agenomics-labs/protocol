@@ -80,6 +80,25 @@ function initDb(dbPath: string): Database.Database {
       last_signature TEXT,
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    -- S-offchain-04 (2026-04 re-audit): tombstone table for deregistered
+    -- agents. The backfill worker processes historic signatures oldest
+    -- first and advances the cursor monotonically, but it runs
+    -- concurrently with the live websocket subscription. A restart that
+    -- begins backfilling a slot range whose live-stream counterpart
+    -- already observed AgentDeregistered would re-INSERT a resurrected
+    -- agent row.
+    --
+    -- The tombstone records the slot at which each authority was last
+    -- deregistered. AgentRegistered consults this table before writing
+    -- and skips the write whenever the event slot is <= the recorded
+    -- deregistration slot. A legitimate re-registration (later slot)
+    -- passes through and clears the tombstone.
+    CREATE TABLE IF NOT EXISTS agent_tombstones (
+      authority TEXT PRIMARY KEY,
+      deregistered_at_slot INTEGER NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 
   // Migration: older databases were created without `event_ordinal`.
@@ -234,6 +253,13 @@ function i64ToJson(v: bigint): number | string {
 
 type EventDecoder = (r: BorshReader) => Record<string, unknown>;
 
+// S-offchain-05 (2026-04 re-audit): this array MUST match the declaration
+// order of `pub enum AgentStatus` in programs/agent-registry/src/state.rs.
+// A borsh enum is wire-encoded as its positional tag, so reordering the
+// Rust enum without updating this array silently mis-decodes every
+// `AgentStatusUpdated` event. The "AgentStatus enum drift guard" test in
+// tests/indexer.test.ts reads the Rust source and fails CI if the two
+// drift; fix the array here and re-run the test if that fires.
 const AGENT_STATUS_VARIANTS = ["Active", "Paused", "Retired", "Suspended"] as const;
 
 /**
@@ -343,12 +369,27 @@ function parseLogsForEvents(logs: string[], _programLabel: string): ParsedEvent[
   return events;
 }
 
-function updateAgentFromEvent(db: Database.Database, event: ParsedEvent): void {
+function updateAgentFromEvent(
+  db: Database.Database,
+  event: ParsedEvent,
+  slot = 0
+): void {
   const data = event.data as Record<string, unknown>;
   const authority = typeof data.authority === "string" ? data.authority : undefined;
 
   if (event.name === "AgentRegistered") {
     if (!authority) return;
+    // S-offchain-04: if a later deregistration has already been observed
+    // for this authority, any `AgentRegistered` at an older slot is a
+    // stale resurrection from backfill and must be ignored. A legitimate
+    // re-registration carries a slot strictly greater than the tombstone;
+    // it passes through and clears the tombstone below.
+    const tombstone = db
+      .prepare("SELECT deregistered_at_slot FROM agent_tombstones WHERE authority = ?")
+      .get(authority) as { deregistered_at_slot: number } | undefined;
+    if (tombstone && slot > 0 && slot <= tombstone.deregistered_at_slot) {
+      return;
+    }
     const stmt = db.prepare(`
       INSERT INTO agents (authority, name, category, last_updated)
       VALUES (?, ?, ?, datetime('now'))
@@ -362,6 +403,9 @@ function updateAgentFromEvent(db: Database.Database, event: ParsedEvent): void {
       typeof data.name === "string" ? data.name : null,
       typeof data.category === "string" ? data.category : null
     );
+    if (tombstone) {
+      db.prepare("DELETE FROM agent_tombstones WHERE authority = ?").run(authority);
+    }
     return;
   }
 
@@ -408,6 +452,19 @@ function updateAgentFromEvent(db: Database.Database, event: ParsedEvent): void {
   if (event.name === "AgentDeregistered") {
     if (!authority) return;
     db.prepare(`DELETE FROM agents WHERE authority = ?`).run(authority);
+    // S-offchain-04: record the deregistration slot so a concurrent or
+    // subsequent backfill cannot re-INSERT this authority. Upsert in case
+    // multiple Deregister events arrive (shouldn't happen on-chain, but
+    // the DB constraint is cheap). `MAX` ensures a later-arriving
+    // tombstone always wins; an older backfill tombstone can't overwrite
+    // a newer one.
+    db.prepare(`
+      INSERT INTO agent_tombstones (authority, deregistered_at_slot, updated_at)
+      VALUES (?, ?, datetime('now'))
+      ON CONFLICT(authority) DO UPDATE SET
+        deregistered_at_slot = MAX(deregistered_at_slot, excluded.deregistered_at_slot),
+        updated_at = datetime('now')
+    `).run(authority, slot);
     return;
   }
 }
@@ -537,7 +594,7 @@ function persistEventsForTx(
       if (result.changes > 0) {
         inserted++;
         metrics.eventsInserted++;
-        updateAgentFromEvent(db, event);
+        updateAgentFromEvent(db, event, slot);
       } else {
         skipped++;
         metrics.eventsDuplicateSkipped++;

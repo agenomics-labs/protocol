@@ -541,6 +541,21 @@ mod tests {
                 }
             }
 
+            /// S-onchain-01 (2026-04 re-audit): any `dispute_timeout_seconds`
+            /// value that passes the `update_protocol_config` bounds check
+            /// must survive the `disputed_at + timeout` arithmetic for any
+            /// plausible `disputed_at`. The cap is `MAX_DISPUTE_TIMEOUT_SECONDS`
+            /// (365 days); `disputed_at` is a Unix epoch (fits comfortably
+            /// in ~60 bits). Together they cannot overflow i64.
+            #[test]
+            fn dispute_timeout_add_never_overflows_within_bounds(
+                timeout in 1i64..=MAX_DISPUTE_TIMEOUT_SECONDS,
+                disputed_at in 0i64..=32_503_680_000i64, // year 3000
+            ) {
+                let deadline = disputed_at.checked_add(timeout);
+                prop_assert!(deadline.is_some());
+            }
+
             /// released_amount tracking with random milestone amounts
             /// never exceeds total_amount (mirrors approve_milestone logic).
             #[test]

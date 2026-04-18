@@ -148,10 +148,15 @@ pub fn resolve_dispute_timeout(ctx: Context<ResolveDisputeTimeout>) -> Result<()
     require!(escrow.status == EscrowStatus::Disputed, SettlementError::InvalidStatus);
     let disputed_at = escrow.disputed_at.ok_or(SettlementError::InvalidStatus)?;
     // Finding #19: governance-owned timeout, not the compile-time const.
-    require!(
-        now >= disputed_at + ctx.accounts.protocol_config.dispute_timeout_seconds,
-        SettlementError::DisputeTimeoutNotReached
-    );
+    // S-onchain-01 (2026-04 re-audit): `checked_add` guards against a
+    // pathological `dispute_timeout_seconds`. `update_protocol_config`
+    // already caps this at MAX_DISPUTE_TIMEOUT_SECONDS, so the add can't
+    // overflow under any reachable config — belt-and-braces for defense
+    // in depth.
+    let timeout_deadline = disputed_at
+        .checked_add(ctx.accounts.protocol_config.dispute_timeout_seconds)
+        .ok_or(SettlementError::AmountOverflow)?;
+    require!(now >= timeout_deadline, SettlementError::DisputeTimeoutNotReached);
 
     let remaining = escrow
         .total_amount

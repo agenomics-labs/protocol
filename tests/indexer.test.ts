@@ -9,6 +9,8 @@
  */
 
 import { expect } from "chai";
+import * as fs from "fs";
+import * as path from "path";
 import { PublicKey, Keypair } from "@solana/web3.js";
 import Database from "better-sqlite3";
 import {
@@ -466,6 +468,67 @@ describe("Indexer - updateAgentFromEvent", () => {
     expect(agent).to.be.undefined;
   });
 
+  // S-offchain-04 (2026-04 re-audit): backfill race guard.
+  it("should NOT resurrect a deregistered agent when backfill delivers an older AgentRegistered", () => {
+    // Timeline: live stream delivered register@100 and deregister@105.
+    // Backfill later re-plays the older register@100 — must NOT resurrect.
+    updateAgentFromEvent(
+      db,
+      { name: "AgentRegistered", data: { authority: "ZombieAgent", name: "z", category: "g" } },
+      100
+    );
+    updateAgentFromEvent(
+      db,
+      { name: "AgentDeregistered", data: { authority: "ZombieAgent" } },
+      105
+    );
+    updateAgentFromEvent(
+      db,
+      { name: "AgentRegistered", data: { authority: "ZombieAgent", name: "z", category: "g" } },
+      100 // stale backfill replay
+    );
+
+    const agent = db
+      .prepare("SELECT * FROM agents WHERE authority = ?")
+      .get("ZombieAgent");
+    expect(agent, "stale backfill must not resurrect deregistered agent").to.be.undefined;
+
+    const tombstone = db
+      .prepare("SELECT deregistered_at_slot FROM agent_tombstones WHERE authority = ?")
+      .get("ZombieAgent") as { deregistered_at_slot: number };
+    expect(tombstone.deregistered_at_slot).to.equal(105);
+  });
+
+  it("should allow legitimate re-registration at a later slot (clears tombstone)", () => {
+    updateAgentFromEvent(
+      db,
+      { name: "AgentRegistered", data: { authority: "Rejoiner", name: "r", category: "g" } },
+      200
+    );
+    updateAgentFromEvent(
+      db,
+      { name: "AgentDeregistered", data: { authority: "Rejoiner" } },
+      210
+    );
+    // Legitimate re-registration: slot strictly greater than tombstone.
+    updateAgentFromEvent(
+      db,
+      { name: "AgentRegistered", data: { authority: "Rejoiner", name: "r2", category: "g2" } },
+      220
+    );
+
+    const agent = db
+      .prepare("SELECT * FROM agents WHERE authority = ?")
+      .get("Rejoiner") as Record<string, unknown>;
+    expect(agent, "re-registration at later slot must succeed").to.not.be.undefined;
+    expect(agent.name).to.equal("r2");
+
+    const tombstone = db
+      .prepare("SELECT deregistered_at_slot FROM agent_tombstones WHERE authority = ?")
+      .get("Rejoiner");
+    expect(tombstone, "tombstone cleared on legitimate re-registration").to.be.undefined;
+  });
+
   it("should handle AgentRegistered with missing optional fields", () => {
     const event = {
       name: "AgentRegistered",
@@ -565,5 +628,61 @@ describe("Indexer - createApi", () => {
     expect(paths).to.include("/events/:program");
     expect(paths).to.include("/agents");
     expect(paths).to.include("/stats");
+  });
+});
+
+/**
+ * S-offchain-05 (2026-04 re-audit): drift guard for `AgentStatus`.
+ *
+ * `AgentStatusUpdated` carries the enum variant as a borsh u8 tag, which
+ * only conveys the ordinal position of the variant in the Rust source.
+ * If the on-chain `pub enum AgentStatus { ... }` is ever reordered (or a
+ * new variant inserted mid-list), every previously-emitted event
+ * silently mis-decodes into the wrong label and downstream projections
+ * drift.
+ *
+ * The indexer keeps a hard-coded positional array (`AGENT_STATUS_VARIANTS`)
+ * in `src/indexer/index.ts`. This test reads the authoritative Rust
+ * source, extracts the variant ordering, and asserts the indexer's array
+ * matches. Any PR that reorders the enum without updating the indexer
+ * fails here — the drift never reaches production.
+ */
+describe("Indexer - AgentStatus enum drift guard", () => {
+  it("AGENT_STATUS_VARIANTS in the indexer must match the Rust enum order", () => {
+    const statePath = path.resolve(
+      __dirname,
+      "../programs/agent-registry/src/state.rs"
+    );
+    const indexerPath = path.resolve(__dirname, "../src/indexer/index.ts");
+
+    const stateSrc = fs.readFileSync(statePath, "utf8");
+    const indexerSrc = fs.readFileSync(indexerPath, "utf8");
+
+    // Extract the `pub enum AgentStatus { ... }` body.
+    const enumMatch = stateSrc.match(/pub enum AgentStatus\s*{([\s\S]*?)}/);
+    expect(enumMatch, "AgentStatus enum not found in registry state.rs").to.not.be.null;
+    const rustVariants = enumMatch![1]
+      .split(/,|\n/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0 && !s.startsWith("//"))
+      .map((s) => s.split(/\s/)[0].replace(/[^A-Za-z0-9_]/g, ""))
+      .filter((s) => /^[A-Z]/.test(s));
+
+    // Extract `AGENT_STATUS_VARIANTS = [...]` from the indexer.
+    const tsMatch = indexerSrc.match(
+      /AGENT_STATUS_VARIANTS\s*=\s*\[([^\]]*)\]\s*as const/
+    );
+    expect(tsMatch, "AGENT_STATUS_VARIANTS not found in indexer").to.not.be.null;
+    const tsVariants = tsMatch![1]
+      .split(",")
+      .map((s) => s.trim().replace(/^["']|["']$/g, ""))
+      .filter((s) => s.length > 0);
+
+    expect(tsVariants).to.deep.equal(
+      rustVariants,
+      `AgentStatus drift: Rust=[${rustVariants.join(", ")}] vs indexer=[${tsVariants.join(
+        ", "
+      )}]. Update AGENT_STATUS_VARIANTS in src/indexer/index.ts.`
+    );
   });
 });

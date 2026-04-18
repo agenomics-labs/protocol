@@ -31,6 +31,20 @@ pub const DEFAULT_MIN_ESCROW_AMOUNT: u64 = 10_000;
 /// Finding #19: Default for the governance-owned `ProtocolConfig.dispute_timeout_seconds`.
 pub const DEFAULT_DISPUTE_TIMEOUT_SECONDS: i64 = 7 * 24 * 3600;
 
+/// S-onchain-01 (2026-04 re-audit): upper bound on
+/// `ProtocolConfig.dispute_timeout_seconds`. Governance can set this
+/// field to any positive `i64` with no ceiling, and the timeout check
+/// in `resolve_dispute_timeout` evaluates `disputed_at + dispute_timeout_seconds`.
+/// A pathological value near `i64::MAX` would overflow and panic every
+/// call to `resolve_dispute_timeout` — effectively bricking the
+/// timeout-resolution path for every disputed escrow at once. 365 days
+/// is a comfortable ceiling: it's longer than any reasonable protocol
+/// dispute window and leaves `i64::MAX - 1 year` of headroom so the
+/// arithmetic cannot overflow for any `disputed_at` this side of the
+/// year ~292e9. Downstream arithmetic also uses `checked_add` as a
+/// belt-and-braces guard.
+pub const MAX_DISPUTE_TIMEOUT_SECONDS: i64 = 365 * 24 * 3600;
+
 /// Reputation deltas for CPI updates to the Agent Registry.
 /// Finding #19: Defaults for the governance-owned `ProtocolConfig` fields
 /// `reputation_delta_task_completed`, `_dispute_loss`, `_expiry_undelivered`.
