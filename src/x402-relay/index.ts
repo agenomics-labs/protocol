@@ -14,9 +14,27 @@ if (!JWT_SECRET_RAW) {
 // below still see the original union. Bind to a `string`-typed local so
 // `jwt.sign`/`jwt.verify` overloads resolve without `!` non-null assertions.
 const JWT_SECRET: string = JWT_SECRET_RAW;
+const JWT_ALGORITHM: jwt.Algorithm = "HS256";
 const TOKEN_EXPIRY_SECONDS = parseInt(process.env.TOKEN_EXPIRY || "3600", 10);
 const PAYMENT_RECIPIENT = process.env.PAYMENT_RECIPIENT || "";
 const REQUIRED_AMOUNT_SOL = parseFloat(process.env.REQUIRED_AMOUNT_SOL || "0.01");
+
+// S-offchain-01: Express's `req.ip` respects `X-Forwarded-For` only when
+// `trust proxy` is configured. With the default (off) and a real L7 proxy
+// in front, every request resolves to the proxy's IP — the rate limiter
+// lumps all clients into one bucket. With `trust proxy` set too liberally
+// (e.g. `true`), any client can spoof `X-Forwarded-For` and rotate into
+// arbitrary buckets, defeating the limiter. Deployments MUST declare the
+// exact hop topology via `TRUST_PROXY`. The safe default (`"loopback"`)
+// only trusts 127.0.0.1/::1 so local development works and non-proxied
+// deployments fall back to the real peer address.
+//
+// Accepted values mirror Express's docs:
+//   - "loopback" / "linklocal" / "uniquelocal" — named subnets
+//   - an integer (e.g. "1") — number of proxy hops to strip
+//   - a comma-separated subnet list (e.g. "10.0.0.0/8,192.168.0.0/16")
+//   - "true" — trust every hop (DANGEROUS; only for tests)
+const TRUST_PROXY = process.env.TRUST_PROXY || "loopback";
 // Finding #16: Use "finalized" — the highest Solana commitment level — so
 // the relay never grants access on a transaction that could still be dropped
 // by a fork. "confirmed" (the old default) is ~2/3 stake and can reorg.
@@ -134,15 +152,20 @@ function issueAccessToken(sender: string, txSignature: string, amountSol: number
   return jwt.sign(
     { sender, txSignature, amountSol } as Omit<TokenPayload, "iat" | "exp">,
     JWT_SECRET,
-    { expiresIn: TOKEN_EXPIRY_SECONDS }
+    { expiresIn: TOKEN_EXPIRY_SECONDS, algorithm: JWT_ALGORITHM }
   );
 }
 
 function verifyAccessToken(token: string): TokenPayload | null {
   try {
-    // Cast through `unknown` because the default `jwt.verify` return type
-    // is `Jwt & JwtPayload & void` (union with `void` for the string form).
-    return jwt.verify(token, JWT_SECRET) as unknown as TokenPayload;
+    // S-offchain-03: Pin verification to HS256. Without an explicit
+    // `algorithms` list, `jwt.verify` accepts whatever `alg` the token's
+    // header advertises — the classic algorithm-confusion CVE class
+    // (`alg: none`, HS/RS confusion when the key could be interpreted as
+    // either secret or public key material).
+    return jwt.verify(token, JWT_SECRET, {
+      algorithms: [JWT_ALGORITHM],
+    }) as unknown as TokenPayload;
   } catch {
     return null;
   }
@@ -184,9 +207,38 @@ function requirePayment(req: Request, res: Response, next: NextFunction): void {
 
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX_REQUESTS = 10;
+// S-offchain-02: Cap the rate-limit map. Without a cap, a scanner rotating
+// source IPs grows this map unbounded. 100k distinct IPs * ~80B overhead
+// per entry ≈ 8 MB, which is a comfortable ceiling for a single-purpose
+// service. If the cap is hit the oldest entry (insertion order) is
+// evicted — this is safe because each entry already expires after
+// RATE_LIMIT_WINDOW_MS, so eviction under pressure just means an
+// attacker's earliest bucket is forgotten slightly sooner than its
+// natural expiry. The cap is a backstop; periodic pruning below is the
+// primary mechanism.
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+const MAX_RATE_LIMIT_ENTRIES = 100_000;
+
+function pruneRateLimitMap(): void {
+  const now = Date.now();
+  for (const [ip, entry] of rateLimitMap) {
+    if (now >= entry.resetAt) {
+      rateLimitMap.delete(ip);
+    }
+  }
+  while (rateLimitMap.size > MAX_RATE_LIMIT_ENTRIES) {
+    const oldest = rateLimitMap.keys().next().value;
+    if (oldest === undefined) break;
+    rateLimitMap.delete(oldest);
+  }
+}
+setInterval(pruneRateLimitMap, RATE_LIMIT_WINDOW_MS);
 
 function rateLimit(req: Request, res: Response, next: NextFunction): void {
+  // S-offchain-01: `req.ip` is correct only when `trust proxy` is set
+  // (see TRUST_PROXY above). With the default `loopback` setting Express
+  // returns the peer's real address for non-local connections and
+  // respects `X-Forwarded-For` only when the peer is 127.0.0.1/::1.
   const ip = req.ip || req.socket.remoteAddress || "unknown";
   const now = Date.now();
   const entry = rateLimitMap.get(ip);
@@ -207,8 +259,23 @@ function rateLimit(req: Request, res: Response, next: NextFunction): void {
 }
 
 const app = express();
+// S-offchain-01: Must be set BEFORE routes/middleware so `req.ip` resolves
+// consistently. Convert the env var through `parseTrustProxy` so integer
+// hop counts and boolean literals survive the string→Express conversion.
+app.set("trust proxy", parseTrustProxy(TRUST_PROXY));
 app.use(express.json());
 app.use("/pay", rateLimit);
+
+function parseTrustProxy(value: string): string | number | boolean {
+  const trimmed = value.trim();
+  if (trimmed === "true") return true;
+  if (trimmed === "false") return false;
+  const asInt = Number(trimmed);
+  if (Number.isInteger(asInt) && asInt >= 0) return asInt;
+  // Named subnets ("loopback", "linklocal", "uniquelocal") or a CIDR list
+  // are passed through verbatim; Express parses them.
+  return trimmed;
+}
 
 app.get("/health", (_req: Request, res: Response) => {
   res.json({
