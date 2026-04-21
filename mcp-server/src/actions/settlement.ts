@@ -228,6 +228,7 @@ export const raiseDisputeAction: Action<
   readOnly: false,
   capabilities: ["sign:settlement"],
   preflight: ["dispute_window_open", "cluster_health"],
+  preflightContext: (input) => ({ escrowAddress: input.escrowAddress }),
   requiresSigner: true,
   handler: wrap(handleRaiseDispute),
 };
@@ -261,6 +262,7 @@ export const resolveDisputeAction: Action<
     "admin:settlement",
   ],
   preflight: ["cluster_health", "account_rent_exempt", "dispute_window_open"],
+  preflightContext: (input) => ({ escrowAddress: input.escrowAddress }),
   requiresSigner: true,
   idempotent: true,
   idempotencyKey: (i) =>
@@ -291,6 +293,7 @@ export const resolveDisputeTimeoutAction: Action<
     "admin:settlement",
   ],
   preflight: ["cluster_health", "account_rent_exempt", "dispute_window_open"],
+  preflightContext: (input) => ({ escrowAddress: input.escrowAddress }),
   requiresSigner: true,
   idempotent: true,
   idempotencyKey: (i) => `${i.escrowAddress}:timeout`,
