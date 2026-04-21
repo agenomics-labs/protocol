@@ -345,3 +345,46 @@ export {
   BN,
   LAMPORTS_PER_SOL,
 };
+
+// ==================== V1 <-> V2 ADAPTER (ADR-012) ====================
+//
+// This section is the boundary between @solana/kit (v2) and @solana/web3.js
+// (v1) + Anchor 0.31.1 (which is v1-bound at the `.rpc()` call site).
+//
+// Rules:
+//  - MCP-facing APIs flow in via v2 primitives (Address, KeyPairSigner, ...).
+//  - Anchor-facing APIs require v1 primitives (PublicKey, Keypair, Connection).
+//  - Conversion happens here, and ONLY here. Handlers do not import @solana/kit.
+//  - v2 `Address<T>` is a branded base58 string — `.toString()` yields the
+//    same base58 the v1 PublicKey constructor accepts, so the round-trip is
+//    byte-identical. Seed-level PDA equivalence is proven in
+//    `test/solana-v2.test.ts`.
+//
+// PR2 scope: types + a tiny conversion helper set. No transaction building,
+// no signer abstraction, no compute budget helpers. PR3 owns those.
+
+import type { Address as V2Address } from "@solana/kit";
+
+/**
+ * v2 Address -> v1 PublicKey.
+ *
+ * Safe to use with any valid `Address` brand, because the brand only
+ * permits base58 strings that parsed successfully in Kit.
+ */
+export function addressToPublicKey(addr: V2Address): PublicKey {
+  // `Address` is a branded string; `new PublicKey(str)` accepts base58 strings.
+  return new PublicKey(addr.toString());
+}
+
+/**
+ * v1 PublicKey -> v2 Address.
+ *
+ * Cast-only: `.toBase58()` emits the same canonical form the brand guards.
+ * We use `as unknown as` + `as V2Address` rather than calling Kit's
+ * `address()` helper because the input is already known-valid — avoiding a
+ * redundant base58 validation on every adapter call.
+ */
+export function publicKeyToAddress(pk: PublicKey): V2Address {
+  return pk.toBase58() as unknown as V2Address;
+}
+

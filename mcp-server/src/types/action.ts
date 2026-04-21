@@ -2,6 +2,7 @@
 
 import type { z, ZodRawShape, ZodType } from "zod";
 import type { PublicKey } from "@solana/web3.js";
+import type { TransactionSigner } from "@solana/kit";
 import type { Capability, PreflightGate } from "./capability.js";
 
 export type SigningMode = "signed" | "passthrough";
@@ -11,10 +12,20 @@ export interface CapabilityBearingWallet {
   capabilities: Set<Capability>;
 }
 
+/**
+ * ADR-012 / PR2: `signer` is now typed against the @solana/kit surface.
+ *
+ * We union with `unknown` so existing call sites that still pass `{}` or
+ * `null` (from PR1) keep type-checking until PR3 wires
+ * `@solana/keychain-core` signers through the MCP context. Once every
+ * call site constructs a real `TransactionSigner`, drop the `| unknown`.
+ */
+export type SolanaSigner = TransactionSigner;
+
 export interface ActionContext {
   mode: SigningMode;
   wallet: CapabilityBearingWallet;
-  signer: unknown | null;
+  signer: SolanaSigner | unknown | null;
 }
 
 export type AeapErrorCode =
