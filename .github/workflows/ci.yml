@@ -74,9 +74,6 @@ jobs:
   typescript-check-mcp:
     name: TypeScript Check (mcp-server)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: mcp-server
     steps:
       - uses: actions/checkout@v4
 
@@ -84,15 +81,34 @@ jobs:
         with:
           node-version: "20"
 
-      - run: npm install
+      # mcp-server consumes @aeap/capability-manifest-validator and
+      # @aeap/sas-resolver via `file:` deps. tsc --noEmit in mcp-server
+      # needs the d.ts output from those packages, so build them first.
+      - name: Build @aeap/capability-manifest-validator
+        working-directory: packages/capability-manifest-validator
+        run: |
+          npm install
+          npm run build
+
+      - name: Build @aeap/sas-resolver
+        working-directory: packages/sas-resolver
+        run: |
+          npm install
+          npm run build
+
+      - name: Install mcp-server deps
+        working-directory: mcp-server
+        run: npm install
 
       - name: Type check
+        working-directory: mcp-server
         run: npx tsc --noEmit
 
       # Finding #22: npm audit at `high` severity. Runs advisory-only for
       # the same reason cargo-audit does — a newly disclosed issue should
       # be visible without torpedoing unrelated PRs.
       - name: npm audit (high)
+        working-directory: mcp-server
         run: npm audit --audit-level=high
         continue-on-error: true
 
@@ -196,16 +212,28 @@ jobs:
   mcp-server-tests:
     name: mcp-server unit tests
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: mcp-server
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - run: npm install
+      # Build the @aeap packages so the `file:` deps + tsx ESM loader
+      # can resolve their dist/*.js at test runtime.
+      - name: Build @aeap/capability-manifest-validator
+        working-directory: packages/capability-manifest-validator
+        run: |
+          npm install
+          npm run build
+      - name: Build @aeap/sas-resolver
+        working-directory: packages/sas-resolver
+        run: |
+          npm install
+          npm run build
+      - name: Install mcp-server deps
+        working-directory: mcp-server
+        run: npm install
       - name: Unit tests (node:test + tsx)
+        working-directory: mcp-server
         run: npm test
 
   # S-xcut-05: mandatory secret-scan gate. A leaked on-chain private key
