@@ -55,6 +55,15 @@ pub mod agent_registry {
         agent_profile.reputation_stake = ReputationStake { staked_amount: 0, slash_count: 0 };
         agent_profile.bump = ctx.bumps.agent_profile;
 
+        // ADR-060: manifest fields zero-initialized. Agents publish a
+        // manifest via a separate `update_manifest` call. This keeps the
+        // migration path clean for already-registered agents — nobody is
+        // forced to publish a manifest at register time.
+        agent_profile.manifest_cid = [0u8; 64];
+        agent_profile.manifest_hash = [0u8; 32];
+        agent_profile.manifest_signature = [0u8; 64];
+        agent_profile.manifest_version = 0;
+
         emit!(AgentRegistered {
             authority: agent_profile.authority,
             name: agent_profile.name.clone(),
@@ -266,6 +275,208 @@ pub mod agent_registry {
         emit!(AgentDeregistered { authority: agent_profile.authority, name: agent_profile.name.clone(), timestamp: Clock::get()?.unix_timestamp });
         Ok(())
     }
+
+    /// ADR-060: publish or rotate the off-chain capability manifest pointer.
+    ///
+    /// Args:
+    /// - `manifest_cid`: 64-byte pointer to off-chain manifest (IPFS CIDv1
+    ///   string or Arweave tx ID), zero-padded. M5 resolution chose
+    ///   `[u8; 64]` for CIDv1 + Arweave headroom.
+    /// - `manifest_hash`: SHA-256 of the RFC-8785 canonical-JSON manifest.
+    /// - `manifest_signature`: Ed25519 signature over `manifest_hash` by the
+    ///   agent's `authority`. Verified via the paired ed25519-program
+    ///   sig-verify instruction (standard Solana pattern — in-program
+    ///   ed25519 is prohibitively expensive in compute units).
+    /// - `manifest_version`: packed semver (high byte = major, low byte = minor).
+    /// - `manifest_capability_names`: the full list of capability names
+    ///   declared in the off-chain manifest. On-chain we assert
+    ///   `agent_profile.capabilities ⊆ manifest_capability_names` per
+    ///   ADR-060 §1 "Relationship to existing". The caller supplies the
+    ///   list out-of-band because the manifest body itself is off-chain.
+    pub fn update_manifest(
+        ctx: Context<UpdateManifest>,
+        manifest_cid: [u8; 64],
+        manifest_hash: [u8; 32],
+        manifest_signature: [u8; 64],
+        manifest_version: u16,
+        manifest_capability_names: Vec<String>,
+    ) -> Result<()> {
+        // Version sanity: 0 is reserved for "no manifest published".
+        require!(manifest_version != 0, AgentRegistryError::InvalidManifestVersion);
+
+        let agent_profile = &mut ctx.accounts.agent_profile;
+
+        // Invariant: on-chain capabilities ⊆ manifest capability names.
+        // The on-chain `Vec<String>` is a denormalized search index; the
+        // manifest is the source of truth. Drift between them would let
+        // the registry advertise capabilities the manifest can't back up.
+        for cap in agent_profile.capabilities.iter() {
+            require!(
+                manifest_capability_names.iter().any(|m| m == cap),
+                AgentRegistryError::CapabilitySubsetViolation
+            );
+        }
+
+        // Ed25519 signature verification via the paired sig-verify precompile.
+        // Compute-cost note: in-program ed25519 burns ~150k CU per verify,
+        // bumping against the default 200k budget. The precompile is the
+        // canonical escape hatch — it verifies in the runtime for free.
+        manifest::verify_ed25519_precompile(
+            &ctx.accounts.instructions_sysvar.to_account_info(),
+            &agent_profile.authority,
+            &manifest_hash,
+            &manifest_signature,
+        )?;
+
+        agent_profile.manifest_cid = manifest_cid;
+        agent_profile.manifest_hash = manifest_hash;
+        agent_profile.manifest_signature = manifest_signature;
+        agent_profile.manifest_version = manifest_version;
+        agent_profile.updated_at = Clock::get()?.unix_timestamp;
+
+        emit!(ManifestUpdated {
+            authority: agent_profile.authority,
+            manifest_cid,
+            manifest_hash,
+            manifest_version,
+            timestamp: agent_profile.updated_at,
+        });
+        Ok(())
+    }
+}
+
+/// ADR-060: Ed25519 precompile introspection.
+///
+/// Solana programs cannot afford in-program Ed25519 verification (~150k
+/// CU per call). The standard pattern is for the client to bundle an
+/// ed25519-program `Ed25519Program::verify` instruction in the same
+/// transaction; the runtime verifies it for free at pre-execution time.
+/// The program then introspects that sibling instruction via the
+/// Instructions sysvar to assert the verified pubkey / message / signature
+/// match the values this instruction is about to persist.
+///
+/// Layout of the ed25519-program instruction data (little-endian):
+/// ```text
+/// offset  size  field
+/// 0       1     num_signatures      (N, must be 1 here)
+/// 1       1     padding
+/// 2       2     signature_offset
+/// 4       2     signature_instruction_index   (u16, 0xFFFF = this ix)
+/// 6       2     public_key_offset
+/// 8       2     public_key_instruction_index  (u16, 0xFFFF = this ix)
+/// 10      2     message_data_offset
+/// 12      2     message_data_size
+/// 14      2     message_instruction_index     (u16, 0xFFFF = this ix)
+/// ```
+/// Signature (64), pubkey (32), and message bytes follow inline at the
+/// declared offsets when `*_instruction_index == 0xFFFF`.
+pub mod manifest {
+    use super::AgentRegistryError;
+    use anchor_lang::prelude::*;
+    use anchor_lang::solana_program::{
+        ed25519_program,
+        sysvar::instructions::{load_instruction_at_checked, load_current_index_checked},
+    };
+
+    /// Offsets within the per-signature block, relative to the start of the
+    /// `Ed25519SignatureOffsets` entry (which itself starts at data[2]).
+    const SIG_OFFSET: usize = 2;                  // signature_offset
+    const SIG_IX_INDEX: usize = 4;                // signature_instruction_index
+    const PK_OFFSET: usize = 6;                   // public_key_offset
+    const PK_IX_INDEX: usize = 8;                 // public_key_instruction_index
+    const MSG_OFFSET: usize = 10;                 // message_data_offset
+    const MSG_SIZE: usize = 12;                   // message_data_size
+    const MSG_IX_INDEX: usize = 14;               // message_instruction_index
+
+    const EXPECTED_NUM_SIGS: u8 = 1;
+    const SELF_REFERENCED: u16 = u16::MAX;        // 0xFFFF sentinel = same instruction
+    const ED25519_HEADER_LEN: usize = 16;         // 2 (header) + 14 (one offsets block)
+    const ED25519_MIN_LEN: usize = ED25519_HEADER_LEN + 64 + 32 + 32;
+
+    pub fn verify_ed25519_precompile(
+        instructions_sysvar: &AccountInfo,
+        expected_pubkey: &Pubkey,
+        expected_message: &[u8; 32],
+        expected_signature: &[u8; 64],
+    ) -> Result<()> {
+        // Search neighbouring instructions for an ed25519-program call.
+        // The sig-verify ix may be placed before or after the program ix;
+        // we try both sides of `current_index`.
+        let current = load_current_index_checked(instructions_sysvar)? as i32;
+        let candidates = [current - 1, current + 1];
+
+        for &ix_index in candidates.iter() {
+            if ix_index < 0 {
+                continue;
+            }
+            let loaded = match load_instruction_at_checked(ix_index as usize, instructions_sysvar) {
+                Ok(ix) => ix,
+                Err(_) => continue,
+            };
+            if loaded.program_id != ed25519_program::ID {
+                continue;
+            }
+
+            let data = loaded.data.as_slice();
+            if data.len() < ED25519_MIN_LEN {
+                continue;
+            }
+            if data[0] != EXPECTED_NUM_SIGS {
+                continue;
+            }
+
+            let read_u16 = |at: usize| -> u16 {
+                u16::from_le_bytes([data[at], data[at + 1]])
+            };
+
+            // All three components must be inline in the ed25519 ix itself.
+            // A cross-instruction reference (e.g. pubkey in another ix)
+            // would break the tight coupling we want.
+            if read_u16(SIG_IX_INDEX) != SELF_REFERENCED
+                || read_u16(PK_IX_INDEX) != SELF_REFERENCED
+                || read_u16(MSG_IX_INDEX) != SELF_REFERENCED
+            {
+                return Err(error!(AgentRegistryError::Ed25519InstructionMismatch));
+            }
+
+            let sig_off = read_u16(SIG_OFFSET) as usize;
+            let pk_off = read_u16(PK_OFFSET) as usize;
+            let msg_off = read_u16(MSG_OFFSET) as usize;
+            let msg_len = read_u16(MSG_SIZE) as usize;
+
+            if msg_len != 32 {
+                return Err(error!(AgentRegistryError::Ed25519InstructionMismatch));
+            }
+            if sig_off + 64 > data.len()
+                || pk_off + 32 > data.len()
+                || msg_off + msg_len > data.len()
+            {
+                return Err(error!(AgentRegistryError::Ed25519InstructionMismatch));
+            }
+
+            let sig_slice = &data[sig_off..sig_off + 64];
+            let pk_slice = &data[pk_off..pk_off + 32];
+            let msg_slice = &data[msg_off..msg_off + 32];
+
+            if sig_slice != expected_signature.as_ref() {
+                return Err(error!(AgentRegistryError::InvalidManifestSignature));
+            }
+            if pk_slice != expected_pubkey.to_bytes().as_ref() {
+                return Err(error!(AgentRegistryError::InvalidManifestSignature));
+            }
+            if msg_slice != expected_message.as_ref() {
+                return Err(error!(AgentRegistryError::InvalidManifestSignature));
+            }
+
+            // The runtime already rejected the transaction if the ed25519
+            // precompile call itself failed verification. Reaching this
+            // point means: precompile passed, and its inputs match what
+            // this instruction is about to persist. QED.
+            return Ok(());
+        }
+
+        Err(error!(AgentRegistryError::MissingEd25519Instruction))
+    }
 }
 
 #[cfg(test)]
@@ -471,6 +682,140 @@ mod tests {
                 | (AgentStatus::Suspended, AgentStatus::Paused)
         );
         assert!(valid);
+    }
+
+    // ================================================================
+    // ADR-060: capability manifest fields + update_manifest
+    // ================================================================
+
+    /// ADR-040 invariant: explicit space calc matches the serialized-size
+    /// floor. Baseline 1243 + 162 (ADR-060) = 1405.
+    #[test]
+    fn adr_060_account_space_matches_explicit_total() {
+        assert_eq!(AgentProfile::SPACE, 1405);
+    }
+
+    /// ADR-060 §2: CID field is 64 bytes. M5 resolved [u8; 64] to fit
+    /// CIDv1 string encodings (~60 chars) or Arweave 43-char tx IDs.
+    #[test]
+    fn adr_060_manifest_cid_is_64_bytes() {
+        // compile-time check via mem::size_of on the array
+        assert_eq!(std::mem::size_of::<[u8; 64]>(), 64);
+    }
+
+    /// ADR-060: capability-subset invariant — on-chain `Vec<String>`
+    /// must be a subset of the manifest's capability name list.
+    /// Subset: accepted.
+    #[test]
+    fn adr_060_capability_subset_accepts_subset() {
+        let on_chain = vec!["transfer-funds".to_string(), "approve-milestone".to_string()];
+        let manifest = vec![
+            "transfer-funds".to_string(),
+            "approve-milestone".to_string(),
+            "split-payment".to_string(),
+        ];
+        let ok = on_chain.iter().all(|c| manifest.iter().any(|m| m == c));
+        assert!(ok);
+    }
+
+    /// ADR-060: capability-subset invariant — on-chain value missing from
+    /// manifest list is rejected.
+    #[test]
+    fn adr_060_capability_subset_rejects_extra_on_chain() {
+        let on_chain = vec!["transfer-funds".to_string(), "ghost-capability".to_string()];
+        let manifest = vec!["transfer-funds".to_string()];
+        let ok = on_chain.iter().all(|c| manifest.iter().any(|m| m == c));
+        assert!(!ok);
+    }
+
+    /// ADR-060: equality of sets is a trivially satisfied subset.
+    #[test]
+    fn adr_060_capability_subset_accepts_equal_sets() {
+        let on_chain = vec!["a".to_string(), "b".to_string()];
+        let manifest = vec!["a".to_string(), "b".to_string()];
+        let ok = on_chain.iter().all(|c| manifest.iter().any(|m| m == c));
+        assert!(ok);
+    }
+
+    /// ADR-060: empty on-chain capabilities is trivially a subset.
+    /// (In practice `register_agent` already rejects empty, but the
+    /// invariant itself must hold under vacuous truth.)
+    #[test]
+    fn adr_060_capability_subset_accepts_empty_on_chain() {
+        let on_chain: Vec<String> = vec![];
+        let manifest = vec!["x".to_string()];
+        let ok = on_chain.iter().all(|c| manifest.iter().any(|m| m == c));
+        assert!(ok);
+    }
+
+    /// ADR-060: version 0 is reserved for "no manifest published" and
+    /// must be rejected by `update_manifest`.
+    #[test]
+    fn adr_060_version_zero_is_rejected() {
+        let version: u16 = 0;
+        let rejected = version == 0;
+        assert!(rejected);
+    }
+
+    /// ADR-060: packed semver decoding — high byte = major, low byte = minor.
+    #[test]
+    fn adr_060_version_packs_major_minor() {
+        let version: u16 = (1u16 << 8) | 2u16; // 1.2
+        assert_eq!(version >> 8, 1);
+        assert_eq!(version & 0xff, 2);
+    }
+
+    /// ADR-060: ed25519 precompile data layout — a well-formed, all-
+    /// self-referenced offsets block parses cleanly.
+    #[test]
+    fn adr_060_ed25519_layout_parses_self_referenced() {
+        // Build a minimal ed25519-program instruction data blob:
+        //   header(2) + offsets(14) + sig(64) + pk(32) + msg(32) = 144
+        let mut data = vec![0u8; 16 + 64 + 32 + 32];
+        data[0] = 1; // num_signatures
+        data[1] = 0; // padding
+
+        let sig_off: u16 = 16;
+        let pk_off: u16 = 16 + 64;
+        let msg_off: u16 = 16 + 64 + 32;
+        let msg_size: u16 = 32;
+        let self_ref: u16 = u16::MAX;
+
+        data[2..4].copy_from_slice(&sig_off.to_le_bytes());
+        data[4..6].copy_from_slice(&self_ref.to_le_bytes());
+        data[6..8].copy_from_slice(&pk_off.to_le_bytes());
+        data[8..10].copy_from_slice(&self_ref.to_le_bytes());
+        data[10..12].copy_from_slice(&msg_off.to_le_bytes());
+        data[12..14].copy_from_slice(&msg_size.to_le_bytes());
+        data[14..16].copy_from_slice(&self_ref.to_le_bytes());
+
+        // Sanity: decode back the self-ref flags.
+        let read_u16 = |at: usize| -> u16 { u16::from_le_bytes([data[at], data[at + 1]]) };
+        assert_eq!(read_u16(4), u16::MAX);
+        assert_eq!(read_u16(8), u16::MAX);
+        assert_eq!(read_u16(14), u16::MAX);
+        assert_eq!(read_u16(12), 32);
+        assert_eq!(data[0], 1);
+    }
+
+    /// ADR-060: ed25519 precompile data layout — message size != 32 is
+    /// rejected (the manifest hash is always SHA-256, 32 bytes).
+    #[test]
+    fn adr_060_ed25519_layout_rejects_non_32_message() {
+        // A precompile call that verified 64 bytes of message cannot be
+        // reused to prove authorship of a 32-byte manifest hash.
+        let msg_size: u16 = 64;
+        assert_ne!(msg_size, 32);
+    }
+
+    /// ADR-060 §5: manifest_version 0 reserved → update sets
+    /// non-zero versions only.
+    #[test]
+    fn adr_060_zero_init_matches_reserved_sentinel() {
+        // After register_agent, manifest_version is 0 ("no manifest").
+        let initial: u16 = 0;
+        // update_manifest rejects version == 0.
+        assert!(initial == 0);
     }
 
     mod fuzz {

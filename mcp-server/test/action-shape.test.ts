@@ -37,19 +37,31 @@ describe("ADR-058 Action pipeline", () => {
       assert.ok(names.includes("create_escrow"));
     });
 
-    it("pilot actions (5) are a subset of the existing tool names", () => {
+    it("the ADR-058 router handles all 23 tools (PR1.5 full migration)", () => {
       const allNames = new Set(allTools.map((t) => t.name));
-      for (const pilot of pilotActionNames) {
-        assert.ok(
-          allNames.has(pilot),
-          `pilot action '${pilot}' missing from allTools`,
-        );
+      for (const routed of actionRouter.names()) {
+        assert.ok(allNames.has(routed), `routed action '${routed}' missing from allTools`);
       }
-      assert.equal(pilotActionNames.size, 5);
+      assert.equal(pilotActionNames.size, 23);
+      assert.deepEqual(actionRouter.names().sort(), [...allNames].sort());
     });
+  });
 
-    it("the ADR-058 router handles exactly the pilot action set", () => {
-      assert.deepEqual(actionRouter.names().sort(), [...pilotActionNames].sort());
+  describe("readOnly action shape (PR1.5)", () => {
+    it("all 4 read actions declare readOnly:true + empty capabilities[]", () => {
+      const readOnlyNames = new Set([
+        "get_vault_info",
+        "get_agent_profile",
+        "discover_agents",
+        "get_escrow_status",
+      ]);
+      const readOnly = pilotActions.filter((a) => readOnlyNames.has(a.name));
+      assert.equal(readOnly.length, 4, "expected 4 readOnly actions");
+      for (const a of readOnly) {
+        assert.equal(a.readOnly, true, `${a.name} should be readOnly:true`);
+        assert.equal(a.capabilities.length, 0, `${a.name} should have empty capabilities[]`);
+        assert.ok(!a.requiresSigner, `${a.name} should not require signer`);
+      }
     });
   });
 
