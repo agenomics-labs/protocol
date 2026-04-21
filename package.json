@@ -9,6 +9,8 @@
     "deploy": "anchor deploy"
   },
   "dependencies": {
+    "@agenomics/capability-manifest-validator": "file:packages/capability-manifest-validator",
+    "@agenomics/sas-resolver": "file:packages/sas-resolver",
     "@coral-xyz/anchor": "^0.31.1",
     "@solana/web3.js": "^1.95.0"
   },
