@@ -33,4 +33,16 @@ pub enum AgentRegistryError {
 
     #[msg("clear_suspension requires status == Suspended and slash_count >= 3")]
     NotSuspended,
+
+    // ADR-060: capability manifest errors.
+    #[msg("Ed25519 signature over manifest_hash failed verification against the authority pubkey")]
+    InvalidManifestSignature,
+    #[msg("On-chain capabilities are not a subset of the supplied manifest capability name list")]
+    CapabilitySubsetViolation,
+    #[msg("Manifest version must be non-zero (packed semver: high=major, low=minor)")]
+    InvalidManifestVersion,
+    #[msg("update_manifest requires a paired Ed25519 precompile instruction in the same transaction")]
+    MissingEd25519Instruction,
+    #[msg("The paired Ed25519 instruction does not match the supplied manifest_hash / manifest_signature / authority")]
+    Ed25519InstructionMismatch,
 }
