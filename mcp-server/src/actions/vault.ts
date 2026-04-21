@@ -1,4 +1,9 @@
 // All 8 vault Actions. Wraps existing handlers without logic change.
+//
+// PR7 / ADR-012: `vault_transfer` gains an env-gated v2 (Kit-native) path.
+// Set `AEAP_USE_V2_VAULT_TRANSFER=1` to route to `handleVaultTransferV2`
+// instead of the Anchor v1 handler. Default remains v1 until devnet tests
+// prove parity. See `handlers-v2/vault.ts` for the v2 implementation.
 
 import { z } from "zod";
 import type { Action } from "../types/action.js";
@@ -13,7 +18,22 @@ import {
   handleResumeVault,
   handleManageAllowlist,
 } from "../handlers/vault.js";
+import { handleVaultTransferV2 } from "../handlers-v2/vault.js";
 import { deriveVaultPDA, getWalletPublicKey } from "../solana.js";
+
+// Emit the v2 warning at most once per process, even if the action fires
+// multiple times. Keeping it simple (module-local flag) — avoid pulling a
+// logger into this file just for one line.
+let _v2WarningEmitted = false;
+function warnV2Enabled(): void {
+  if (_v2WarningEmitted) return;
+  _v2WarningEmitted = true;
+  // eslint-disable-next-line no-console
+  console.warn(
+    "[AEAP] AEAP_USE_V2_VAULT_TRANSFER=1 — routing vault_transfer through " +
+      "the Kit v2 pipeline (ADR-012 / PR7). Devnet parity test required.",
+  );
+}
 
 /**
  * Resolve the default wallet-vault PDA for this process. Used by the
@@ -106,6 +126,34 @@ const vaultTransferInput = {
   amountSol: z.number().positive(),
 } as const;
 
+/**
+ * `vault_transfer` handler. Branches on `AEAP_USE_V2_VAULT_TRANSFER`:
+ *   - unset / "0"  → v1 Anchor path (`handleVaultTransfer`, PRESERVED)
+ *   - "1"          → v2 Kit path (`handleVaultTransferV2`)
+ *
+ * The v1 handler stays intact and is the default; the v2 flag is opt-in
+ * until devnet parity is proven (see PR7 PR description).
+ */
+async function vaultTransferDispatcher(
+  _ctx: unknown,
+  input: z.infer<z.ZodObject<typeof vaultTransferInput>>,
+) {
+  if (process.env.AEAP_USE_V2_VAULT_TRANSFER === "1") {
+    warnV2Enabled();
+    // v2 handler already returns a typed Result<T>.
+    return handleVaultTransferV2(input);
+  }
+  // v1 fall-through preserves the existing behavior exactly.
+  try {
+    return ok(await handleVaultTransfer(input as unknown as Record<string, unknown>));
+  } catch (e) {
+    return err({
+      code: "PROGRAM_ERROR",
+      message: e instanceof Error ? e.message : String(e),
+    });
+  }
+}
+
 export const vaultTransferAction: Action<
   z.infer<z.ZodObject<typeof vaultTransferInput>>,
   unknown
@@ -130,7 +178,32 @@ export const vaultTransferAction: Action<
       BigInt(Math.round(input.amountSol * 1e9)),
   }),
   requiresSigner: true,
-  handler: wrap(handleVaultTransfer),
+  handler: vaultTransferDispatcher,
+};
+
+/**
+ * Alternative v2-only action export. Not registered in the router by
+ * default — exists so tests / ops tooling can invoke the v2 path directly
+ * without flipping the process-wide env flag.
+ */
+export const vaultTransferV2Action: Action<
+  z.infer<z.ZodObject<typeof vaultTransferInput>>,
+  unknown
+> = {
+  name: "vault_transfer_v2",
+  title: "Vault SOL transfer (Kit v2)",
+  description:
+    "Transfer SOL from the vault to a recipient via the Kit v2 pipeline. " +
+    "Opt-in alternative to vault_transfer; used for PR7 devnet parity testing.",
+  inputSchema: vaultTransferInput,
+  outputSchema: z.unknown(),
+  similes: ["send sol v2", "vault payout v2", "transfer from vault v2"],
+  examples: [],
+  readOnly: false,
+  capabilities: ["sign:vault"],
+  preflight: ["cluster_health", "account_rent_exempt", "daily_cap_not_exhausted"],
+  requiresSigner: true,
+  handler: async (_ctx, input) => handleVaultTransferV2(input),
 };
 
 // ---------- vault_token_transfer ----------
