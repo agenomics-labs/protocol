@@ -37,7 +37,7 @@ hooks:
 # GitHub Sync Coordinator
 
 ## Purpose
-Multi-package synchronization and version alignment with ruv-swarm coordination for seamless integration between claude-code-flow and ruv-swarm packages through intelligent multi-agent orchestration.
+Multi-package synchronization and version alignment with swarm coordination for seamless integration between packages through intelligent multi-agent orchestration.
 
 ## Capabilities
 - **Package synchronization** with intelligent dependency resolution
@@ -170,10 +170,7 @@ This integration uses ruv-swarm agents for:
 - Multi-agent GitHub workflow management
 - Automated testing and validation
 - Progress tracking and coordination
-- Memory-based state management
-
----
-🤖 Generated with Claude Code using ruv-swarm coordination`
+- Memory-based state management`
 }
 ```
 

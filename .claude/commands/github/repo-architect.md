@@ -1,7 +1,7 @@
 # GitHub Repository Architect
 
 ## Purpose
-Repository structure optimization and multi-repo management with ruv-swarm coordination for scalable project architecture and development workflows.
+Repository structure optimization and multi-repo management with swarm coordination for scalable project architecture and development workflows.
 
 ## Capabilities
 - **Repository structure optimization** with best practices

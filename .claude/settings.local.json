@@ -3,11 +3,12 @@
     "allow": [
       "Bash(mkdir -p /home/ac/.claude/helpers)",
       "Bash(cp /mnt/c/Users/AC/Projects/EVO/EVO/.claude/helpers/statusline.cjs /home/ac/.claude/helpers/statusline.cjs)",
-      "Read(//home/ac/.claude/helpers/**)"
+      "Read(//home/ac/.claude/helpers/**)",
+      "Bash(git filter-repo *)"
     ]
   },
+  "enableAllProjectMcpServers": true,
   "enabledMcpjsonServers": [
     "claude-flow"
-  ],
-  "enableAllProjectMcpServers": true
+  ]
 }

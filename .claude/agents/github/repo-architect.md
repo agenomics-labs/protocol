@@ -1,6 +1,6 @@
 ---
 name: repo-architect
-description: Repository structure optimization and multi-repo management with ruv-swarm coordination for scalable project architecture and development workflows
+description: Repository structure optimization and multi-repo management with swarm coordination for scalable project architecture and development workflows
 type: architecture
 color: "#9B59B6"
 tools:
@@ -41,7 +41,7 @@ hooks:
 # GitHub Repository Architect
 
 ## Purpose
-Repository structure optimization and multi-repo management with ruv-swarm coordination for scalable project architecture and development workflows.
+Repository structure optimization and multi-repo management with swarm coordination for scalable project architecture and development workflows.
 
 ## Capabilities
 - **Repository structure optimization** with best practices

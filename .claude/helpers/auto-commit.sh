@@ -1,5 +1,5 @@
 #!/bin/bash
-# Auto-commit helper for Claude Code hooks
+# Auto-commit helper for git hooks
 # Handles git add, commit, and push in a robust way
 
 set -e
@@ -83,14 +83,9 @@ auto_commit() {
     # Commit
     if git commit -m "$message
 
-Automatic checkpoint created by Claude Code
 - Branch: $branch
 - Timestamp: $timestamp
-- Changes: $change_count file(s)
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
-
-Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>" --quiet 2>/dev/null; then
+- Changes: $change_count file(s)" --quiet 2>/dev/null; then
         log "Created commit: $message"
 
         # Push if enabled

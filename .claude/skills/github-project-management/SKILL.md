@@ -851,9 +851,6 @@ npx ruv-swarm github review-coordinate \
 
 ### Progress Tracking
 Updates will be posted automatically by swarm agents during implementation.
-
----
-🤖 Generated with Claude Code
 ```
 
 ### Bug Report Template
@@ -890,9 +887,6 @@ Updates will be posted automatically by swarm agents during implementation.
 - **Debugger**: Issue investigation
 - **Coder**: Fix implementation
 - **Tester**: Validation and testing
-
----
-🤖 Generated with Claude Code
 ```
 
 ### Feature Request Template
@@ -934,9 +928,6 @@ Updates will be posted automatically by swarm agents during implementation.
 - **Coder**: Implementation
 - **Tester**: Quality assurance
 - **Documenter**: Documentation
-
----
-🤖 Generated with Claude Code
 ```
 
 ### Swarm Task Template

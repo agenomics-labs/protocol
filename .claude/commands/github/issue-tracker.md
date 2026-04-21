@@ -85,10 +85,7 @@ mcp__github__add_issue_comment {
   - 📊 Integration score: 89% (Excellent)
   
   ### Next Steps
-  - Final validation and merge preparation
-  
-  ---
-  🤖 Generated with Claude Code using ruv-swarm coordination`
+  - Final validation and merge preparation`
 }
 
 // Store progress in swarm memory
@@ -204,9 +201,6 @@ mcp__github__update_issue {
 
 ### Progress Tracking
 Updates will be posted automatically by swarm agents during implementation.
-
----
-🤖 Generated with Claude Code
 ```
 
 ### Bug Report Template:
@@ -242,9 +236,6 @@ Updates will be posted automatically by swarm agents during implementation.
 - **Debugger**: Issue investigation
 - **Coder**: Fix implementation
 - **Tester**: Validation and testing
-
----
-🤖 Generated with Claude Code
 ```
 
 ## Best Practices

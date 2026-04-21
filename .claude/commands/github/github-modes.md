@@ -1,7 +1,7 @@
 # GitHub Integration Modes
 
 ## Overview
-This document describes all GitHub integration modes available in Claude-Flow with ruv-swarm coordination. Each mode is optimized for specific GitHub workflows and includes batch tool integration for maximum efficiency.
+This document describes all GitHub integration modes with swarm coordination. Each mode is optimized for specific GitHub workflows and includes batch tool integration for maximum efficiency.
 
 ## GitHub Workflow Modes
 
@@ -131,9 +131,9 @@ All GitHub modes support batch operations for maximum efficiency:
   Bash("git checkout main && git pull")
 ```
 
-## Integration with ruv-swarm
+## Swarm Integration
 
-All GitHub modes can be enhanced with ruv-swarm coordination:
+All GitHub modes can be enhanced with swarm coordination:
 
 ```javascript
 // Initialize swarm for GitHub workflow
