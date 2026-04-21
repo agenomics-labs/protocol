@@ -7,6 +7,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { allTools, ToolName } from "./tools/index.js";
 import { getConnection, getWalletPublicKey } from "./solana.js";
+import { createRpc } from "./solana-v2.js";
 
 // ==================== ADR-058 ACTION PIPELINE (PR1 pilot) ====================
 
@@ -212,9 +213,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
+
+  // ADR-012 PR2: initialise the @solana/kit (v2) RPC alongside the v1
+  // surface. Nothing in the dispatch path reads it yet — handlers still go
+  // through Anchor + v1. PR3 will migrate read paths + introduce the
+  // tx-pipeline.
+  createRpc();
+
   console.error("Agenomics MCP Server started on stdio transport");
   console.error(`Agent wallet: ${getWalletPublicKey().toBase58()}`);
-  console.error(`RPC: ${getConnection().rpcEndpoint}`);
+  console.error(`RPC (v1/Anchor): ${getConnection().rpcEndpoint}`);
+  console.error(
+    `RPC (v2/kit):    ${process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com"}`,
+  );
   console.error(
     `ADR-058 pilot actions: ${[...pilotActionNames].join(", ")}`,
   );
