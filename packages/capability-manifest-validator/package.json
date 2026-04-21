@@ -1,7 +1,7 @@
 {
-  "name": "@aeap/capability-manifest-validator",
+  "name": "@aep/capability-manifest-validator",
   "version": "0.1.0",
-  "description": "ADR-060 reference validator for AEAP capability manifests. Validates schema, RFC-8785 canonical-JSON hash, and Ed25519 signature.",
+  "description": "ADR-060 reference validator for AEP capability manifests. Validates schema, RFC-8785 canonical-JSON hash, and Ed25519 signature.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -33,7 +33,7 @@
     "test": "node --import tsx --test test/validate.test.ts"
   },
   "keywords": [
-    "aeap",
+    "aep",
     "solana",
     "capability",
     "manifest",

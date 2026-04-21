@@ -189,7 +189,7 @@ export async function handleUpdateAgentProfile(args: Record<string, unknown>) {
  * that fetched every profile account via `getProgramAccounts` — an O(N)
  * unbounded RPC hit that doesn't scale past a few hundred agents.
  *
- * If `AEAP_INDEXER_URL` is unset or the request fails, the handler falls
+ * If `AEP_INDEXER_URL` is unset or the request fails, the handler falls
  * back to the old `agentProfile.all()` path so the MCP server stays
  * usable in local development and during indexer outages.
  */
@@ -207,7 +207,7 @@ export async function handleDiscoverAgents(args: Record<string, unknown>) {
       ? (args.minReputation as number)
       : 0;
 
-  const indexerUrl = process.env.AEAP_INDEXER_URL;
+  const indexerUrl = process.env.AEP_INDEXER_URL;
   if (indexerUrl) {
     try {
       const hydrated = await discoverViaIndexer(

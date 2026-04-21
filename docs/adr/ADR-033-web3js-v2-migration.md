@@ -5,7 +5,7 @@
 
 ## Context
 
-The AEAP MCP server (`mcp-server/src/solana.ts`) uses `@solana/web3.js` v1 with class-based APIs (`Connection`, `PublicKey`, `Keypair`, `Transaction`) and `@solana/spl-token` for token account operations. The `@coral-xyz/anchor` TypeScript client also depends on web3.js v1 internally.
+The AEP MCP server (`mcp-server/src/solana.ts`) uses `@solana/web3.js` v1 with class-based APIs (`Connection`, `PublicKey`, `Keypair`, `Transaction`) and `@solana/spl-token` for token account operations. The `@coral-xyz/anchor` TypeScript client also depends on web3.js v1 internally.
 
 Solana's web3.js v2 introduces breaking changes: addresses are strings instead of `PublicKey` objects, amounts use native `BigInt` instead of `BN.js`, functions are tree-shakeable (no class singletons), and PDA derivation is async. A partial v2 compatibility layer already exists at `mcp-server/src/solana-v2.ts` with string addresses, BigInt amounts, and bridge functions (`bnToBigInt`, `pubkeyToAddress`).
 
@@ -15,7 +15,7 @@ Migrating to v2 improves bundle size (tree-shaking), type safety (branded addres
 
 1. **Three-phase migration**: Migrate in order of risk -- read-only operations first, then write operations, then Anchor client replacement (blocked on upstream).
 
-2. **Dual-module approach**: Maintain `solana.ts` (v1) and `solana-v2.ts` (v2) in parallel during migration. Feature flag (`AEAP_WEB3_V2=true`) enables v2 code paths for testing.
+2. **Dual-module approach**: Maintain `solana.ts` (v1) and `solana-v2.ts` (v2) in parallel during migration. Feature flag (`AEP_WEB3_V2=true`) enables v2 code paths for testing.
 
 3. **Migration plan document**: Create `docs/WEB3_V2_MIGRATION.md` with:
    - Complete v1 API usage inventory (every import and call site)

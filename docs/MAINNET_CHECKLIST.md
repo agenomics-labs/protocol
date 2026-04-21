@@ -1,4 +1,4 @@
-# AEAP Mainnet Deployment Checklist
+# AEP Mainnet Deployment Checklist
 
 **Protocol**: Agenomics Protocol
 **Date**: 2026-04-15
@@ -283,7 +283,7 @@ Set up [Helius](https://helius.dev) webhooks to monitor all program events in re
 curl -X POST https://api.helius.xyz/v0/webhooks?api-key=<API_KEY> \
   -H "Content-Type: application/json" \
   -d '{
-    "webhookURL": "https://your-server.com/webhooks/aeap",
+    "webhookURL": "https://your-server.com/webhooks/aep",
     "transactionTypes": ["Any"],
     "accountAddresses": [
       "<VAULT_PROGRAM_ID>",
@@ -320,7 +320,7 @@ curl -X POST https://api.helius.xyz/v0/webhooks?api-key=<API_KEY> \
 ### 6.4 Alerting Channels
 
 - **Critical**: PagerDuty + SMS to on-call
-- **Warning**: Slack `#aeap-alerts` channel
+- **Warning**: Slack `#aep-alerts` channel
 - **Info**: Logged to monitoring dashboard (Grafana/Datadog)
 
 ---

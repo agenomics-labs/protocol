@@ -1,7 +1,7 @@
 // All 8 vault Actions. Wraps existing handlers without logic change.
 //
 // PR7 / ADR-012: `vault_transfer` gains an env-gated v2 (Kit-native) path.
-// Set `AEAP_USE_V2_VAULT_TRANSFER=1` to route to `handleVaultTransferV2`
+// Set `AEP_USE_V2_VAULT_TRANSFER=1` to route to `handleVaultTransferV2`
 // instead of the Anchor v1 handler. Default remains v1 until devnet tests
 // prove parity. See `handlers-v2/vault.ts` for the v2 implementation.
 
@@ -30,7 +30,7 @@ function warnV2Enabled(): void {
   _v2WarningEmitted = true;
   // eslint-disable-next-line no-console
   console.warn(
-    "[AEAP] AEAP_USE_V2_VAULT_TRANSFER=1 — routing vault_transfer through " +
+    "[AEP] AEP_USE_V2_VAULT_TRANSFER=1 — routing vault_transfer through " +
       "the Kit v2 pipeline (ADR-012 / PR7). Devnet parity test required.",
   );
 }
@@ -127,7 +127,7 @@ const vaultTransferInput = {
 } as const;
 
 /**
- * `vault_transfer` handler. Branches on `AEAP_USE_V2_VAULT_TRANSFER`:
+ * `vault_transfer` handler. Branches on `AEP_USE_V2_VAULT_TRANSFER`:
  *   - unset / "0"  → v1 Anchor path (`handleVaultTransfer`, PRESERVED)
  *   - "1"          → v2 Kit path (`handleVaultTransferV2`)
  *
@@ -138,7 +138,7 @@ async function vaultTransferDispatcher(
   _ctx: unknown,
   input: z.infer<z.ZodObject<typeof vaultTransferInput>>,
 ) {
-  if (process.env.AEAP_USE_V2_VAULT_TRANSFER === "1") {
+  if (process.env.AEP_USE_V2_VAULT_TRANSFER === "1") {
     warnV2Enabled();
     // v2 handler already returns a typed Result<T>.
     return handleVaultTransferV2(input);

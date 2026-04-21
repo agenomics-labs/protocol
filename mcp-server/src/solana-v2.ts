@@ -1,5 +1,5 @@
 /**
- * ADR-012 / ADR-033 — @solana/kit v2 surface for the AEAP MCP server.
+ * ADR-012 / ADR-033 — @solana/kit v2 surface for the AEP MCP server.
  *
  * This module is the Kit-native (web3.js v2) boundary. It is additive in PR2:
  * callers continue to use `src/solana.ts` (v1 / Anchor) for now. PR3 will begin

@@ -5,7 +5,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "aeap-mcp": "dist/index.js"
+    "aep-mcp": "dist/index.js"
   },
   "publishConfig": {
     "access": "public"
@@ -24,7 +24,7 @@
   "keywords": [
     "mcp",
     "solana",
-    "aeap",
+    "aep",
     "agent",
     "vault",
     "settlement"
@@ -32,8 +32,8 @@
   "author": "Alejandro",
   "license": "UNLICENSED",
   "dependencies": {
-    "@aeap/capability-manifest-validator": "file:../packages/capability-manifest-validator",
-    "@aeap/sas-resolver": "file:../packages/sas-resolver",
+    "@aep/capability-manifest-validator": "file:../packages/capability-manifest-validator",
+    "@aep/sas-resolver": "file:../packages/sas-resolver",
     "@coral-xyz/anchor": "^0.31.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@solana-program/compute-budget": "^0.15.0",

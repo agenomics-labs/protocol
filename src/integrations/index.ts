@@ -1,2 +1,2 @@
-export { aeapPlugin } from './elizaos-plugin';
-export { aeapTools } from './solana-agent-kit-plugin';
+export { aepPlugin } from './elizaos-plugin';
+export { aepTools } from './solana-agent-kit-plugin';

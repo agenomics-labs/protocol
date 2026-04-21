@@ -2,11 +2,11 @@
 
 ## 1. Protocol Overview
 
-The Agenomics Protocol enables AI agents to operate as independent economic entities on Solana. By providing on-chain identity, programmable wallets, discovery mechanisms, and autonomous payment settlement, AEAP creates a trustless economic layer where agents can discover each other, negotiate tasks, and settle payments without human intermediation.
+The Agenomics Protocol enables AI agents to operate as independent economic entities on Solana. By providing on-chain identity, programmable wallets, discovery mechanisms, and autonomous payment settlement, AEP creates a trustless economic layer where agents can discover each other, negotiate tasks, and settle payments without human intermediation.
 
 ### Core Vision
 
-AEAP transforms AI agents from stateless, one-shot interactions into persistent economic actors with:
+AEP transforms AI agents from stateless, one-shot interactions into persistent economic actors with:
 - **On-chain identity**: Verifiable agent profiles and reputation
 - **Autonomous wallets**: SPL token accounts with configurable spending policies
 - **Discovery layer**: Registry for agents to find each other by capability and reputation
@@ -29,7 +29,7 @@ A single **Model Context Protocol (MCP) server** acts as the bridge between any 
 ### Ecosystem Integrations
 
 - **ElizaOS**: Run fully autonomous agents with on-chain commerce capabilities
-- **Solana Agent Kit**: Use AEAP as a plugin for agentic wallets
+- **Solana Agent Kit**: Use AEP as a plugin for agentic wallets
 - **Goat Framework**: Integrate with DeFi agent workflows
 - **x402 Payment Relay**: Enable HTTP-based agent payments (402 Payment Required responses)
 
@@ -651,7 +651,7 @@ Future versions may implement **collateral-based reputation**:
 
 ### Why PDAs for All Accounts?
 
-**Program-Derived Accounts (PDAs)** are the architectural backbone of AEAP:
+**Program-Derived Accounts (PDAs)** are the architectural backbone of AEP:
 
 **Deterministic Addressing**
 - Vault address is always `["vault", authority]` — no random address generation
@@ -660,7 +660,7 @@ Future versions may implement **collateral-based reputation**:
 - Agents can coordinate without needing to share addresses
 
 **Composability**
-- Other programs can invoke AEAP instructions without storing addresses
+- Other programs can invoke AEP instructions without storing addresses
 - Nested PDAs (`["audit_entry", vault, index]`) enable hierarchical account structures
 - Settlement program references vault by seed, not address
 - Reduces account dependency issues and improves modularity
@@ -673,7 +673,7 @@ Future versions may implement **collateral-based reputation**:
 
 ### Why Events for Indexing (Not Accounts)?
 
-AEAP emits **Solana events** (e.g., using Anchor emit macros) rather than creating accounts for audit/discovery:
+AEP emits **Solana events** (e.g., using Anchor emit macros) rather than creating accounts for audit/discovery:
 
 **Cost Efficiency**
 - AuditEntry accounts cost rent (5000 lamports base + data size)
@@ -723,7 +723,7 @@ The **Model Context Protocol** is the bridge between AI and blockchain:
 
 **Extensibility**
 - MCP servers are composable (chain multiple servers)
-- AEAP + Marinade + Jupiter in one agent context
+- AEP + Marinade + Jupiter in one agent context
 - Easy to add new capabilities (DeFi, NFTs, DAOs)
 - Standard tool discovery mechanism
 
@@ -747,7 +747,7 @@ The **Model Context Protocol** is the bridge between AI and blockchain:
 
 ### Why Stablecoins (USDC) as Default Settlement?
 
-AEAP settles tasks in **USDC** (or other SPL stablecoins) by design:
+AEP settles tasks in **USDC** (or other SPL stablecoins) by design:
 
 **Economic Certainty**
 - SOL is volatile (100 USDC ≠ constant SOL amount)

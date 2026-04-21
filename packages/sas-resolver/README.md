@@ -1,12 +1,12 @@
-# @aeap/sas-resolver
+# @aep/sas-resolver
 
 Reference resolver for the SAS (Solana Attestation Service) integration
 described in [ADR-061](../../docs/adr/ADR-061-sas-integration.md) and
 the caching strategy in
 [ADR-065](../../docs/adr/ADR-065-caching-strategy.md).
 
-Consumes a validated AEAP capability manifest (see
-[`@aeap/capability-manifest-validator`](../capability-manifest-validator/README.md))
+Consumes a validated AEP capability manifest (see
+[`@aep/capability-manifest-validator`](../capability-manifest-validator/README.md))
 and resolves the optional `agent.owner_attestation` SAS pointer into a
 typed reputation snapshot. Implements the 7-step flow in ADR-061 §4
 faithfully — subject-mismatch is the one hard error; every other failure
@@ -16,26 +16,26 @@ allowlist) degrades to `absent: true` so SAS stays strictly additive.
 ## Install
 
 ```sh
-npm install @aeap/sas-resolver
+npm install @aep/sas-resolver
 ```
 
 Peer deps: `@solana/kit@^6.8`, `@noble/curves@^1.4`. Optional runtime
-dep: `ioredis@^5.4` (only needed if `AEAP_REDIS_URL` is set — the
+dep: `ioredis@^5.4` (only needed if `AEP_REDIS_URL` is set — the
 in-memory cache is the default).
 
 ## Usage
 
 ```ts
 import { createSolanaRpc } from "@solana/kit";
-import { SasResolver, createCache } from "@aeap/sas-resolver";
+import { SasResolver, createCache } from "@aep/sas-resolver";
 
 const resolver = new SasResolver({
   rpc: createSolanaRpc("https://api.mainnet-beta.solana.com"),
   allowedCredentials: new Set([
-    "<AEAP_PROTOCOL credential PDA>",
-    "<AEAP_VALIDATORS credential PDA>",
+    "<AEP_PROTOCOL credential PDA>",
+    "<AEP_VALIDATORS credential PDA>",
   ]),
-  schemaPda: "<AEAP_AGENT_REPUTATION_v1 schema PDA>",
+  schemaPda: "<AEP_AGENT_REPUTATION_v1 schema PDA>",
   cache: createCache(process.env),    // ADR-065: in-memory or Redis-backed
 });
 
@@ -69,7 +69,7 @@ await resolver.resolve(manifest, subject, { maxAge: 0 });
 await resolver.resolve(manifest, subject, { maxAge: 30_000 });
 ```
 
-Multi-instance deployments can set `AEAP_REDIS_URL` and the factory
+Multi-instance deployments can set `AEP_REDIS_URL` and the factory
 returns a `LayeredCache` (in-memory L1 + Redis L2). Pattern mirrors
 [`mcp-server/src/pipeline/idempotency.ts`](../../mcp-server/src/pipeline/idempotency.ts)
 from ADR-059.
@@ -80,7 +80,7 @@ The resolver ships a few convenience helpers for the ADR-061 §4
 "display side-by-side, don't blend" merge convention:
 
 ```ts
-import { renderSideBySide, detectDisagreement, scoreFreshness } from "@aeap/sas-resolver";
+import { renderSideBySide, detectDisagreement, scoreFreshness } from "@aep/sas-resolver";
 
 const lines = renderSideBySide(onChainReputation, reputation);  // { line1, line2 }
 const disagrees = detectDisagreement(onChainReputation, reputation);   // > 2000 bps delta
@@ -91,7 +91,7 @@ const freshness = scoreFreshness(reputation.attestation.last_updated, Date.now()
 ## Non-goals
 
 - Does not fetch the Registry account or the manifest body — consume a pre-validated manifest.
-- Does not validate the manifest — use `@aeap/capability-manifest-validator` upstream.
+- Does not validate the manifest — use `@aep/capability-manifest-validator` upstream.
 - Does not mint, close, or rotate attestations — read-only client.
 - Does not take on-chain governance actions — see [ADR-063](../../docs/adr/ADR-063-sas-credential-authority-governance.md) for the credential authority lifecycle.
 

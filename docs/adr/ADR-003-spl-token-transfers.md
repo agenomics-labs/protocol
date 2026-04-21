@@ -9,7 +9,7 @@ Accepted
 ## Context
 The Agent Vault program's architecture documentation described SPL token transfers with allowlist enforcement, but the implementation only supported native SOL transfers via `execute_transfer`. The `token_allowlist` field existed in `VaultPolicy` with an `is_token_allowed()` method, but it was unused — flagged as dead code by the compiler.
 
-For AEAP's core use case (USDC-denominated agent payments), SPL token transfers are essential. Without them, the vault cannot participate in the settlement escrow flow that uses SPL tokens.
+For AEP's core use case (USDC-denominated agent payments), SPL token transfers are essential. Without them, the vault cannot participate in the settlement escrow flow that uses SPL tokens.
 
 ## Decision
 Add a new `execute_token_transfer` instruction to the Agent Vault program:

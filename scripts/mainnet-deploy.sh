@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AEAP Mainnet Deployment Script
+# AEP Mainnet Deployment Script
 # Usage: ./scripts/mainnet-deploy.sh [--skip-authority-transfer]
 #
 # Prerequisites:
@@ -108,7 +108,7 @@ verify_program_id() {
 
 echo ""
 echo "=============================================="
-echo "  AEAP MAINNET DEPLOYMENT"
+echo "  AEP MAINNET DEPLOYMENT"
 echo "  THIS DEPLOYS TO SOLANA MAINNET-BETA"
 echo "  REAL SOL WILL BE SPENT"
 echo "=============================================="

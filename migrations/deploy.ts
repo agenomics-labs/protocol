@@ -7,7 +7,7 @@ export const deploy = async () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
 
-  console.log("Deploying AEAP programs...");
+  console.log("Deploying AEP programs...");
   console.log("Provider cluster:", provider.connection.rpcEndpoint);
   console.log("Wallet:", provider.publicKey.toString());
 

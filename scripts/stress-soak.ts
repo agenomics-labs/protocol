@@ -170,7 +170,7 @@ function percentile(xs: number[], q: number): number {
   return sorted[Math.floor(sorted.length * q)];
 }
 
-describe("AEAP Soak Test", () => {
+describe("AEP Soak Test", () => {
   it(`soaks for ${DURATION_SEC}s at ${INTERVAL_MS}ms intervals`, async () => {
     const provider = anchor.AnchorProvider.env();
     anchor.setProvider(provider);

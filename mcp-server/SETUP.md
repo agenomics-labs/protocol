@@ -71,15 +71,15 @@ Add to `~/.claude-config/claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
-    "aeap": {
+    "aep": {
       "command": "node",
-      "args": ["/path/to/aeap/mcp-server/dist/index.js"]
+      "args": ["/path/to/aep/mcp-server/dist/index.js"]
     }
   }
 }
 ```
 
-Restart Claude Desktop, then ask: "Connect to the AEAP server"
+Restart Claude Desktop, then ask: "Connect to the AEP server"
 
 ### Option 2: Claude API with MCP
 ```bash
@@ -92,13 +92,13 @@ Example:
 const client = new Anthropic({
   mcpServers: [
     {
-      name: "aeap",
+      name: "aep",
       command: "node /path/to/dist/index.js"
     }
   ]
 });
 
-// Now Claude can use AEAP tools in conversations
+// Now Claude can use AEP tools in conversations
 ```
 
 ### Option 3: Direct Testing

@@ -5,11 +5,11 @@
 
 ## Context
 
-The AEAP dashboard displays static mock data. With programs deployed on devnet, the dashboard should show live on-chain data for vault balances, agent profiles, and escrow status.
+The AEP dashboard displays static mock data. With programs deployed on devnet, the dashboard should show live on-chain data for vault balances, agent profiles, and escrow status.
 
 ## Decision
 
-Update `AEAPDashboard.jsx` to:
+Update `AEPDashboard.jsx` to:
 
 1. **Connect to devnet RPC** at `https://api.devnet.solana.com` using `@solana/web3.js`.
 2. **Fetch real vault balance** for a configured wallet address via `getBalance`.

@@ -7,7 +7,7 @@ Accepted
 2026-04-15
 
 ## Context
-The AEAP architecture defines an x402 HTTP Payment Relay as an optional component (Architecture doc, Section 2: Flow 4). The HTTP 402 "Payment Required" status code enables a standard web pattern where agents can pay for API access using on-chain Solana transactions. This bridges the gap between HTTP-based agent APIs and on-chain settlement.
+The AEP architecture defines an x402 HTTP Payment Relay as an optional component (Architecture doc, Section 2: Flow 4). The HTTP 402 "Payment Required" status code enables a standard web pattern where agents can pay for API access using on-chain Solana transactions. This bridges the gap between HTTP-based agent APIs and on-chain settlement.
 
 The relay needs to:
 - Return 402 responses with payment instructions when no valid token is present

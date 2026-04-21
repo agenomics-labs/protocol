@@ -1,4 +1,4 @@
-/** AEAP Off-chain Event Indexer - subscribes to program logs, stores in SQLite, exposes REST API */
+/** AEP Off-chain Event Indexer - subscribes to program logs, stores in SQLite, exposes REST API */
 import express, { Request, Response } from "express";
 import Database from "better-sqlite3";
 import {
@@ -1058,12 +1058,12 @@ function createApi(
 }
 
 async function main(): Promise<void> {
-  console.log("AEAP Event Indexer starting...");
+  console.log("AEP Event Indexer starting...");
   console.log(`RPC: ${RPC_URL}`);
   console.log(`Commitment: ${COMMITMENT}`);
 
   const connection = new Connection(RPC_URL, COMMITMENT);
-  const db = initDb(process.env.DB_PATH || "./aeap-events.db");
+  const db = initDb(process.env.DB_PATH || "./aep-events.db");
 
   const { states, metrics } = subscribeToPrograms(connection, db);
   const app = createApi(db, states, metrics);

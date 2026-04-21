@@ -276,10 +276,10 @@ describe("ADR-059 §5 RedisIdempotencyStore (ioredis-mock)", () => {
     assert.equal(attempts, 2, "handler was re-entered after the first throw");
   });
 
-  it("factory selects Redis when AEAP_REDIS_URL is set, memory otherwise", () => {
-    const prev = process.env.AEAP_REDIS_URL;
+  it("factory selects Redis when AEP_REDIS_URL is set, memory otherwise", () => {
+    const prev = process.env.AEP_REDIS_URL;
     try {
-      delete process.env.AEAP_REDIS_URL;
+      delete process.env.AEP_REDIS_URL;
       assert.equal(activeIdempotencyBackend(), "memory");
       const memStore = createIdempotencyStore();
       assert.ok(memStore instanceof InMemoryIdempotencyStore);
@@ -288,11 +288,11 @@ describe("ADR-059 §5 RedisIdempotencyStore (ioredis-mock)", () => {
       // attempt a real connection. activeIdempotencyBackend() reports the
       // env-selected backend without constructing anything, which is the
       // invariant we care about at startup logging time.
-      process.env.AEAP_REDIS_URL = "redis://localhost:6379";
+      process.env.AEP_REDIS_URL = "redis://localhost:6379";
       assert.equal(activeIdempotencyBackend(), "redis");
     } finally {
-      if (prev === undefined) delete process.env.AEAP_REDIS_URL;
-      else process.env.AEAP_REDIS_URL = prev;
+      if (prev === undefined) delete process.env.AEP_REDIS_URL;
+      else process.env.AEP_REDIS_URL = prev;
     }
   });
 });

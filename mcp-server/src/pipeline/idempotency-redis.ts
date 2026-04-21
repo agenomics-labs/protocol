@@ -1,6 +1,6 @@
 // ADR-059 §5 — Redis-backed replay protection (multi-instance).
 //
-// Selected at runtime when `AEAP_REDIS_URL` is set; see
+// Selected at runtime when `AEP_REDIS_URL` is set; see
 // `createIdempotencyStore()` in `./idempotency.ts`.
 //
 // Wire protocol (two keys per idempotency key):
@@ -28,7 +28,7 @@
 //
 // JSON serialization caveat — the `T` parameter of `Result<T>` must be
 // JSON-safe. Functions, Maps, Sets, BigInt, undefined, symbols, and
-// circular references will not round-trip. AEAP's idempotent actions
+// circular references will not round-trip. AEP's idempotent actions
 // (submit_milestone, approve_milestone, etc.) all return plain
 // string/number/boolean records, so this is not currently a blocker —
 // but action authors should prefer primitive shapes for the action
@@ -76,7 +76,7 @@ export interface RedisIdempotencyStoreOptions {
 
   /**
    * Key prefix for both the pending marker and the `:result` key.
-   * Defaults to `"aeap:idem:"`. Intentionally includes the trailing
+   * Defaults to `"aep:idem:"`. Intentionally includes the trailing
    * colon so callers can drop a bare idempotency key in without
    * reserving a separator.
    */
@@ -123,7 +123,7 @@ export interface RedisIdempotencyStoreOptions {
   ownerToken?: () => string;
 }
 
-const DEFAULT_PREFIX = "aeap:idem:";
+const DEFAULT_PREFIX = "aep:idem:";
 const DEFAULT_RESULT_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_PENDING_TTL_MS = 60 * 1000;
 const DEFAULT_INFLIGHT_WAIT_MS = 30 * 1000;
@@ -250,7 +250,7 @@ export class RedisIdempotencyStore implements IdempotencyStore {
   }
 
   /**
-   * Drop every AEAP idempotency entry. Implemented as best-effort (no
+   * Drop every AEP idempotency entry. Implemented as best-effort (no
    * SCAN), so tests injecting a mock client that doesn't expose scan can
    * still use it. Production callers should prefer `invalidate(key)`.
    */
@@ -326,7 +326,7 @@ export class RedisIdempotencyStore implements IdempotencyStore {
 
 // --------------------------------------------------------------------------
 // Serialization — `Result<T>` is a tagged union of POJOs; `JSON` is fine
-// for AEAP's action outputs (plain string/number/boolean records).
+// for AEP's action outputs (plain string/number/boolean records).
 // --------------------------------------------------------------------------
 
 function serializeResult<T>(result: Result<T>): string {

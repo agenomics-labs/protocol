@@ -8,7 +8,7 @@ Proposed
 
 ## Context
 
-ADR-061 §4 defines a three-hop resolution flow for any consumer that wants a complete view of an AEAP agent:
+ADR-061 §4 defines a three-hop resolution flow for any consumer that wants a complete view of an AEP agent:
 
 ```
 1. Registry account     — Solana RPC getAccountInfo
@@ -28,7 +28,7 @@ The data fetched at each hop has different mutability:
 
 A single global TTL is the wrong tool — it's either too short (pays RPC cost for static data) or too long (serves stale protocol state). This ADR specifies per-layer TTLs, invalidation hooks, memory bounds, and cross-process cache sharing, paralleling the in-memory / Redis dual pattern ADR-059 §5 established for the idempotency store (`mcp-server/src/pipeline/idempotency.ts` and `idempotency-redis.ts`).
 
-This is a **DOCS-only** ADR. The implementation lands in a follow-up PR against the `@aeap/sas-resolver` package (ADR-064).
+This is a **DOCS-only** ADR. The implementation lands in a follow-up PR against the `@aep/sas-resolver` package (ADR-064).
 
 ## Decision
 
@@ -75,11 +75,11 @@ interface CacheEntry<T> { value: T; cachedAt: number; ttlMs: number; }
 Two concrete backends, env-driven factory:
 
 - **`InMemoryCache`** — `Map<Layer, LruMap<string, Entry>>`, time-based expiry, LRU eviction. Default path. Parallels `InMemoryIdempotencyStore`.
-- **`RedisCache`** — `SET <key> <value> PX <ttlMs>`, `GET <key>`, `DEL <key>`. Selected when `AEAP_REDIS_URL` is set (same env var as the idempotency store — one Redis dep covers both). Parallels `RedisIdempotencyStore`.
+- **`RedisCache`** — `SET <key> <value> PX <ttlMs>`, `GET <key>`, `DEL <key>`. Selected when `AEP_REDIS_URL` is set (same env var as the idempotency store — one Redis dep covers both). Parallels `RedisIdempotencyStore`.
 
 **Layered deployment.** In multi-instance deployments the recommended topology is **L1 in-memory in front of L2 Redis**: the resolver checks the in-memory cache first (per-process locality, sub-millisecond), falls through to Redis on miss, then writes the Redis hit back up to L1. L1 TTLs SHOULD be the same as or shorter than the L2 TTLs so invalidation propagates on L1 expiry without requiring an explicit L1-flush-on-L2-invalidation signal.
 
-**Key format.** `aeap:cache:<layer>:<key>`, where `layer` is one of the five enum values and `key` is the layer's primary identifier: Registry authority pubkey, manifest CID, attestation / schema / credential PDA. Prefix is configurable for test isolation and for cohabiting with the `aeap:idem:` namespace ADR-059 already claims.
+**Key format.** `aep:cache:<layer>:<key>`, where `layer` is one of the five enum values and `key` is the layer's primary identifier: Registry authority pubkey, manifest CID, attestation / schema / credential PDA. Prefix is configurable for test isolation and for cohabiting with the `aep:idem:` namespace ADR-059 already claims.
 
 ### 4. Batch resolution and cache warming
 
@@ -134,10 +134,10 @@ The resolver exposes `getMetrics()` returning a snapshot; consumers adapt to Pro
 This ADR **changes no code.** Specifically:
 
 - `programs/**` — unchanged. The cache lives entirely off-chain per ADR-061's option B.
-- `mcp-server/src/pipeline/{idempotency,idempotency-redis}.ts` — unchanged. The idempotency store and the resolver cache are separate concerns sharing the `AEAP_REDIS_URL` env var and the dual-backend pattern.
-- `@aeap/capability-manifest-validator` — unchanged.
+- `mcp-server/src/pipeline/{idempotency,idempotency-redis}.ts` — unchanged. The idempotency store and the resolver cache are separate concerns sharing the `AEP_REDIS_URL` env var and the dual-backend pattern.
+- `@aep/capability-manifest-validator` — unchanged.
 
-The cache implementation ships in a follow-up PR against the `@aeap/sas-resolver` package (ADR-064). That PR will add `InMemoryCache` and `RedisCache` modules paralleling the existing idempotency files, wire them into the resolver's three-hop flow, and export `CacheMetrics` / `invalidate()` / `resolve(... { maxAge })`.
+The cache implementation ships in a follow-up PR against the `@aep/sas-resolver` package (ADR-064). That PR will add `InMemoryCache` and `RedisCache` modules paralleling the existing idempotency files, wire them into the resolver's three-hop flow, and export `CacheMetrics` / `invalidate()` / `resolve(... { maxAge })`.
 
 ## Alternatives Considered
 
@@ -162,14 +162,14 @@ TTL-based is simpler and correct at this scale. A future ADR can add subscriptio
 Rejected. For the manifest layer specifically, one could imagine caching by SHA-256 of the body rather than CID, so that two CIDs pointing at identical content share a cache entry. This is a marginal win — the size class is 10k entries, duplication is rare, and the extra bookkeeping (hash-to-CID index, hash-to-body store) is disproportionate.
 
 ### Alternative F: Redis-only, no in-memory fast path
-Rejected for single-instance deployments — matches ADR-059 §5's rejection of Alternative E for the same reason. Redis would be a mandatory dep. In-memory for single-instance, Redis for multi-instance (with L1 in-memory in front), determined by `AEAP_REDIS_URL` — identical config knob to the idempotency store.
+Rejected for single-instance deployments — matches ADR-059 §5's rejection of Alternative E for the same reason. Redis would be a mandatory dep. In-memory for single-instance, Redis for multi-instance (with L1 in-memory in front), determined by `AEP_REDIS_URL` — identical config knob to the idempotency store.
 
 ## Consequences
 
 ### Positive
 - **Sub-second lookups for cached subjects.** Registry + SAS cache hits are `Map.get` or Redis `GET`; manifest cache hits skip the IPFS / Arweave round-trip entirely.
 - **Linear scaling with unique subjects.** Hot set lives in L1, long tail is either recomputed on miss or lives in L2 Redis.
-- **Parallel pattern with ADR-059 idempotency store.** One Redis dep, one config knob (`AEAP_REDIS_URL`), two lazy-loaded backends, matching factory ergonomics.
+- **Parallel pattern with ADR-059 idempotency store.** One Redis dep, one config knob (`AEP_REDIS_URL`), two lazy-loaded backends, matching factory ergonomics.
 - **Staleness is opt-in strict.** Consumers default to TTL-bounded staleness; protocol-logic consumers pass `maxAge: 0` for authoritative reads.
 - **Observable without a monitoring-framework dep.** The counter-record interface is adapter-friendly for Prometheus / OpenTelemetry / custom backends.
 
@@ -177,17 +177,17 @@ Rejected for single-instance deployments — matches ADR-059 §5's rejection of 
 - **Stale reads are bounded by TTL.** Protocol-logic consumers MUST use `maxAge: 0` for authoritative reads (reputation gates, tier thresholds, dispute eligibility). Otherwise a consumer may act on a stale `reputation_score` up to 30s old. This is the single load-bearing correctness obligation this ADR imposes on consumers.
 - **Cache memory footprint.** Worst-case 100MB in the process for a fully populated in-memory cache. Mitigated by per-layer LRU ceilings and the Redis L2 option.
 - **Manifest hash-drift invalidation requires a fresh Registry read.** If a consumer only hits the manifest cache without re-reading the Registry, it cannot detect that the underlying `manifest_hash` changed. The resolver serializes the Registry read before the manifest read already (ADR-061 §4), so this is a resolver-internal constraint, not a consumer one — but it constrains any future "manifest-only" caller API.
-- **Two caches and an idempotency store share one Redis.** Namespace collisions are prevented by the `aeap:cache:` vs. `aeap:idem:` prefixes, but operators running both need to size the Redis instance for the union.
+- **Two caches and an idempotency store share one Redis.** Namespace collisions are prevented by the `aep:cache:` vs. `aep:idem:` prefixes, but operators running both need to size the Redis instance for the union.
 
 ### Neutral
 - **No change to Registry, Vault, Settlement, or SAS.** The cache lives entirely in the resolver package; it is orthogonal to on-chain programs and to the idempotency pipeline.
 - **Follow-up ADR for subscription-based invalidation remains open.** Alternative D is explicitly rejected for v1, not v∞.
-- **`@aeap/sas-resolver` PR (ADR-064) absorbs the implementation.** This ADR defines the policy; the package PR delivers the code.
+- **`@aep/sas-resolver` PR (ADR-064) absorbs the implementation.** This ADR defines the policy; the package PR delivers the code.
 
 ## Open items / follow-up ADRs
 
 - **ADR-066**: on-chain governance upgrade path if the protocol outgrows the ADR-063 multisig model.
-- **ADR-067**: cross-protocol credential trust — how AEAP resolvers handle SAS attestations signed by credential authorities from other protocols, including whitelist expansion governance.
+- **ADR-067**: cross-protocol credential trust — how AEP resolvers handle SAS attestations signed by credential authorities from other protocols, including whitelist expansion governance.
 
 ## References
 

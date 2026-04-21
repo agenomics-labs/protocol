@@ -5,7 +5,7 @@
 // against `lastValidBlockHeight` and throw a typed SolanaError on expiry.
 // What Kit does NOT ship is automatic rebroadcast after expiry — the
 // caller catches, re-signs with a fresh blockhash, and retries. This
-// module is that catch-refresh-retry loop and the typed AeapError wrapper.
+// module is that catch-refresh-retry loop and the typed AepError wrapper.
 
 import { isSolanaError, SOLANA_ERROR__BLOCK_HEIGHT_EXCEEDED } from "@solana/kit";
 import type { Result } from "../types/action.js";

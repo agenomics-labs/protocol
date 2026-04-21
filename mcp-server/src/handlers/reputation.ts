@@ -3,8 +3,8 @@
  *
  * Read-only — fetches an agent's on-chain `AgentProfile` and composes it with
  * the off-chain ADR-060 capability manifest (validated via
- * `@aeap/capability-manifest-validator`) and the optional ADR-061 SAS
- * attestation signal (resolved via `@aeap/sas-resolver`).
+ * `@aep/capability-manifest-validator`) and the optional ADR-061 SAS
+ * attestation signal (resolved via `@aep/sas-resolver`).
  *
  * Implementation follows ADR-061 §4 resolution flow step-for-step:
  *   1. Registry fetch.
@@ -16,7 +16,7 @@
  *   5. Merge — Registry native values are the authoritative signal; manifest
  *      metadata + SAS reputation are additive advisory overlays.
  *
- * Module loading note: the two `@aeap/*` packages ship as ESM-only, but the
+ * Module loading note: the two `@aep/*` packages ship as ESM-only, but the
  * mcp-server transpiles to CommonJS. A static `import` would be
  * down-compiled to `require()` and fail at runtime. We therefore load both
  * packages through a `new Function(...)` dynamic-import shim that TypeScript
@@ -54,11 +54,11 @@ const dynImport = new Function(
 import type {
   SasResolver as SasResolverClass,
   ResolvedReputation,
-} from "@aeap/sas-resolver";
+} from "@aep/sas-resolver";
 import type {
   CapabilityManifest,
   ValidationResult,
-} from "@aeap/capability-manifest-validator";
+} from "@aep/capability-manifest-validator";
 
 // --------------------------------------------------------------------------
 // SAS resolver lifecycle: lazy, single-instance per process.
@@ -72,7 +72,7 @@ import type {
 // - A warning is emitted exactly once when we fall back to the stub.
 
 interface SasHandle {
-  /** Resolve a subject. Mirrors the @aeap/sas-resolver contract. */
+  /** Resolve a subject. Mirrors the @aep/sas-resolver contract. */
   resolve(
     manifest: { agent: { pubkey: string; owner_attestation?: string } },
     subjectAuthority: string,
@@ -92,15 +92,15 @@ let _sasConfigWarned = false;
 async function getSasHandle(): Promise<SasHandle> {
   if (_sasHandle) return _sasHandle;
 
-  const schemaPda = process.env.AEAP_SAS_SCHEMA_PDA;
-  const allowedRaw = process.env.AEAP_SAS_ALLOWED_CREDENTIALS;
+  const schemaPda = process.env.AEP_SAS_SCHEMA_PDA;
+  const allowedRaw = process.env.AEP_SAS_ALLOWED_CREDENTIALS;
 
   if (!schemaPda || !allowedRaw) {
     if (!_sasConfigWarned) {
       _sasConfigWarned = true;
       console.error(
-        "[get_agent_reputation] AEAP_SAS_SCHEMA_PDA and/or " +
-          "AEAP_SAS_ALLOWED_CREDENTIALS is unset — running with SAS " +
+        "[get_agent_reputation] AEP_SAS_SCHEMA_PDA and/or " +
+          "AEP_SAS_ALLOWED_CREDENTIALS is unset — running with SAS " +
           "resolution disabled. Every resolve() call returns " +
           "{ absent: true, reason: 'sas-not-configured' }.",
       );
@@ -127,8 +127,8 @@ async function getSasHandle(): Promise<SasHandle> {
     .filter((s) => s.length > 0);
 
   // Dynamic ESM imports — see module header.
-  const resolverMod = await dynImport<typeof import("@aeap/sas-resolver")>(
-    "@aeap/sas-resolver",
+  const resolverMod = await dynImport<typeof import("@aep/sas-resolver")>(
+    "@aep/sas-resolver",
   );
   const allowlist = resolverMod.buildAllowlist(allowed);
 
@@ -159,7 +159,7 @@ const DEFAULT_IPFS_GATEWAY = "https://ipfs.io/ipfs";
 /**
  * Fetch a manifest body from IPFS via a public HTTP gateway.
  *
- * Configurable via `AEAP_IPFS_GATEWAY` (trailing slashes stripped). This is
+ * Configurable via `AEP_IPFS_GATEWAY` (trailing slashes stripped). This is
  * intentionally minimal — no pinning, no caching, no content verification
  * beyond what `validateManifest` performs once the bytes arrive. A production
  * deployment would front this with a pinned gateway or a local IPFS node.
@@ -167,7 +167,7 @@ const DEFAULT_IPFS_GATEWAY = "https://ipfs.io/ipfs";
 async function fetchManifestFromIpfs(
   cid: string,
 ): Promise<{ bytes: Uint8Array; json: unknown }> {
-  const base = (process.env.AEAP_IPFS_GATEWAY || DEFAULT_IPFS_GATEWAY).replace(
+  const base = (process.env.AEP_IPFS_GATEWAY || DEFAULT_IPFS_GATEWAY).replace(
     /\/+$/,
     "",
   );
@@ -371,8 +371,8 @@ export async function handleGetAgentReputation(
         sasAttested: false,
         sasStale: false,
         sasConfigured: Boolean(
-          process.env.AEAP_SAS_SCHEMA_PDA &&
-            process.env.AEAP_SAS_ALLOWED_CREDENTIALS,
+          process.env.AEP_SAS_SCHEMA_PDA &&
+            process.env.AEP_SAS_ALLOWED_CREDENTIALS,
         ),
       },
     };
@@ -392,8 +392,8 @@ export async function handleGetAgentReputation(
   const { json } = await fetchManifestFromIpfs(pointer.cid);
 
   const validatorMod = await dynImport<
-    typeof import("@aeap/capability-manifest-validator")
-  >("@aeap/capability-manifest-validator");
+    typeof import("@aep/capability-manifest-validator")
+  >("@aep/capability-manifest-validator");
 
   const authorityBytes = new Uint8Array(authorityKey.toBytes());
   const result: ValidationResult = validatorMod.validateManifest({

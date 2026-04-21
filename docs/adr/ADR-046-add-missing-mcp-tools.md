@@ -5,7 +5,7 @@
 
 ## Context
 
-The AEAP MCP server exposes three on-chain programs (Vault, Registry, Settlement) to AI agents. Several on-chain instructions added in previous ADRs lacked corresponding MCP tool definitions, making them inaccessible to agents:
+The AEP MCP server exposes three on-chain programs (Vault, Registry, Settlement) to AI agents. Several on-chain instructions added in previous ADRs lacked corresponding MCP tool definitions, making them inaccessible to agents:
 
 1. **`executeTokenTransfer`** (Vault) -- SPL token transfers from the vault were not exposed. Agents could only transfer native SOL via `vault_transfer`.
 2. **`stakeReputation`** (Registry, ADR-020) -- Reputation staking was implemented on-chain but had no MCP entry point.

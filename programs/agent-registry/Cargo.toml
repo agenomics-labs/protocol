@@ -2,7 +2,7 @@
 name = "agent-registry"
 version = "0.1.0"
 edition = "2021"
-description = "Agent Registry - Discovery and identity component for the Autonomous Economic Agents Protocol (AEAP) on Solana"
+description = "Agent Registry - Discovery and identity component for the Agent Economy Protocol (AEP) on Solana"
 
 [dependencies]
 anchor-lang = { version = "0.31.1", features = ["init-if-needed"] }

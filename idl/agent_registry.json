@@ -4,7 +4,7 @@
     "name": "agent_registry",
     "version": "0.1.0",
     "spec": "0.1.0",
-    "description": "Agent Registry - Discovery and identity component for the Autonomous Economic Agents Protocol (AEAP) on Solana"
+    "description": "Agent Registry - Discovery and identity component for the Agent Economy Protocol (AEP) on Solana"
   },
   "instructions": [
     {

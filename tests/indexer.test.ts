@@ -1,5 +1,5 @@
 /**
- * AEAP Event Indexer - Unit Tests
+ * AEP Event Indexer - Unit Tests
  *
  * Tests the pure functions: parseLogsForEvents, initDb, updateAgentFromEvent, createApi.
  * Uses an in-memory SQLite database for isolation.

@@ -1,10 +1,10 @@
 # Agenomics MCP Server
 
-A TypeScript Model Context Protocol (MCP) server for the Agenomics Protocol on Solana. This server enables any AI agent (Claude, ChatGPT, ElizaOS, etc.) to interact with the AEAP on-chain programs.
+A TypeScript Model Context Protocol (MCP) server for the Agenomics Protocol on Solana. This server enables any AI agent (Claude, ChatGPT, ElizaOS, etc.) to interact with the AEP on-chain programs.
 
 ## Overview
 
-The Agenomics MCP Server exposes three core components of the AEAP:
+The Agenomics MCP Server exposes three core components of the AEP:
 
 ### 1. Agent Vault
 Programmable wallets for AI agents with customizable spending policies:
@@ -80,11 +80,11 @@ export SOLANA_KEYPAIR_PATH="/path/to/keypair.json"
 # Replay-protection backend (ADR-059 §5). Unset → in-memory store
 # (single-instance). Set to a redis:// URL → multi-instance-safe
 # Redis-backed store. Idempotent action results are JSON-serialized
-# under key prefix `aeap:idem:` with a 10-minute TTL.
-export AEAP_REDIS_URL="redis://localhost:6379"
+# under key prefix `aep:idem:` with a 10-minute TTL.
+export AEP_REDIS_URL="redis://localhost:6379"
 ```
 
-### Replay-protection backend (`AEAP_REDIS_URL`)
+### Replay-protection backend (`AEP_REDIS_URL`)
 
 Idempotent settlement actions (`submit_milestone`, `approve_milestone`,
 `resolve_dispute`, …) use a mutex-per-key store to collapse concurrent
@@ -93,13 +93,13 @@ available:
 
 | Backend   | Selected when       | Scope              | Dep       |
 | --------- | ------------------- | ------------------ | --------- |
-| in-memory | `AEAP_REDIS_URL` unset | single process  | none      |
-| Redis     | `AEAP_REDIS_URL` set   | multi-instance  | `ioredis` |
+| in-memory | `AEP_REDIS_URL` unset | single process  | none      |
+| Redis     | `AEP_REDIS_URL` set   | multi-instance  | `ioredis` |
 
 **JSON serialization caveat.** The Redis backend serializes cached
 `Result<T>` values with `JSON.stringify`. `T` must therefore be JSON-safe
 — primitives, arrays, and plain objects are fine; `Map`, `Set`, `BigInt`,
-`Date`, functions, and circular references will not round-trip. All AEAP
+`Date`, functions, and circular references will not round-trip. All AEP
 idempotent actions currently return plain string/number/boolean records,
 so this is not a practical constraint today.
 

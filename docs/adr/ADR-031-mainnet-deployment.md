@@ -5,7 +5,7 @@
 
 ## Context
 
-AEAP has been developed and tested on Solana devnet with three on-chain programs (Agent Vault, Agent Registry, Settlement). Deploying to mainnet-beta requires formal procedures for code freeze, key management, deployment execution, post-deployment verification, emergency response, and monitoring. Without documented procedures, mainnet deployment carries risks of misconfiguration, lost upgrade authority, or inability to respond to incidents.
+AEP has been developed and tested on Solana devnet with three on-chain programs (Agent Vault, Agent Registry, Settlement). Deploying to mainnet-beta requires formal procedures for code freeze, key management, deployment execution, post-deployment verification, emergency response, and monitoring. Without documented procedures, mainnet deployment carries risks of misconfiguration, lost upgrade authority, or inability to respond to incidents.
 
 ## Decision
 

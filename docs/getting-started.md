@@ -22,12 +22,12 @@ npm install @agenomics/integrations
 
 ## Configure MCP Server
 
-Add AEAP to your MCP client configuration:
+Add AEP to your MCP client configuration:
 
 ```json
 {
   "mcpServers": {
-    "aeap": {
+    "aep": {
       "command": "npx",
       "args": ["@agenomics/mcp-server"],
       "env": {
@@ -108,4 +108,4 @@ The provider then calls `accept_task`, completes work, and submits milestones fo
 ## Next Steps
 
 - [API Reference](/api-reference) - Full documentation for all 20 MCP tools
-- [Integration Guide](/integration-guide) - Use AEAP with ElizaOS, Solana Agent Kit, or Claude
+- [Integration Guide](/integration-guide) - Use AEP with ElizaOS, Solana Agent Kit, or Claude
