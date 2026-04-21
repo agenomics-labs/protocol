@@ -45,8 +45,8 @@ the drift, you just don't get the local guard.
 Inter-package graph:
 
 ```
-mcp-server  ──(file:)──▶  @aep/capability-manifest-validator
-                ─────▶    @aep/sas-resolver  ──▶  uses @aep/capability-manifest-validator types
+mcp-server  ──(file:)──▶  @agenomics/capability-manifest-validator
+                ─────▶    @agenomics/sas-resolver  ──▶  uses @agenomics/capability-manifest-validator types
 ```
 
 ## Common tasks
@@ -83,7 +83,7 @@ All blocking unless noted.
 | Anchor Build & IDL Diff | `anchor build` + IDL matches `idl/*.json` |
 | Anchor Integration | `anchor test` against local validator (99 cases) |
 | Secret Scan | TruffleHog (PR diff or full history on main) |
-| TypeScript Check (mcp-server) | `tsc --noEmit` after building `@aep/*` packages first |
+| TypeScript Check (mcp-server) | `tsc --noEmit` after building `@agenomics/*` packages first |
 | mcp-server unit tests | `npm test` (node:test + tsx) |
 | TypeScript Check (capability-manifest-validator) | `tsc --noEmit` + `npm test` |
 | TypeScript Check (sas-resolver) | `tsc --noEmit` + `npm test` |
@@ -117,7 +117,7 @@ cd packages/capability-manifest-validator && npm version patch && npm publish --
 cd packages/sas-resolver                  && npm version patch && npm publish --access public
 ```
 
-Both are scoped under `@aep/`. Bump the `file:` dep in
+Both are scoped under `@agenomics/`. Bump the `file:` dep in
 `mcp-server/package.json` to the published version once published.
 
 ## Things worth flagging when opening a PR

@@ -3,8 +3,8 @@
  *
  * Read-only — fetches an agent's on-chain `AgentProfile` and composes it with
  * the off-chain ADR-060 capability manifest (validated via
- * `@aep/capability-manifest-validator`) and the optional ADR-061 SAS
- * attestation signal (resolved via `@aep/sas-resolver`).
+ * `@agenomics/capability-manifest-validator`) and the optional ADR-061 SAS
+ * attestation signal (resolved via `@agenomics/sas-resolver`).
  *
  * Implementation follows ADR-061 §4 resolution flow step-for-step:
  *   1. Registry fetch.
@@ -16,7 +16,7 @@
  *   5. Merge — Registry native values are the authoritative signal; manifest
  *      metadata + SAS reputation are additive advisory overlays.
  *
- * Module loading note: the two `@aep/*` packages ship as ESM-only, but the
+ * Module loading note: the two `@agenomics/*` packages ship as ESM-only, but the
  * mcp-server transpiles to CommonJS. A static `import` would be
  * down-compiled to `require()` and fail at runtime. We therefore load both
  * packages through a `new Function(...)` dynamic-import shim that TypeScript
@@ -54,11 +54,11 @@ const dynImport = new Function(
 import type {
   SasResolver as SasResolverClass,
   ResolvedReputation,
-} from "@aep/sas-resolver";
+} from "@agenomics/sas-resolver";
 import type {
   CapabilityManifest,
   ValidationResult,
-} from "@aep/capability-manifest-validator";
+} from "@agenomics/capability-manifest-validator";
 
 // --------------------------------------------------------------------------
 // SAS resolver lifecycle: lazy, single-instance per process.
@@ -72,7 +72,7 @@ import type {
 // - A warning is emitted exactly once when we fall back to the stub.
 
 interface SasHandle {
-  /** Resolve a subject. Mirrors the @aep/sas-resolver contract. */
+  /** Resolve a subject. Mirrors the @agenomics/sas-resolver contract. */
   resolve(
     manifest: { agent: { pubkey: string; owner_attestation?: string } },
     subjectAuthority: string,
@@ -127,8 +127,8 @@ async function getSasHandle(): Promise<SasHandle> {
     .filter((s) => s.length > 0);
 
   // Dynamic ESM imports — see module header.
-  const resolverMod = await dynImport<typeof import("@aep/sas-resolver")>(
-    "@aep/sas-resolver",
+  const resolverMod = await dynImport<typeof import("@agenomics/sas-resolver")>(
+    "@agenomics/sas-resolver",
   );
   const allowlist = resolverMod.buildAllowlist(allowed);
 
@@ -392,8 +392,8 @@ export async function handleGetAgentReputation(
   const { json } = await fetchManifestFromIpfs(pointer.cid);
 
   const validatorMod = await dynImport<
-    typeof import("@aep/capability-manifest-validator")
-  >("@aep/capability-manifest-validator");
+    typeof import("@agenomics/capability-manifest-validator")
+  >("@agenomics/capability-manifest-validator");
 
   const authorityBytes = new Uint8Array(authorityKey.toBytes());
   const result: ValidationResult = validatorMod.validateManifest({

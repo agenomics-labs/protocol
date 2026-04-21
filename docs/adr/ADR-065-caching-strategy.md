@@ -28,7 +28,7 @@ The data fetched at each hop has different mutability:
 
 A single global TTL is the wrong tool — it's either too short (pays RPC cost for static data) or too long (serves stale protocol state). This ADR specifies per-layer TTLs, invalidation hooks, memory bounds, and cross-process cache sharing, paralleling the in-memory / Redis dual pattern ADR-059 §5 established for the idempotency store (`mcp-server/src/pipeline/idempotency.ts` and `idempotency-redis.ts`).
 
-This is a **DOCS-only** ADR. The implementation lands in a follow-up PR against the `@aep/sas-resolver` package (ADR-064).
+This is a **DOCS-only** ADR. The implementation lands in a follow-up PR against the `@agenomics/sas-resolver` package (ADR-064).
 
 ## Decision
 
@@ -135,9 +135,9 @@ This ADR **changes no code.** Specifically:
 
 - `programs/**` — unchanged. The cache lives entirely off-chain per ADR-061's option B.
 - `mcp-server/src/pipeline/{idempotency,idempotency-redis}.ts` — unchanged. The idempotency store and the resolver cache are separate concerns sharing the `AEP_REDIS_URL` env var and the dual-backend pattern.
-- `@aep/capability-manifest-validator` — unchanged.
+- `@agenomics/capability-manifest-validator` — unchanged.
 
-The cache implementation ships in a follow-up PR against the `@aep/sas-resolver` package (ADR-064). That PR will add `InMemoryCache` and `RedisCache` modules paralleling the existing idempotency files, wire them into the resolver's three-hop flow, and export `CacheMetrics` / `invalidate()` / `resolve(... { maxAge })`.
+The cache implementation ships in a follow-up PR against the `@agenomics/sas-resolver` package (ADR-064). That PR will add `InMemoryCache` and `RedisCache` modules paralleling the existing idempotency files, wire them into the resolver's three-hop flow, and export `CacheMetrics` / `invalidate()` / `resolve(... { maxAge })`.
 
 ## Alternatives Considered
 
@@ -182,7 +182,7 @@ Rejected for single-instance deployments — matches ADR-059 §5's rejection of 
 ### Neutral
 - **No change to Registry, Vault, Settlement, or SAS.** The cache lives entirely in the resolver package; it is orthogonal to on-chain programs and to the idempotency pipeline.
 - **Follow-up ADR for subscription-based invalidation remains open.** Alternative D is explicitly rejected for v1, not v∞.
-- **`@aep/sas-resolver` PR (ADR-064) absorbs the implementation.** This ADR defines the policy; the package PR delivers the code.
+- **`@agenomics/sas-resolver` PR (ADR-064) absorbs the implementation.** This ADR defines the policy; the package PR delivers the code.
 
 ## Open items / follow-up ADRs
 

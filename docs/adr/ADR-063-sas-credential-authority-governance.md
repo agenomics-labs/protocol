@@ -144,7 +144,7 @@ Performed when this ADR moves from Proposed to Accepted and the two credentials 
 2. `AEP_PROTOCOL` credential PDA created on devnet via SAS admin instruction, signed by the existing program-upgrade multisig. Seeds: `["credential", <aep_authority_devnet>, "AEP_PROTOCOL"]`. Transaction signature logged.
 3. `AEP_AGENT_REPUTATION_v1` schema PDA created on devnet under the `AEP_PROTOCOL` credential, per ADR-061 §2 layout.
 4. `AEP_VALIDATORS` credential PDA created on devnet, signed by the same multisig. Initial validator set: three pubkeys nominated by the protocol multisig at ceremony time; four additional slots left empty pending the §1.2 first governance cycle.
-5. End-to-end smoke test: issue a sample attestation under each credential, resolve it via the off-chain resolver path (ADR-064 dependency), confirm `@aep/sas-resolver` returns the expected structured output.
+5. End-to-end smoke test: issue a sample attestation under each credential, resolve it via the off-chain resolver path (ADR-064 dependency), confirm `@agenomics/sas-resolver` returns the expected structured output.
 6. Devnet PDAs are **kept as historical reference**, not closed. They serve as a public rehearsal record.
 
 **Mainnet ceremony**
@@ -156,7 +156,7 @@ Executed no earlier than 7 days after the devnet dry run, to allow independent r
 3. `AEP_AGENT_REPUTATION_v1` schema PDA attached.
 4. `AEP_VALIDATORS` PDA creation transaction signed by the same multisig. Initial 3 validator signers nominated by the protocol multisig; slots 4–9 filled per §1.2 within 60 days.
 5. Post-ceremony checklist (must all be true before closing the ceremony record):
-   - Devnet and mainnet PDAs both resolvable via `@aep/sas-resolver`.
+   - Devnet and mainnet PDAs both resolvable via `@agenomics/sas-resolver`.
    - All signer pubkeys verified on the multisig account state.
    - Transparency-log entries published (§7).
    - ADR-061 updated with the mainnet PDA addresses in a documentation-only follow-up PR.
@@ -254,7 +254,7 @@ Published to the protocol repo and linked from the documentation site.
 ## Open items / follow-up ADRs
 
 - **ADR-066**: On-chain governance upgrade path. If the protocol outgrows multisig-executed off-chain proposals — for example, if volume grows past ~100 proposals per year, or if token-weighted voting becomes desirable — this ADR lays out the migration from the current model to a full on-chain governance framework (Squads, Realms, or a custom program). Supersedes §2 and §3 of this ADR.
-- **ADR-067**: Cross-protocol credential trust. Whether SAS attestations issued under AEP authorities are accepted by external protocols, and conversely, whether external-protocol SAS attestations are surfaced by the AEP resolver. This is a policy question about the `@aep/sas-resolver` (ADR-064) allowlist and is independent of the authority governance in this ADR.
+- **ADR-067**: Cross-protocol credential trust. Whether SAS attestations issued under AEP authorities are accepted by external protocols, and conversely, whether external-protocol SAS attestations are surfaced by the AEP resolver. This is a policy question about the `@agenomics/sas-resolver` (ADR-064) allowlist and is independent of the authority governance in this ADR.
 
 ## References
 

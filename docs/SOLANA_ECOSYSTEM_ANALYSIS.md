@@ -457,7 +457,7 @@ Draft **ADR-058, ADR-059, ADR-060, ADR-061 (SAS integration), ADR-062 (MPP confo
 - PR: adopt `framework-kit` blockhash/compute-budget helpers; add mutex-per-sig; port commerce-kit Paid→Cleared→Refunded to AEP milestone state machine.
 
 ### Week 4 — Distribution
-- PR `@aep/plugin-solana-agent-kit` alpha (D-1 from sendaifun analysis).
+- PR `@agenomics/plugin-solana-agent-kit` alpha (D-1 from sendaifun analysis).
 - PR `skills/aep/*.md` to both `sendaifun/skills` and reference the `solana-dev-skill` format.
 - PR `solana-new` CLI index entry.
 
