@@ -27,13 +27,20 @@ Companion analysis: `docs/SOLANA_ECOSYSTEM_ANALYSIS.md`, `docs/SENDAIFUN_ECOSYST
 
 ## Decision
 
-### 1. Adopt `framework-kit` blockhash cache + compute-budget helpers
+### 1. Adopt Foundation tx-pipeline packages
 
-Depend on `framework-kit` (or its lower-level `@solana-program/compute-budget` exports). In `mcp-server/src/solana.ts`:
+`framework-kit` is a repo name, not an npm package. The actual published dependencies AEAP consumes are (verified 2026-04-21):
 
-- Import `LatestBlockhashCache` with configurable `blockhashMaxAgeMs` (default: 30s for settlement-critical paths, 120s otherwise)
-- Import `getSetComputeUnitLimitInstruction` + `getSetComputeUnitPriceInstruction`; auto-prepend to every tx (respect caller overrides)
-- Use `@solana/kit` primitives end-to-end (`createTransactionMessage`, `setTransactionMessageLifetimeUsingBlockhash`, `signTransactionMessageWithSigners`)
+| Package | Version | Role |
+|---|---|---|
+| `@solana/kit` | `^6.8.0` | Core primitives: `createTransactionMessage`, `setTransactionMessageLifetimeUsingBlockhash`, `signTransactionMessageWithSigners`, RPC pipeline |
+| `@solana/transaction-confirmation` | `^6.8.0` | Confirmation-with-expiry: `sendAndConfirmTransactionFactory`, `waitForRecentTransactionConfirmation` — races signature status against `lastValidBlockHeight` and throws a typed `SolanaError` on expiry |
+| `@solana-program/compute-budget` | `^0.15.0` | `getSetComputeUnitLimitInstruction`, `getSetComputeUnitPriceInstruction` |
+
+In `mcp-server/src/solana.ts`:
+- Use Kit's RPC pipeline as the blockhash source; cache `getLatestBlockhash` responses at the RPC layer with TTL (30s settlement-critical paths, 120s otherwise).
+- Import the compute-budget instructions; auto-prepend to every tx (respect caller overrides).
+- Use `@solana/kit` message construction end-to-end.
 
 ### 2. `getComputeBudgetInstructions(connection, tx, signer)` — simulate-then-size
 
@@ -73,36 +80,36 @@ async function estimatePriorityFee(
 }
 ```
 
-### 4. `sendAndConfirmWithBlockhashExpiry` — fix agent-kit's footgun
+### 4. `sendAndConfirmWithBlockhashExpiry` — thin wrapper over Kit's built-in
+
+Kit 6.8.0 already ships `sendAndConfirmTransactionFactory()` + `waitForRecentTransactionConfirmation()`, which internally race signature status against `lastValidBlockHeight` and throw a typed `SolanaError('SOLANA_ERROR__BLOCK_HEIGHT_EXCEEDED')` when the blockhash ages out. What Kit does **not** ship is automatic rebroadcast on expiry — it throws, the caller catches, re-signs with a fresh blockhash, and retries.
+
+AEAP's helper is therefore a thin wrapper (~30% of the original scope):
 
 ```ts
 async function sendAndConfirmWithBlockhashExpiry(
-    tx: SignedTransaction,
-    connection: Connection,
-    opts: { maxRetries: number; commitment: Commitment; checkSlotLag?: boolean },
+    kitSendAndConfirm: ReturnType<typeof sendAndConfirmTransactionFactory>,
+    buildAndSign: () => Promise<SignedTransaction>,
+    opts: { maxRetries: number; commitment: Commitment },
 ): Promise<Signature> {
     for (let attempt = 0; attempt <= opts.maxRetries; attempt++) {
+        const signed = await buildAndSign();
         try {
-            const sig = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: false });
-            const confirmed = await confirmWithExpiry(connection, sig, tx.lifetime, opts.commitment);
-            if (confirmed.ok) return sig;
-            if (confirmed.reason === 'blockhash_expired') {
-                tx = await refreshBlockhashAndResign(tx);
-                continue;
-            }
-            throw new AeapError({ code: 'RPC_ERROR', message: confirmed.reason });
+            await kitSendAndConfirm(signed, { commitment: opts.commitment });
+            return signed.signatures[0];
         } catch (e) {
-            if (attempt === opts.maxRetries) throw e;
+            if (isBlockheightExceeded(e) && attempt < opts.maxRetries) continue;   // re-sign + retry
+            throw new AeapError({ code: 'RPC_ERROR', message: String(e) });
         }
     }
     throw new AeapError({ code: 'RPC_ERROR', message: 'max retries exceeded' });
 }
 ```
 
-Key differences from agent-kit's `sendTx`:
-- Detects blockhash expiry (via `lastValidBlockHeight` check) and refreshes rather than silently timing out.
-- Rebroadcasts on expiry instead of failing.
-- Returns typed `AeapError` (per ADR-058 error shape) on exhaustion.
+Key differences from the original ADR draft:
+- We do **not** re-implement the confirmation race or expiry detection — Kit already does this correctly.
+- We only add the catch-refresh-retry loop and the typed `AeapError` wrapper.
+- `buildAndSign()` is passed as a thunk so each retry gets a fresh blockhash via the caller's existing Kit pipeline.
 
 ### 5. Mutex-per-key replay protection (port from `solana-mpp`, adapted)
 
