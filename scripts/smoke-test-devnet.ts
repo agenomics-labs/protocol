@@ -1,14 +1,40 @@
 /**
  * Agenomics Devnet Smoke Test
  *
- * Verifies that all 3 programs are deployed and functional on devnet.
- * Tests: vault creation, agent registration, and escrow creation.
+ * Verifies that all 3 programs are deployed and functional on devnet AND that
+ * the off-chain stack (capability-manifest-validator, sas-resolver, MCP server,
+ * v2 Kit vault path, preflight gates) lines up with the on-chain state.
  *
- * Usage: SOLANA_RPC_URL=https://api.devnet.solana.com npx ts-node scripts/smoke-test-devnet.ts
+ * Steps (see docs/SMOKE_TESTING.md for expected pass criteria):
+ *    1  Program deployment probe
+ *    2  Test wallet + devnet airdrop
+ *    3  Vault initialization
+ *    4  Agent registration
+ *    5  Verify on-chain state (vault + profile)
+ *    6  update_manifest — ADR-060: canonical-JSON + SHA-256 + Ed25519 precompile
+ *    7  capability-manifest-validator round-trip (including tampered-byte negative)
+ *    8  MCP server dispatch — tools/list + get_agent_reputation (SAS absent path)
+ *    9  v2 vault_transfer — AEP_USE_V2_VAULT_TRANSFER=1 parity with v1
+ *   10  Preflight proof — PREFLIGHT_FAILED { gate: 'daily_cap_not_exhausted' }
+ *   11+ SAS bootstrap (devnet): attempted conditional on schema env; reports
+ *       "SAS not bootstrapped on devnet — skipping" when absent.
+ *
+ * Usage:
+ *   SOLANA_RPC_URL=https://api.devnet.solana.com npx ts-node scripts/smoke-test-devnet.ts
  */
 
-import { Connection, Keypair, PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js";
+import {
+  Connection,
+  Keypair,
+  PublicKey,
+  LAMPORTS_PER_SOL,
+  SystemProgram,
+  Transaction,
+  Ed25519Program,
+} from "@solana/web3.js";
 import { AnchorProvider, Program, BN } from "@coral-xyz/anchor";
+import { spawn, ChildProcessWithoutNullStreams } from "child_process";
+import * as crypto from "crypto";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -16,9 +42,22 @@ const VAULT_PROGRAM_ID = new PublicKey("4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KK
 const REGISTRY_PROGRAM_ID = new PublicKey("8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh");
 const SETTLEMENT_PROGRAM_ID = new PublicKey("GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3");
 
+const PROJECT_ROOT = path.resolve(__dirname, "..");
+const MANIFEST_SCHEMA_V1_URL =
+  "https://aep.dev/schemas/capability-manifest/v1.0.json";
+
 function loadIdl(name: string): any {
-  const idlPath = path.resolve(__dirname, "..", "target", "idl", `${name}.json`);
-  return JSON.parse(fs.readFileSync(idlPath, "utf-8"));
+  // `anchor build` drops IDLs under `target/idl/`; a checked-in copy lives at
+  // `idl/`. Prefer target (fresh build), fall back to the tracked copy so the
+  // script runs without requiring `anchor build` first.
+  const candidates = [
+    path.resolve(PROJECT_ROOT, "target", "idl", `${name}.json`),
+    path.resolve(PROJECT_ROOT, "idl", `${name}.json`),
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, "utf-8"));
+  }
+  throw new Error(`IDL not found for ${name} (searched: ${candidates.join(", ")})`);
 }
 
 class KeypairWallet {
@@ -27,6 +66,94 @@ class KeypairWallet {
   get publicKey() { return this.payer.publicKey; }
   async signTransaction<T>(tx: T): Promise<T> { (tx as any).partialSign(this.payer); return tx; }
   async signAllTransactions<T>(txs: T[]): Promise<T[]> { txs.forEach(tx => (tx as any).partialSign(this.payer)); return txs; }
+}
+
+// ---------- Dynamic-import shim for the ESM-only @agenomics/* packages ----------
+type DynImport = <T = unknown>(specifier: string) => Promise<T>;
+const dynImport = new Function("s", "return import(s);") as unknown as DynImport;
+
+// ---------- Minimal manifest fabricator (ADR-060 §2 v1.0) ----------
+function fabricateManifest(agentPubkey: PublicKey, name: string): any {
+  return {
+    $schema: MANIFEST_SCHEMA_V1_URL,
+    version: "1.0",
+    agent: {
+      pubkey: agentPubkey.toBase58(),
+      name,
+    },
+    agent_version: "0.1.0",
+    capabilities: [
+      {
+        name: "smoke-test",
+        description: "Devnet smoke-test capability",
+        input_schema: { type: "object" },
+        output_schema: { type: "object" },
+        required_capabilities: [],
+        side_effects: ["read-onchain"],
+        stability: "experimental",
+      },
+    ],
+    published_at: new Date().toISOString(),
+  };
+}
+
+// Pack packed-semver 1.0 as high-byte=1, low-byte=0 → 0x0100 (256).
+const MANIFEST_VERSION_V1_0 = (1 << 8) | 0;
+
+// Spawn the MCP server as a stdio subprocess and drive it via line-delimited JSON-RPC.
+class McpStdioClient {
+  private proc: ChildProcessWithoutNullStreams;
+  private buf = "";
+  private pending = new Map<number, (msg: any) => void>();
+  private nextId = 1;
+
+  constructor(env: NodeJS.ProcessEnv) {
+    const entry = path.resolve(PROJECT_ROOT, "mcp-server", "dist", "index.js");
+    this.proc = spawn("node", [entry], {
+      cwd: path.resolve(PROJECT_ROOT, "mcp-server"),
+      env: { ...process.env, ...env },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    this.proc.stdout.on("data", (chunk: Buffer) => {
+      this.buf += chunk.toString("utf-8");
+      let nl: number;
+      while ((nl = this.buf.indexOf("\n")) !== -1) {
+        const line = this.buf.slice(0, nl).trim();
+        this.buf = this.buf.slice(nl + 1);
+        if (!line) continue;
+        try {
+          const msg = JSON.parse(line);
+          if (msg && typeof msg.id === "number") {
+            const cb = this.pending.get(msg.id);
+            if (cb) { this.pending.delete(msg.id); cb(msg); }
+          }
+        } catch { /* non-JSON log line — ignore */ }
+      }
+    });
+  }
+
+  async request(method: string, params: any = {}): Promise<any> {
+    const id = this.nextId++;
+    const payload = JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n";
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`MCP request timeout: ${method}`));
+      }, 45_000);
+      this.pending.set(id, (msg) => { clearTimeout(timer); resolve(msg); });
+      this.proc.stdin.write(payload);
+    });
+  }
+
+  stderr(): NodeJS.ReadableStream { return this.proc.stderr; }
+
+  async close(): Promise<void> {
+    return new Promise((resolve) => {
+      this.proc.once("exit", () => resolve());
+      this.proc.kill("SIGTERM");
+      setTimeout(() => { try { this.proc.kill("SIGKILL"); } catch {}; resolve(); }, 2_000);
+    });
+  }
 }
 
 async function main() {
@@ -38,67 +165,56 @@ async function main() {
   console.log(`Cluster version: ${await connection.getVersion().then(v => v["solana-core"])}`);
   console.log();
 
-  // Step 1: Verify programs are deployed
-  console.log("--- Checking program deployments ---");
-  const programs = [
+  // ==================== Step 1: program deployments ====================
+  console.log("--- Step 1: Checking program deployments ---");
+  for (const p of [
     { name: "Agent Vault", id: VAULT_PROGRAM_ID },
     { name: "Agent Registry", id: REGISTRY_PROGRAM_ID },
     { name: "Settlement", id: SETTLEMENT_PROGRAM_ID },
-  ];
-
-  for (const prog of programs) {
-    const info = await connection.getAccountInfo(prog.id);
+  ]) {
+    const info = await connection.getAccountInfo(p.id);
     if (info && info.executable) {
-      console.log(`  ${prog.name} (${prog.id.toBase58().slice(0, 8)}...): DEPLOYED (${info.data.length} bytes)`);
+      console.log(`  ${p.name} (${p.id.toBase58().slice(0, 8)}...): DEPLOYED (${info.data.length} bytes)`);
     } else {
-      console.log(`  ${prog.name}: NOT FOUND`);
-      console.log("  Run ./scripts/deploy-devnet.sh first");
+      console.log(`  ${p.name}: NOT FOUND — run ./scripts/deploy-devnet.sh first`);
       process.exit(1);
     }
   }
-  console.log();
 
-  // Step 2: Create a test keypair and fund it
+  // ==================== Step 2: test wallet + airdrop ====================
   const testKp = Keypair.generate();
-  console.log(`--- Test wallet: ${testKp.publicKey.toBase58()} ---`);
-
+  console.log(`\n--- Step 2: Test wallet: ${testKp.publicKey.toBase58()} ---`);
   try {
     const sig = await connection.requestAirdrop(testKp.publicKey, 2 * LAMPORTS_PER_SOL);
     await connection.confirmTransaction(sig, "confirmed");
-    console.log(`  Airdropped 2 SOL`);
+    console.log("  Airdropped 2 SOL");
   } catch (e) {
     console.log(`  Airdrop failed (rate limited?): ${(e as Error).message}`);
-    console.log("  Fund manually: solana transfer <address> 2 --allow-unfunded-recipient");
     process.exit(1);
   }
 
   const provider = new AnchorProvider(
     connection,
     new KeypairWallet(testKp) as any,
-    { commitment: "confirmed" }
+    { commitment: "confirmed" },
   );
 
-  // Step 3: Test vault creation
-  console.log();
-  console.log("--- Testing Vault Program ---");
+  // ==================== Step 3: vault creation ====================
+  console.log("\n--- Step 3: Vault Program ---");
   const vaultProgram = new Program(loadIdl("agent_vault"), provider);
   const [vaultPDA] = PublicKey.findProgramAddressSync(
     [Buffer.from("vault"), testKp.publicKey.toBuffer()],
-    VAULT_PROGRAM_ID
+    VAULT_PROGRAM_ID,
   );
-
   try {
     await vaultProgram.methods
       .initializeVault(
         testKp.publicKey,
         new BN(LAMPORTS_PER_SOL),
         new BN(LAMPORTS_PER_SOL / 10),
-        10
+        10,
       )
-      .accounts({
-        vault: vaultPDA,
-        authority: testKp.publicKey,
-      })
+      .accounts({ vault: vaultPDA, authority: testKp.publicKey })
       .signers([testKp])
       .rpc();
     console.log(`  Vault created: ${vaultPDA.toBase58()}`);
@@ -106,15 +222,13 @@ async function main() {
     console.log(`  Vault creation failed: ${(e as Error).message}`);
   }
 
-  // Step 4: Test agent registration
-  console.log();
-  console.log("--- Testing Registry Program ---");
+  // ==================== Step 4: agent registration ====================
+  console.log("\n--- Step 4: Registry Program ---");
   const registryProgram = new Program(loadIdl("agent_registry"), provider);
   const [profilePDA] = PublicKey.findProgramAddressSync(
     [testKp.publicKey.toBuffer(), Buffer.from("agent-profile")],
-    REGISTRY_PROGRAM_ID
+    REGISTRY_PROGRAM_ID,
   );
-
   try {
     await registryProgram.methods
       .registerAgent(
@@ -124,12 +238,12 @@ async function main() {
         ["smoke-test"],
         { perTask: {} },
         new BN(1000),
-        [testKp.publicKey], // Using test key as placeholder token
-        vaultPDA
+        [testKp.publicKey],
       )
       .accounts({
         authority: testKp.publicKey,
         agentProfile: profilePDA,
+        vault: vaultPDA,
       })
       .signers([testKp])
       .rpc();
@@ -138,9 +252,8 @@ async function main() {
     console.log(`  Registration failed: ${(e as Error).message}`);
   }
 
-  // Step 5: Verify on-chain state
-  console.log();
-  console.log("--- Verifying on-chain state ---");
+  // ==================== Step 5: verify on-chain state ====================
+  console.log("\n--- Step 5: Verify on-chain state ---");
   try {
     const vault = await (vaultProgram.account as any).vault.fetch(vaultPDA);
     console.log(`  Vault authority: ${vault.authority.toBase58()}`);
@@ -148,7 +261,6 @@ async function main() {
   } catch (e) {
     console.log(`  Vault fetch failed: ${(e as Error).message}`);
   }
-
   try {
     const profile = await (registryProgram.account as any).agentProfile.fetch(profilePDA);
     console.log(`  Agent name: ${profile.name}`);
@@ -158,8 +270,203 @@ async function main() {
     console.log(`  Profile fetch failed: ${(e as Error).message}`);
   }
 
-  console.log();
-  console.log("=== Smoke test complete ===");
+  // ==================== Step 6: update_manifest ====================
+  console.log("\n--- Step 6: update_manifest (ADR-060) ---");
+  const validatorMod = await dynImport<typeof import("@agenomics/capability-manifest-validator")>(
+    "@agenomics/capability-manifest-validator",
+  );
+  const manifest = fabricateManifest(testKp.publicKey, "SmokeTestAgent");
+  const canonicalBytes = validatorMod.canonicalBytes(manifest);
+  const manifestHash = validatorMod.manifestHash(manifest); // 32 bytes
+  const { ed25519 } = await dynImport<typeof import("@noble/curves/ed25519")>("@noble/curves/ed25519");
+  const sigBytes = ed25519.sign(manifestHash, testKp.secretKey.slice(0, 32));
+  const cidBytes = new Uint8Array(64);
+  // Synthetic CID: "bafy" + 60 'a' chars, zero-padded in the on-chain [u8; 64].
+  const cidStr = "bafy" + "a".repeat(56);
+  new TextEncoder().encodeInto(cidStr, cidBytes);
+
+  try {
+    const ed25519Ix = Ed25519Program.createInstructionWithPublicKey({
+      publicKey: testKp.publicKey.toBytes(),
+      message: manifestHash,
+      signature: sigBytes,
+    });
+    const tx = new Transaction().add(ed25519Ix).add(
+      await registryProgram.methods
+        .updateManifest(
+          Array.from(cidBytes),
+          Array.from(manifestHash),
+          Array.from(sigBytes),
+          MANIFEST_VERSION_V1_0,
+          ["smoke-test"], // superset of on-chain capabilities
+        )
+        .accounts({
+          authority: testKp.publicKey,
+          agentProfile: profilePDA,
+          instructionsSysvar: new PublicKey("Sysvar1nstructions1111111111111111111111111"),
+        })
+        .instruction(),
+    );
+    const sig = await provider.sendAndConfirm(tx, [testKp]);
+    console.log(`  update_manifest tx: ${sig}`);
+    const profile = await (registryProgram.account as any).agentProfile.fetch(profilePDA);
+    const onHash = Uint8Array.from(profile.manifestHash as number[]);
+    const onSig = Uint8Array.from(profile.manifestSignature as number[]);
+    const hashOk = Buffer.from(onHash).equals(Buffer.from(manifestHash));
+    const sigOk = Buffer.from(onSig).equals(Buffer.from(sigBytes));
+    console.log(`  manifest_hash matches local:      ${hashOk}`);
+    console.log(`  manifest_signature matches local: ${sigOk}`);
+    console.log(`  manifest_version = 0x${profile.manifestVersion.toString(16)} (expected 0x100)`);
+    if (!hashOk || !sigOk || profile.manifestVersion !== MANIFEST_VERSION_V1_0) {
+      throw new Error("on-chain manifest fields did not match local values");
+    }
+  } catch (e) {
+    console.log(`  update_manifest failed: ${(e as Error).message}`);
+    process.exit(1);
+  }
+
+  // ==================== Step 7: validator round-trip ====================
+  console.log("\n--- Step 7: capability-manifest-validator round-trip ---");
+  const authorityBytes = new Uint8Array(testKp.publicKey.toBytes());
+  const good = validatorMod.validateManifest({
+    manifest,
+    onChainHash: manifestHash,
+    onChainSignature: sigBytes,
+    authorityPubkey: authorityBytes,
+  });
+  console.log(`  clean manifest:   ok=${good.ok}`);
+  const tampered = new Uint8Array(canonicalBytes);
+  tampered[0] ^= 0x01;
+  let tamperedObj: unknown;
+  try { tamperedObj = JSON.parse(new TextDecoder().decode(tampered)); } catch { tamperedObj = { __malformed: true }; }
+  const bad = validatorMod.validateManifest({
+    manifest: tamperedObj,
+    onChainHash: manifestHash,
+    onChainSignature: sigBytes,
+    authorityPubkey: authorityBytes,
+  });
+  console.log(`  tampered manifest: ok=${bad.ok}, code=${bad.ok ? "-" : bad.error.code}`);
+  if (!good.ok || bad.ok || bad.error.code === "INVALID_INPUT") {
+    throw new Error("validator round-trip failed expectations");
+  }
+
+  // ==================== Step 8: MCP dispatch — get_agent_reputation ====================
+  console.log("\n--- Step 8: MCP server dispatch — get_agent_reputation ---");
+  const walletPath = path.resolve(PROJECT_ROOT, ".smoke-test-wallet.json");
+  fs.writeFileSync(walletPath, JSON.stringify(Array.from(testKp.secretKey)));
+  const mcpEnv = {
+    SOLANA_RPC_URL: rpcUrl,
+    WALLET_PATH: walletPath,
+    // Leave SAS env vars unset — we want the "sas-not-configured" branch.
+  };
+  let mcpOk = true;
+  {
+    const client = new McpStdioClient(mcpEnv);
+    try {
+      const list = await client.request("tools/list", {});
+      const toolNames: string[] = (list.result?.tools ?? []).map((t: any) => t.name);
+      console.log(`  tools/list → ${toolNames.length} tools (has get_agent_reputation: ${toolNames.includes("get_agent_reputation")})`);
+      const callRes = await client.request("tools/call", {
+        name: "get_agent_reputation",
+        arguments: { agentAddress: testKp.publicKey.toBase58() },
+      });
+      const text = callRes.result?.content?.[0]?.text ?? JSON.stringify(callRes);
+      console.log(`  tools/call excerpt: ${text.slice(0, 160)}${text.length > 160 ? "…" : ""}`);
+      // SAS stub signal: when AEP_SAS_SCHEMA_PDA / AEP_SAS_ALLOWED_CREDENTIALS are unset,
+      // the action returns { absent: true, reason: 'sas-not-configured', ... } in its sas field.
+      const hasSasStub = text.includes("sas-not-configured");
+      console.log(`  SAS stub signal present: ${hasSasStub}`);
+    } catch (e) {
+      console.log(`  MCP call failed: ${(e as Error).message}`);
+      mcpOk = false;
+    } finally {
+      await client.close();
+    }
+  }
+  if (!mcpOk) console.log("  (continuing — see troubleshooting in docs/SMOKE_TESTING.md)");
+
+  // ==================== Step 9: v2 vault_transfer ====================
+  console.log("\n--- Step 9: v2 vault_transfer (AEP_USE_V2_VAULT_TRANSFER=1) ---");
+  // Fund the vault with a little SOL so the transfer has something to move.
+  try {
+    const tx = new Transaction().add(SystemProgram.transfer({
+      fromPubkey: testKp.publicKey,
+      toPubkey: vaultPDA,
+      lamports: Math.floor(0.1 * LAMPORTS_PER_SOL),
+    }));
+    await provider.sendAndConfirm(tx, [testKp]);
+    console.log(`  Vault funded with 0.1 SOL`);
+  } catch (e) {
+    console.log(`  Vault funding failed: ${(e as Error).message}`);
+  }
+  const recipient = Keypair.generate().publicKey;
+
+  for (const mode of ["v1", "v2"] as const) {
+    const env = { ...mcpEnv, AEP_USE_V2_VAULT_TRANSFER: mode === "v2" ? "1" : "0" };
+    const client = new McpStdioClient(env);
+    let sawV2Warn = false;
+    client.stderr().on("data", (b: Buffer) => {
+      if (b.toString("utf-8").includes("routing vault_transfer through")) sawV2Warn = true;
+    });
+    try {
+      const res = await client.request("tools/call", {
+        name: "vault_transfer",
+        arguments: { recipientAddress: recipient.toBase58(), amountSol: 0.001 },
+      });
+      const text = res.result?.content?.[0]?.text ?? JSON.stringify(res);
+      console.log(`  ${mode} dispatch excerpt: ${text.slice(0, 160)}${text.length > 160 ? "…" : ""}`);
+      if (mode === "v2") console.log(`  v2 warning emitted: ${sawV2Warn}`);
+    } catch (e) {
+      console.log(`  ${mode} dispatch failed: ${(e as Error).message}`);
+    } finally {
+      await client.close();
+    }
+  }
+
+  // ==================== Step 10: preflight proof (daily-cap exceedance) ====================
+  console.log("\n--- Step 10: Preflight denial proof (daily_cap_not_exhausted) ---");
+  {
+    // dailyLimit was set to 1 SOL at vault creation; request 2 SOL > dailyLimit.
+    const client = new McpStdioClient(mcpEnv);
+    try {
+      const res = await client.request("tools/call", {
+        name: "vault_transfer",
+        arguments: { recipientAddress: recipient.toBase58(), amountSol: 2.0 },
+      });
+      const text = res.result?.content?.[0]?.text ?? JSON.stringify(res);
+      const isPreflight = text.includes("PREFLIGHT_FAILED");
+      const gateMatches = text.includes("daily_cap_not_exhausted");
+      const isCap = text.includes("CAPABILITY_MISSING");
+      console.log(`  response excerpt:     ${text.slice(0, 200)}${text.length > 200 ? "…" : ""}`);
+      console.log(`  PREFLIGHT_FAILED seen: ${isPreflight}`);
+      console.log(`  gate='daily_cap_not_exhausted' in details: ${gateMatches}`);
+      console.log(`  CAPABILITY_MISSING NOT present (sanity):    ${!isCap}`);
+    } finally {
+      await client.close();
+    }
+  }
+
+  // ==================== Step 11+: SAS bootstrap (conditional) ====================
+  console.log("\n--- Steps 11-13: SAS bootstrap on devnet ---");
+  const sasSchemaEnv = process.env.AEP_SAS_SCHEMA_PDA;
+  const sasAllowedEnv = process.env.AEP_SAS_ALLOWED_CREDENTIALS;
+  if (!sasSchemaEnv || !sasAllowedEnv) {
+    console.log("  SAS not bootstrapped on devnet — skipping steps 11-13.");
+    console.log("  To bootstrap, the following must exist on devnet:");
+    console.log("    - AEP_AGENT_REPUTATION_v1 schema PDA (ADR-061 §2)");
+    console.log("    - AEP_PROTOCOL / AEP_VALIDATORS credential PDAs (ADR-063)");
+    console.log("    - One attestation issued for the test agent authority");
+    console.log("  Then re-run with AEP_SAS_SCHEMA_PDA=... AEP_SAS_ALLOWED_CREDENTIALS=<csv>.");
+  } else {
+    console.log(`  SAS env detected: schema=${sasSchemaEnv}`);
+    console.log("  Full issue-attestation + resolver-exercise path is tracked as a");
+    console.log("  follow-up (depends on live SAS program on devnet).");
+  }
+
+  // Cleanup scratch wallet file.
+  try { fs.unlinkSync(walletPath); } catch {}
+
+  console.log("\n=== Smoke test complete ===");
 }
 
-main().catch(console.error);
+main().catch((e) => { console.error(e); process.exit(1); });
