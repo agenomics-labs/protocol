@@ -48,6 +48,24 @@ describe("Settlement Protocol Tests", () => {
       VAULT_PROGRAM_ID
     );
   }
+  const vaultFor = (pk: PublicKey) => deriveVaultPDA(pk)[0];
+
+  // Finding #19: Governance-owned ProtocolConfig PDA — singleton seeded by
+  // `[b"protocol_config"]` under the settlement program. Must be initialized
+  // once per deployment before any escrow can be created.
+  const [PROTOCOL_CONFIG_PDA] = PublicKey.findProgramAddressSync(
+    [Buffer.from("protocol_config")],
+    SETTLEMENT_PROGRAM_ID
+  );
+
+  // ADR-026: Settlement's signing authority PDA for CPI calls into the
+  // registry. The registry enforces `seeds = [b"settlement_authority"]` +
+  // `seeds::program = SETTLEMENT_PROGRAM_ID`, so this must be derived under
+  // the settlement program ID — NOT passed as a raw program-id pubkey.
+  const [SETTLEMENT_AUTHORITY_PDA] = PublicKey.findProgramAddressSync(
+    [Buffer.from("settlement_authority")],
+    SETTLEMENT_PROGRAM_ID
+  );
 
   // Test configuration
   const TASK_ID = new BN(1);
@@ -151,6 +169,24 @@ describe("Settlement Protocol Tests", () => {
           airdropAmount
         );
         await connection.confirmTransaction(sig);
+      }
+
+      // Finding #19 / ADR-026: The ProtocolConfig PDA is a hard precondition
+      // for create_escrow / approve_milestone / resolve_dispute /
+      // expire_escrow / resolve_dispute_timeout. Initialize it once per
+      // test-suite run, guarded by existing-account detection so reruns on a
+      // warm validator are idempotent.
+      const existing = await connection.getAccountInfo(PROTOCOL_CONFIG_PDA);
+      if (existing === null) {
+        await program.methods
+          .initializeProtocolConfig()
+          .accounts({
+            payer: mintAuthority.publicKey,
+            protocolConfig: PROTOCOL_CONFIG_PDA,
+            systemProgram: SystemProgram.programId,
+          })
+          .signers([mintAuthority])
+          .rpc();
       }
     });
 
@@ -315,8 +351,9 @@ describe("Settlement Protocol Tests", () => {
         )
         .accounts({
           client: client.publicKey,
-          clientVault: client.publicKey,
-          providerVault: provider_account.publicKey,
+          clientVault: vaultFor(client.publicKey),
+          providerVault: vaultFor(provider_account.publicKey),
+          protocolConfig: PROTOCOL_CONFIG_PDA,
           provider: provider_account.publicKey,
           tokenMint: tokenMint,
           clientTokenAccount: clientTokenAccount,
@@ -401,7 +438,8 @@ describe("Settlement Protocol Tests", () => {
           providerTokenAccount: providerTokenAccount,
           registryProgram: REGISTRY_PROGRAM_ID,
           providerProfile: providerProfilePDA,
-          settlementSelf: SETTLEMENT_PROGRAM_ID,
+          settlementAuthority: SETTLEMENT_AUTHORITY_PDA,
+          protocolConfig: PROTOCOL_CONFIG_PDA,
           tokenProgram: TOKEN_PROGRAM_ID,
         })
         .signers([client])
@@ -445,7 +483,8 @@ describe("Settlement Protocol Tests", () => {
           providerTokenAccount: providerTokenAccount,
           registryProgram: REGISTRY_PROGRAM_ID,
           providerProfile: providerProfilePDA,
-          settlementSelf: SETTLEMENT_PROGRAM_ID,
+          settlementAuthority: SETTLEMENT_AUTHORITY_PDA,
+          protocolConfig: PROTOCOL_CONFIG_PDA,
           tokenProgram: TOKEN_PROGRAM_ID,
         })
         .signers([client])
@@ -518,8 +557,9 @@ describe("Settlement Protocol Tests", () => {
         )
         .accounts({
           client: client.publicKey,
-          clientVault: client.publicKey,
-          providerVault: provider_account.publicKey,
+          clientVault: vaultFor(client.publicKey),
+          providerVault: vaultFor(provider_account.publicKey),
+          protocolConfig: PROTOCOL_CONFIG_PDA,
           provider: provider_account.publicKey,
           tokenMint: tokenMint,
           clientTokenAccount: clientTokenAccount,
@@ -629,8 +669,9 @@ describe("Settlement Protocol Tests", () => {
         )
         .accounts({
           client: client.publicKey,
-          clientVault: client.publicKey,
-          providerVault: provider_account.publicKey,
+          clientVault: vaultFor(client.publicKey),
+          providerVault: vaultFor(provider_account.publicKey),
+          protocolConfig: PROTOCOL_CONFIG_PDA,
           provider: provider_account.publicKey,
           tokenMint: tokenMint,
           clientTokenAccount: clientTokenAccount,
@@ -707,7 +748,8 @@ describe("Settlement Protocol Tests", () => {
           providerTokenAccount: providerTokenAccount,
           registryProgram: REGISTRY_PROGRAM_ID,
           providerProfile: providerProfilePDA,
-          settlementSelf: SETTLEMENT_PROGRAM_ID,
+          settlementAuthority: SETTLEMENT_AUTHORITY_PDA,
+          protocolConfig: PROTOCOL_CONFIG_PDA,
           tokenProgram: TOKEN_PROGRAM_ID,
         })
         .signers([resolver_account])
@@ -793,8 +835,9 @@ describe("Settlement Protocol Tests", () => {
         )
         .accounts({
           client: client.publicKey,
-          clientVault: client.publicKey,
-          providerVault: provider_account.publicKey,
+          clientVault: vaultFor(client.publicKey),
+          providerVault: vaultFor(provider_account.publicKey),
+          protocolConfig: PROTOCOL_CONFIG_PDA,
           provider: provider_account.publicKey,
           tokenMint: tokenMint,
           clientTokenAccount: clientTokenAccount,
@@ -894,7 +937,8 @@ describe("Settlement Protocol Tests", () => {
           providerTokenAccount: providerTokenAccount,
           registryProgram: REGISTRY_PROGRAM_ID,
           providerProfile: providerProfilePDA,
-          settlementSelf: SETTLEMENT_PROGRAM_ID,
+          settlementAuthority: SETTLEMENT_AUTHORITY_PDA,
+          protocolConfig: PROTOCOL_CONFIG_PDA,
           tokenProgram: TOKEN_PROGRAM_ID,
         })
         .signers([client])
@@ -953,8 +997,9 @@ describe("Settlement Protocol Tests", () => {
         await program.methods
           .createEscrow(new BN(200), new BN(1000000), Buffer.alloc(32), FUTURE_DEADLINE, [], null)
           .accounts({
-            client: clientLocal.publicKey, clientVault: clientLocal.publicKey,
-            providerVault: providerLocal.publicKey, provider: providerLocal.publicKey,
+            client: clientLocal.publicKey, clientVault: vaultFor(clientLocal.publicKey),
+            providerVault: vaultFor(providerLocal.publicKey), provider: providerLocal.publicKey,
+            protocolConfig: PROTOCOL_CONFIG_PDA,
             tokenMint, clientTokenAccount: clientTokenAccountLocal,
             escrow: escrowPDA, escrowTokenAccount: escrowTA,
             tokenProgram: TOKEN_PROGRAM_ID, associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
@@ -979,8 +1024,9 @@ describe("Settlement Protocol Tests", () => {
         await program.methods
           .createEscrow(new BN(201), new BN(6000000), Buffer.alloc(32), FUTURE_DEADLINE, milestonesData, null)
           .accounts({
-            client: clientLocal.publicKey, clientVault: clientLocal.publicKey,
-            providerVault: providerLocal.publicKey, provider: providerLocal.publicKey,
+            client: clientLocal.publicKey, clientVault: vaultFor(clientLocal.publicKey),
+            providerVault: vaultFor(providerLocal.publicKey), provider: providerLocal.publicKey,
+            protocolConfig: PROTOCOL_CONFIG_PDA,
             tokenMint, clientTokenAccount: clientTokenAccountLocal,
             escrow: escrowPDA, escrowTokenAccount: escrowTA,
             tokenProgram: TOKEN_PROGRAM_ID, associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
@@ -1005,8 +1051,9 @@ describe("Settlement Protocol Tests", () => {
         await program.methods
           .createEscrow(new BN(202), new BN(1000000), Buffer.alloc(32), FUTURE_DEADLINE, milestonesData, null)
           .accounts({
-            client: clientLocal.publicKey, clientVault: clientLocal.publicKey,
-            providerVault: providerLocal.publicKey, provider: providerLocal.publicKey,
+            client: clientLocal.publicKey, clientVault: vaultFor(clientLocal.publicKey),
+            providerVault: vaultFor(providerLocal.publicKey), provider: providerLocal.publicKey,
+            protocolConfig: PROTOCOL_CONFIG_PDA,
             tokenMint, clientTokenAccount: clientTokenAccountLocal,
             escrow: escrowPDA, escrowTokenAccount: escrowTA,
             tokenProgram: TOKEN_PROGRAM_ID, associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
@@ -1031,8 +1078,9 @@ describe("Settlement Protocol Tests", () => {
         await program.methods
           .createEscrow(new BN(203), new BN(1000000), Buffer.alloc(32), PAST_DEADLINE, milestonesData, null)
           .accounts({
-            client: clientLocal.publicKey, clientVault: clientLocal.publicKey,
-            providerVault: providerLocal.publicKey, provider: providerLocal.publicKey,
+            client: clientLocal.publicKey, clientVault: vaultFor(clientLocal.publicKey),
+            providerVault: vaultFor(providerLocal.publicKey), provider: providerLocal.publicKey,
+            protocolConfig: PROTOCOL_CONFIG_PDA,
             tokenMint, clientTokenAccount: clientTokenAccountLocal,
             escrow: escrowPDA, escrowTokenAccount: escrowTA,
             tokenProgram: TOKEN_PROGRAM_ID, associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
@@ -1113,8 +1161,9 @@ describe("Settlement Protocol Tests", () => {
         )
         .accounts({
           client: client.publicKey,
-          clientVault: client.publicKey,
-          providerVault: provider_account.publicKey,
+          clientVault: vaultFor(client.publicKey),
+          providerVault: vaultFor(provider_account.publicKey),
+          protocolConfig: PROTOCOL_CONFIG_PDA,
           provider: provider_account.publicKey,
           tokenMint: tokenMint,
           clientTokenAccount: clientTokenAccount,
@@ -1178,7 +1227,8 @@ describe("Settlement Protocol Tests", () => {
             providerTokenAccount: providerTokenAccount,
             registryProgram: REGISTRY_PROGRAM_ID,
             providerProfile: providerProfilePDA,
-            settlementSelf: SETTLEMENT_PROGRAM_ID,
+            settlementAuthority: SETTLEMENT_AUTHORITY_PDA,
+          protocolConfig: PROTOCOL_CONFIG_PDA,
             tokenProgram: TOKEN_PROGRAM_ID,
           })
           .signers([otherAccount])
@@ -1206,8 +1256,9 @@ describe("Settlement Protocol Tests", () => {
           taskId2, new BN(1000000), Buffer.alloc(32), FUTURE_DEADLINE, milestonesData, null
         )
         .accounts({
-          client: client.publicKey, clientVault: client.publicKey,
-          providerVault: provider_account.publicKey, provider: provider_account.publicKey,
+          client: client.publicKey, clientVault: vaultFor(client.publicKey),
+          providerVault: vaultFor(provider_account.publicKey), provider: provider_account.publicKey,
+          protocolConfig: PROTOCOL_CONFIG_PDA,
           tokenMint, clientTokenAccount,
           escrow: escrowPDA2, escrowTokenAccount: escrowTA2,
           tokenProgram: TOKEN_PROGRAM_ID, associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
@@ -1315,8 +1366,9 @@ describe("Settlement Protocol Tests", () => {
         )
         .accounts({
           client: client.publicKey,
-          clientVault: client.publicKey,
-          providerVault: provider_account.publicKey,
+          clientVault: vaultFor(client.publicKey),
+          providerVault: vaultFor(provider_account.publicKey),
+          protocolConfig: PROTOCOL_CONFIG_PDA,
           provider: provider_account.publicKey,
           tokenMint: tokenMint,
           clientTokenAccount: clientTokenAccount,
@@ -1435,8 +1487,9 @@ describe("Settlement Protocol Tests", () => {
           )
           .accounts({
             client: samePerson.publicKey,
-            clientVault: samePerson.publicKey,
-            providerVault: samePerson.publicKey,
+            clientVault: vaultFor(samePerson.publicKey),
+            providerVault: vaultFor(samePerson.publicKey),
+            protocolConfig: PROTOCOL_CONFIG_PDA,
             provider: samePerson.publicKey,
             tokenMint: tokenMint,
             clientTokenAccount: samePersonTA,
@@ -1530,8 +1583,9 @@ describe("Settlement Protocol Tests", () => {
         .createEscrow(expTaskId, new BN(1000000), Buffer.alloc(32), shortDeadline, milestonesData, null)
         .accounts({
           client: expClient.publicKey,
-          clientVault: expClient.publicKey,
-          providerVault: expProvider.publicKey,
+          clientVault: vaultFor(expClient.publicKey),
+          providerVault: vaultFor(expProvider.publicKey),
+          protocolConfig: PROTOCOL_CONFIG_PDA,
           provider: expProvider.publicKey,
           tokenMint: tokenMint,
           clientTokenAccount: expClientTA,
@@ -1565,7 +1619,8 @@ describe("Settlement Protocol Tests", () => {
           providerTokenAccount: expProviderTA,
           registryProgram: REGISTRY_PROGRAM_ID,
           providerProfile: provProfilePDA,
-          settlementSelf: SETTLEMENT_PROGRAM_ID,
+          settlementAuthority: SETTLEMENT_AUTHORITY_PDA,
+          protocolConfig: PROTOCOL_CONFIG_PDA,
           tokenProgram: TOKEN_PROGRAM_ID,
         })
         .signers([expClient]).rpc();
@@ -1591,7 +1646,8 @@ describe("Settlement Protocol Tests", () => {
           providerTokenAccount: expProviderTA,
           registryProgram: REGISTRY_PROGRAM_ID,
           providerProfile: provProfilePDA,
-          settlementSelf: SETTLEMENT_PROGRAM_ID,
+          settlementAuthority: SETTLEMENT_AUTHORITY_PDA,
+          protocolConfig: PROTOCOL_CONFIG_PDA,
           tokenProgram: TOKEN_PROGRAM_ID,
         })
         .signers([expClient]).rpc();
@@ -1681,8 +1737,9 @@ describe("Settlement Protocol Tests", () => {
         .createEscrow(toTaskId, new BN(1000000), Buffer.alloc(32), FUTURE_DEADLINE, milestonesData, null)
         .accounts({
           client: toClient.publicKey,
-          clientVault: toClient.publicKey,
-          providerVault: toProvider.publicKey,
+          clientVault: vaultFor(toClient.publicKey),
+          providerVault: vaultFor(toProvider.publicKey),
+          protocolConfig: PROTOCOL_CONFIG_PDA,
           provider: toProvider.publicKey,
           tokenMint: tokenMint,
           clientTokenAccount: toClientTA,
@@ -1718,7 +1775,8 @@ describe("Settlement Protocol Tests", () => {
             clientTokenAccount: toClientTA,
             registryProgram: REGISTRY_PROGRAM_ID,
             providerProfile: provProfilePDA,
-            settlementSelf: SETTLEMENT_PROGRAM_ID,
+            settlementAuthority: SETTLEMENT_AUTHORITY_PDA,
+          protocolConfig: PROTOCOL_CONFIG_PDA,
             tokenProgram: TOKEN_PROGRAM_ID,
           })
           .signers([toClient]).rpc();
@@ -1754,8 +1812,9 @@ describe("Settlement Protocol Tests", () => {
         .createEscrow(ndTaskId, new BN(1000000), Buffer.alloc(32), FUTURE_DEADLINE, milestonesData, null)
         .accounts({
           client: toClient.publicKey,
-          clientVault: toClient.publicKey,
-          providerVault: toProvider.publicKey,
+          clientVault: vaultFor(toClient.publicKey),
+          providerVault: vaultFor(toProvider.publicKey),
+          protocolConfig: PROTOCOL_CONFIG_PDA,
           provider: toProvider.publicKey,
           tokenMint: tokenMint,
           clientTokenAccount: toClientTA,
@@ -1785,7 +1844,8 @@ describe("Settlement Protocol Tests", () => {
             clientTokenAccount: toClientTA,
             registryProgram: REGISTRY_PROGRAM_ID,
             providerProfile: provProfilePDA,
-            settlementSelf: SETTLEMENT_PROGRAM_ID,
+            settlementAuthority: SETTLEMENT_AUTHORITY_PDA,
+          protocolConfig: PROTOCOL_CONFIG_PDA,
             tokenProgram: TOKEN_PROGRAM_ID,
           })
           .signers([toClient]).rpc();

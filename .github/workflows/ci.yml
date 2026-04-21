@@ -359,13 +359,107 @@ jobs:
       - name: Check IDL matches committed baseline
         run: ./scripts/check-idl.sh
 
-  # S-xcut-04: integration test job against a local solana-test-validator —
-  # intentionally not added in this PR.
+  # S-xcut-04: integration test job against a local solana-test-validator.
   #
-  # The Anchor suites under `tests/` (settlement / agent-registry /
-  # agent-vault) predate the C1..C4 refactors that rewrote escrow, dispute,
-  # reputation, and registry CPIs. 14 of 99 tests currently fail against
-  # the post-refactor programs. Gating CI on them right now would wedge
-  # every unrelated PR. Fix is tracked separately; see the S-xcut-04
-  # follow-up issue. Once the tests are current, re-add this job with
-  # `needs: anchor-build` and `anchor test` as the final step.
+  # Runs the Anchor test suites under `tests/` (settlement / agent-registry /
+  # agent-vault) against a freshly-deployed local validator that
+  # `anchor test` spins up per run. The suites were aligned with the
+  # post-refactor programs (ADR-025 .. ADR-060) under the S-xcut-04
+  # follow-up; 99/99 pass locally against the current programs on
+  # Anchor 0.31.1 + Solana 3.1.13.
+  #
+  # `needs: anchor-build` means this job waits for the IDL-diff gate to
+  # pass — avoids re-running a full test cycle if IDL drift is already
+  # detected. Toolchain install mirrors anchor-build exactly so cache keys
+  # are shared; Solana/Anchor versions come from the same pinned env vars.
+  anchor-integration:
+    name: Anchor Integration Tests
+    runs-on: ubuntu-latest
+    needs: anchor-build
+    env:
+      SOLANA_VERSION: v3.1.13
+      ANCHOR_VERSION: 0.31.1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry & target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-anchor-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-anchor-cargo-
+
+      - name: Cache solana CLI
+        id: cache-solana
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/solana
+          key: ${{ runner.os }}-solana-${{ env.SOLANA_VERSION }}
+
+      - name: Install Solana CLI
+        if: steps.cache-solana.outputs.cache-hit != 'true'
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/${SOLANA_VERSION}/install)"
+
+      - name: Add Solana to PATH
+        run: echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Verify Solana toolchain
+        run: |
+          solana --version
+          cargo-build-sbf --version
+
+      - name: Cache anchor CLI
+        id: cache-anchor
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/anchor
+          key: ${{ runner.os }}-anchor-${{ env.ANCHOR_VERSION }}
+
+      - name: Install Anchor CLI
+        if: steps.cache-anchor.outputs.cache-hit != 'true'
+        run: |
+          cargo install --git https://github.com/coral-xyz/anchor \
+            --tag "v${ANCHOR_VERSION}" anchor-cli --locked
+
+      - name: Verify Anchor
+        run: anchor --version
+
+      - name: Generate local validator keypair
+        # `solana-test-validator` (spawned by `anchor test`) needs a wallet
+        # at the provider path declared in Anchor.toml
+        # (`~/.config/solana/id.json`). Fresh CI runners don't have one.
+        run: |
+          mkdir -p "$HOME/.config/solana"
+          if [ ! -f "$HOME/.config/solana/id.json" ]; then
+            solana-keygen new --no-bip39-passphrase --force -o "$HOME/.config/solana/id.json"
+          fi
+
+      - name: Install npm test deps
+        # `package-lock.json` is gitignored (see .gitignore), so `npm ci`
+        # can't run. `npm install --no-audit --no-fund` keeps output quiet
+        # and is deterministic enough for a green-path test gate (Anchor
+        # 0.31.1 + web3.js 1.95.x are both pinned in package.json).
+        run: npm install --no-audit --no-fund
+
+      - name: Anchor test (solana-test-validator + ts-mocha)
+        env:
+          RUST_BACKTRACE: full
+        run: |
+          set -x
+          anchor test
+
+  # Historical note (superseded by `anchor-integration` above):
+  # pre-S-xcut-04 the tests/ suites predated the C1..C4 refactors that
+  # rewrote escrow, dispute, reputation, and registry CPIs — 14 of 99
+  # tests were failing against the post-refactor programs. Rather than
+  # gate unrelated PRs on a broken suite, the integration job was left
+  # out of CI until the suite was aligned. S-xcut-04 aligned the tests
+  # with the current program contracts (ADR-025 .. ADR-060) and the
+  # job above is the live gate.
