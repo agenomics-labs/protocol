@@ -10,6 +10,7 @@
 //   - Subject mismatch (4f) is a HARD error — never silently papered over.
 
 import type { Rpc, SolanaRpcApi } from "@solana/kit";
+import type { CacheBackend } from "./cache.js";
 
 /**
  * Minimal RPC surface the resolver uses. We accept the full
@@ -38,11 +39,81 @@ export interface ResolverConfig {
   /** Test hook — defaults to `() => Math.floor(Date.now() / 1000)` (unix seconds). */
   now?: () => number;
   /**
+   * Test hook — cache-freshness wall clock in **milliseconds**. Defaults
+   * to `Date.now`. Kept separate from `now` because the resolver's
+   * stale-by-age math runs in seconds (matches SAS on-chain expiry
+   * fields) while the cache primitive runs in ms (matches `Date.now`
+   * and `setTimeout`'s ms semantics per ADR-065 §5). Production callers
+   * should leave both unset.
+   */
+  cacheNow?: () => number;
+  /**
    * Optional override for console.warn — tests swap this to capture
    * warn messages without polluting test output. Defaults to
    * `console.warn.bind(console)`.
    */
   warn?: (message: string, details?: unknown) => void;
+  /**
+   * Cache backend used for the SAS-layer fetches this resolver makes
+   * (attestation / schema / credential). Defaults to a fresh
+   * `InMemoryCache`. Pass a `RedisCache` / `LayeredCache` for
+   * multi-instance deployments. See ADR-065 §3.
+   *
+   * Note: Registry (`AgentProfile`) and manifest-body caching are out
+   * of scope for this resolver — the caller passes an already-validated
+   * manifest. Both layers live in follow-up PRs.
+   */
+  cache?: CacheBackend;
+  /**
+   * Per-layer TTLs (milliseconds). Defaults from ADR-065 §1:
+   *   - `registry`     → 30 000       (30s; reserved for future use)
+   *   - `manifest`     → 86 400 000   (24h; reserved for future use)
+   *   - `attestation`  → 300 000      (5m)
+   *   - `schema`       → 3 600 000    (1h)
+   *   - `credential`   → 3 600 000    (1h)
+   *
+   * `registry` and `manifest` slots are present for forward-compat —
+   * the resolver does not fetch either layer today.
+   */
+  ttl?: ResolverTtlConfig;
+}
+
+/**
+ * Cache TTLs per ADR-065 §1. All values in milliseconds. Any field left
+ * undefined falls back to the ADR default.
+ */
+export interface ResolverTtlConfig {
+  /** Reserved — Registry caching is a follow-up PR. Default 30 000 ms. */
+  registry?: number;
+  /** Reserved — manifest-body caching is a follow-up PR. Default 86 400 000 ms. */
+  manifest?: number;
+  /** Default 300 000 ms (5 m). Mutable layer; ADR-061 §6 tolerates bounded staleness. */
+  attestation?: number;
+  /** Default 3 600 000 ms (1 h). Effectively immutable — new schema versions are new PDAs. */
+  schema?: number;
+  /** Default 3 600 000 ms (1 h). ADR-063 governance cadence is weeks-to-months. */
+  credential?: number;
+}
+
+/**
+ * Per-call cache-policy override (ADR-065 §5 "Staleness surfaces").
+ *
+ *   resolve(manifest, subj)                       // respect TTL (default)
+ *   resolve(manifest, subj, { maxAge: 0 })        // force fresh
+ *   resolve(manifest, subj, { maxAge: 5_000 })    // tighter than TTL
+ *
+ * Protocol-logic consumers (reputation gates, dispute eligibility) MUST
+ * pass `maxAge: 0` for authoritative reads — see ADR-065 "Consequences
+ * → Negative".
+ */
+export interface ResolveOptions {
+  /**
+   * "No data older than this, in milliseconds." If the cached entry's
+   * `now - cachedAt > maxAge`, the resolver bypasses the cache and
+   * hits the RPC. `maxAge: 0` is the canonical "give me a fresh read"
+   * signal.
+   */
+  maxAge?: number;
 }
 
 /**

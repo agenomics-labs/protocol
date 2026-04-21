@@ -29,6 +29,8 @@ import type {
   ResolvedReputation,
   ResolverConfig,
   ResolverRpc,
+  ResolveOptions,
+  ResolverTtlConfig,
   Result,
   ResolverError,
   AttestationReputation,
@@ -39,6 +41,11 @@ import {
   toAttestationReputation,
 } from "./schema.js";
 import { isAllowed } from "./allowlist.js";
+import {
+  InMemoryCache,
+  type CacheBackend,
+  type CacheMetrics,
+} from "./cache.js";
 
 // --------------------------------------------------------------------
 // Input validation — zod schemas at the boundary (AEAP project rule:
@@ -62,12 +69,64 @@ const ManifestInputSchema = z.object({
 // --------------------------------------------------------------------
 const STALE_SECONDS = 90 * 86_400;
 
+// --------------------------------------------------------------------
+// Cache defaults — ADR-065 §1. All in milliseconds.
+// --------------------------------------------------------------------
+const DEFAULT_TTL: Required<ResolverTtlConfig> = {
+  registry: 30_000,
+  manifest: 86_400_000,
+  attestation: 300_000,
+  schema: 3_600_000,
+  credential: 3_600_000,
+};
+
+const CACHE_KEY_PREFIX = "aeap:cache:";
+
+/** Cache key format per ADR-065 §3 "Key format". */
+function attestationCacheKey(pda: string): string {
+  return `${CACHE_KEY_PREFIX}attestation:${pda}`;
+}
+
+/**
+ * Shape we store in the cache. Kept deliberately narrow — just the raw
+ * bytes plus the PDA that was fetched. We avoid caching the decoded
+ * `ResolvedReputation` because downstream interpretation (subject check,
+ * stale-by-age) is cheap and depends on the caller's `now()`.
+ */
+interface CachedAttestationBytes {
+  /** base64-encoded account bytes — JSON-safe for the Redis backend. */
+  bytesB64: string;
+}
+
 export class SasResolver {
   readonly #rpc: ResolverRpc;
   readonly #allowed: Set<string>;
   readonly #schemaPda: string;
   readonly #now: () => number;
   readonly #warn: (message: string, details?: unknown) => void;
+  readonly #cache: CacheBackend;
+  readonly #ttl: Required<ResolverTtlConfig>;
+  /**
+   * Wall-clock millisecond source for cache `maxAge` arithmetic. The
+   * resolver's `#now` returns unix *seconds* (ADR-064 contract, to
+   * match SAS's on-chain timestamp format); the cache primitive uses
+   * milliseconds (ADR-065 §5 `cachedAt: number` — Unix ms). We keep
+   * them separate: production defaults to `Date.now()`, tests that
+   * want to freeze cache time should inject their own `CacheBackend`
+   * constructed with a custom `now` (see `InMemoryCacheOptions`).
+   * Mixing the two clocks in one `now` callback would force every
+   * caller to choose between controlling cache freshness and the
+   * resolver's stale-by-age threshold.
+   */
+  readonly #cacheNow: () => number;
+  /**
+   * Aggregated cache counters. We tally in the resolver rather than
+   * poking the backend's internals because (a) the `CacheBackend`
+   * interface is deliberately layer-agnostic and (b) tests need
+   * resolver-observable hit/miss counts even when a Redis backend
+   * that doesn't expose metrics is in use.
+   */
+  readonly #cacheMetrics: CacheMetrics = { hits: 0, misses: 0, evictions: 0 };
 
   constructor(config: ResolverConfig) {
     if (!config || typeof config !== "object") {
@@ -91,6 +150,19 @@ export class SasResolver {
     this.#schemaPda = config.schemaPda;
     this.#now = config.now ?? (() => Math.floor(Date.now() / 1000));
     this.#warn = config.warn ?? ((m, d) => (d !== undefined ? console.warn(m, d) : console.warn(m)));
+    this.#cache = config.cache ?? new InMemoryCache();
+    this.#ttl = {
+      registry: config.ttl?.registry ?? DEFAULT_TTL.registry,
+      manifest: config.ttl?.manifest ?? DEFAULT_TTL.manifest,
+      attestation: config.ttl?.attestation ?? DEFAULT_TTL.attestation,
+      schema: config.ttl?.schema ?? DEFAULT_TTL.schema,
+      credential: config.ttl?.credential ?? DEFAULT_TTL.credential,
+    };
+    // Cache freshness math uses ms; resolver math uses seconds. Use
+    // `config.cacheNow` if supplied (tests that want to freeze cache
+    // time), otherwise `Date.now()`. See the JSDoc on `#cacheNow`
+    // above for why we don't overload the seconds-clock `config.now`.
+    this.#cacheNow = config.cacheNow ?? (() => Date.now());
   }
 
   /**
@@ -101,6 +173,8 @@ export class SasResolver {
    * @param subjectAuthority - The agent's on-chain authority pubkey,
    *   as fetched from `AgentProfile.authority`. The resolver verifies
    *   the attestation's `subject` matches this value (§4 row 4f).
+   * @param opts - Optional per-call cache policy override. See
+   *   {@link ResolveOptions} and ADR-065 §5 for the `maxAge` semantics.
    * @returns A `Result<ResolvedReputation>`. `ok: true` is the normal
    *   path — check `value.absent`, `value.stale`, `value.attestation`
    *   to interpret. `ok: false` only triggers for hard errors
@@ -109,8 +183,9 @@ export class SasResolver {
   async resolve(
     manifest: ManifestLike,
     subjectAuthority: string,
+    opts?: ResolveOptions,
   ): Promise<Result<ResolvedReputation>> {
-    return this.#resolveSingle(manifest, subjectAuthority);
+    return this.#resolveSingle(manifest, subjectAuthority, opts);
   }
 
   /**
@@ -118,17 +193,57 @@ export class SasResolver {
    * output array — callers can zip against their original list.
    *
    * Each entry is resolved independently; one entry's failure does not
-   * affect the others (each gets its own `Result`).
+   * affect the others (each gets its own `Result`). The per-call cache
+   * policy applies uniformly to every entry in the batch — entries that
+   * need different staleness thresholds should split into separate
+   * `resolve` calls.
    */
   async resolveBatch(
     entries: Array<{ manifest: ManifestLike; subjectAuthority: string }>,
+    opts?: ResolveOptions,
   ): Promise<Result<ResolvedReputation>[]> {
     if (!Array.isArray(entries)) {
       throw new Error("resolveBatch: entries must be an array");
     }
     return Promise.all(
-      entries.map((e) => this.#resolveSingle(e.manifest, e.subjectAuthority)),
+      entries.map((e) => this.#resolveSingle(e.manifest, e.subjectAuthority, opts)),
     );
+  }
+
+  /**
+   * Evict the cache entry for a specific attestation PDA. The caller
+   * already did the manifest validation that produced this PDA, so
+   * passing it explicitly avoids an index-by-subject lookup we would
+   * otherwise need to maintain.
+   *
+   * A broader `invalidate(subjectAuthority)` that evicts every SAS
+   * entry tied to an agent authority requires the cache to maintain a
+   * secondary index (subject → attestation PDA) — deferred to a
+   * follow-up PR per ADR-065 §2 "Explicit consumer API" with a v1
+   * shape. Wiring an on-chain event subscription to call this method
+   * is the canonical "push-based invalidation" pattern.
+   */
+  async invalidate(attestationPda: string): Promise<void> {
+    if (typeof attestationPda !== "string" || attestationPda.length === 0) {
+      throw new Error("invalidate: attestationPda must be a non-empty string");
+    }
+    await this.#cache.delete(attestationCacheKey(attestationPda));
+  }
+
+  /**
+   * Snapshot of cache hit / miss / eviction counters. The counter
+   * record is shaped per ADR-065 §7 and is deliberately flat — per-layer
+   * breakdown is a follow-up PR that lands alongside Registry and
+   * manifest-body caching (§3).
+   *
+   * The eviction counter reflects the resolver's view of TTL-based
+   * evictions observed on `get`. In-memory LRU evictions happen on the
+   * backend's internal path and are visible to the operator via the
+   * backend's own metrics (`InMemoryCache.metrics()`), not via this
+   * method — the two counters are additive but distinct.
+   */
+  cacheMetrics(): CacheMetrics {
+    return { ...this.#cacheMetrics };
   }
 
   // ------------------------------------------------------------------
@@ -137,6 +252,7 @@ export class SasResolver {
   async #resolveSingle(
     manifest: ManifestLike,
     subjectAuthority: string,
+    opts?: ResolveOptions,
   ): Promise<Result<ResolvedReputation>> {
     // Boundary validation.
     const manifestParsed = ManifestInputSchema.safeParse(manifest);
@@ -161,11 +277,11 @@ export class SasResolver {
       return ok({ subject, absent: true });
     }
 
-    // Fetch the SAS attestation account via the RPC.
+    // Fetch the SAS attestation account — with cache.
     // Row 4b — account missing / closed -> absent: true.
     let accountBytes: Uint8Array | null;
     try {
-      accountBytes = await this.#fetchAccountData(attestationPubkey);
+      accountBytes = await this.#fetchAttestationBytes(attestationPubkey, opts);
     } catch (e) {
       // RPC-layer failure — hard error. Distinct from "account not
       // found" (which resolves to null below).
@@ -266,6 +382,66 @@ export class SasResolver {
       resolved.stale = true;
     }
     return ok(resolved);
+  }
+
+  /**
+   * Fetch an attestation account's raw bytes, consulting the cache
+   * first (ADR-065 §3). Policy:
+   *
+   *   - `opts.maxAge` undefined → respect configured TTL (cache hit
+   *     returns immediately).
+   *   - `opts.maxAge === 0`     → bypass cache on read, still
+   *     write-through on the fresh fetch.
+   *   - `opts.maxAge > 0`       → use cache only if the entry is
+   *     fresher than `maxAge`; otherwise refetch.
+   *
+   * A successful fetch (account found OR explicitly absent) is cached
+   * with the configured `attestation` TTL. Transport errors are NOT
+   * cached — they propagate to the caller and stay the caller's
+   * decision to retry.
+   */
+  async #fetchAttestationBytes(
+    pubkey: string,
+    opts: ResolveOptions | undefined,
+  ): Promise<Uint8Array | null> {
+    const key = attestationCacheKey(pubkey);
+    const maxAge = opts?.maxAge;
+
+    // Cache read — skipped when `maxAge === 0` (force-fresh).
+    if (maxAge !== 0) {
+      const cached = await this.#cache.get<CachedAttestationBytes | null>(key);
+      if (cached !== null) {
+        const age = this.#cacheNow() - cached.cachedAt;
+        const fresh =
+          maxAge === undefined ? true /* respect TTL, which the backend already enforced */
+                               : age <= maxAge;
+        if (fresh) {
+          this.#cacheMetrics.hits++;
+          // `null` entry means "we fetched and confirmed absent" — the
+          // resolver's row-4b path. Treat as `null` bytes.
+          if (cached.value === null) return null;
+          return base64Decode(cached.value.bytesB64);
+        }
+        // Entry exists but is older than the caller's maxAge. Count as
+        // a miss so the metrics reflect the RPC hit the caller got.
+        this.#cacheMetrics.misses++;
+      } else {
+        this.#cacheMetrics.misses++;
+      }
+    }
+    // maxAge === 0 path also counts as a miss so metrics reflect the
+    // RPC call the resolver is about to issue.
+    if (maxAge === 0) this.#cacheMetrics.misses++;
+
+    const bytes = await this.#fetchAccountData(pubkey);
+
+    // Write-through — populate the cache (including the "absent"
+    // negative entry so row-4b lookups also cache).
+    const payload: CachedAttestationBytes | null =
+      bytes === null ? null : { bytesB64: base64Encode(bytes) };
+    await this.#cache.set(key, payload, this.#ttl.attestation);
+
+    return bytes;
   }
 
   /**
@@ -412,6 +588,17 @@ export function base64Decode(s: string): Uint8Array {
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
+}
+
+export function base64Encode(bytes: Uint8Array): string {
+  // Paired with `base64Decode` — same env preference (Node `Buffer`
+  // first, falls back to `btoa` via binary-string intermediate).
+  if (typeof Buffer !== "undefined") {
+    return Buffer.from(bytes).toString("base64");
+  }
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]!);
+  return btoa(bin);
 }
 
 // --------------------------------------------------------------------

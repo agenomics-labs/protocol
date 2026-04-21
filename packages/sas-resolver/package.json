@@ -26,6 +26,14 @@
       "types": "./dist/merge.d.ts",
       "import": "./dist/merge.js"
     },
+    "./cache": {
+      "types": "./dist/cache.d.ts",
+      "import": "./dist/cache.js"
+    },
+    "./cache-redis": {
+      "types": "./dist/cache-redis.d.ts",
+      "import": "./dist/cache-redis.js"
+    },
     "./types": {
       "types": "./dist/types.d.ts",
       "import": "./dist/types.js"
@@ -38,7 +46,7 @@
   ],
   "scripts": {
     "build": "tsc",
-    "test": "node --import tsx --test test/resolver.test.ts test/schema.test.ts test/merge.test.ts"
+    "test": "node --import tsx --test test/resolver.test.ts test/schema.test.ts test/merge.test.ts test/cache.test.ts"
   },
   "keywords": [
     "aeap",
@@ -56,7 +64,11 @@
   },
   "devDependencies": {
     "@types/node": "^20.9.0",
+    "ioredis-mock": "^8.9.0",
     "tsx": "^4.21.0",
     "typescript": "^5.2.2"
+  },
+  "optionalDependencies": {
+    "ioredis": "^5.4.1"
   }
 }

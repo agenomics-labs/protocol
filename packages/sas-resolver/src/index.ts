@@ -9,7 +9,29 @@
 // ./merge, ./types) are also available if the consumer wants to
 // import a narrower subset (reduces TS program size in large trees).
 
-export { SasResolver, encodeBase58, base58Decode, base64Decode } from "./resolver.js";
+export {
+  SasResolver,
+  encodeBase58,
+  base58Decode,
+  base64Decode,
+  base64Encode,
+} from "./resolver.js";
+
+export {
+  InMemoryCache,
+  LayeredCache,
+  createCache,
+  activeCacheBackend,
+  type CacheBackend,
+  type CacheMetrics,
+  type InMemoryCacheOptions,
+} from "./cache.js";
+
+export {
+  RedisCache,
+  type RedisCacheOptions,
+  type RedisClient,
+} from "./cache-redis.js";
 
 export {
   AEAP_AGENT_REPUTATION_V1_SIZE,
@@ -35,6 +57,8 @@ export {
 export type {
   ResolverConfig,
   ResolverRpc,
+  ResolverTtlConfig,
+  ResolveOptions,
   ResolvedReputation,
   SolanaAttestation,
   AttestationReputation,
