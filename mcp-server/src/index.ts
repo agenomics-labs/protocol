@@ -31,7 +31,14 @@ const server = new Server(
   { capabilities: { tools: {} } }
 );
 
-export const actionRouter = createActionRouter(allActions);
+// Wire the v2 Kit RPC into the preflight dispatch path so gates that need
+// on-chain state (cluster_health, account_rent_exempt, daily_cap_not_exhausted,
+// token_daily_cap_not_exhausted, dispute_window_open) have a working RPC.
+// Without this, every gate declared on an action would fail with
+// "no RPC configured" before reaching the handler.
+export const actionRouter = createActionRouter(allActions, {
+  preflightDeps: { rpc: createRpc() },
+});
 
 const ALL_CAPABILITIES: Capability[] = [
   "read:settlement",
