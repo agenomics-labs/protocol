@@ -1,0 +1,129 @@
+name: Publish npm packages
+
+# Triggered by pushing a tag like `v0.1.1`. Publishes BOTH workspace
+# packages (@agenomics/capability-manifest-validator + @agenomics/sas-resolver)
+# at that tag version.
+#
+# Prerequisites (one-time):
+#   1. Claim the @agenomics org on npm.com (done — https://www.npmjs.com/org/agenomics).
+#   2. Create an automation / publish token on npm (Account → Access Tokens → Granular,
+#      scope it to the @agenomics org, publish + read).
+#   3. Add it as a GitHub repo secret named `NPM_TOKEN`.
+#   4. Gate the workflow on branch protection for tags if desired.
+#
+# Release flow (manual):
+#   1. Bump both package.json versions to the target (e.g., 0.1.1).
+#   2. Commit + push to main.
+#   3. git tag v0.1.1 && git push origin v0.1.1
+#   4. This workflow runs, publishes both, and creates a GitHub Release.
+#
+# See RELEASE.md for the full checklist.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Pre-publish verification
+    runs-on: ubuntu-latest
+    outputs:
+      tag_version: ${{ steps.meta.outputs.tag_version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract tag version
+        id: meta
+        run: |
+          tag="${GITHUB_REF#refs/tags/v}"
+          echo "tag_version=${tag}" >> "$GITHUB_OUTPUT"
+          echo "Publishing tag v${tag}"
+
+      - name: Verify package.json versions match the tag
+        run: |
+          tag="${{ steps.meta.outputs.tag_version }}"
+          validator_v=$(jq -r .version packages/capability-manifest-validator/package.json)
+          resolver_v=$(jq -r .version packages/sas-resolver/package.json)
+          if [ "$validator_v" != "$tag" ]; then
+            echo "::error::capability-manifest-validator version ($validator_v) does not match tag (v$tag)"
+            exit 1
+          fi
+          if [ "$resolver_v" != "$tag" ]; then
+            echo "::error::sas-resolver version ($resolver_v) does not match tag (v$tag)"
+            exit 1
+          fi
+          echo "Both packages at $tag."
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Build + test capability-manifest-validator
+        working-directory: packages/capability-manifest-validator
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+          npm test
+
+      - name: Build + test sas-resolver
+        working-directory: packages/sas-resolver
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+          npm test
+
+  publish:
+    name: Publish to npm
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write     # for creating the GitHub Release
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      # capability-manifest-validator has no workspace deps — publish first.
+      - name: Publish @agenomics/capability-manifest-validator
+        working-directory: packages/capability-manifest-validator
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+          npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # sas-resolver depends on capability-manifest-validator via `file:`; that's
+      # fine at publish time — npm resolves the `file:` at install, not at publish,
+      # and consumers will pick up the registry version once both are published.
+      - name: Publish @agenomics/sas-resolver
+        working-directory: packages/sas-resolver
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+          npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          body: |
+            Published to npm:
+
+            - `@agenomics/capability-manifest-validator@${{ needs.verify.outputs.tag_version }}`
+            - `@agenomics/sas-resolver@${{ needs.verify.outputs.tag_version }}`
+
+            See [RELEASE.md](./RELEASE.md) for the release checklist.
