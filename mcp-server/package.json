@@ -32,6 +32,8 @@
   "author": "Alejandro",
   "license": "UNLICENSED",
   "dependencies": {
+    "@aeap/capability-manifest-validator": "file:../packages/capability-manifest-validator",
+    "@aeap/sas-resolver": "file:../packages/sas-resolver",
     "@coral-xyz/anchor": "^0.31.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@solana-program/compute-budget": "^0.15.0",
