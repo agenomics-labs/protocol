@@ -8,7 +8,7 @@
 // Scope note (see ADR-065 §3 vs. PR scope):
 //   The ADR describes five logical layers (registry, manifest,
 //   attestation, schema, credential). Only attestation / schema /
-//   credential live inside `@aep/sas-resolver`'s fetch surface today;
+//   credential live inside `@agenomics/sas-resolver`'s fetch surface today;
 //   Registry (`AgentProfile`) and manifest-body caching require new
 //   fetch seams and are deferred to a follow-up PR. The cache primitive
 //   in this file is deliberately **layer-agnostic** — callers build the

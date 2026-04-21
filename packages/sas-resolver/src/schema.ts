@@ -18,7 +18,7 @@
 //      rationale — it applies symmetrically to the SDK dep too).
 //   3. When/if `sas-lib` updates to kit v6, or the Solana Foundation
 //      publishes a kit-v6-native SDK, migrating this module is a
-//      strictly-local change (no API surface of `@aep/sas-resolver`
+//      strictly-local change (no API surface of `@agenomics/sas-resolver`
 //      depends on whether the bytes are decoded by `sas-lib` or by
 //      the code below).
 //

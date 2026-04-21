@@ -81,16 +81,16 @@ jobs:
         with:
           node-version: "20"
 
-      # mcp-server consumes @aep/capability-manifest-validator and
-      # @aep/sas-resolver via `file:` deps. tsc --noEmit in mcp-server
+      # mcp-server consumes @agenomics/capability-manifest-validator and
+      # @agenomics/sas-resolver via `file:` deps. tsc --noEmit in mcp-server
       # needs the d.ts output from those packages, so build them first.
-      - name: Build @aep/capability-manifest-validator
+      - name: Build @agenomics/capability-manifest-validator
         working-directory: packages/capability-manifest-validator
         run: |
           npm install
           npm run build
 
-      - name: Build @aep/sas-resolver
+      - name: Build @agenomics/sas-resolver
         working-directory: packages/sas-resolver
         run: |
           npm install
@@ -162,7 +162,7 @@ jobs:
         continue-on-error: true
 
   # Added alongside the `packages/*` TS packages introduced with ADR-060
-  # (`@aep/capability-manifest-validator`) and ADR-064 (`@aep/sas-resolver`).
+  # (`@agenomics/capability-manifest-validator`) and ADR-064 (`@agenomics/sas-resolver`).
   # Each package is self-contained (own package.json + tsconfig + tests under
   # node:test + tsx) and must pass type-check and unit tests independently.
   typescript-check-validator:
@@ -219,12 +219,12 @@ jobs:
           node-version: "20"
       # Build the @aep packages so the `file:` deps + tsx ESM loader
       # can resolve their dist/*.js at test runtime.
-      - name: Build @aep/capability-manifest-validator
+      - name: Build @agenomics/capability-manifest-validator
         working-directory: packages/capability-manifest-validator
         run: |
           npm install
           npm run build
-      - name: Build @aep/sas-resolver
+      - name: Build @agenomics/sas-resolver
         working-directory: packages/sas-resolver
         run: |
           npm install

@@ -1,4 +1,4 @@
-# @aep/capability-manifest-validator
+# @agenomics/capability-manifest-validator
 
 Reference validator for the AEP capability manifest format defined in
 [ADR-060](../../docs/adr/ADR-060-capability-descriptor-format.md).
@@ -20,7 +20,7 @@ the on-chain commitment.
 ## Install
 
 ```sh
-npm install @aep/capability-manifest-validator
+npm install @agenomics/capability-manifest-validator
 ```
 
 Peer dependencies: `@noble/curves@^1.4.0`, `@noble/hashes@^1.4.0`, `canonicalize@^2.0.0`, `zod@^3.23`.
@@ -28,7 +28,7 @@ Peer dependencies: `@noble/curves@^1.4.0`, `@noble/hashes@^1.4.0`, `canonicalize
 ## Usage
 
 ```ts
-import { validateManifest } from "@aep/capability-manifest-validator";
+import { validateManifest } from "@agenomics/capability-manifest-validator";
 
 // Bytes fetched from IPFS/Arweave via the manifest_cid stored on-chain.
 const manifestBytes: Uint8Array = await fetchManifestBody(cid);
@@ -56,13 +56,13 @@ console.log(manifest.agent.name, manifest.capabilities.length);
 
 ## Non-goals
 
-This package does **not** fetch the manifest from IPFS/Arweave, the Registry account from Solana, or SAS attestations. Those concerns live upstream (in a downstream integration) or in `@aep/sas-resolver`. This package is pure, synchronous-ish (Ed25519 is fast), and has no network dependency.
+This package does **not** fetch the manifest from IPFS/Arweave, the Registry account from Solana, or SAS attestations. Those concerns live upstream (in a downstream integration) or in `@agenomics/sas-resolver`. This package is pure, synchronous-ish (Ed25519 is fast), and has no network dependency.
 
 ## Related
 
 - [ADR-060](../../docs/adr/ADR-060-capability-descriptor-format.md) — manifest format + on-chain commitments
 - [ADR-061](../../docs/adr/ADR-061-sas-integration.md) — the `owner_attestation` field reserved for SAS
-- [`@aep/sas-resolver`](../sas-resolver/README.md) — resolves SAS attestations referenced by a validated manifest
+- [`@agenomics/sas-resolver`](../sas-resolver/README.md) — resolves SAS attestations referenced by a validated manifest
 
 ## License
 

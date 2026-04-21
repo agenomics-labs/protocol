@@ -1,5 +1,5 @@
 {
-  "name": "@aep/sas-resolver",
+  "name": "@agenomics/sas-resolver",
   "version": "0.1.0",
   "description": "ADR-064 reference resolver for ADR-061 manifest-referenced SAS attestations. Off-chain only; dereferences manifest.agent.owner_attestation, parses AEP_AGENT_REPUTATION_v1, and surfaces merge helpers for registry + SAS UX.",
   "type": "module",

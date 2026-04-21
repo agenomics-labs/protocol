@@ -1,9 +1,9 @@
-// ADR-064 — `@aep/sas-resolver` main resolver class.
+// ADR-064 — `@agenomics/sas-resolver` main resolver class.
 //
 // Implements the ADR-061 §4 resolution flow end-to-end for off-chain
 // consumers. Steps 1–3 (Registry fetch + manifest integrity check) are
 // out of scope per ADR-061 §8 (those belong to the Registry indexer
-// and `@aep/capability-manifest-validator` respectively); the resolver
+// and `@agenomics/capability-manifest-validator` respectively); the resolver
 // assumes the caller has already validated the manifest.
 //
 // The §4 failure-mode table is implemented row-for-row in

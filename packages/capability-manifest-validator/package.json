@@ -1,5 +1,5 @@
 {
-  "name": "@aep/capability-manifest-validator",
+  "name": "@agenomics/capability-manifest-validator",
   "version": "0.1.0",
   "description": "ADR-060 reference validator for AEP capability manifests. Validates schema, RFC-8785 canonical-JSON hash, and Ed25519 signature.",
   "type": "module",
