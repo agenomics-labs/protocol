@@ -145,6 +145,69 @@ jobs:
         run: npm audit --audit-level=high
         continue-on-error: true
 
+  # Added alongside the `packages/*` TS packages introduced with ADR-060
+  # (`@aeap/capability-manifest-validator`) and ADR-064 (`@aeap/sas-resolver`).
+  # Each package is self-contained (own package.json + tsconfig + tests under
+  # node:test + tsx) and must pass type-check and unit tests independently.
+  typescript-check-validator:
+    name: TypeScript Check (capability-manifest-validator)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/capability-manifest-validator
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install
+      - name: Type check
+        run: npx tsc --noEmit
+      - name: Unit tests
+        run: npm test
+      - name: npm audit (high)
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
+  typescript-check-sas-resolver:
+    name: TypeScript Check (sas-resolver)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/sas-resolver
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install
+      - name: Type check
+        run: npx tsc --noEmit
+      - name: Unit tests
+        run: npm test
+      - name: npm audit (high)
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
+  # mcp-server also has pipeline + action-shape tests under node:test + tsx
+  # (see `test/*.test.ts`). The existing `typescript-check-mcp` job only runs
+  # `npx tsc --noEmit`; add a separate `npm test` invocation so the 70+ unit
+  # tests block regressions.
+  mcp-server-tests:
+    name: mcp-server unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mcp-server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install
+      - name: Unit tests (node:test + tsx)
+        run: npm test
+
   # S-xcut-05: mandatory secret-scan gate. A leaked on-chain private key
   # has direct blast radius against the protocol's authorities, so this
   # is blocking (no `continue-on-error`). Full-history scan on push to
