@@ -16,7 +16,7 @@ import type { AttestationReputation } from "./types.js";
 /**
  * Minimal Registry-native view the merge helpers need. Mirrors the
  * subset of `AgentProfile` fields ADR-061 §5 lists as authoritative.
- * We do NOT import the full Registry type here — `@aep/sas-resolver`
+ * We do NOT import the full Registry type here — `@agenomics/sas-resolver`
  * is decoupled from program types by design (Registry TS bindings
  * regen on Anchor IDL bumps; this package shouldn't).
  */

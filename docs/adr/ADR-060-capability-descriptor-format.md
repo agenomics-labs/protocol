@@ -118,7 +118,7 @@ Rejected: S3, HTTPS URLs (mutable).
 
 - **Minor version bumps**: additive-only (new optional fields). Consumers MUST accept unknown optional fields.
 - **Major version bumps**: publish a new `$schema` URL; old consumers reject. Registry keeps both `manifest_version` fields during deprecation windows.
-- Validation: AEP publishes a reference validator crate (`@aep/capability-manifest-validator`) with JSON Schema bundled.
+- Validation: AEP publishes a reference validator crate (`@agenomics/capability-manifest-validator`) with JSON Schema bundled.
 
 ### 6. Explicit rejections (see also the Alternatives section)
 
@@ -173,7 +173,7 @@ Rejected for v1. JSON is debuggable, inspectable in browsers, and trivial to val
 
 ## Open items
 
-- Manifest validator crate (`@aep/capability-manifest-validator`) — separate work item.
+- Manifest validator crate (`@agenomics/capability-manifest-validator`) — separate work item.
 - ADR-061 (Proposed): how agents reference SAS attestations via `owner_attestation` — resolves the SAS-integration-depth open question with manifest-referenced, loosely-coupled resolution.
 - Indexer crate to build a searchable capability index from Registry + IPFS/Arweave — separate work item.
 

@@ -32,8 +32,8 @@
   "author": "Alejandro",
   "license": "UNLICENSED",
   "dependencies": {
-    "@aep/capability-manifest-validator": "file:../packages/capability-manifest-validator",
-    "@aep/sas-resolver": "file:../packages/sas-resolver",
+    "@agenomics/capability-manifest-validator": "file:../packages/capability-manifest-validator",
+    "@agenomics/sas-resolver": "file:../packages/sas-resolver",
     "@coral-xyz/anchor": "^0.31.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@solana-program/compute-budget": "^0.15.0",

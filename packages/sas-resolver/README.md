@@ -1,4 +1,4 @@
-# @aep/sas-resolver
+# @agenomics/sas-resolver
 
 Reference resolver for the SAS (Solana Attestation Service) integration
 described in [ADR-061](../../docs/adr/ADR-061-sas-integration.md) and
@@ -6,7 +6,7 @@ the caching strategy in
 [ADR-065](../../docs/adr/ADR-065-caching-strategy.md).
 
 Consumes a validated AEP capability manifest (see
-[`@aep/capability-manifest-validator`](../capability-manifest-validator/README.md))
+[`@agenomics/capability-manifest-validator`](../capability-manifest-validator/README.md))
 and resolves the optional `agent.owner_attestation` SAS pointer into a
 typed reputation snapshot. Implements the 7-step flow in ADR-061 §4
 faithfully — subject-mismatch is the one hard error; every other failure
@@ -16,7 +16,7 @@ allowlist) degrades to `absent: true` so SAS stays strictly additive.
 ## Install
 
 ```sh
-npm install @aep/sas-resolver
+npm install @agenomics/sas-resolver
 ```
 
 Peer deps: `@solana/kit@^6.8`, `@noble/curves@^1.4`. Optional runtime
@@ -27,7 +27,7 @@ in-memory cache is the default).
 
 ```ts
 import { createSolanaRpc } from "@solana/kit";
-import { SasResolver, createCache } from "@aep/sas-resolver";
+import { SasResolver, createCache } from "@agenomics/sas-resolver";
 
 const resolver = new SasResolver({
   rpc: createSolanaRpc("https://api.mainnet-beta.solana.com"),
@@ -80,7 +80,7 @@ The resolver ships a few convenience helpers for the ADR-061 §4
 "display side-by-side, don't blend" merge convention:
 
 ```ts
-import { renderSideBySide, detectDisagreement, scoreFreshness } from "@aep/sas-resolver";
+import { renderSideBySide, detectDisagreement, scoreFreshness } from "@agenomics/sas-resolver";
 
 const lines = renderSideBySide(onChainReputation, reputation);  // { line1, line2 }
 const disagrees = detectDisagreement(onChainReputation, reputation);   // > 2000 bps delta
@@ -91,7 +91,7 @@ const freshness = scoreFreshness(reputation.attestation.last_updated, Date.now()
 ## Non-goals
 
 - Does not fetch the Registry account or the manifest body — consume a pre-validated manifest.
-- Does not validate the manifest — use `@aep/capability-manifest-validator` upstream.
+- Does not validate the manifest — use `@agenomics/capability-manifest-validator` upstream.
 - Does not mint, close, or rotate attestations — read-only client.
 - Does not take on-chain governance actions — see [ADR-063](../../docs/adr/ADR-063-sas-credential-authority-governance.md) for the credential authority lifecycle.
 

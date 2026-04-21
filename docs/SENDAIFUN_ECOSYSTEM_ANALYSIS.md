@@ -61,7 +61,7 @@ interface Action<I, O> {
 
 ### Highest-leverage move (revised)
 
-The highest-leverage move is **not** publishing `@aep/plugin-solana-agent-kit` — that would force us to mirror SendAI's anti-patterns. The highest-leverage move is **adopting the strengthened `Action` abstraction inside `mcp-server/` first**, with `RemoteSigner` capability gating, and using that as the source from which external artefacts (plugin, skill, scaffolder) are derived. **Architecture before distribution.**
+The highest-leverage move is **not** publishing `@agenomics/plugin-solana-agent-kit` — that would force us to mirror SendAI's anti-patterns. The highest-leverage move is **adopting the strengthened `Action` abstraction inside `mcp-server/` first**, with `RemoteSigner` capability gating, and using that as the source from which external artefacts (plugin, skill, scaffolder) are derived. **Architecture before distribution.**
 
 ---
 
@@ -111,7 +111,7 @@ Port behavior (not code), all `readOnly: true`, no capabilities required:
 
 These are **derivatives** of Phase 1.A's `Action[]` exports, not net-new code.
 
-#### D-1: Publish `@aep/plugin-solana-agent-kit`
+#### D-1: Publish `@agenomics/plugin-solana-agent-kit`
 
 Reference `plugin-god-mode` file layout:
 ```
@@ -440,7 +440,7 @@ PR: P1-A (compute budget / priority fee / blockhash refresh / mutex-per-sig) + P
 - Verification: force blockhash-expiry mid-submit (sleep 90s) → rebroadcasts, doesn't error; `HELIUS_API_KEY` on/off both land.
 
 ### Week 4 — Phase 1.B distribution
-PR D-1 (`@aep/plugin-solana-agent-kit` alpha). PR D-2 (`skills/aep/SKILL.md` to sendaifun/skills). PR D-3 (`solana-new` index entry; `create-aep-agent` path choice).
+PR D-1 (`@agenomics/plugin-solana-agent-kit` alpha). PR D-2 (`skills/aep/SKILL.md` to sendaifun/skills). PR D-3 (`solana-new` index entry; `create-aep-agent` path choice).
 
 ### Week 5+ — Phase 2 protocol alignment (stretch)
 `solana-mpp` charge/session intent adoption as AEP settlement schema (ADR, then program work). `x-research-x402` reservation + micro-USD pattern. Cross-chain x402 bridge only on demand.

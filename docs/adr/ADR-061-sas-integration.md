@@ -98,7 +98,7 @@ SAS credentials are multi-signer. AEP defines **two credential authorities** at 
 - Removing / rotating a credential authority follows the same path; existing attestations remain valid until expiry (§6) or superseding credentials are issued.
 - Detailed voting thresholds, proposal format, and multisig composition are out of scope for this ADR — tracked as **ADR-063** (§9).
 
-Explicitly **not** blessed in v1: arbitrary third-party credentials. A consumer is free to resolve any SAS attestation, but the AEP-published resolver (`@aep/sas-resolver`, tracked as ADR-064) ships with an allowlist containing only the two authorities above. Extending the allowlist is a consumer-side decision.
+Explicitly **not** blessed in v1: arbitrary third-party credentials. A consumer is free to resolve any SAS attestation, but the AEP-published resolver (`@agenomics/sas-resolver`, tracked as ADR-064) ships with an allowlist containing only the two authorities above. Extending the allowlist is a consumer-side decision.
 
 ### 4. Resolution flow
 
@@ -150,7 +150,7 @@ This asymmetry is deliberate: manifest integrity failures (steps 2–3) invalida
 - Registry's `reputation_score`, `reputation_stake.staked_amount`, `slash_count`, `total_tasks_completed`, `avg_rating`, and `status` remain the **authoritative** protocol-enforced signals. These are the only values Settlement, Vault, and dispute programs read when making CPI decisions.
 - SAS attestation data is **advisory / additive** only. Consumers MAY surface it alongside Registry values, MAY weight it for UX ranking, but MUST NOT substitute it for Registry state in protocol-level authorization decisions.
 - When displaying a merged score, recommended UI convention is "`reputation_score` (Registry) + `score` (SAS, last_updated ≤ N days)" — surfaced side-by-side, not summed. Mixing them into a single numeric hides the provenance, which is the opposite of what this ADR is trying to preserve.
-- A divergence between Registry `reputation_score` and SAS `score` by > 2000 bps (20 percentage points) SHOULD be flagged to the consumer as a staleness / disagreement signal. This threshold is a recommendation for `@aep/sas-resolver` (ADR-064), not a protocol rule.
+- A divergence between Registry `reputation_score` and SAS `score` by > 2000 bps (20 percentage points) SHOULD be flagged to the consumer as a staleness / disagreement signal. This threshold is a recommendation for `@agenomics/sas-resolver` (ADR-064), not a protocol rule.
 - Consumers integrating the resolver into an automated decision path (e.g., a client-side auto-bidder choosing between agents) MUST document which side (Registry vs. SAS) drives the decision. Opaque blended weights are the failure mode this rule exists to prevent.
 
 ### 5. What stays in Registry vs. what lives in SAS
@@ -178,7 +178,7 @@ This asymmetry is deliberate: manifest integrity failures (steps 2–3) invalida
 
 **Revocation.** SAS supports attestation closure by the issuing authority. When an attestation is closed, the PDA is gone and the resolver surfaces "absent" — indistinguishable from "never issued." Consumers requiring stricter provenance MAY cache historical attestation hashes off-chain; AEP does not maintain such a cache.
 
-**Versioning.** Schema version is part of the SAS schema PDA seed. A future `AEP_AGENT_REPUTATION_v2` would have a distinct PDA; resolvers MUST treat v1 and v2 as independent signals during a deprecation window. The `@aep/sas-resolver` package tracks the supported schema set in its own semver — new schema versions ship via resolver upgrades, not Registry upgrades.
+**Versioning.** Schema version is part of the SAS schema PDA seed. A future `AEP_AGENT_REPUTATION_v2` would have a distinct PDA; resolvers MUST treat v1 and v2 as independent signals during a deprecation window. The `@agenomics/sas-resolver` package tracks the supported schema set in its own semver — new schema versions ship via resolver upgrades, not Registry upgrades.
 
 **Stale-data policy.** Attestations with `last_updated` older than 90 days SHOULD be weighted lower by consumers but not discarded. The 90-day threshold is a resolver-side convention, documented in ADR-064, not a protocol rule.
 
@@ -198,10 +198,10 @@ This follows the same pattern as ADR-060's manifest storage: the on-chain artifa
 This ADR **changes no code**. Specifically:
 
 - `programs/agent-registry/**` — unchanged. `AgentProfile` fields from ADR-060 are reused verbatim; no new fields, no new instructions, no new CPI edges.
-- `@aep/capability-manifest-validator` (PR9, in flight) — unchanged. The validator already recognizes `agent.owner_attestation?: string` as an optional base58 pubkey; no SAS-specific validation is added here.
+- `@agenomics/capability-manifest-validator` (PR9, in flight) — unchanged. The validator already recognizes `agent.owner_attestation?: string` as an optional base58 pubkey; no SAS-specific validation is added here.
 - `mcp-server/**` — unchanged. SAS resolution is not an MCP action in v1.
 
-The SAS resolver is a **new, separate, off-chain TS package** — `@aep/sas-resolver` — tracked as ADR-064 (§9). It depends on SAS's TS SDK and implements the §4 flow. Keeping the resolver out of the Registry program is the concrete embodiment of decision-#8 option B.
+The SAS resolver is a **new, separate, off-chain TS package** — `@agenomics/sas-resolver` — tracked as ADR-064 (§9). It depends on SAS's TS SDK and implements the §4 flow. Keeping the resolver out of the Registry program is the concrete embodiment of decision-#8 option B.
 
 ## Alternatives Considered
 
@@ -235,21 +235,21 @@ The SAS resolver is a **new, separate, off-chain TS package** — `@aep/sas-reso
 - **DOCS-only ADR.** Resolves decision #8 without blocking on implementation — the PR9 validator ships as-is, and the resolver package follows asynchronously.
 
 ### Negative
-- **Consumers need SAS SDK or an equivalent resolver.** Off-chain resolution adds a dependency for any caller that wants SAS signals (not just Registry reads). Mitigated by shipping `@aep/sas-resolver` (ADR-064) as the reference implementation with a batched-fetch API.
+- **Consumers need SAS SDK or an equivalent resolver.** Off-chain resolution adds a dependency for any caller that wants SAS signals (not just Registry reads). Mitigated by shipping `@agenomics/sas-resolver` (ADR-064) as the reference implementation with a batched-fetch API.
 - **Multiple fetches per agent lookup.** Full resolution is Registry → IPFS/Arweave → SAS — three network hops worst case. Mitigated by caching at every layer (see ADR-065 for the explicit caching strategy).
 - **Merge semantics are a convention, not a protocol rule.** Different consumers may weight Registry vs. SAS signals differently; cross-consumer consistency depends on adoption of the recommended convention (§4). This is an acceptable cost for a reputation *layer* — it would not be acceptable for a *protocol-logic* signal, but §5 keeps protocol logic in Registry.
 - **Credential authority governance is a new process surface.** Adding / removing authorities requires multisig action and a governance proposal (ADR-063). Bootstrap requires an initial credential creation ceremony.
 
 ### Neutral
-- **Validator crate `@aep/capability-manifest-validator` (PR9) stays as-is.** It already validates `owner_attestation` as an optional base58 pubkey per ADR-060 §2. No SAS-specific validation in the manifest validator.
-- **`@aep/sas-resolver` TS package is the only new code artifact** implied by this ADR, and it is explicitly out-of-scope here (tracked as ADR-064).
+- **Validator crate `@agenomics/capability-manifest-validator` (PR9) stays as-is.** It already validates `owner_attestation` as an optional base58 pubkey per ADR-060 §2. No SAS-specific validation in the manifest validator.
+- **`@agenomics/sas-resolver` TS package is the only new code artifact** implied by this ADR, and it is explicitly out-of-scope here (tracked as ADR-064).
 - **No impact on existing Registry, Vault, Settlement, or MCP-server behavior.** SAS resolution is strictly additive and strictly off-chain in v1.
 - **Option A remains available as a future superseding ADR** if a concrete need emerges.
 
 ## Open items / follow-up ADRs
 
 - **ADR-063**: AEP SAS credential authority governance — multisig composition, proposal format, voting thresholds, rotation procedure, and bootstrap ceremony for the two v1 credentials (`AEP_PROTOCOL`, `AEP_VALIDATORS`).
-- **ADR-064**: `@aep/sas-resolver` TS package — implementation PR for the §4 resolution flow, including batched-fetch API, allowlist handling, expiry / staleness flags, and merge-convention helpers.
+- **ADR-064**: `@agenomics/sas-resolver` TS package — implementation PR for the §4 resolution flow, including batched-fetch API, allowlist handling, expiry / staleness flags, and merge-convention helpers.
 - **ADR-065**: Caching strategy for multi-fetch resolution — TTL policy per layer (Registry account, IPFS/Arweave manifest body, SAS attestation), invalidation hooks on Registry updates, and cross-process cache sharing (Redis vs. in-process) paralleling ADR-059's mutex decision.
 
 ## References

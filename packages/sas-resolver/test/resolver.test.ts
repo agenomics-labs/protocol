@@ -1,7 +1,7 @@
 // ADR-064 resolver behavioral tests — ADR-061 §4 failure-mode table.
 //
 // Runs under Node's built-in test runner (`node:test`) via `tsx` —
-// same pattern as @aep/capability-manifest-validator's tests.
+// same pattern as @agenomics/capability-manifest-validator's tests.
 //
 // The SAS RPC is mocked via a `MockRpc` shim that returns canned
 // `getAccountInfo` responses. No network calls.

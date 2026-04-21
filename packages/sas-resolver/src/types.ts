@@ -1,4 +1,4 @@
-// ADR-064 @aep/sas-resolver — public type surface.
+// ADR-064 @agenomics/sas-resolver — public type surface.
 //
 // Kept in a separate module so consumers can type-annotate without
 // dragging in the runtime code (schema decoders, resolver class).
@@ -211,7 +211,7 @@ export interface ResolverError {
   details?: unknown;
 }
 
-/** Lightweight Result type; mirrors `@aep/capability-manifest-validator`. */
+/** Lightweight Result type; mirrors `@agenomics/capability-manifest-validator`. */
 export type Result<T> = { ok: true; value: T } | { ok: false; error: ResolverError };
 
 /**
