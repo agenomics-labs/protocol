@@ -77,7 +77,7 @@ Enables AI agents (Claude, ChatGPT, Eliza) to:
 
 1. **Install**
    ```bash
-   cd /sessions/elegant-quirky-davinci/mnt/Solana/aeap/mcp-server
+   cd /sessions/elegant-quirky-davinci/mnt/Solana/aep/mcp-server
    npm install
    ```
 
@@ -100,7 +100,7 @@ Enables AI agents (Claude, ChatGPT, Eliza) to:
 5. **Connect with Claude**
    - Add server path to Claude Desktop config
    - Restart Claude
-   - Start using AEAP tools in conversations
+   - Start using AEP tools in conversations
 
 For detailed instructions, see [SETUP.md](SETUP.md).
 
@@ -109,7 +109,7 @@ For detailed instructions, see [SETUP.md](SETUP.md).
 ## Project Structure
 
 ```
-aeap-mcp-server/
+aep-mcp-server/
 ├── src/                          # Source code
 │   ├── index.ts                 # Main server (640 lines)
 │   ├── tools.ts                 # Tool definitions (538 lines)

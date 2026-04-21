@@ -1,7 +1,7 @@
-// ADR-060: AEAP capability manifest validator — public entry point.
+// ADR-060: AEP capability manifest validator — public entry point.
 //
 // Consumers should import from the root:
-//   import { validateManifest, manifestHash } from "@aeap/capability-manifest-validator";
+//   import { validateManifest, manifestHash } from "@aep/capability-manifest-validator";
 
 export {
   validateManifest,

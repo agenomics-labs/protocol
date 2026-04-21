@@ -1,7 +1,7 @@
 {
   "name": "@agenomics/x402-relay",
   "version": "0.1.0",
-  "description": "x402 HTTP Payment Relay for AEAP agent-to-agent payments",
+  "description": "x402 HTTP Payment Relay for AEP agent-to-agent payments",
   "main": "index.ts",
   "scripts": {
     "start": "ts-node index.ts",

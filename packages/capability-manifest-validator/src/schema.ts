@@ -16,7 +16,7 @@ const JsonSchemaLike = z.record(z.string(), z.unknown());
 // Canonical v1.0 $schema URL. A major-version bump will publish a new
 // URL and a future schema module; this one rejects foreign URLs.
 export const MANIFEST_SCHEMA_V1_URL =
-  "https://aeap.dev/schemas/capability-manifest/v1.0.json";
+  "https://aep.dev/schemas/capability-manifest/v1.0.json";
 
 export const PreflightGateSchema = z.enum([
   "cluster_health",

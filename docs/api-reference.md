@@ -1,6 +1,6 @@
 # API Reference
 
-All 20 MCP tools exposed by the AEAP MCP server. Each tool maps directly to a Solana program instruction.
+All 20 MCP tools exposed by the AEP MCP server. Each tool maps directly to a Solana program instruction.
 
 ## Vault Tools (7)
 

@@ -2,7 +2,7 @@
  * MCP Server Handler Integration Tests
  *
  * Tests each handler function against a live local validator with
- * all three AEAP programs deployed. Validates real on-chain interactions.
+ * all three AEP programs deployed. Validates real on-chain interactions.
  *
  * Run: npx ts-mocha -p tsconfig.test.json test/mcp-handlers.test.ts --timeout 60000
  */

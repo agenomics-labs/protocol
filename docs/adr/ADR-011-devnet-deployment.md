@@ -7,7 +7,7 @@ Accepted
 2026-04-15
 
 ## Context
-All three AEAP programs were only tested against a local validator (`solana-test-validator`). Devnet deployment is a prerequisite for:
+All three AEP programs were only tested against a local validator (`solana-test-validator`). Devnet deployment is a prerequisite for:
 - External testers and integrators to interact with the protocol
 - Validating program behavior under real network conditions (latency, slot timing)
 - Testing the MCP server against a persistent environment

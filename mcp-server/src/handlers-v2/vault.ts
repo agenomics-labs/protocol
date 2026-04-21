@@ -5,7 +5,7 @@
  * full pipeline (Kit RPC → compute-budget → signer → send+confirm) before
  * migrating the rest of the surface. The v1 handler in
  * `src/handlers/vault.ts:handleVaultTransfer` is untouched; operators opt in
- * via `AEAP_USE_V2_VAULT_TRANSFER=1` (see `src/actions/vault.ts`).
+ * via `AEP_USE_V2_VAULT_TRANSFER=1` (see `src/actions/vault.ts`).
  *
  * On-chain target: `execute_transfer(amount_lamports: u64)` on the
  * `agent_vault` program (id `4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN`).

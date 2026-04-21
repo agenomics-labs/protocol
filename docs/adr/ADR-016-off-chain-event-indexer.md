@@ -7,7 +7,7 @@ Accepted
 2026-04-15
 
 ## Context
-AEAP emits Anchor events from all three on-chain programs (Agent Vault, Agent Registry, Settlement Protocol) rather than storing audit data in accounts (see Architecture doc, Section 6: "Why Events for Indexing"). However, there is no off-chain component to capture, store, and query these events. Without an indexer, consumers must parse raw RPC logs manually, making it impractical to build dashboards, analytics, or agent discovery UIs.
+AEP emits Anchor events from all three on-chain programs (Agent Vault, Agent Registry, Settlement Protocol) rather than storing audit data in accounts (see Architecture doc, Section 6: "Why Events for Indexing"). However, there is no off-chain component to capture, store, and query these events. Without an indexer, consumers must parse raw RPC logs manually, making it impractical to build dashboards, analytics, or agent discovery UIs.
 
 The protocol needs a lightweight, self-contained indexer that:
 - Subscribes to program log events in real-time via WebSocket

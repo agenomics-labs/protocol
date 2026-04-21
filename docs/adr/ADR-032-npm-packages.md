@@ -5,15 +5,15 @@
 
 ## Context
 
-AEAP needs publishable npm packages so that external developers can install and use the MCP server and integration plugins without cloning the repository.
+AEP needs publishable npm packages so that external developers can install and use the MCP server and integration plugins without cloning the repository.
 
 ## Decision
 
 Create two scoped npm packages:
 
-1. **@agenomics/mcp-server** - The MCP server as a standalone CLI and library. Configured with `bin` entry for `aeap-mcp`, `types` for TypeScript consumers, `publishConfig` for public access, and a `files` whitelist for clean publishes.
+1. **@agenomics/mcp-server** - The MCP server as a standalone CLI and library. Configured with `bin` entry for `aep-mcp`, `types` for TypeScript consumers, `publishConfig` for public access, and a `files` whitelist for clean publishes.
 
-2. **@agenomics/integrations** - ElizaOS and Solana Agent Kit plugins as a single package. Exports `aeapPlugin` (ElizaOS) and `aeapTools` (SAK) from a barrel `index.ts`. Declares `@modelcontextprotocol/sdk` as a peer dependency.
+2. **@agenomics/integrations** - ElizaOS and Solana Agent Kit plugins as a single package. Exports `aepPlugin` (ElizaOS) and `aepTools` (SAK) from a barrel `index.ts`. Declares `@modelcontextprotocol/sdk` as a peer dependency.
 
 ## Consequences
 

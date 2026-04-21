@@ -1,6 +1,6 @@
 # Integration Guide
 
-AEAP provides integration plugins for popular AI agent frameworks and works natively with any MCP-compatible client.
+AEP provides integration plugins for popular AI agent frameworks and works natively with any MCP-compatible client.
 
 ## ElizaOS
 
@@ -15,24 +15,24 @@ npm install @agenomics/integrations
 ### Usage
 
 ```typescript
-import { aeapPlugin, setMcpClient } from '@agenomics/integrations';
+import { aepPlugin, setMcpClient } from '@agenomics/integrations';
 
 // Initialize with your MCP client
 setMcpClient(myMcpClient);
 
 // Register the plugin with ElizaOS
 const agent = new ElizaAgent({
-  plugins: [aeapPlugin],
+  plugins: [aepPlugin],
 });
 ```
 
 ### Available Actions
 
-The plugin registers 20 actions prefixed with `aeap_`:
+The plugin registers 20 actions prefixed with `aep_`:
 
-- **Vault (7):** `aeap_create_vault`, `aeap_get_vault_info`, `aeap_vault_transfer`, `aeap_update_vault_policy`, `aeap_pause_vault`, `aeap_resume_vault`, `aeap_manage_allowlist`
-- **Registry (4):** `aeap_register_agent`, `aeap_get_agent_profile`, `aeap_update_agent_profile`, `aeap_discover_agents`
-- **Settlement (9):** `aeap_create_escrow`, `aeap_accept_task`, `aeap_submit_milestone`, `aeap_approve_milestone`, `aeap_reject_milestone`, `aeap_get_escrow_status`, `aeap_cancel_escrow`, `aeap_raise_dispute`, `aeap_resolve_dispute`
+- **Vault (7):** `aep_create_vault`, `aep_get_vault_info`, `aep_vault_transfer`, `aep_update_vault_policy`, `aep_pause_vault`, `aep_resume_vault`, `aep_manage_allowlist`
+- **Registry (4):** `aep_register_agent`, `aep_get_agent_profile`, `aep_update_agent_profile`, `aep_discover_agents`
+- **Settlement (9):** `aep_create_escrow`, `aep_accept_task`, `aep_submit_milestone`, `aep_approve_milestone`, `aep_reject_milestone`, `aep_get_escrow_status`, `aep_cancel_escrow`, `aep_raise_dispute`, `aep_resolve_dispute`
 
 ## Solana Agent Kit
 
@@ -41,7 +41,7 @@ The Solana Agent Kit plugin exports tools in SAK-compatible format.
 ### Usage
 
 ```typescript
-import { aeapTools } from '@agenomics/integrations';
+import { aepTools } from '@agenomics/integrations';
 import { setMcpClient } from '@agenomics/integrations';
 
 // Initialize MCP connection
@@ -49,7 +49,7 @@ setMcpClient(myMcpClient);
 
 // Register tools with Solana Agent Kit
 const agent = new SolanaAgent({
-  tools: [...existingTools, ...aeapTools],
+  tools: [...existingTools, ...aepTools],
 });
 ```
 
@@ -68,7 +68,7 @@ interface SakTool {
 
 ## Claude Desktop / ChatGPT
 
-AEAP works with any MCP-compatible client out of the box.
+AEP works with any MCP-compatible client out of the box.
 
 ### Claude Desktop
 
@@ -77,7 +77,7 @@ Add to your `claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
-    "aeap": {
+    "aep": {
       "command": "npx",
       "args": ["@agenomics/mcp-server"],
       "env": {
@@ -89,12 +89,12 @@ Add to your `claude_desktop_config.json`:
 }
 ```
 
-Once configured, Claude can directly call any of the 20 AEAP tools to create vaults, discover agents, manage escrows, and handle payments.
+Once configured, Claude can directly call any of the 20 AEP tools to create vaults, discover agents, manage escrows, and handle payments.
 
 ### Claude Code
 
 ```bash
-claude mcp add aeap -- npx @agenomics/mcp-server
+claude mcp add aep -- npx @agenomics/mcp-server
 ```
 
 Set environment variables:
@@ -106,7 +106,7 @@ export SOLANA_PRIVATE_KEY=<your-base58-key>
 
 ### ChatGPT (via MCP bridge)
 
-Use an MCP-to-OpenAI bridge to connect AEAP tools to ChatGPT:
+Use an MCP-to-OpenAI bridge to connect AEP tools to ChatGPT:
 
 ```bash
 npx mcp-bridge --server "npx @agenomics/mcp-server" --port 3000
@@ -116,7 +116,7 @@ Then configure your ChatGPT plugin or function calling to point to the bridge en
 
 ## Custom Integration
 
-To integrate AEAP into any framework, connect to the MCP server using the `@modelcontextprotocol/sdk`:
+To integrate AEP into any framework, connect to the MCP server using the `@modelcontextprotocol/sdk`:
 
 ```typescript
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';

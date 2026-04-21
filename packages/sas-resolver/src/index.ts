@@ -1,7 +1,7 @@
-// ADR-064 @aeap/sas-resolver — public entry point.
+// ADR-064 @aep/sas-resolver — public entry point.
 //
 // Consumers should import from the root:
-//   import { SasResolver, buildAllowlist } from "@aeap/sas-resolver";
+//   import { SasResolver, buildAllowlist } from "@aep/sas-resolver";
 //
 // ADR-061 §4 resolution flow + §2 schema + §3 credential allowlist
 // semantics + §4 merge convention helpers are all surfaced from this
@@ -34,7 +34,7 @@ export {
 } from "./cache-redis.js";
 
 export {
-  AEAP_AGENT_REPUTATION_V1_SIZE,
+  AEP_AGENT_REPUTATION_V1_SIZE,
   parseReputationData,
   toAttestationReputation,
   parseAttestationAccount,

@@ -169,7 +169,7 @@ async function setupEscrow(
   return { client, providerAgent, resolver, tokenMint, clientTokenAccount, providerTokenAccount, providerProfilePDA, escrowPDA, escrowTokenAccount };
 }
 
-describe("AEAP Same-Account Contention", () => {
+describe("AEP Same-Account Contention", () => {
   it(`probes lock conflicts with ${N} concurrent writers`, async () => {
     const provider = anchor.AnchorProvider.env();
     anchor.setProvider(provider);

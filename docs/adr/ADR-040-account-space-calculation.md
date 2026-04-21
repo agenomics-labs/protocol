@@ -44,6 +44,6 @@ Each field size is documented inline in the constant definition to make future f
 
 ## Files Changed
 
-- `programs/aeap/src/state/agent.rs` -- replaced `ACCOUNT_SPACE` constant with explicit 1243-byte sum
-- `programs/aeap/src/instructions/register_agent.rs` -- updated `space` parameter in `init` constraint
+- `programs/aep/src/state/agent.rs` -- replaced `ACCOUNT_SPACE` constant with explicit 1243-byte sum
+- `programs/aep/src/instructions/register_agent.rs` -- updated `space` parameter in `init` constraint
 - `tests/agent_registration.ts` -- updated expected account size in test assertions

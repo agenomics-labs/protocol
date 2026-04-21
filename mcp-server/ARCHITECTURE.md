@@ -78,7 +78,7 @@ The Agenomics MCP Server is a TypeScript-based Model Context Protocol server tha
 **Server Initialization**
 ```typescript
 const server = new Server({
-  name: "aeap-mcp-server",
+  name: "aep-mcp-server",
   version: "1.0.0"
 });
 ```

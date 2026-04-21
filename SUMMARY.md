@@ -1,12 +1,12 @@
-# AEAP — Agenomics Protocol
+# AEP — Agenomics Protocol
 
 **Colosseum Frontier Hackathon 2026** | Solana / Anchor | Grand Champion Track
 
 ---
 
-## What is AEAP?
+## What is AEP?
 
-AEAP is a three-program Solana protocol that enables AI agents to operate as autonomous economic actors. It provides the on-chain infrastructure for agents to hold funds under programmable policies, discover and evaluate each other through a reputation system, and transact using milestone-based escrow with built-in dispute resolution.
+AEP is a three-program Solana protocol that enables AI agents to operate as autonomous economic actors. It provides the on-chain infrastructure for agents to hold funds under programmable policies, discover and evaluate each other through a reputation system, and transact using milestone-based escrow with built-in dispute resolution.
 
 The entire protocol is accessible to any AI agent through a Model Context Protocol (MCP) server — meaning Claude, GPT, or any MCP-compatible agent can discover providers, negotiate tasks, lock funds in escrow, and settle payments without human intervention.
 
@@ -204,7 +204,7 @@ A TypeScript MCP server exposes all three programs as 20 tools that any AI agent
 ## File Structure
 
 ```
-aeap/
+aep/
 ├── programs/
 │   ├── agent-vault/src/lib.rs        (848 lines)
 │   ├── agent-registry/src/lib.rs     (567 lines)
@@ -254,7 +254,7 @@ aeap/
 | Scoped borrows for CEI | Rust borrow checker requires `{...}` blocks to separate mutable state updates from immutable CPI account access |
 | Manual CPI discriminator | Settlement builds Registry CPI manually with `sha256("global:update_reputation")[0..8]` to avoid circular Anchor dependencies |
 | PDA bump storage | Vault stores bump at init to avoid recomputing in `invoke_signed` — a gas optimization and correctness requirement |
-| `CARGO_TARGET_DIR` override | Moved build artifacts to `/sessions/.../target-aeap` to avoid disk space issues on mounted volumes |
+| `CARGO_TARGET_DIR` override | Moved build artifacts to `/sessions/.../target-aep` to avoid disk space issues on mounted volumes |
 | UncheckedAccount for CPI targets | `provider_profile` and `settlement_self` use `UncheckedAccount` since they're validated by the target program during CPI, not by Anchor constraints |
 
 ---

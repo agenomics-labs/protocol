@@ -36,9 +36,9 @@ This is a defense-in-depth measure: Anchor validates the authority match before 
 
 ## Files Changed
 
-- `programs/aeap/src/instructions/update_policy.rs` -- added `has_one = authority`, removed `require!`
-- `programs/aeap/src/instructions/manage_allowlist.rs` -- added `has_one = authority`, removed `require!`
-- `programs/aeap/src/instructions/manage_program_allowlist.rs` -- added `has_one = authority`, removed `require!`
-- `programs/aeap/src/instructions/pause_vault.rs` -- added `has_one = authority`, removed `require!`
-- `programs/aeap/src/instructions/resume_vault.rs` -- added `has_one = authority`, removed `require!`
+- `programs/aep/src/instructions/update_policy.rs` -- added `has_one = authority`, removed `require!`
+- `programs/aep/src/instructions/manage_allowlist.rs` -- added `has_one = authority`, removed `require!`
+- `programs/aep/src/instructions/manage_program_allowlist.rs` -- added `has_one = authority`, removed `require!`
+- `programs/aep/src/instructions/pause_vault.rs` -- added `has_one = authority`, removed `require!`
+- `programs/aep/src/instructions/resume_vault.rs` -- added `has_one = authority`, removed `require!`
 - `tests/vault_authority.ts` -- updated error assertions to expect `ConstraintHasOne`

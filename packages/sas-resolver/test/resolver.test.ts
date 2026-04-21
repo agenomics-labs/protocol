@@ -1,7 +1,7 @@
 // ADR-064 resolver behavioral tests — ADR-061 §4 failure-mode table.
 //
 // Runs under Node's built-in test runner (`node:test`) via `tsx` —
-// same pattern as @aeap/capability-manifest-validator's tests.
+// same pattern as @aep/capability-manifest-validator's tests.
 //
 // The SAS RPC is mocked via a `MockRpc` shim that returns canned
 // `getAccountInfo` responses. No network calls.
@@ -280,7 +280,7 @@ describe("ADR-064 SasResolver — ADR-061 §4 resolution flow", () => {
     // Valid attestation envelope but with malformed schema data
     // (not 16 bytes). Schema check passes (PDA matches) but the
     // data decoder throws.
-    const badData = new Uint8Array([1, 2, 3]); // too short for AEAP_AGENT_REPUTATION_v1
+    const badData = new Uint8Array([1, 2, 3]); // too short for AEP_AGENT_REPUTATION_v1
     rpc.set(ATTESTATION_ADDR, accountResponse(makeAttestation({ data: badData })));
     const warnings: string[] = [];
     const resolver = makeResolver(rpc, { warnSink: warnings });
@@ -294,7 +294,7 @@ describe("ADR-064 SasResolver — ADR-061 §4 resolution flow", () => {
     assert.equal(value.absent, true);
     assert.equal(value.attestation, undefined);
     assert.equal(warnings.length, 1);
-    assert.match(warnings[0]!, /did not decode as AEAP_AGENT_REPUTATION/);
+    assert.match(warnings[0]!, /did not decode as AEP_AGENT_REPUTATION/);
   });
 
   it("malformed account bytes → absent + warn (row 4b / 4g defense-in-depth)", async () => {

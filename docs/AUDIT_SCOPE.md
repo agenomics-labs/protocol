@@ -1,4 +1,4 @@
-# AEAP External Audit Scope Document
+# AEP External Audit Scope Document
 
 **Protocol**: Agenomics Protocol
 **Version**: 1.0.0 (pre-audit)
@@ -242,7 +242,7 @@ The following firms have relevant Solana and Anchor audit experience:
 When submitting to audit firms, include:
 
 ```
-Subject: Audit Engagement Request - AEAP (Solana)
+Subject: Audit Engagement Request - AEP (Solana)
 
 Protocol: Agenomics Protocol
 Chain: Solana (Mainnet-Beta)

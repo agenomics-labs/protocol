@@ -1,6 +1,6 @@
 # Agenomics MCP Server - File Manifest
 
-## Project Root: `/sessions/elegant-quirky-davinci/mnt/Solana/aeap/mcp-server/`
+## Project Root: `/sessions/elegant-quirky-davinci/mnt/Solana/aep/mcp-server/`
 
 ### Source Code Files
 
@@ -211,7 +211,7 @@ Complete documentation of all files with line counts, contents, and organization
 ## Directory Tree
 
 ```
-/sessions/elegant-quirky-davinci/mnt/Solana/aeap/mcp-server/
+/sessions/elegant-quirky-davinci/mnt/Solana/aep/mcp-server/
 ├── src/
 │   ├── index.ts              (640 lines) MCP server & handlers
 │   ├── tools.ts              (538 lines) Tool definitions
@@ -316,7 +316,7 @@ This manifest documents all files in the Agenomics MCP Server project:
 - **4 configuration files** (~112 lines)
 - **5 documentation files** (~1,600+ lines)
 
-The server is production-ready for integration with on-chain AEAP programs and deployment with MCP clients like Claude Desktop, ChatGPT, or Eliza.
+The server is production-ready for integration with on-chain AEP programs and deployment with MCP clients like Claude Desktop, ChatGPT, or Eliza.
 
 ---
 

@@ -1,4 +1,4 @@
-/** AEAP ElizaOS Plugin - wraps 20 MCP tools as ElizaOS actions */
+/** AEP ElizaOS Plugin - wraps 20 MCP tools as ElizaOS actions */
 
 interface ElizaAction {
   name: string;
@@ -53,40 +53,40 @@ function createAction(
 }
 
 const vaultActions: ElizaAction[] = [
-  createAction("aeap_create_vault", "Create a new agent vault with spending policies", {
+  createAction("aep_create_vault", "Create a new agent vault with spending policies", {
     agentIdentity: { type: "string", description: "Agent public key", required: true },
     dailyLimitSol: { type: "number", description: "Max SOL per day", required: true },
     perTxLimitSol: { type: "number", description: "Max SOL per transaction", required: true },
     maxTxsPerHour: { type: "number", description: "Max transactions per hour", required: true },
   }, "create_vault"),
 
-  createAction("aeap_get_vault_info", "Get vault balance, policies, and status", {
+  createAction("aep_get_vault_info", "Get vault balance, policies, and status", {
     vaultAddress: { type: "string", description: "Vault public key (optional)" },
   }, "get_vault_info"),
 
-  createAction("aeap_vault_transfer", "Transfer SOL from vault to recipient", {
+  createAction("aep_vault_transfer", "Transfer SOL from vault to recipient", {
     recipientAddress: { type: "string", description: "Recipient public key", required: true },
     amountSol: { type: "number", description: "Amount in SOL", required: true },
   }, "vault_transfer"),
 
-  createAction("aeap_update_vault_policy", "Update vault spending policies", {
+  createAction("aep_update_vault_policy", "Update vault spending policies", {
     dailyLimitSol: { type: "number", description: "New daily limit", required: true },
     perTxLimitSol: { type: "number", description: "New per-tx limit", required: true },
     maxTxsPerHour: { type: "number", description: "New rate limit", required: true },
   }, "update_vault_policy"),
 
-  createAction("aeap_pause_vault", "Pause vault (block all transfers)", {}, "pause_vault"),
+  createAction("aep_pause_vault", "Pause vault (block all transfers)", {}, "pause_vault"),
 
-  createAction("aeap_resume_vault", "Resume a paused vault", {}, "resume_vault"),
+  createAction("aep_resume_vault", "Resume a paused vault", {}, "resume_vault"),
 
-  createAction("aeap_manage_allowlist", "Add/remove tokens or programs from vault allowlist", {
+  createAction("aep_manage_allowlist", "Add/remove tokens or programs from vault allowlist", {
     action: { type: "string", description: "Operation", required: true, enum: ["add_token", "remove_token", "add_program", "remove_program"] },
     address: { type: "string", description: "Token mint or program public key", required: true },
   }, "manage_allowlist"),
 ];
 
 const registryActions: ElizaAction[] = [
-  createAction("aeap_register_agent", "Register agent in on-chain registry", {
+  createAction("aep_register_agent", "Register agent in on-chain registry", {
     name: { type: "string", description: "Agent name", required: true },
     description: { type: "string", description: "Agent description", required: true },
     category: { type: "string", description: "Primary category", required: true },
@@ -97,11 +97,11 @@ const registryActions: ElizaAction[] = [
     vaultAddress: { type: "string", description: "Vault address", required: true },
   }, "register_agent"),
 
-  createAction("aeap_get_agent_profile", "Get agent profile and reputation", {
+  createAction("aep_get_agent_profile", "Get agent profile and reputation", {
     agentAddress: { type: "string", description: "Agent authority public key" },
   }, "get_agent_profile"),
 
-  createAction("aeap_update_agent_profile", "Update agent profile fields", {
+  createAction("aep_update_agent_profile", "Update agent profile fields", {
     name: { type: "string", description: "New name" },
     description: { type: "string", description: "New description" },
     category: { type: "string", description: "New category" },
@@ -110,7 +110,7 @@ const registryActions: ElizaAction[] = [
     pricingAmountSol: { type: "number", description: "New price" },
   }, "update_agent_profile"),
 
-  createAction("aeap_discover_agents", "Search registry for agents by capability or reputation", {
+  createAction("aep_discover_agents", "Search registry for agents by capability or reputation", {
     capability: { type: "string", description: "Filter by capability" },
     category: { type: "string", description: "Filter by category" },
     minReputation: { type: "number", description: "Minimum reputation score" },
@@ -119,7 +119,7 @@ const registryActions: ElizaAction[] = [
 ];
 
 const settlementActions: ElizaAction[] = [
-  createAction("aeap_create_escrow", "Create task escrow with milestones", {
+  createAction("aep_create_escrow", "Create task escrow with milestones", {
     providerAddress: { type: "string", description: "Provider agent public key", required: true },
     providerVaultAddress: { type: "string", description: "Provider vault", required: true },
     tokenMintAddress: { type: "string", description: "Payment token mint", required: true },
@@ -129,39 +129,39 @@ const settlementActions: ElizaAction[] = [
     deadlineUnix: { type: "number", description: "Deadline timestamp", required: true },
   }, "create_escrow"),
 
-  createAction("aeap_accept_task", "Accept a task as provider", {
+  createAction("aep_accept_task", "Accept a task as provider", {
     escrowAddress: { type: "string", description: "Escrow public key", required: true },
   }, "accept_task"),
 
-  createAction("aeap_submit_milestone", "Submit milestone for review", {
+  createAction("aep_submit_milestone", "Submit milestone for review", {
     escrowAddress: { type: "string", description: "Escrow public key", required: true },
     milestoneIndex: { type: "number", description: "Milestone index", required: true },
   }, "submit_milestone"),
 
-  createAction("aeap_approve_milestone", "Approve milestone and release payment", {
+  createAction("aep_approve_milestone", "Approve milestone and release payment", {
     escrowAddress: { type: "string", description: "Escrow public key", required: true },
     milestoneIndex: { type: "number", description: "Milestone index", required: true },
     providerTokenAccount: { type: "string", description: "Provider token account", required: true },
   }, "approve_milestone"),
 
-  createAction("aeap_reject_milestone", "Reject submitted milestone", {
+  createAction("aep_reject_milestone", "Reject submitted milestone", {
     escrowAddress: { type: "string", description: "Escrow public key", required: true },
     milestoneIndex: { type: "number", description: "Milestone index", required: true },
   }, "reject_milestone"),
 
-  createAction("aeap_get_escrow_status", "Get escrow status and milestone details", {
+  createAction("aep_get_escrow_status", "Get escrow status and milestone details", {
     escrowAddress: { type: "string", description: "Escrow public key", required: true },
   }, "get_escrow_status"),
 
-  createAction("aeap_cancel_escrow", "Cancel escrow and refund client", {
+  createAction("aep_cancel_escrow", "Cancel escrow and refund client", {
     escrowAddress: { type: "string", description: "Escrow public key", required: true },
   }, "cancel_escrow"),
 
-  createAction("aeap_raise_dispute", "Raise dispute on active escrow", {
+  createAction("aep_raise_dispute", "Raise dispute on active escrow", {
     escrowAddress: { type: "string", description: "Escrow public key", required: true },
   }, "raise_dispute"),
 
-  createAction("aeap_resolve_dispute", "Resolve dispute by splitting funds", {
+  createAction("aep_resolve_dispute", "Resolve dispute by splitting funds", {
     escrowAddress: { type: "string", description: "Escrow public key", required: true },
     clientRefundTokens: { type: "number", description: "Client refund amount", required: true },
     providerPaymentTokens: { type: "number", description: "Provider payment amount", required: true },
@@ -170,11 +170,11 @@ const settlementActions: ElizaAction[] = [
   }, "resolve_dispute"),
 ];
 
-export const aeapPlugin: ElizaPlugin = {
-  name: "aeap",
+export const aepPlugin: ElizaPlugin = {
+  name: "aep",
   description: "Agenomics Protocol - vaults, discovery, and settlement for AI agents on Solana",
   version: "0.1.0",
   actions: [...vaultActions, ...registryActions, ...settlementActions],
 };
 
-export default aeapPlugin;
+export default aepPlugin;

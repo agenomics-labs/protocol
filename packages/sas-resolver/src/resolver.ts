@@ -1,9 +1,9 @@
-// ADR-064 — `@aeap/sas-resolver` main resolver class.
+// ADR-064 — `@aep/sas-resolver` main resolver class.
 //
 // Implements the ADR-061 §4 resolution flow end-to-end for off-chain
 // consumers. Steps 1–3 (Registry fetch + manifest integrity check) are
 // out of scope per ADR-061 §8 (those belong to the Registry indexer
-// and `@aeap/capability-manifest-validator` respectively); the resolver
+// and `@aep/capability-manifest-validator` respectively); the resolver
 // assumes the caller has already validated the manifest.
 //
 // The §4 failure-mode table is implemented row-for-row in
@@ -48,7 +48,7 @@ import {
 } from "./cache.js";
 
 // --------------------------------------------------------------------
-// Input validation — zod schemas at the boundary (AEAP project rule:
+// Input validation — zod schemas at the boundary (AEP project rule:
 // "Ensure input validation at system boundaries").
 // --------------------------------------------------------------------
 
@@ -80,7 +80,7 @@ const DEFAULT_TTL: Required<ResolverTtlConfig> = {
   credential: 3_600_000,
 };
 
-const CACHE_KEY_PREFIX = "aeap:cache:";
+const CACHE_KEY_PREFIX = "aep:cache:";
 
 /** Cache key format per ADR-065 §3 "Key format". */
 function attestationCacheKey(pda: string): string {
@@ -360,7 +360,7 @@ export class SasResolver {
       data = parseReputationData(raw.data);
     } catch (e) {
       this.#warn(
-        `[sas-resolver] attestation ${attestationPubkey} data did not decode as AEAP_AGENT_REPUTATION_v1 — skipping`,
+        `[sas-resolver] attestation ${attestationPubkey} data did not decode as AEP_AGENT_REPUTATION_v1 — skipping`,
         { error: e instanceof Error ? e.message : String(e) },
       );
       return ok({ subject, absent: true });

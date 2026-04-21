@@ -1,6 +1,6 @@
 // ADR-065 §3 — Redis-backed cache (multi-instance L2).
 //
-// Selected at runtime when `AEAP_REDIS_URL` is set; see `createCache()` in
+// Selected at runtime when `AEP_REDIS_URL` is set; see `createCache()` in
 // `./cache.ts`. Mirrors the structure of
 // `mcp-server/src/pipeline/idempotency-redis.ts` (ADR-059 §5) — same env
 // var, same client-injection pattern for tests, same lazy-load of the
@@ -60,18 +60,18 @@ export interface RedisCacheOptions {
   client?: RedisClient;
 
   /**
-   * Key prefix. Defaults to `"aeap:cache:"` per ADR-065 §3 key-format
+   * Key prefix. Defaults to `"aep:cache:"` per ADR-065 §3 key-format
    * spec. Intentionally includes the trailing colon so callers can drop
    * a bare cache key in without reserving a separator.
    *
-   * The matching idempotency prefix is `"aeap:idem:"` — ADR-065 §3
+   * The matching idempotency prefix is `"aep:idem:"` — ADR-065 §3
    * "Key format" and ADR-059 §5 both document this explicitly so
    * operators running both subsystems on one Redis don't collide.
    */
   prefix?: string;
 }
 
-const DEFAULT_PREFIX = "aeap:cache:";
+const DEFAULT_PREFIX = "aep:cache:";
 
 // --------------------------------------------------------------------------
 // Implementation

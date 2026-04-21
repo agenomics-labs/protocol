@@ -1,7 +1,7 @@
 {
   "name": "@agenomics/integrations",
   "version": "1.0.0",
-  "description": "AEAP framework integration plugins",
+  "description": "AEP framework integration plugins",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "publishConfig": {

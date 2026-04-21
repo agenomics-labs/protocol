@@ -2,17 +2,17 @@
 //
 // Implements the in-memory L1 path and the env-driven factory described
 // in ADR-065 §3. The Redis L2 backend lives in `./cache-redis.ts` and is
-// lazy-loaded only when `AEAP_REDIS_URL` is set — identical pattern to
+// lazy-loaded only when `AEP_REDIS_URL` is set — identical pattern to
 // `mcp-server/src/pipeline/idempotency{,-redis}.ts`.
 //
 // Scope note (see ADR-065 §3 vs. PR scope):
 //   The ADR describes five logical layers (registry, manifest,
 //   attestation, schema, credential). Only attestation / schema /
-//   credential live inside `@aeap/sas-resolver`'s fetch surface today;
+//   credential live inside `@aep/sas-resolver`'s fetch surface today;
 //   Registry (`AgentProfile`) and manifest-body caching require new
 //   fetch seams and are deferred to a follow-up PR. The cache primitive
 //   in this file is deliberately **layer-agnostic** — callers build the
-//   namespaced key themselves (e.g. `aeap:cache:attestation:<pda>`).
+//   namespaced key themselves (e.g. `aep:cache:attestation:<pda>`).
 //
 // Public surface:
 //   - `CacheBackend` interface — the contract all backends implement.
@@ -20,7 +20,7 @@
 //   - `InMemoryCache` — LRU + TTL bounded, default 10 000 entries.
 //   - `LayeredCache`  — L1-in-front-of-L2 composition helper.
 //   - `createCache()` — env-driven factory (returns Redis when
-//     `AEAP_REDIS_URL` is set, else `InMemoryCache`).
+//     `AEP_REDIS_URL` is set, else `InMemoryCache`).
 
 // --------------------------------------------------------------------------
 // Contract
@@ -340,13 +340,13 @@ const BACKFILL_TTL_MS = 60_000;
 /**
  * Build the cache backend implied by the current process env.
  *
- * - `AEAP_REDIS_URL` set → returns a `RedisCache` bound to that URL.
+ * - `AEP_REDIS_URL` set → returns a `RedisCache` bound to that URL.
  * - Otherwise → returns an `InMemoryCache`.
  *
  * Loaded lazily so in-memory deployments never pay the `ioredis` import
  * cost. Mirrors `createIdempotencyStore()` in
  * `mcp-server/src/pipeline/idempotency.ts` — ADR-065 §3 calls out the
- * shared `AEAP_REDIS_URL` env var explicitly.
+ * shared `AEP_REDIS_URL` env var explicitly.
  *
  * For L1+L2 topologies, callers construct the composition themselves:
  *
@@ -357,9 +357,9 @@ const BACKFILL_TTL_MS = 60_000;
  * overhead without benefit.
  */
 export function createCache(
-  env: { AEAP_REDIS_URL?: string } = process.env,
+  env: { AEP_REDIS_URL?: string } = process.env,
 ): CacheBackend {
-  const redisUrl = env.AEAP_REDIS_URL;
+  const redisUrl = env.AEP_REDIS_URL;
   if (redisUrl && redisUrl.length > 0) {
     // Lazy require — keeps `ioredis` out of the in-memory path's import
     // graph. `require` (vs. dynamic `import()`) keeps the factory
@@ -376,9 +376,9 @@ export function createCache(
 
 /** Returns `"redis"` or `"memory"` — used at startup logging. */
 export function activeCacheBackend(
-  env: { AEAP_REDIS_URL?: string } = process.env,
+  env: { AEP_REDIS_URL?: string } = process.env,
 ): "redis" | "memory" {
-  return env.AEAP_REDIS_URL && env.AEAP_REDIS_URL.length > 0
+  return env.AEP_REDIS_URL && env.AEP_REDIS_URL.length > 0
     ? "redis"
     : "memory";
 }

@@ -5,7 +5,7 @@
 
 ## Context
 
-AEAP consists of three Solana programs totaling 3,683 lines of Rust that manage agent wallets, identity/reputation, and escrow-based payment settlement. These programs handle real funds on mainnet. An internal security review (`docs/SECURITY_AUDIT.md`) identified 12 attack vectors across the three programs, including critical risks in CPI signing (V-A5), escrow fund flows (S-A1), and cross-program reputation updates (R-S1). Internal review alone is insufficient for a protocol managing user funds; an independent external audit is required before mainnet deployment.
+AEP consists of three Solana programs totaling 3,683 lines of Rust that manage agent wallets, identity/reputation, and escrow-based payment settlement. These programs handle real funds on mainnet. An internal security review (`docs/SECURITY_AUDIT.md`) identified 12 attack vectors across the three programs, including critical risks in CPI signing (V-A5), escrow fund flows (S-A1), and cross-program reputation updates (R-S1). Internal review alone is insufficient for a protocol managing user funds; an independent external audit is required before mainnet deployment.
 
 ## Decision
 

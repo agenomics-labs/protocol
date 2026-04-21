@@ -8,10 +8,10 @@ Proposed
 
 ## Context
 
-ADR-061 (Accepted) resolved *how* AEAP integrates with `solana-attestation-service` (SAS) — option B, manifest-referenced attestations, with the Registry retaining authoritative reputation state. ADR-061 §3 named two SAS credentials at v1:
+ADR-061 (Accepted) resolved *how* AEP integrates with `solana-attestation-service` (SAS) — option B, manifest-referenced attestations, with the Registry retaining authoritative reputation state. ADR-061 §3 named two SAS credentials at v1:
 
-- **`AEAP_PROTOCOL`** — baseline attestations derived from on-chain Registry state. Canonical; resolvers may treat as protocol-blessed.
-- **`AEAP_VALIDATORS`** — community-signed behavioral observations. Non-canonical; consumers may weight lower.
+- **`AEP_PROTOCOL`** — baseline attestations derived from on-chain Registry state. Canonical; resolvers may treat as protocol-blessed.
+- **`AEP_VALIDATORS`** — community-signed behavioral observations. Non-canonical; consumers may weight lower.
 
 ADR-061 §3 explicitly deferred the governance details — *"detailed voting thresholds, proposal format, and multisig composition are out of scope for this ADR — tracked as **ADR-063**."* This ADR resolves that open item.
 
@@ -19,8 +19,8 @@ SAS credentials are multi-signer PDAs. Each credential carries an authority set 
 
 Three related constraints shape the decision:
 
-- AEAP already operates a **program-upgrade multisig** for `programs/agent-registry` and the other on-chain artifacts. Introducing a parallel governance substrate for SAS credentials would fragment the trust model and create two separate compromise surfaces.
-- ADR-060's **identity / reputation / capabilities separation** and ADR-061's **loose-coupling** decision argue for the lightest governance process that still meets the accountability bar. On-chain governance frameworks (Squads, Realms) exist and work, but they add infra that AEAP does not otherwise need in v1.
+- AEP already operates a **program-upgrade multisig** for `programs/agent-registry` and the other on-chain artifacts. Introducing a parallel governance substrate for SAS credentials would fragment the trust model and create two separate compromise surfaces.
+- ADR-060's **identity / reputation / capabilities separation** and ADR-061's **loose-coupling** decision argue for the lightest governance process that still meets the accountability bar. On-chain governance frameworks (Squads, Realms) exist and work, but they add infra that AEP does not otherwise need in v1.
 - **Emergency rotation** (signer compromise) must be fast. A process that forces a 14-day delay on all rotations is wrong for v1; the protocol must distinguish routine rotation (slow, transparent) from emergency rotation (fast, auditor-backed).
 
 This ADR is **DOCS-only** — no program changes, no SDK changes. Implementation of the bootstrap ceremony and the transparency log tooling is scoped to follow-ups (§9).
@@ -31,9 +31,9 @@ This ADR is **DOCS-only** — no program changes, no SDK changes. Implementation
 
 Each SAS credential authority is a Solana multisig account. The two v1 credentials use the following compositions:
 
-#### 1.1 `AEAP_PROTOCOL` authority — **3-of-5**
+#### 1.1 `AEP_PROTOCOL` authority — **3-of-5**
 
-Reuses the **same multisig** that currently gates Registry program upgrades on mainnet (see ADR-031 for the deployment record). Rationale: a SAS attestation issued under `AEAP_PROTOCOL` asserts something protocol-endorsed about an agent; the trust set for such assertions should not be larger or weaker than the trust set that can change the protocol itself.
+Reuses the **same multisig** that currently gates Registry program upgrades on mainnet (see ADR-031 for the deployment record). Rationale: a SAS attestation issued under `AEP_PROTOCOL` asserts something protocol-endorsed about an agent; the trust set for such assertions should not be larger or weaker than the trust set that can change the protocol itself.
 
 Signer roles (not hardcoded to specific individuals — role slots):
 
@@ -47,7 +47,7 @@ Signer roles (not hardcoded to specific individuals — role slots):
 
 Bootstrap (§5) initializes slots 1–3 from existing protocol stakeholders; slots 4–5 are filled within 60 days of bootstrap via the first governance cycle.
 
-#### 1.2 `AEAP_VALIDATORS` authority — **5-of-9**
+#### 1.2 `AEP_VALIDATORS` authority — **5-of-9**
 
 A community validator collective. Membership is **not hardcoded** in code or ADR — it is stored on-chain as the multisig signer set and rotates per §4.
 
@@ -71,16 +71,16 @@ Explicitly rejected:
 
 All changes to either credential authority (add / remove / rotate signer; emergency suspension) follow a two-stage process:
 
-1. **Proposal** published at a stable URL — GitHub Discussions in the protocol repo, under a pinned `governance` category. Each proposal gets a monotonic ID (`AEAP-GOV-NNN`) and is **never edited after voting opens**; corrections go in a successor proposal.
+1. **Proposal** published at a stable URL — GitHub Discussions in the protocol repo, under a pinned `governance` category. Each proposal gets a monotonic ID (`AEP-GOV-NNN`) and is **never edited after voting opens**; corrections go in a successor proposal.
 2. **Execution** via the relevant multisig after the proposal passes the §3 threshold and the required notice window (§4) elapses.
 
 Required proposal fields:
 
 | Field | Purpose |
 |---|---|
-| `id` | `AEAP-GOV-NNN`, monotonic |
+| `id` | `AEP-GOV-NNN`, monotonic |
 | `rationale` | Why the change is needed; what problem it solves |
-| `affected_credential` | One of `AEAP_PROTOCOL`, `AEAP_VALIDATORS`, or both |
+| `affected_credential` | One of `AEP_PROTOCOL`, `AEP_VALIDATORS`, or both |
 | `action` | `add_signer` \| `remove_signer` \| `rotate_signer` \| `suspend_credential` \| `resume_credential` |
 | `target_pubkey` | The signer pubkey being added / removed / rotated (base58) |
 | `replacement_pubkey` | Required for `rotate_signer`; empty for others |
@@ -100,7 +100,7 @@ Required proposal fields:
 
 Thresholds apply to the **multisig signing** stage, not the off-chain discussion. The off-chain discussion is informative only — it establishes rationale, surfaces objections, and creates an auditable paper trail. Final authority is the on-chain multisig signature count.
 
-| Action | `AEAP_PROTOCOL` (3-of-5) | `AEAP_VALIDATORS` (5-of-9) | Notice window |
+| Action | `AEP_PROTOCOL` (3-of-5) | `AEP_VALIDATORS` (5-of-9) | Notice window |
 |---|---|---|---|
 | Add signer | **4-of-5** (supermajority) | **7-of-9** (supermajority) | 14 days |
 | Remove signer (routine) | **4-of-5** | **7-of-9** | 14 days |
@@ -121,9 +121,9 @@ Rationale:
 
 A contributor steps down; a new contributor takes their slot. No compromise, no emergency.
 
-1. **T–14 days: public notice.** Proposal `AEAP-GOV-NNN` posted with `action: rotate_signer`, `target_pubkey`, `replacement_pubkey`, `rationale`, `effective_date ≥ T+14`.
+1. **T–14 days: public notice.** Proposal `AEP-GOV-NNN` posted with `action: rotate_signer`, `target_pubkey`, `replacement_pubkey`, `rationale`, `effective_date ≥ T+14`.
 2. **T–14 to T–7: discussion window.** Community / stakeholders review and object if applicable. Objections are recorded in the proposal thread but do not veto — only the multisig threshold does.
-3. **T–7: new-signer possession proof.** Replacement signer publishes an Ed25519 signature over the string `"AEAP-GOV-NNN:rotate:<replacement_pubkey>"` in the proposal thread. This proves the replacement controls the private key and prevents accidentally-committed pubkey typos.
+3. **T–7: new-signer possession proof.** Replacement signer publishes an Ed25519 signature over the string `"AEP-GOV-NNN:rotate:<replacement_pubkey>"` in the proposal thread. This proves the replacement controls the private key and prevents accidentally-committed pubkey typos.
 4. **T–3: multisig pre-signing coordination.** Existing multisig members coordinate signing (off-chain, out-of-band); a serialized partial-signed transaction is circulated.
 5. **T (effective_date): on-chain execution.** The multisig submits the SAS admin instruction that updates the credential's signer set — atomically add `replacement_pubkey` and remove `target_pubkey`. The transaction signature is recorded in the proposal thread and in the transparency log (§7).
 6. **T+0 to T+7: post-rotation attestation audit.** A designated auditor (can be one of the §1 signers, rotates per rotation) enumerates all attestations issued under the credential by the departing signer in the preceding 180 days and confirms:
@@ -140,23 +140,23 @@ Performed when this ADR moves from Proposed to Accepted and the two credentials 
 
 **Devnet dry run (mandatory precursor)**
 
-1. Protocol multisig generates `<aeap_authority_devnet>` and `<validators_authority_devnet>` keypairs locally; pubkeys published in the ceremony transcript.
-2. `AEAP_PROTOCOL` credential PDA created on devnet via SAS admin instruction, signed by the existing program-upgrade multisig. Seeds: `["credential", <aeap_authority_devnet>, "AEAP_PROTOCOL"]`. Transaction signature logged.
-3. `AEAP_AGENT_REPUTATION_v1` schema PDA created on devnet under the `AEAP_PROTOCOL` credential, per ADR-061 §2 layout.
-4. `AEAP_VALIDATORS` credential PDA created on devnet, signed by the same multisig. Initial validator set: three pubkeys nominated by the protocol multisig at ceremony time; four additional slots left empty pending the §1.2 first governance cycle.
-5. End-to-end smoke test: issue a sample attestation under each credential, resolve it via the off-chain resolver path (ADR-064 dependency), confirm `@aeap/sas-resolver` returns the expected structured output.
+1. Protocol multisig generates `<aep_authority_devnet>` and `<validators_authority_devnet>` keypairs locally; pubkeys published in the ceremony transcript.
+2. `AEP_PROTOCOL` credential PDA created on devnet via SAS admin instruction, signed by the existing program-upgrade multisig. Seeds: `["credential", <aep_authority_devnet>, "AEP_PROTOCOL"]`. Transaction signature logged.
+3. `AEP_AGENT_REPUTATION_v1` schema PDA created on devnet under the `AEP_PROTOCOL` credential, per ADR-061 §2 layout.
+4. `AEP_VALIDATORS` credential PDA created on devnet, signed by the same multisig. Initial validator set: three pubkeys nominated by the protocol multisig at ceremony time; four additional slots left empty pending the §1.2 first governance cycle.
+5. End-to-end smoke test: issue a sample attestation under each credential, resolve it via the off-chain resolver path (ADR-064 dependency), confirm `@aep/sas-resolver` returns the expected structured output.
 6. Devnet PDAs are **kept as historical reference**, not closed. They serve as a public rehearsal record.
 
 **Mainnet ceremony**
 
 Executed no earlier than 7 days after the devnet dry run, to allow independent review.
 
-1. Witnesses: the five `AEAP_PROTOCOL` prospective signers (§1.1), plus at least one external security researcher explicitly named in the ceremony announcement, plus a publicly-visible video or live-stream attestation of the ceremony (optional but recommended).
-2. `AEAP_PROTOCOL` PDA creation transaction signed by the Registry program-upgrade multisig (existing mainnet). Transaction signature published in the transparency log (§7).
-3. `AEAP_AGENT_REPUTATION_v1` schema PDA attached.
-4. `AEAP_VALIDATORS` PDA creation transaction signed by the same multisig. Initial 3 validator signers nominated by the protocol multisig; slots 4–9 filled per §1.2 within 60 days.
+1. Witnesses: the five `AEP_PROTOCOL` prospective signers (§1.1), plus at least one external security researcher explicitly named in the ceremony announcement, plus a publicly-visible video or live-stream attestation of the ceremony (optional but recommended).
+2. `AEP_PROTOCOL` PDA creation transaction signed by the Registry program-upgrade multisig (existing mainnet). Transaction signature published in the transparency log (§7).
+3. `AEP_AGENT_REPUTATION_v1` schema PDA attached.
+4. `AEP_VALIDATORS` PDA creation transaction signed by the same multisig. Initial 3 validator signers nominated by the protocol multisig; slots 4–9 filled per §1.2 within 60 days.
 5. Post-ceremony checklist (must all be true before closing the ceremony record):
-   - Devnet and mainnet PDAs both resolvable via `@aeap/sas-resolver`.
+   - Devnet and mainnet PDAs both resolvable via `@aep/sas-resolver`.
    - All signer pubkeys verified on the multisig account state.
    - Transparency-log entries published (§7).
    - ADR-061 updated with the mainnet PDA addresses in a documentation-only follow-up PR.
@@ -189,11 +189,11 @@ At-or-above-threshold loss (e.g., 3 of 5 signers lost) — the multisig itself c
 
 #### 6.3 Schema vulnerability
 
-If `AEAP_AGENT_REPUTATION_v1` itself is found to have a flaw (integer overflow in score encoding, ambiguous field semantics, etc.), schema rotation is handled by a new ADR (tentatively ADR-065 in ADR-061 §9's numbering, or a superseding ADR). This ADR does not govern schema versioning — only credential authorities.
+If `AEP_AGENT_REPUTATION_v1` itself is found to have a flaw (integer overflow in score encoding, ambiguous field semantics, etc.), schema rotation is handled by a new ADR (tentatively ADR-065 in ADR-061 §9's numbering, or a superseding ADR). This ADR does not govern schema versioning — only credential authorities.
 
 ### 7. Transparency requirements
 
-**Append-only issuance log.** Every attestation issuance under `AEAP_PROTOCOL` or `AEAP_VALIDATORS` is logged to a public append-only JSON feed. Log entries include: attestation PDA, credential, schema, signer pubkey, subject pubkey, expiry, transaction signature, and issuance timestamp. **No attestation data payload is mirrored in the log** — that would duplicate the on-chain state and create a second source of truth; the log is an index, not a cache.
+**Append-only issuance log.** Every attestation issuance under `AEP_PROTOCOL` or `AEP_VALIDATORS` is logged to a public append-only JSON feed. Log entries include: attestation PDA, credential, schema, signer pubkey, subject pubkey, expiry, transaction signature, and issuance timestamp. **No attestation data payload is mirrored in the log** — that would duplicate the on-chain state and create a second source of truth; the log is an index, not a cache.
 
 Storage: IPFS or GitHub (repo: `agenomics-labs/protocol`, path: `governance/attestation-log/YYYY-MM/`). The log is published hourly by a designated off-chain worker; a failure to publish does not block issuance, but a persistent publication gap (> 24h) triggers a transparency incident proposal.
 
@@ -207,33 +207,33 @@ Storage: IPFS or GitHub (repo: `agenomics-labs/protocol`, path: `governance/atte
 
 Published to the protocol repo and linked from the documentation site.
 
-**Signer identities.** Each signer pubkey on either credential is published in the repo under `docs/governance/signers.md`. Per-signer real-world identity disclosure is **optional** — a signer may choose to remain pseudonymous behind the pubkey. The community-elected slot (`AEAP_PROTOCOL` slot 4) and the auditor co-signer MUST publish real-world identity; all other slots MAY. The pubkey itself is always public — pseudonymity here is about the human, not the key.
+**Signer identities.** Each signer pubkey on either credential is published in the repo under `docs/governance/signers.md`. Per-signer real-world identity disclosure is **optional** — a signer may choose to remain pseudonymous behind the pubkey. The community-elected slot (`AEP_PROTOCOL` slot 4) and the auditor co-signer MUST publish real-world identity; all other slots MAY. The pubkey itself is always public — pseudonymity here is about the human, not the key.
 
 ## Alternatives Considered
 
 ### Alternative A: On-chain governance program (Squads, Realms)
-**Rejected for v1.** On-chain governance frameworks are mature and battle-tested, and would ultimately provide stronger guarantees than off-chain proposals. They are rejected for v1 because: (a) AEAP's governance volume is projected at 10–30 proposals per year — the overhead of running a governance program for that volume is disproportionate; (b) integrating a governance program creates a new on-chain surface with its own upgrade cadence, contradicting the loose-coupling principle ADR-061 established; (c) the actual authority change still lands on-chain via multisig regardless of where the proposal lives. ADR-066 (§9) tracks on-chain governance as a future upgrade path.
+**Rejected for v1.** On-chain governance frameworks are mature and battle-tested, and would ultimately provide stronger guarantees than off-chain proposals. They are rejected for v1 because: (a) AEP's governance volume is projected at 10–30 proposals per year — the overhead of running a governance program for that volume is disproportionate; (b) integrating a governance program creates a new on-chain surface with its own upgrade cadence, contradicting the loose-coupling principle ADR-061 established; (c) the actual authority change still lands on-chain via multisig regardless of where the proposal lives. ADR-066 (§9) tracks on-chain governance as a future upgrade path.
 
 ### Alternative B: Single-signer per credential
 **Rejected.** Concentration risk is immediate and severe — one lost key takes down the credential. Conflicts with SAS's native multi-signer model. No compensating benefit.
 
 ### Alternative C: No governance (permissionless authority creation)
-**Rejected.** SAS allows anyone to create a credential with any name, so "permissionless" is the default SAS behavior. The governed `AEAP_PROTOCOL` and `AEAP_VALIDATORS` authorities exist precisely so consumers have an authoritative set to trust. Abandoning governance would make the two named credentials indistinguishable from any impersonation attempt — a consumer would have no way to know which `AEAP_PROTOCOL`-named credential is the real one.
+**Rejected.** SAS allows anyone to create a credential with any name, so "permissionless" is the default SAS behavior. The governed `AEP_PROTOCOL` and `AEP_VALIDATORS` authorities exist precisely so consumers have an authoritative set to trust. Abandoning governance would make the two named credentials indistinguishable from any impersonation attempt — a consumer would have no way to know which `AEP_PROTOCOL`-named credential is the real one.
 
 ### Alternative D: Time-locked rotation only (no emergency path)
 **Rejected.** A 14-day delay on a compromised-key rotation gives an attacker a 14-day window of silently-forged attestations. Emergency rotation with auditor co-sign is the correct trade: fast enough to close the window, gated enough to prevent misuse.
 
 ### Alternative E: Shared authority (one multisig owns both credentials)
-**Rejected.** Collapses the `AEAP_PROTOCOL` / `AEAP_VALIDATORS` distinction that ADR-061 §3 exists to preserve. A single compromise would take down both the canonical and the community signals simultaneously. Separate authorities preserve defense in depth.
+**Rejected.** Collapses the `AEP_PROTOCOL` / `AEP_VALIDATORS` distinction that ADR-061 §3 exists to preserve. A single compromise would take down both the canonical and the community signals simultaneously. Separate authorities preserve defense in depth.
 
 ### Alternative F: Token-weighted voting from day one
-**Rejected for v1.** AEAP does not currently have a governance token. Introducing one purely to gate SAS authority changes would conflate governance with tokenomics and create speculation pressure on a mechanism that should be process-driven, not market-driven. Tracked in ADR-066 as a possible future direction if/when a governance token emerges for other reasons.
+**Rejected for v1.** AEP does not currently have a governance token. Introducing one purely to gate SAS authority changes would conflate governance with tokenomics and create speculation pressure on a mechanism that should be process-driven, not market-driven. Tracked in ADR-066 as a possible future direction if/when a governance token emerges for other reasons.
 
 ## Consequences
 
 ### Positive
 - **Clear accountability.** Every authority change has a named proposal, a signing multisig, and an on-chain transaction. Provenance is auditable end-to-end.
-- **Reuses existing trust surface.** `AEAP_PROTOCOL` binds to the same multisig that already controls Registry upgrades — no new key infrastructure, no new compromise surface.
+- **Reuses existing trust surface.** `AEP_PROTOCOL` binds to the same multisig that already controls Registry upgrades — no new key infrastructure, no new compromise surface.
 - **Separation of concerns preserved.** Protocol-endorsed vs. community-observed attestations remain under distinct authorities with distinct trust models.
 - **Emergency path is credible.** Simple-majority + auditor co-sign + 0-day notice is fast enough to respond to real key compromise, and gated enough to prevent misuse.
 - **Transparency log makes misuse visible.** Even if an authority acts against community interests, the append-only issuance log makes the misuse publicly observable.
@@ -254,7 +254,7 @@ Published to the protocol repo and linked from the documentation site.
 ## Open items / follow-up ADRs
 
 - **ADR-066**: On-chain governance upgrade path. If the protocol outgrows multisig-executed off-chain proposals — for example, if volume grows past ~100 proposals per year, or if token-weighted voting becomes desirable — this ADR lays out the migration from the current model to a full on-chain governance framework (Squads, Realms, or a custom program). Supersedes §2 and §3 of this ADR.
-- **ADR-067**: Cross-protocol credential trust. Whether SAS attestations issued under AEAP authorities are accepted by external protocols, and conversely, whether external-protocol SAS attestations are surfaced by the AEAP resolver. This is a policy question about the `@aeap/sas-resolver` (ADR-064) allowlist and is independent of the authority governance in this ADR.
+- **ADR-067**: Cross-protocol credential trust. Whether SAS attestations issued under AEP authorities are accepted by external protocols, and conversely, whether external-protocol SAS attestations are surfaced by the AEP resolver. This is a policy question about the `@aep/sas-resolver` (ADR-064) allowlist and is independent of the authority governance in this ADR.
 
 ## References
 
@@ -262,6 +262,6 @@ Published to the protocol repo and linked from the documentation site.
 - `docs/adr/ADR-060-capability-descriptor-format.md` — identity / reputation / capabilities separation doctrine
 - `docs/adr/ADR-020-reputation-staking.md` — native Registry reputation state (`reputation_stake`, slashing, `Suspended` transition)
 - `docs/adr/ADR-028-anti-sybil-defense.md` — economic defenses backing native reputation
-- `docs/adr/ADR-031-mainnet-deployment.md` — existing mainnet program-upgrade multisig, reused for `AEAP_PROTOCOL`
+- `docs/adr/ADR-031-mainnet-deployment.md` — existing mainnet program-upgrade multisig, reused for `AEP_PROTOCOL`
 - `programs/agent-registry/**` — current on-chain surfaces (unchanged by this ADR)
 - SAS documentation — credential PDA layout, multi-signer authority admin instructions, attestation closure semantics

@@ -30,7 +30,7 @@ the drift, you just don't get the local guard.
 │   ├── agent-registry/
 │   └── settlement/
 ├── idl/                   Committed IDL baseline (ci gate vs. anchor build)
-├── mcp-server/            MCP server exposing 24 AEAP actions to AI agents
+├── mcp-server/            MCP server exposing 24 AEP actions to AI agents
 ├── packages/              Publishable TS libraries
 │   ├── capability-manifest-validator/   ADR-060
 │   └── sas-resolver/                    ADR-061 + ADR-065
@@ -45,8 +45,8 @@ the drift, you just don't get the local guard.
 Inter-package graph:
 
 ```
-mcp-server  ──(file:)──▶  @aeap/capability-manifest-validator
-                ─────▶    @aeap/sas-resolver  ──▶  uses @aeap/capability-manifest-validator types
+mcp-server  ──(file:)──▶  @aep/capability-manifest-validator
+                ─────▶    @aep/sas-resolver  ──▶  uses @aep/capability-manifest-validator types
 ```
 
 ## Common tasks
@@ -83,7 +83,7 @@ All blocking unless noted.
 | Anchor Build & IDL Diff | `anchor build` + IDL matches `idl/*.json` |
 | Anchor Integration | `anchor test` against local validator (99 cases) |
 | Secret Scan | TruffleHog (PR diff or full history on main) |
-| TypeScript Check (mcp-server) | `tsc --noEmit` after building `@aeap/*` packages first |
+| TypeScript Check (mcp-server) | `tsc --noEmit` after building `@aep/*` packages first |
 | mcp-server unit tests | `npm test` (node:test + tsx) |
 | TypeScript Check (capability-manifest-validator) | `tsc --noEmit` + `npm test` |
 | TypeScript Check (sas-resolver) | `tsc --noEmit` + `npm test` |
@@ -117,7 +117,7 @@ cd packages/capability-manifest-validator && npm version patch && npm publish --
 cd packages/sas-resolver                  && npm version patch && npm publish --access public
 ```
 
-Both are scoped under `@aeap/`. Bump the `file:` dep in
+Both are scoped under `@aep/`. Bump the `file:` dep in
 `mcp-server/package.json` to the published version once published.
 
 ## Things worth flagging when opening a PR

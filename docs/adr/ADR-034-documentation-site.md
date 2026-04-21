@@ -5,7 +5,7 @@
 
 ## Context
 
-AEAP lacks a structured documentation site. Developers need a searchable, navigable reference covering setup, API, integrations, and architectural decisions.
+AEP lacks a structured documentation site. Developers need a searchable, navigable reference covering setup, API, integrations, and architectural decisions.
 
 ## Decision
 
@@ -20,7 +20,7 @@ Use VitePress to build a static documentation site under `/docs`:
 
 ## Consequences
 
-- Developers have a single entry point for all AEAP documentation.
+- Developers have a single entry point for all AEP documentation.
 - VitePress generates fast static pages deployable to GitHub Pages or Vercel.
 - ADRs are accessible alongside usage docs, providing architectural context.
 - Documentation lives alongside code and stays in sync with development.

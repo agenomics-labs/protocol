@@ -7,7 +7,7 @@
 #   - Wallet funded with devnet SOL: solana airdrop 5
 #   - Programs built: anchor build --no-idl
 #
-# This script deploys all 3 AEAP programs to Solana devnet and verifies deployment.
+# This script deploys all 3 AEP programs to Solana devnet and verifies deployment.
 
 set -euo pipefail
 

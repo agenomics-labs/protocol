@@ -5,7 +5,7 @@
 
 ## Context
 
-The MCP server, ElizaOS plugin, and Solana Agent Kit plugin have been developed as local TypeScript packages but lack the configuration needed for (a) devnet connectivity and (b) publishing to npm under the `@aeap` scope. Devnet testing requires a dedicated environment file so that developers do not accidentally point integration tests at mainnet-beta. Publishing separate npm packages allows third-party agent frameworks to depend on individual components without pulling the entire monorepo.
+The MCP server, ElizaOS plugin, and Solana Agent Kit plugin have been developed as local TypeScript packages but lack the configuration needed for (a) devnet connectivity and (b) publishing to npm under the `@aep` scope. Devnet testing requires a dedicated environment file so that developers do not accidentally point integration tests at mainnet-beta. Publishing separate npm packages allows third-party agent frameworks to depend on individual components without pulling the entire monorepo.
 
 ## Decision
 
@@ -16,9 +16,9 @@ The MCP server, ElizaOS plugin, and Solana Agent Kit plugin have been developed 
    The MCP server loads this file when `NODE_ENV=devnet` or when explicitly passed via `--env-file .env.devnet`.
 
 2. **npm package configurations**: Prepare `package.json` files for three publishable packages:
-   - `@agenomics/mcp-server` -- Model Context Protocol server exposing AEAP Solana instructions as MCP tools. Entry point: `dist/index.js`. Peer dependency on `@solana/web3.js ^2.0`.
+   - `@agenomics/mcp-server` -- Model Context Protocol server exposing AEP Solana instructions as MCP tools. Entry point: `dist/index.js`. Peer dependency on `@solana/web3.js ^2.0`.
    - `@agenomics/elizaos-plugin` -- ElizaOS plugin wrapping MCP tools for agent integration. Peer dependency on `@elizaos/core`.
-   - `@agenomics/solana-agent-kit-plugin` -- Solana Agent Kit plugin providing AEAP actions. Peer dependency on `solana-agent-kit`.
+   - `@agenomics/solana-agent-kit-plugin` -- Solana Agent Kit plugin providing AEP actions. Peer dependency on `solana-agent-kit`.
 
 3. **Build and publish workflow**: Each package includes `build`, `test`, and `prepublishOnly` scripts. A root-level `scripts/publish-packages.sh` orchestrates version bumping and `npm publish --access public` for all three packages.
 
@@ -31,7 +31,7 @@ The MCP server, ElizaOS plugin, and Solana Agent Kit plugin have been developed 
 ## Consequences
 
 - Developers can switch to devnet with `cp .env.devnet .env` or by setting `NODE_ENV=devnet`.
-- Each package is independently versionable and publishable under the `@aeap` npm scope.
+- Each package is independently versionable and publishable under the `@aep` npm scope.
 - `.env.devnet` is committed to the repo (contains no secrets); `.env` remains git-ignored.
 - Third-party frameworks can install only the plugin they need, reducing dependency footprint.
 

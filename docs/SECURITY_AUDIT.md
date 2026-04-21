@@ -1,4 +1,4 @@
-# AEAP Security Audit Preparation
+# AEP Security Audit Preparation
 
 **Protocol**: Agenomics Protocol
 **Date**: 2026-04-15

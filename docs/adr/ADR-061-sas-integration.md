@@ -10,7 +10,7 @@ Accepted
 
 `solana-attestation-service` (SAS) is a Solana Foundation primitive for issuing, storing, and verifying third-party claims ("attestations") about on-chain subjects. SAS answers "did signer X, acting under credential C, say Y about subject Z, per schema S?" — it is **reputation / credential substrate**, not identity and not capability.
 
-AEAP already owns three separate concerns:
+AEP already owns three separate concerns:
 
 - **Identity** — `AgentProfile` in `programs/agent-registry/src/state.rs` (authority, name, category, status, vault_address).
 - **Reputation** — `reputation_score`, `reputation_stake { staked_amount, slash_count }`, `total_tasks_completed`, `avg_rating`, slashing → `Suspended` state (ADR-020, ADR-028).
@@ -44,7 +44,7 @@ Three options were evaluated against decision #8:
 | **B** Manifest-references-SAS *(accepted)* | Loose — manifest carries the attestation pubkey, consumers resolve off-chain | Off-chain consumer | Zero on-chain cost beyond ADR-060's 162 bytes | Independent — SAS schema evolves on its own cadence |
 | **C** Bypass SAS | None — Registry owns all reputation state | N/A | Zero | Registry only |
 
-**Decision: option B.** The manifest's existing `agent.owner_attestation?: string` field (ADR-060 §2) carries a base58 SAS attestation pubkey. Consumers dereference it via the SAS SDK off-chain; AEAP programs never read SAS accounts.
+**Decision: option B.** The manifest's existing `agent.owner_attestation?: string` field (ADR-060 §2) carries a base58 SAS attestation pubkey. Consumers dereference it via the SAS SDK off-chain; AEP programs never read SAS accounts.
 
 Rationale:
 
@@ -54,14 +54,14 @@ Rationale:
 - Off-chain resolution cost is already paid: consumers fetch the manifest from IPFS / Arweave (ADR-060 §4), so adding a SAS lookup is an incremental — not net new — fetch.
 - Additive: option B does not preclude option A as a v2 enhancement. If a concrete Settlement use-case emerges that needs SAS data on-chain, a later ADR can lift option B's off-chain resolution into program state without rewriting manifests in the field.
 
-### 2. Schema — `AEAP_AGENT_REPUTATION_v1`
+### 2. Schema — `AEP_AGENT_REPUTATION_v1`
 
-AEAP publishes **one canonical SAS schema** for baseline agent reputation. The schema is deliberately minimal; richer signals (graph-of-graphs reputation, cross-protocol endorsements) compose out-of-band off-chain.
+AEP publishes **one canonical SAS schema** for baseline agent reputation. The schema is deliberately minimal; richer signals (graph-of-graphs reputation, cross-protocol endorsements) compose out-of-band off-chain.
 
 ```
-Schema name:    AEAP_AGENT_REPUTATION
+Schema name:    AEP_AGENT_REPUTATION
 Schema version: 1
-Schema PDA:     ["schema", credential, "AEAP_AGENT_REPUTATION", 1]
+Schema PDA:     ["schema", credential, "AEP_AGENT_REPUTATION", 1]
 ```
 
 Field layout (SAS typed encoding, not Borsh):
@@ -81,16 +81,16 @@ Design notes:
 - **No identity fields** — subject is determined by the attestation's `subject` pubkey (the agent authority), which is intrinsic to SAS, not schema data.
 - **No signer identity** — attestation's `signer` pubkey is intrinsic to SAS.
 - **No free-form strings** — prevents the "LLM-prompt-shrapnel" regression ADR-060 called out for skills formats.
-- **Explicit scope**: this schema is the **baseline** only. Additional schemas (`AEAP_AGENT_KYC_v1`, `AEAP_AGENT_EXPERTISE_v1`, cross-protocol endorsement schemas) may be published later under their own ADRs; consumers MUST treat missing auxiliary schemas as "no signal," not as failure.
+- **Explicit scope**: this schema is the **baseline** only. Additional schemas (`AEP_AGENT_KYC_v1`, `AEP_AGENT_EXPERTISE_v1`, cross-protocol endorsement schemas) may be published later under their own ADRs; consumers MUST treat missing auxiliary schemas as "no signal," not as failure.
 
 ### 3. Credential authorities
 
-SAS credentials are multi-signer. AEAP defines **two credential authorities** at v1, with a governance path to add more:
+SAS credentials are multi-signer. AEP defines **two credential authorities** at v1, with a governance path to add more:
 
 | Credential | PDA | Signer set | Purpose |
 |---|---|---|---|
-| **AEAP Protocol Authority** | `["credential", <aeap_authority>, "AEAP_PROTOCOL"]` | Protocol governance multisig (same multisig that gates Registry program upgrades) | Baseline attestations derived from on-chain Registry state (reputation_score, dispute outcomes). Canonical — resolvers may treat as protocol-blessed. |
-| **AEAP Validators Collective** | `["credential", <validators_authority>, "AEAP_VALIDATORS"]` | N-of-M community validators; membership governed by the protocol multisig | Community-signed behavioral observations (e.g., third parties attesting a agent completed a task outside the Settlement path). Non-canonical — consumers may weight lower. |
+| **AEP Protocol Authority** | `["credential", <aep_authority>, "AEP_PROTOCOL"]` | Protocol governance multisig (same multisig that gates Registry program upgrades) | Baseline attestations derived from on-chain Registry state (reputation_score, dispute outcomes). Canonical — resolvers may treat as protocol-blessed. |
+| **AEP Validators Collective** | `["credential", <validators_authority>, "AEP_VALIDATORS"]` | N-of-M community validators; membership governed by the protocol multisig | Community-signed behavioral observations (e.g., third parties attesting a agent completed a task outside the Settlement path). Non-canonical — consumers may weight lower. |
 
 **Governance for adding / removing credential authorities:**
 
@@ -98,7 +98,7 @@ SAS credentials are multi-signer. AEAP defines **two credential authorities** at
 - Removing / rotating a credential authority follows the same path; existing attestations remain valid until expiry (§6) or superseding credentials are issued.
 - Detailed voting thresholds, proposal format, and multisig composition are out of scope for this ADR — tracked as **ADR-063** (§9).
 
-Explicitly **not** blessed in v1: arbitrary third-party credentials. A consumer is free to resolve any SAS attestation, but the AEAP-published resolver (`@aeap/sas-resolver`, tracked as ADR-064) ships with an allowlist containing only the two authorities above. Extending the allowlist is a consumer-side decision.
+Explicitly **not** blessed in v1: arbitrary third-party credentials. A consumer is free to resolve any SAS attestation, but the AEP-published resolver (`@aep/sas-resolver`, tracked as ADR-064) ships with an allowlist containing only the two authorities above. Extending the allowlist is a consumer-side decision.
 
 ### 4. Resolution flow
 
@@ -119,13 +119,13 @@ When a consumer (another agent, an indexer, a UI) looks up an agent:
 4. If manifest.agent.owner_attestation is set:
    a. Parse the base58 pubkey → SAS attestation PDA
    b. Fetch the attestation account via SAS SDK
-   c. Verify attestation.schema == AEAP_AGENT_REPUTATION_v1 schema PDA
+   c. Verify attestation.schema == AEP_AGENT_REPUTATION_v1 schema PDA
    d. Verify attestation.credential is in the allowed-authorities set
    e. Verify attestation.expiry is not elapsed (see §6)
    f. Verify attestation.subject == AgentProfile.authority
       (defense-in-depth — manifest author could reference an attestation
        about a different subject, accidentally or adversarially)
-   g. Parse attestation.data per the AEAP_AGENT_REPUTATION_v1 layout
+   g. Parse attestation.data per the AEP_AGENT_REPUTATION_v1 layout
 
 5. Merge with Registry native state (see below)
 ```
@@ -141,7 +141,7 @@ When a consumer (another agent, an indexer, a UI) looks up an agent:
 | 4c–d | Schema or credential-authority mismatch | Skip this attestation, log a warning. Do not escalate — an agent may reference an unsupported schema and the resolver should not consider that a manifest failure. |
 | 4e | Expired | Skip + `stale: true` flag (see §6). |
 | 4f | Subject pubkey mismatch | **Hard error.** A subject mismatch is either an agent mistake (accidentally referencing someone else's attestation) or adversarial (trying to borrow a stronger agent's reputation). Never silently paper over. |
-| 4g | Data parse failure (malformed per `AEAP_AGENT_REPUTATION_v1`) | Skip + warn. Schema-mismatch guard (4c) should catch this upstream; the explicit data-parse check is defense-in-depth. |
+| 4g | Data parse failure (malformed per `AEP_AGENT_REPUTATION_v1`) | Skip + warn. Schema-mismatch guard (4c) should catch this upstream; the explicit data-parse check is defense-in-depth. |
 
 This asymmetry is deliberate: manifest integrity failures (steps 2–3) invalidate the agent's capability claims and must be hard errors; SAS lookup failures (most of step 4) degrade to "no reputation signal" because SAS is additive. Subject mismatch is the one exception inside step 4 — it's a provenance violation, not a signal absence.
 
@@ -150,7 +150,7 @@ This asymmetry is deliberate: manifest integrity failures (steps 2–3) invalida
 - Registry's `reputation_score`, `reputation_stake.staked_amount`, `slash_count`, `total_tasks_completed`, `avg_rating`, and `status` remain the **authoritative** protocol-enforced signals. These are the only values Settlement, Vault, and dispute programs read when making CPI decisions.
 - SAS attestation data is **advisory / additive** only. Consumers MAY surface it alongside Registry values, MAY weight it for UX ranking, but MUST NOT substitute it for Registry state in protocol-level authorization decisions.
 - When displaying a merged score, recommended UI convention is "`reputation_score` (Registry) + `score` (SAS, last_updated ≤ N days)" — surfaced side-by-side, not summed. Mixing them into a single numeric hides the provenance, which is the opposite of what this ADR is trying to preserve.
-- A divergence between Registry `reputation_score` and SAS `score` by > 2000 bps (20 percentage points) SHOULD be flagged to the consumer as a staleness / disagreement signal. This threshold is a recommendation for `@aeap/sas-resolver` (ADR-064), not a protocol rule.
+- A divergence between Registry `reputation_score` and SAS `score` by > 2000 bps (20 percentage points) SHOULD be flagged to the consumer as a staleness / disagreement signal. This threshold is a recommendation for `@aep/sas-resolver` (ADR-064), not a protocol rule.
 - Consumers integrating the resolver into an automated decision path (e.g., a client-side auto-bidder choosing between agents) MUST document which side (Registry vs. SAS) drives the decision. Opaque blended weights are the failure mode this rule exists to prevent.
 
 ### 5. What stays in Registry vs. what lives in SAS
@@ -165,7 +165,7 @@ This asymmetry is deliberate: manifest integrity failures (steps 2–3) invalida
 | `status` (Active/Paused/Retired/Suspended) | **Registry** | State machine enforced on-chain. |
 | `capabilities: Vec<String>` | **Registry** (denormalized index) | ADR-060 §1 — search index for on-chain discovery. |
 | Capability manifest (typed I/O, cost, preflight) | **Off-chain** (IPFS / Arweave) | ADR-060 §1 — manifest body. |
-| Baseline reputation observation (SAS `AEAP_AGENT_REPUTATION_v1`) | **SAS** (optional, additive) | Third-party readable, composable with wider SAS ecosystem. |
+| Baseline reputation observation (SAS `AEP_AGENT_REPUTATION_v1`) | **SAS** (optional, additive) | Third-party readable, composable with wider SAS ecosystem. |
 | KYC attestation | **SAS (pointer) + off-chain (data)** | PII MUST NOT be in the attestation data itself — see §7. |
 | Expertise / certification claims | **SAS** | Additive; consumers choose which credentials to trust. |
 | Cross-party endorsements | **SAS** | Graph-of-graphs reputation composes from signer set. |
@@ -176,9 +176,9 @@ This asymmetry is deliberate: manifest integrity failures (steps 2–3) invalida
 
 **Expiry.** SAS attestations carry an expiry field. The resolver (ADR-064) treats an expired attestation as **absent** — it is silently skipped, not propagated as an error. Rationale: an agent publishing a manifest that references an expired attestation is equivalent to publishing a manifest with no `owner_attestation` — the agent is simply not making a third-party-backed reputation claim. Failing closed would penalize agents whose signer authorities are slow to re-attest. The resolver SHOULD surface expiry via a `stale: true` flag for UX, separately from the skip.
 
-**Revocation.** SAS supports attestation closure by the issuing authority. When an attestation is closed, the PDA is gone and the resolver surfaces "absent" — indistinguishable from "never issued." Consumers requiring stricter provenance MAY cache historical attestation hashes off-chain; AEAP does not maintain such a cache.
+**Revocation.** SAS supports attestation closure by the issuing authority. When an attestation is closed, the PDA is gone and the resolver surfaces "absent" — indistinguishable from "never issued." Consumers requiring stricter provenance MAY cache historical attestation hashes off-chain; AEP does not maintain such a cache.
 
-**Versioning.** Schema version is part of the SAS schema PDA seed. A future `AEAP_AGENT_REPUTATION_v2` would have a distinct PDA; resolvers MUST treat v1 and v2 as independent signals during a deprecation window. The `@aeap/sas-resolver` package tracks the supported schema set in its own semver — new schema versions ship via resolver upgrades, not Registry upgrades.
+**Versioning.** Schema version is part of the SAS schema PDA seed. A future `AEP_AGENT_REPUTATION_v2` would have a distinct PDA; resolvers MUST treat v1 and v2 as independent signals during a deprecation window. The `@aep/sas-resolver` package tracks the supported schema set in its own semver — new schema versions ship via resolver upgrades, not Registry upgrades.
 
 **Stale-data policy.** Attestations with `last_updated` older than 90 days SHOULD be weighted lower by consumers but not discarded. The 90-day threshold is a resolver-side convention, documented in ADR-064, not a protocol rule.
 
@@ -187,7 +187,7 @@ This asymmetry is deliberate: manifest integrity failures (steps 2–3) invalida
 SAS attestations are **public on-chain records**. Consequences:
 
 - **No raw PII in attestation data.** KYC-style attestations MUST reference a secondary off-chain resolver (e.g., an IPFS CID pointing to encrypted KYC artifacts, or a URL to a KYC provider's verification API) rather than embedding PII bytes in `attestation.data`.
-- The v1 `AEAP_AGENT_REPUTATION_v1` schema (§2) is PII-free by design: only scores, counts, and a timestamp.
+- The v1 `AEP_AGENT_REPUTATION_v1` schema (§2) is PII-free by design: only scores, counts, and a timestamp.
 - Future schemas for expertise / certification claims MUST be reviewed against this rule before the corresponding credential authority is added (§3).
 - Agents operating under pseudonymous authorities retain pseudonymity — SAS attestations about a pseudonymous pubkey do not de-anonymize it.
 
@@ -198,10 +198,10 @@ This follows the same pattern as ADR-060's manifest storage: the on-chain artifa
 This ADR **changes no code**. Specifically:
 
 - `programs/agent-registry/**` — unchanged. `AgentProfile` fields from ADR-060 are reused verbatim; no new fields, no new instructions, no new CPI edges.
-- `@aeap/capability-manifest-validator` (PR9, in flight) — unchanged. The validator already recognizes `agent.owner_attestation?: string` as an optional base58 pubkey; no SAS-specific validation is added here.
+- `@aep/capability-manifest-validator` (PR9, in flight) — unchanged. The validator already recognizes `agent.owner_attestation?: string` as an optional base58 pubkey; no SAS-specific validation is added here.
 - `mcp-server/**` — unchanged. SAS resolution is not an MCP action in v1.
 
-The SAS resolver is a **new, separate, off-chain TS package** — `@aeap/sas-resolver` — tracked as ADR-064 (§9). It depends on SAS's TS SDK and implements the §4 flow. Keeping the resolver out of the Registry program is the concrete embodiment of decision-#8 option B.
+The SAS resolver is a **new, separate, off-chain TS package** — `@aep/sas-resolver` — tracked as ADR-064 (§9). It depends on SAS's TS SDK and implements the §4 flow. Keeping the resolver out of the Registry program is the concrete embodiment of decision-#8 option B.
 
 ## Alternatives Considered
 
@@ -211,11 +211,11 @@ The SAS resolver is a **new, separate, off-chain TS package** — `@aeap/sas-res
 ### Alternative B: Manifest-references-SAS (loose coupling)
 **Accepted by this ADR.** Uses the ADR-060 §2 `owner_attestation?: string` field as the only integration point. Off-chain resolvers dereference. Zero new on-chain surface. Independent upgrade cadence. Additive — does not preclude a future v2 that lifts resolution on-chain if a concrete use case emerges.
 
-### Alternative C: Bypass SAS entirely (AEAP owns all reputation state)
-**Rejected.** Gives up SAS-ecosystem network effects (cross-protocol signer authorities, reusable schemas, tooling, indexers) for a gain that is already achieved by option B (AEAP Registry remains authoritative for protocol-logic reputation — see §5). Option C is a strictly smaller surface than B with no corresponding benefit.
+### Alternative C: Bypass SAS entirely (AEP owns all reputation state)
+**Rejected.** Gives up SAS-ecosystem network effects (cross-protocol signer authorities, reusable schemas, tooling, indexers) for a gain that is already achieved by option B (AEP Registry remains authoritative for protocol-logic reputation — see §5). Option C is a strictly smaller surface than B with no corresponding benefit.
 
 ### Alternative D: Federated reputation via signed JSON outside SAS
-**Rejected.** AEAP could publish its own "signed reputation claims" format outside SAS — essentially a parallel attestation substrate. Rejected because:
+**Rejected.** AEP could publish its own "signed reputation claims" format outside SAS — essentially a parallel attestation substrate. Rejected because:
 - Misses the on-chain signer-authority enforcement SAS provides (credential PDA with multisig).
 - Misses the optional soulbound-NFT wrapper SAS offers.
 - Forks from a production Foundation primitive for no architectural gain.
@@ -228,28 +228,28 @@ The SAS resolver is a **new, separate, off-chain TS package** — `@aeap/sas-res
 
 ### Positive
 - **Separation of concerns preserved.** Identity (Registry core), reputation (Registry native + SAS additive), capabilities (manifest) remain three independent artifacts with independent upgrade cadences — the explicit design goal of ADR-060 §6.
-- **SAS-ecosystem network effects accessible.** Any third-party wallet, indexer, or aggregator that already resolves SAS attestations can surface AEAP agent reputation without any AEAP-specific integration.
-- **No new custody surface.** No SOL or tokens flow through SAS on the AEAP path; SAS holds no AEAP-economic state.
+- **SAS-ecosystem network effects accessible.** Any third-party wallet, indexer, or aggregator that already resolves SAS attestations can surface AEP agent reputation without any AEP-specific integration.
+- **No new custody surface.** No SOL or tokens flow through SAS on the AEP path; SAS holds no AEP-economic state.
 - **No new CPI edges.** Registry program remains isolated from SAS; no upgrade coupling.
 - **Additive, reversible v1.** Consumers that don't care about SAS never fetch it; agents that don't publish attestations have an empty `owner_attestation` field. Zero opt-in cost for either side.
 - **DOCS-only ADR.** Resolves decision #8 without blocking on implementation — the PR9 validator ships as-is, and the resolver package follows asynchronously.
 
 ### Negative
-- **Consumers need SAS SDK or an equivalent resolver.** Off-chain resolution adds a dependency for any caller that wants SAS signals (not just Registry reads). Mitigated by shipping `@aeap/sas-resolver` (ADR-064) as the reference implementation with a batched-fetch API.
+- **Consumers need SAS SDK or an equivalent resolver.** Off-chain resolution adds a dependency for any caller that wants SAS signals (not just Registry reads). Mitigated by shipping `@aep/sas-resolver` (ADR-064) as the reference implementation with a batched-fetch API.
 - **Multiple fetches per agent lookup.** Full resolution is Registry → IPFS/Arweave → SAS — three network hops worst case. Mitigated by caching at every layer (see ADR-065 for the explicit caching strategy).
 - **Merge semantics are a convention, not a protocol rule.** Different consumers may weight Registry vs. SAS signals differently; cross-consumer consistency depends on adoption of the recommended convention (§4). This is an acceptable cost for a reputation *layer* — it would not be acceptable for a *protocol-logic* signal, but §5 keeps protocol logic in Registry.
 - **Credential authority governance is a new process surface.** Adding / removing authorities requires multisig action and a governance proposal (ADR-063). Bootstrap requires an initial credential creation ceremony.
 
 ### Neutral
-- **Validator crate `@aeap/capability-manifest-validator` (PR9) stays as-is.** It already validates `owner_attestation` as an optional base58 pubkey per ADR-060 §2. No SAS-specific validation in the manifest validator.
-- **`@aeap/sas-resolver` TS package is the only new code artifact** implied by this ADR, and it is explicitly out-of-scope here (tracked as ADR-064).
+- **Validator crate `@aep/capability-manifest-validator` (PR9) stays as-is.** It already validates `owner_attestation` as an optional base58 pubkey per ADR-060 §2. No SAS-specific validation in the manifest validator.
+- **`@aep/sas-resolver` TS package is the only new code artifact** implied by this ADR, and it is explicitly out-of-scope here (tracked as ADR-064).
 - **No impact on existing Registry, Vault, Settlement, or MCP-server behavior.** SAS resolution is strictly additive and strictly off-chain in v1.
 - **Option A remains available as a future superseding ADR** if a concrete need emerges.
 
 ## Open items / follow-up ADRs
 
-- **ADR-063**: AEAP SAS credential authority governance — multisig composition, proposal format, voting thresholds, rotation procedure, and bootstrap ceremony for the two v1 credentials (`AEAP_PROTOCOL`, `AEAP_VALIDATORS`).
-- **ADR-064**: `@aeap/sas-resolver` TS package — implementation PR for the §4 resolution flow, including batched-fetch API, allowlist handling, expiry / staleness flags, and merge-convention helpers.
+- **ADR-063**: AEP SAS credential authority governance — multisig composition, proposal format, voting thresholds, rotation procedure, and bootstrap ceremony for the two v1 credentials (`AEP_PROTOCOL`, `AEP_VALIDATORS`).
+- **ADR-064**: `@aep/sas-resolver` TS package — implementation PR for the §4 resolution flow, including batched-fetch API, allowlist handling, expiry / staleness flags, and merge-convention helpers.
 - **ADR-065**: Caching strategy for multi-fetch resolution — TTL policy per layer (Registry account, IPFS/Arweave manifest body, SAS attestation), invalidation hooks on Registry updates, and cross-process cache sharing (Redis vs. in-process) paralleling ADR-059's mutex decision.
 
 ## References
