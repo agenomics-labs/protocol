@@ -1,7 +1,7 @@
 # ADR-061: SAS integration model — manifest-referenced attestations, Registry keeps authoritative state
 
 ## Status
-Proposed
+Accepted
 
 ## Date
 2026-04-21
