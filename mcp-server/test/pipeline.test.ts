@@ -15,8 +15,18 @@ import { PublicKey } from "@solana/web3.js";
 import { z } from "zod";
 
 import {
-  IdempotencyStore,
+  InMemoryIdempotencyStore,
+  createIdempotencyStore,
+  activeIdempotencyBackend,
 } from "../src/pipeline/idempotency.js";
+import { RedisIdempotencyStore } from "../src/pipeline/idempotency-redis.js";
+// `ioredis-mock` ships a CommonJS default export whose constructor implements
+// the subset of the `ioredis` surface we touch (`set`, `get`, `del`, `eval`,
+// `quit`, …). We treat it as an opaque `RedisClient` for typing here — the
+// Redis store only needs structural compatibility (see RedisClient in
+// ../src/pipeline/idempotency-redis.ts).
+// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
+const IoRedisMock = require("ioredis-mock") as new () => any;
 import {
   executePreflight,
   __resetClusterHealthCacheForTests,
@@ -51,9 +61,9 @@ function tick(): Promise<void> {
 // IdempotencyStore
 // ==========================================================================
 
-describe("ADR-059 §5 IdempotencyStore", () => {
+describe("ADR-059 §5 InMemoryIdempotencyStore", () => {
   it("serializes concurrent calls with the same key (fn invoked once)", async () => {
-    const store = new IdempotencyStore({ ttlMs: 60_000 });
+    const store = new InMemoryIdempotencyStore({ ttlMs: 60_000 });
     let invocations = 0;
     let release: ((v: Result<number>) => void) | null = null;
 
@@ -82,7 +92,7 @@ describe("ADR-059 §5 IdempotencyStore", () => {
   });
 
   it("parallelizes calls with different keys", async () => {
-    const store = new IdempotencyStore({ ttlMs: 60_000 });
+    const store = new InMemoryIdempotencyStore({ ttlMs: 60_000 });
     let invocA = 0;
     let invocB = 0;
 
@@ -109,7 +119,7 @@ describe("ADR-059 §5 IdempotencyStore", () => {
 
   it("evicts entries after TTL elapses", async () => {
     // Short TTL to keep the test quick.
-    const store = new IdempotencyStore({ ttlMs: 50 });
+    const store = new InMemoryIdempotencyStore({ ttlMs: 50 });
     let invocations = 0;
     const fn = async () => {
       invocations++;
@@ -132,6 +142,155 @@ describe("ADR-059 §5 IdempotencyStore", () => {
     assert.deepEqual(r2, { ok: true, data: 2 }, "should re-run after TTL");
     assert.equal(invocations, 2);
     assert.equal(store.size(), 1);
+  });
+});
+
+// ==========================================================================
+// RedisIdempotencyStore (against ioredis-mock)
+// ==========================================================================
+
+describe("ADR-059 §5 RedisIdempotencyStore (ioredis-mock)", () => {
+  // Each test gets a fresh mock client so keys don't bleed across cases.
+  function freshClient() {
+    return new IoRedisMock();
+  }
+
+  it("serializes concurrent calls with the same key (fn invoked once)", async () => {
+    const client = freshClient();
+    const store = new RedisIdempotencyStore({
+      client,
+      prefix: "t1:",
+      resultTtlMs: 60_000,
+      pendingTtlMs: 5_000,
+      // Make the polling loop snappy so the test finishes quickly.
+      pollInitialMs: 2,
+      pollMaxMs: 10,
+      inflightWaitMs: 2_000,
+    });
+
+    let invocations = 0;
+    let release: ((v: Result<number>) => void) | null = null;
+    const fn = () =>
+      new Promise<Result<number>>((resolve) => {
+        invocations++;
+        release = resolve;
+      });
+
+    const p1 = store.acquire("same", fn);
+    // Yield so p1 takes the pending marker before p2/p3 try to SET NX.
+    await tick();
+    const p2 = store.acquire("same", fn);
+    const p3 = store.acquire("same", fn);
+    await tick();
+
+    assert.equal(invocations, 1, "fn should run exactly once");
+
+    release!(ok(42));
+    const [r1, r2, r3] = await Promise.all([p1, p2, p3]);
+
+    assert.deepEqual(r1, { ok: true, data: 42 });
+    assert.deepEqual(r2, { ok: true, data: 42 });
+    assert.deepEqual(r3, { ok: true, data: 42 });
+    assert.equal(invocations, 1);
+  });
+
+  it("returns the cached result on a subsequent acquire without re-invoking fn", async () => {
+    const client = freshClient();
+    const store = new RedisIdempotencyStore({
+      client,
+      prefix: "t2:",
+      resultTtlMs: 60_000,
+      pendingTtlMs: 5_000,
+    });
+
+    let invocations = 0;
+    const fn = async () => {
+      invocations++;
+      return ok({ answer: invocations });
+    };
+
+    const r1 = await store.acquire("k", fn);
+    assert.deepEqual(r1, { ok: true, data: { answer: 1 } });
+
+    const r2 = await store.acquire("k", fn);
+    assert.deepEqual(r2, { ok: true, data: { answer: 1 } }, "cache hit");
+    assert.equal(invocations, 1, "fn only ran on the first acquire");
+  });
+
+  it("evicts the cached result after TTL elapses (Redis PX expiry)", async () => {
+    const client = freshClient();
+    const store = new RedisIdempotencyStore({
+      client,
+      prefix: "t3:",
+      // Very short result TTL so the test stays quick.
+      resultTtlMs: 40,
+      pendingTtlMs: 5_000,
+    });
+
+    let invocations = 0;
+    const fn = async () => {
+      invocations++;
+      return ok(invocations);
+    };
+
+    const r1 = await store.acquire("k", fn);
+    assert.deepEqual(r1, { ok: true, data: 1 });
+
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    const r2 = await store.acquire("k", fn);
+    assert.deepEqual(r2, { ok: true, data: 2 }, "should re-run after TTL");
+    assert.equal(invocations, 2);
+  });
+
+  it("releases the pending marker when the handler throws (next acquire re-enters)", async () => {
+    const client = freshClient();
+    const store = new RedisIdempotencyStore({
+      client,
+      prefix: "t4:",
+      resultTtlMs: 60_000,
+      pendingTtlMs: 60_000,
+    });
+
+    let attempts = 0;
+    const flakyFn = async (): Promise<Result<string>> => {
+      attempts++;
+      if (attempts === 1) throw new Error("boom");
+      return ok("ok");
+    };
+
+    await assert.rejects(
+      () => store.acquire("k", flakyFn),
+      /boom/,
+    );
+
+    // Marker must be gone — next acquire must re-enter and succeed.
+    const pending = await client.get("t4:k");
+    assert.equal(pending, null, "pending marker should be released");
+
+    const r2 = await store.acquire("k", flakyFn);
+    assert.deepEqual(r2, { ok: true, data: "ok" });
+    assert.equal(attempts, 2, "handler was re-entered after the first throw");
+  });
+
+  it("factory selects Redis when AEAP_REDIS_URL is set, memory otherwise", () => {
+    const prev = process.env.AEAP_REDIS_URL;
+    try {
+      delete process.env.AEAP_REDIS_URL;
+      assert.equal(activeIdempotencyBackend(), "memory");
+      const memStore = createIdempotencyStore();
+      assert.ok(memStore instanceof InMemoryIdempotencyStore);
+
+      // Note: we don't instantiate with a live URL here — ioredis would
+      // attempt a real connection. activeIdempotencyBackend() reports the
+      // env-selected backend without constructing anything, which is the
+      // invariant we care about at startup logging time.
+      process.env.AEAP_REDIS_URL = "redis://localhost:6379";
+      assert.equal(activeIdempotencyBackend(), "redis");
+    } finally {
+      if (prev === undefined) delete process.env.AEAP_REDIS_URL;
+      else process.env.AEAP_REDIS_URL = prev;
+    }
   });
 });
 
