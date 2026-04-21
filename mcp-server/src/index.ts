@@ -11,12 +11,19 @@ import { createRpc } from "./solana-v2.js";
 
 import { createActionRouter } from "./adapters/mcp.js";
 import { allActions } from "./actions/index.js";
+import { activeIdempotencyBackend } from "./pipeline/idempotency.js";
 import type { ActionContext } from "./types/action.js";
 import type { Capability } from "./types/capability.js";
 
 /**
  * Agenomics MCP Server — all 23 actions dispatched through the ADR-058
  * capability-gated ActionRouter. Legacy switch-case dispatch retired in PR1.5.
+ *
+ * Replay-protection backend (ADR-059 §5) is selected by the `AEAP_REDIS_URL`
+ * environment variable:
+ *   - unset  → in-memory store (single-instance, PR5 default)
+ *   - set    → Redis-backed store (multi-instance safe; requires ioredis)
+ * See `./pipeline/idempotency.ts` and `./pipeline/idempotency-redis.ts`.
  */
 
 const server = new Server(
@@ -105,6 +112,12 @@ async function main() {
     `RPC (v2/kit):    ${process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com"}`,
   );
   console.error(`Actions: ${allActions.length} (all gated via ADR-058 router)`);
+  const idemBackend = activeIdempotencyBackend();
+  console.error(
+    `Idempotency store: ${idemBackend}${
+      idemBackend === "redis" ? ` (AEAP_REDIS_URL=${process.env.AEAP_REDIS_URL})` : " (set AEAP_REDIS_URL to enable Redis-backed replay protection)"
+    }`,
+  );
 }
 
 if (require.main === module) {
