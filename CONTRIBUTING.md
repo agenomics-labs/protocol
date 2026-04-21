@@ -1,0 +1,128 @@
+# Contributing
+
+Short guide for local setup and the checks CI enforces. If something
+here disagrees with CI, CI wins — file a patch.
+
+## One-time setup
+
+```sh
+# 1. Install the IDL-parity pre-commit hook.
+#    Auto-runs `scripts/sync-idl.sh` when programs/**/*.rs|toml is staged
+#    and blocks the commit if idl/*.json drifts from the staged baseline.
+./scripts/install-hooks.sh
+
+# 2. (Optional but recommended) install the full toolchain so the hook
+#    can actually regenerate IDL locally:
+rustup toolchain install stable
+sh -c "$(curl -sSfL https://release.anza.xyz/v3.1.13/install)"   # Solana CLI
+cargo install --git https://github.com/coral-xyz/anchor --tag v0.31.1 anchor-cli --locked
+```
+
+The hook skips cleanly when `anchor` isn't installed — CI still catches
+the drift, you just don't get the local guard.
+
+## Workspace layout
+
+```
+.
+├── programs/              Anchor programs (Rust, on-chain)
+│   ├── agent-vault/
+│   ├── agent-registry/
+│   └── settlement/
+├── idl/                   Committed IDL baseline (ci gate vs. anchor build)
+├── mcp-server/            MCP server exposing 24 AEAP actions to AI agents
+├── packages/              Publishable TS libraries
+│   ├── capability-manifest-validator/   ADR-060
+│   └── sas-resolver/                    ADR-061 + ADR-065
+├── src/
+│   ├── indexer/           Off-chain event indexer
+│   └── x402-relay/        HTTP-402 payment relay
+├── tests/                 Anchor integration tests (live validator)
+├── scripts/               Sync / deploy / smoke-test helpers
+└── docs/adr/              Architecture Decision Records
+```
+
+Inter-package graph:
+
+```
+mcp-server  ──(file:)──▶  @aeap/capability-manifest-validator
+                ─────▶    @aeap/sas-resolver  ──▶  uses @aeap/capability-manifest-validator types
+```
+
+## Common tasks
+
+```sh
+# Rust build + unit tests
+cargo test --workspace
+
+# Anchor build + IDL diff (matches the CI gate)
+anchor build && ./scripts/check-idl.sh
+
+# Anchor integration tests (local validator, 99 cases)
+anchor test
+
+# mcp-server unit tests (node:test + tsx, ~75 cases)
+cd mcp-server && npm install && npm test
+
+# Package-level tests
+cd packages/capability-manifest-validator && npm install && npm test
+cd packages/sas-resolver && npm install && npm test
+
+# Refresh the IDL baseline after a program change
+./scripts/sync-idl.sh
+```
+
+## CI jobs (what runs on every PR)
+
+All blocking unless noted.
+
+| Job | What it checks |
+|---|---|
+| Rust Check & Test | `cargo check` + `cargo test --workspace` |
+| Security Audit | `cargo audit` (advisory) |
+| Anchor Build & IDL Diff | `anchor build` + IDL matches `idl/*.json` |
+| Anchor Integration | `anchor test` against local validator (99 cases) |
+| Secret Scan | TruffleHog (PR diff or full history on main) |
+| TypeScript Check (mcp-server) | `tsc --noEmit` after building `@aeap/*` packages first |
+| mcp-server unit tests | `npm test` (node:test + tsx) |
+| TypeScript Check (capability-manifest-validator) | `tsc --noEmit` + `npm test` |
+| TypeScript Check (sas-resolver) | `tsc --noEmit` + `npm test` |
+| TypeScript Check (indexer) | `tsc --noEmit` in `src/indexer/` |
+| TypeScript Check (x402-relay) | `tsc --noEmit` in `src/x402-relay/` |
+
+## ADR conventions
+
+- Numbered sequentially. ADR-001 through ADR-065 are taken. Next free: ADR-062, ADR-066, ADR-067 (062 is the MPP wire format placeholder; 066/067 are speculative follow-ups from ADR-061/063).
+- `## Status` values: `Proposed` | `Accepted` | `Superseded by ADR-NNN`.
+- Structure: Context → Decision (numbered sections) → Alternatives Considered → Consequences (Positive/Negative/Neutral) → Open items → References.
+- Cross-reference with `docs/adr/ADR-NNN-*.md` (not web URLs).
+
+## Commit message style
+
+Conventional Commits. `feat(scope):`, `fix(scope):`, `docs(adr):`, `ci:`, `test:`, `infra:`, `chore:`. Scopes we use: `mcp-server`, `sas-resolver`, `agent-registry`, `settlement`, `preflight`, `pipeline`, `action`, `adr`. Keep the summary under 72 chars; wrap the body at 72.
+
+## PRs
+
+- Draft until tests pass locally.
+- Body must include: scope, what's deferred, test plan checkboxes.
+- Merge strategy: **squash**. Branches auto-delete on merge.
+- Never force-push to `main`. Never bypass the pre-commit hook with `--no-verify` (CI will reject anyway).
+
+## Publishing the TS packages
+
+Not currently automated. When we're ready:
+
+```sh
+cd packages/capability-manifest-validator && npm version patch && npm publish --access public
+cd packages/sas-resolver                  && npm version patch && npm publish --access public
+```
+
+Both are scoped under `@aeap/`. Bump the `file:` dep in
+`mcp-server/package.json` to the published version once published.
+
+## Things worth flagging when opening a PR
+
+- Program ADRs that touch `AgentProfile` account space — update `AgentProfile::SPACE` and the anchor tests that init profiles.
+- New preflight gates — update ADR-058 §2.1 (single source of truth), `types/capability.ts`, `pipeline/preflight-types.ts` context, `pipeline/preflight.ts` dispatch, and the relevant action declarations.
+- New MCP actions — update `src/actions/index.ts`, add a hand-written Tool descriptor in `src/tools/` if you want byte-identical `list_tools` wire output, and update the snapshot-count assertion in `test/action-shape.test.ts`.
+- New `file:` workspace deps — update the `typescript-check-mcp` and `mcp-server-tests` jobs in `ci.yml` to build the referenced package first.
