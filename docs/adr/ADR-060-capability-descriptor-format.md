@@ -97,7 +97,7 @@ interface RequiredCapability {
 }
 
 // PreflightGate — canonical definition in ADR-058 §2.1; referenced here, not redeclared.
-// Values: 'cluster_health' | 'account_rent_exempt' | 'daily_cap_not_exhausted' | 'dispute_window_open'.
+// Values: 'cluster_health' | 'account_rent_exempt' | 'daily_cap_not_exhausted' | 'token_daily_cap_not_exhausted' | 'dispute_window_open'.
 type PreflightGate = /* see ADR-058 §2.1 */;
 type SideEffect = 'read-onchain' | 'write-onchain' | 'signs-tx' | 'external-http' | 'emits-event';
 ```

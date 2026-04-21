@@ -4,16 +4,20 @@
 // ADR-058 §2.1 / `src/types/capability.ts`). `executePreflight` runs the
 // declared gates sequentially and returns the first failure.
 //
-// All four gates from ADR-058 §2.1 are implemented:
-//   - `cluster_health`            — getRecentPerformanceSamples + slot lag
-//   - `account_rent_exempt`       — recipient account already rent-exempt
-//   - `daily_cap_not_exhausted`   — vault.daily_limit - vault.spent_today
-//                                   >= requested amount (with UTC-midnight
-//                                   rollover); needs `vaultAddress` +
-//                                   `amountLamports` via PreflightInputContext
-//   - `dispute_window_open`       — escrow.disputed_at.is_some() AND
-//                                   now < escrow.deadline; needs
-//                                   `escrowAddress` via PreflightInputContext
+// All five gates from ADR-058 §2.1 are implemented:
+//   - `cluster_health`               — getRecentPerformanceSamples + slot lag
+//   - `account_rent_exempt`          — recipient account already rent-exempt
+//   - `daily_cap_not_exhausted`      — vault.daily_limit - vault.spent_today
+//                                      >= requested amount (SOL-denominated);
+//                                      needs `vaultAddress` + `amountLamports`
+//   - `token_daily_cap_not_exhausted`— per-mint analogue of the SOL gate; reads
+//                                      Vault.token_spend_records[mint] and
+//                                      checks both daily_limit and per_tx_limit;
+//                                      needs `vaultAddress` + `tokenMint` +
+//                                      `tokenAmountBaseUnits`
+//   - `dispute_window_open`          — escrow.disputed_at.is_some() AND
+//                                      now < escrow.deadline; needs
+//                                      `escrowAddress` via PreflightInputContext
 //
 // The last two gates live in `state-gates.ts` (split out to keep each file
 // under the 500-line project guideline); their public runners + the shared
@@ -31,8 +35,10 @@ import type {
 } from "./preflight-types.js";
 import {
   runDailyCapNotExhausted,
+  runTokenDailyCapNotExhausted,
   runDisputeWindowOpen,
   __resetVaultStateCacheForTests,
+  __resetVaultFullStateCacheForTests,
 } from "./state-gates.js";
 
 export type {
@@ -42,7 +48,10 @@ export type {
   PreflightDeps,
   PreflightInputContext,
 };
-export { __resetVaultStateCacheForTests };
+export {
+  __resetVaultStateCacheForTests,
+  __resetVaultFullStateCacheForTests,
+};
 
 // --------------------------------------------------------------------------
 // cluster_health
@@ -240,6 +249,8 @@ async function runGate(
       return runAccountRentExempt(deps);
     case "daily_cap_not_exhausted":
       return runDailyCapNotExhausted(deps, ctx, input);
+    case "token_daily_cap_not_exhausted":
+      return runTokenDailyCapNotExhausted(deps, ctx, input);
     case "dispute_window_open":
       return runDisputeWindowOpen(deps, ctx, input);
     default: {
