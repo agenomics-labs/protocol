@@ -182,15 +182,33 @@ async function main() {
   }
 
   // ==================== Step 2: test wallet + airdrop ====================
-  const testKp = Keypair.generate();
-  console.log(`\n--- Step 2: Test wallet: ${testKp.publicKey.toBase58()} ---`);
-  try {
-    const sig = await connection.requestAirdrop(testKp.publicKey, 2 * LAMPORTS_PER_SOL);
-    await connection.confirmTransaction(sig, "confirmed");
-    console.log("  Airdropped 2 SOL");
-  } catch (e) {
-    console.log(`  Airdrop failed (rate limited?): ${(e as Error).message}`);
-    process.exit(1);
+  // If SMOKE_TEST_KEYPAIR_PATH is set, load that keypair instead of generating
+  // a fresh one + airdropping. Useful when devnet airdrop is rate-limited or
+  // when you want repeatable smoke runs against the same test identity.
+  let testKp: Keypair;
+  const funderPath = process.env.SMOKE_TEST_KEYPAIR_PATH;
+  if (funderPath) {
+    const secret = JSON.parse(fs.readFileSync(funderPath, "utf8"));
+    testKp = Keypair.fromSecretKey(Uint8Array.from(secret));
+    const balance = await connection.getBalance(testKp.publicKey);
+    console.log(`\n--- Step 2: Test wallet (preloaded): ${testKp.publicKey.toBase58()} ---`);
+    console.log(`  Balance: ${(balance / LAMPORTS_PER_SOL).toFixed(4)} SOL (from ${funderPath})`);
+    if (balance < 0.5 * LAMPORTS_PER_SOL) {
+      console.log(`  Insufficient balance. Need >= 0.5 SOL for smoke test tx fees.`);
+      process.exit(1);
+    }
+  } else {
+    testKp = Keypair.generate();
+    console.log(`\n--- Step 2: Test wallet: ${testKp.publicKey.toBase58()} ---`);
+    try {
+      const sig = await connection.requestAirdrop(testKp.publicKey, 2 * LAMPORTS_PER_SOL);
+      await connection.confirmTransaction(sig, "confirmed");
+      console.log("  Airdropped 2 SOL");
+    } catch (e) {
+      console.log(`  Airdrop failed (rate limited?): ${(e as Error).message}`);
+      console.log(`  Retry with SMOKE_TEST_KEYPAIR_PATH=<funded keypair json>`);
+      process.exit(1);
+    }
   }
 
   const provider = new AnchorProvider(
@@ -275,6 +293,19 @@ async function main() {
   const validatorMod = await dynImport<typeof import("@agenomics/capability-manifest-validator")>(
     "@agenomics/capability-manifest-validator",
   );
+  // Read current on-chain capabilities so the manifest's capability name
+  // list is a superset (ADR-060 §1 invariant). Prior smoke runs may have
+  // registered the profile with different names than what fabricateManifest
+  // emits today — fetch live and merge.
+  let onChainCapabilities: string[] = ["smoke-test"];
+  try {
+    const existing = (await (registryProgram.account as any).agentProfile.fetch(profilePDA)) as any;
+    if (Array.isArray(existing.capabilities)) {
+      onChainCapabilities = existing.capabilities as string[];
+    }
+  } catch {
+    // Profile doesn't exist yet — just use the default.
+  }
   const manifest = fabricateManifest(testKp.publicKey, "SmokeTestAgent");
   const canonicalBytes = validatorMod.canonicalBytes(manifest);
   const manifestHash = validatorMod.manifestHash(manifest); // 32 bytes
@@ -298,7 +329,7 @@ async function main() {
           Array.from(manifestHash),
           Array.from(sigBytes),
           MANIFEST_VERSION_V1_0,
-          ["smoke-test"], // superset of on-chain capabilities
+          onChainCapabilities, // fetched live in Step 6; invariant: must be a superset of on-chain
         )
         .accounts({
           authority: testKp.publicKey,
