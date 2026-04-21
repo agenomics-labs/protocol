@@ -6,7 +6,10 @@ import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { Action, ActionContext, Result } from "../types/action.js";
-import { capabilityGated } from "./capability-gated-tool.js";
+import {
+  capabilityGated,
+  type CapabilityGatedOptions,
+} from "./capability-gated-tool.js";
 
 export interface ActionRouter {
   listToolsDescriptors(): Tool[];
@@ -15,13 +18,16 @@ export interface ActionRouter {
   dispatch(toolName: string, args: unknown, ctx: ActionContext): Promise<Result<unknown>>;
 }
 
-export function createActionRouter(rawActions: Action<any, any>[]): ActionRouter {
+export function createActionRouter(
+  rawActions: Action<any, any>[],
+  options: CapabilityGatedOptions = {},
+): ActionRouter {
   const actions = new Map<string, Action<any, any>>();
   for (const a of rawActions) {
     if (actions.has(a.name)) {
       throw new Error(`duplicate action name: ${a.name}`);
     }
-    actions.set(a.name, capabilityGated(a));
+    actions.set(a.name, capabilityGated(a, options));
   }
 
   return {
