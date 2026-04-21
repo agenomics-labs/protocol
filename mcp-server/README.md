@@ -76,7 +76,32 @@ export SOLANA_RPC_URL="https://api.devnet.solana.com"
 
 # Path to keypair file (defaults to ~/.config/solana/id.json)
 export SOLANA_KEYPAIR_PATH="/path/to/keypair.json"
+
+# Replay-protection backend (ADR-059 §5). Unset → in-memory store
+# (single-instance). Set to a redis:// URL → multi-instance-safe
+# Redis-backed store. Idempotent action results are JSON-serialized
+# under key prefix `aeap:idem:` with a 10-minute TTL.
+export AEAP_REDIS_URL="redis://localhost:6379"
 ```
+
+### Replay-protection backend (`AEAP_REDIS_URL`)
+
+Idempotent settlement actions (`submit_milestone`, `approve_milestone`,
+`resolve_dispute`, …) use a mutex-per-key store to collapse concurrent
+duplicate submits into a single on-chain effect. Two backends are
+available:
+
+| Backend   | Selected when       | Scope              | Dep       |
+| --------- | ------------------- | ------------------ | --------- |
+| in-memory | `AEAP_REDIS_URL` unset | single process  | none      |
+| Redis     | `AEAP_REDIS_URL` set   | multi-instance  | `ioredis` |
+
+**JSON serialization caveat.** The Redis backend serializes cached
+`Result<T>` values with `JSON.stringify`. `T` must therefore be JSON-safe
+— primitives, arrays, and plain objects are fine; `Map`, `Set`, `BigInt`,
+`Date`, functions, and circular references will not round-trip. All AEAP
+idempotent actions currently return plain string/number/boolean records,
+so this is not a practical constraint today.
 
 ## Usage with Claude
 

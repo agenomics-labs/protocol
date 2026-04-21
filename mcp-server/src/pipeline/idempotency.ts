@@ -1,23 +1,65 @@
-// ADR-059 §5 — Mutex-per-key replay protection, in-memory.
+// ADR-059 §5 — Replay-protection store.
 //
 // Two concurrent MCP calls with the same idempotency key should serialize
-// (both await the same in-flight Promise) and, once finished, return the
-// cached Result to subsequent calls for a short TTL window. Redis-backed
-// multi-instance mode is explicitly deferred (see ADR-059 §5 / Negative
-// Consequences). This module is single-process only.
+// (both await the same in-flight work) and, once finished, return the
+// cached Result to subsequent calls for a short TTL window.
 //
-// Semantics:
+// Single-instance deployments use `InMemoryIdempotencyStore` (this file).
+// Multi-instance deployments opt into `RedisIdempotencyStore`
+// (`./idempotency-redis.ts`) by setting `AEAP_REDIS_URL`. See ADR-059 §5
+// "Consequences → Negative" — the Redis backend was deferred in PR5 and is
+// delivered in this PR.
+//
+// Public surface:
+//   - `IdempotencyStore` interface — the contract all backends implement.
+//   - `InMemoryIdempotencyStore` — single-process map-backed implementation
+//     (the original PR5 class, renamed).
+//   - `createIdempotencyStore()` — env-driven factory.
+//   - `getIdempotencyStore()` — module-level singleton accessor.
+//
+// Semantics (shared across backends):
 //   - `acquire(key, fn)`:
-//       * if a promise for `key` is currently in-flight OR its cache window
-//         has not expired, await the cached promise and return its Result;
+//       * if a prior in-flight OR cached-and-unexpired result exists for
+//         `key`, await it and return its Result;
 //       * otherwise call `fn()`, cache the promise, install a TTL-bound
 //         eviction timer, and return the result.
-//   - Failures are cached just like successes: two concurrent submits with
-//     the same key observe the same error (correct — they are the same
-//     conceptual request). Callers that want retry-on-error must vary the
-//     key.
+//   - Failures (rejected `Result` / `{ ok: false }`) are cached just like
+//     successes: two concurrent submits with the same key observe the same
+//     error (they are the same conceptual request). Callers that want
+//     retry-on-error must vary the key.
 
 import type { Result } from "../types/action.js";
+
+// --------------------------------------------------------------------------
+// Contract
+// --------------------------------------------------------------------------
+
+/**
+ * Replay-protection store contract (ADR-059 §5).
+ *
+ * All backends (in-memory, Redis) implement this interface. `acquire`
+ * de-duplicates concurrent callers with the same key against a single
+ * in-flight invocation of `fn`, then caches the resulting `Result<T>` for
+ * a TTL-bounded window.
+ */
+export interface IdempotencyStore {
+  /**
+   * Acquire the mutex for `key` and run `fn` if no prior in-flight or
+   * cached-and-unexpired result exists. Concurrent callers receive the
+   * same Result.
+   */
+  acquire<T>(key: string, fn: () => Promise<Result<T>>): Promise<Result<T>>;
+
+  /** Drop a specific key from the cache (test / admin hook). */
+  invalidate(key: string): void | Promise<void>;
+
+  /** Drop everything (test hook). */
+  clear(): void | Promise<void>;
+}
+
+// --------------------------------------------------------------------------
+// In-memory backend (PR5, renamed — the canonical single-instance path)
+// --------------------------------------------------------------------------
 
 interface Entry {
   promise: Promise<Result<unknown>>;
@@ -25,7 +67,7 @@ interface Entry {
   timer: NodeJS.Timeout | null;
 }
 
-export interface IdempotencyStoreOptions {
+export interface InMemoryIdempotencyStoreOptions {
   /** Cache TTL in milliseconds. Defaults to 10 minutes per ADR-059 §5. */
   ttlMs?: number;
   /** Test hook. */
@@ -34,22 +76,16 @@ export interface IdempotencyStoreOptions {
 
 const DEFAULT_TTL_MS = 10 * 60 * 1000;
 
-export class IdempotencyStore {
+export class InMemoryIdempotencyStore implements IdempotencyStore {
   private readonly store = new Map<string, Entry>();
   private readonly ttlMs: number;
   private readonly now: () => number;
 
-  constructor(opts: IdempotencyStoreOptions = {}) {
+  constructor(opts: InMemoryIdempotencyStoreOptions = {}) {
     this.ttlMs = opts.ttlMs ?? DEFAULT_TTL_MS;
     this.now = opts.now ?? Date.now;
   }
 
-  /**
-   * Acquire the mutex for `key` and run `fn` if no prior in-flight or
-   * cached-and-unexpired result exists. Concurrent callers receive the same
-   * Promise. On completion the Promise remains cached until `ttlMs`
-   * elapses, then is evicted by a timer.
-   */
   acquire<T>(
     key: string,
     fn: () => Promise<Result<T>>,
@@ -118,13 +154,51 @@ export class IdempotencyStore {
 }
 
 // --------------------------------------------------------------------------
+// Factory — env-driven backend selection (ADR-059 §5)
+// --------------------------------------------------------------------------
+
+/**
+ * Build the idempotency store implied by the current process env.
+ *
+ * - `AEAP_REDIS_URL` set → returns a `RedisIdempotencyStore` bound to that
+ *   URL (multi-instance replay protection).
+ * - Otherwise → returns an `InMemoryIdempotencyStore` (single-instance).
+ *
+ * Loaded lazily so that in-memory deployments never pay the `ioredis`
+ * import cost and test runs without Redis never trip over module-load
+ * side effects.
+ */
+export function createIdempotencyStore(): IdempotencyStore {
+  const redisUrl = process.env.AEAP_REDIS_URL;
+  if (redisUrl && redisUrl.length > 0) {
+    // Lazy require — keeps the in-memory path from pulling in `ioredis`.
+    // `require` (vs. dynamic `import()`) is deliberate: the factory stays
+    // synchronous so the module-level singleton accessor below can remain
+    // a simple `function(): IdempotencyStore`.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const mod = require("./idempotency-redis.js") as {
+      RedisIdempotencyStore: new (opts: { url: string }) => IdempotencyStore;
+    };
+    return new mod.RedisIdempotencyStore({ url: redisUrl });
+  }
+  return new InMemoryIdempotencyStore();
+}
+
+/** Returns `"redis"` or `"memory"` — used at startup logging. */
+export function activeIdempotencyBackend(): "redis" | "memory" {
+  return process.env.AEAP_REDIS_URL && process.env.AEAP_REDIS_URL.length > 0
+    ? "redis"
+    : "memory";
+}
+
+// --------------------------------------------------------------------------
 // Module-level singleton (PR3 — DI comes later, see ADR-059 §5).
 // --------------------------------------------------------------------------
 
 let singleton: IdempotencyStore | null = null;
 
 export function getIdempotencyStore(): IdempotencyStore {
-  if (!singleton) singleton = new IdempotencyStore();
+  if (!singleton) singleton = createIdempotencyStore();
   return singleton;
 }
 

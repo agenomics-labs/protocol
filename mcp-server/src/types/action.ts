@@ -4,6 +4,7 @@ import type { z, ZodRawShape, ZodType } from "zod";
 import type { PublicKey } from "@solana/web3.js";
 import type { TransactionSigner } from "@solana/kit";
 import type { Capability, PreflightGate } from "./capability.js";
+import type { PreflightInputContext } from "../pipeline/preflight-types.js";
 
 export type SigningMode = "signed" | "passthrough";
 
@@ -70,6 +71,19 @@ export interface Action<I = unknown, O = unknown> {
   readOnly: boolean;
   capabilities: Capability[];
   preflight?: PreflightGate[];
+  /**
+   * Optional per-input preflight context provider. Called at dispatch time
+   * to extract the narrow subset of state-lookup inputs each gate requires
+   * (e.g. `vaultAddress` + `amountLamports` for `daily_cap_not_exhausted`,
+   * `escrowAddress` for `dispute_window_open`). See
+   * `pipeline/preflight.ts#PreflightInputContext` for the supported fields.
+   *
+   * If a declared gate requires a field and `preflightContext` is missing
+   * or returns an object without it, the gate fails with PREFLIGHT_FAILED —
+   * that's a programmer error (action declares a gate but doesn't plumb
+   * its inputs) and we surface it loudly rather than silently bypass.
+   */
+  preflightContext?: (input: I) => PreflightInputContext;
 
   idempotent?: boolean;
   idempotencyKey?: (input: I) => string;

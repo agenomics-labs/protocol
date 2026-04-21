@@ -174,7 +174,7 @@ Rejected for v1. JSON is debuggable, inspectable in browsers, and trivial to val
 ## Open items
 
 - Manifest validator crate (`@aeap/capability-manifest-validator`) — separate work item.
-- ADR-061 (planned): how agents reference SAS attestations via `owner_attestation`.
+- ADR-061 (Proposed): how agents reference SAS attestations via `owner_attestation` — resolves the SAS-integration-depth open question with manifest-referenced, loosely-coupled resolution.
 - Indexer crate to build a searchable capability index from Registry + IPFS/Arweave — separate work item.
 
 ## References

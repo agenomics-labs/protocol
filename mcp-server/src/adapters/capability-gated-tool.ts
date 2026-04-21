@@ -68,12 +68,17 @@ export function capabilityGated<I, O>(
       }
 
       // ADR-059 §6 — preflight gates. Runs BEFORE the handler so a failing
-      // gate short-circuits without any side effect.
+      // gate short-circuits without any side effect. `preflightContext` (PR6)
+      // lets gates that need input-derived data (vault address + amount,
+      // escrow address, ...) receive it without coupling the preflight
+      // layer to the full Action input schema.
       if (action.preflight && action.preflight.length > 0) {
+        const inputContext = action.preflightContext?.(input);
         const preflightResult = await executePreflight(
           action.preflight,
           ctx,
           options.preflightDeps ?? {},
+          inputContext,
         );
         if (!preflightResult.ok) {
           return preflightResult as Result<O>;
