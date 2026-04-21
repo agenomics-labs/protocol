@@ -29,38 +29,68 @@ function ctxWith(
 
 describe("ADR-058 Action pipeline", () => {
   describe("non-breaking tool set (ADR-058 §8)", () => {
-    it("exposes all 23 existing tool names", () => {
+    it("exposes all 24 existing tool names", () => {
       const names = allTools.map((t) => t.name).sort();
-      assert.equal(names.length, 23);
+      assert.equal(names.length, 24);
       assert.ok(names.includes("create_vault"));
       assert.ok(names.includes("register_agent"));
       assert.ok(names.includes("create_escrow"));
+      assert.ok(names.includes("get_agent_reputation"));
     });
 
-    it("the ADR-058 router handles all 23 tools (PR1.5 full migration)", () => {
+    it("the ADR-058 router handles all 24 tools", () => {
       const allNames = new Set(allTools.map((t) => t.name));
       for (const routed of actionRouter.names()) {
         assert.ok(allNames.has(routed), `routed action '${routed}' missing from allTools`);
       }
-      assert.equal(pilotActionNames.size, 23);
+      assert.equal(pilotActionNames.size, 24);
       assert.deepEqual(actionRouter.names().sort(), [...allNames].sort());
     });
   });
 
-  describe("readOnly action shape (PR1.5)", () => {
-    it("all 4 read actions declare readOnly:true + empty capabilities[]", () => {
+  describe("readOnly action shape (PR1.5 + get_agent_reputation)", () => {
+    it("all 5 read actions declare readOnly:true + empty capabilities[]", () => {
       const readOnlyNames = new Set([
         "get_vault_info",
         "get_agent_profile",
         "discover_agents",
         "get_escrow_status",
+        "get_agent_reputation",
       ]);
       const readOnly = pilotActions.filter((a) => readOnlyNames.has(a.name));
-      assert.equal(readOnly.length, 4, "expected 4 readOnly actions");
+      assert.equal(readOnly.length, 5, "expected 5 readOnly actions");
       for (const a of readOnly) {
         assert.equal(a.readOnly, true, `${a.name} should be readOnly:true`);
         assert.equal(a.capabilities.length, 0, `${a.name} should have empty capabilities[]`);
         assert.ok(!a.requiresSigner, `${a.name} should not require signer`);
+      }
+    });
+
+    it("get_agent_reputation is registered and bypasses the capability gate", async () => {
+      const action = pilotActions.find((a) => a.name === "get_agent_reputation");
+      assert.ok(action, "get_agent_reputation should be in pilotActions");
+      assert.equal(action!.readOnly, true);
+      assert.equal(action!.capabilities.length, 0);
+      assert.ok(!action!.requiresSigner);
+      assert.ok(actionRouter.names().includes("get_agent_reputation"));
+
+      // Dispatch with a zero-capability wallet. Input is zod-valid
+      // (agentAddress is optional), so we must get past the gate and
+      // into the handler. The handler then fails because no RPC /
+      // keypair is configured in-process — `wrap()` surfaces that as
+      // PROGRAM_ERROR. The point of this assertion is that we see
+      // anything OTHER than CAPABILITY_MISSING / SIGNER_UNAVAILABLE /
+      // INVALID_INPUT, which would indicate the gate is misconfigured.
+      const ctx = ctxWith([]);
+      const result = await actionRouter.dispatch(
+        "get_agent_reputation",
+        {},
+        ctx,
+      );
+      if (!result.ok) {
+        assert.notEqual(result.error.code, "CAPABILITY_MISSING");
+        assert.notEqual(result.error.code, "SIGNER_UNAVAILABLE");
+        assert.notEqual(result.error.code, "INVALID_INPUT");
       }
     });
   });

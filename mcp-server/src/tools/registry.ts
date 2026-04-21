@@ -148,3 +148,19 @@ export const stakeReputationTool: Tool = {
     required: ["amount"],
   },
 };
+
+export const getAgentReputationTool: Tool = {
+  name: "get_agent_reputation",
+  description:
+    "Fetches the merged reputation snapshot for an agent: on-chain Registry native state (reputation_score, stake, slash_count, status, avg_rating, total_tasks_completed) + capability manifest summary (fetched from IPFS and validated via @aeap/capability-manifest-validator) + optional SAS attestation signal (resolved via @aeap/sas-resolver). Read-only.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      agentAddress: {
+        type: "string",
+        description:
+          "Public key (authority) of the agent to look up. If omitted, returns this agent's snapshot.",
+      },
+    },
+  },
+};

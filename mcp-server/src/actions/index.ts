@@ -1,4 +1,4 @@
-// All 23 MCP Actions registered through the ADR-058 Action<I, O> shape.
+// All 24 MCP Actions registered through the ADR-058 Action<I, O> shape.
 // Legacy switch-case dispatch in src/index.ts is retired.
 
 import type { Action } from "../types/action.js";
@@ -19,6 +19,7 @@ import {
   discoverAgentsAction,
   stakeReputationAction,
 } from "./registry.js";
+import { getAgentReputationAction } from "./reputation.js";
 import {
   createEscrowAction,
   acceptTaskAction,
@@ -42,12 +43,13 @@ export const allActions: Action<any, any>[] = [
   pauseVaultAction,
   resumeVaultAction,
   manageAllowlistAction,
-  // Registry (5)
+  // Registry (5) + reputation snapshot (1)
   registerAgentAction,
   getAgentProfileAction,
   updateAgentProfileAction,
   discoverAgentsAction,
   stakeReputationAction,
+  getAgentReputationAction,
   // Settlement (10)
   createEscrowAction,
   acceptTaskAction,

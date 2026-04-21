@@ -19,6 +19,7 @@ export {
   updateAgentProfileTool,
   discoverAgentsTool,
   stakeReputationTool,
+  getAgentReputationTool,
 } from "./registry.js";
 
 // Re-export all settlement tools
@@ -53,6 +54,7 @@ import {
   updateAgentProfileTool,
   discoverAgentsTool,
   stakeReputationTool,
+  getAgentReputationTool,
 } from "./registry.js";
 
 import {
@@ -69,10 +71,10 @@ import {
 } from "./settlement.js";
 
 /**
- * All 22 Agenomics MCP tools organized by domain:
+ * All 24 Agenomics MCP tools organized by domain:
  * - Vault (8): Agent wallet management with spending policies
- * - Registry (5): Agent discovery and reputation
- * - Settlement (9): Escrow lifecycle and milestone-based payments
+ * - Registry (5) + reputation snapshot (1): Agent discovery and reputation
+ * - Settlement (10): Escrow lifecycle and milestone-based payments
  */
 export const allTools: Tool[] = [
   // Vault
@@ -90,6 +92,7 @@ export const allTools: Tool[] = [
   updateAgentProfileTool,
   discoverAgentsTool,
   stakeReputationTool,
+  getAgentReputationTool,
   // Settlement
   createEscrowTool,
   acceptTaskTool,
@@ -117,6 +120,7 @@ export type ToolName =
   | "update_agent_profile"
   | "discover_agents"
   | "stake_reputation"
+  | "get_agent_reputation"
   | "create_escrow"
   | "accept_task"
   | "submit_milestone"
