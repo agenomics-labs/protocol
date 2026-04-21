@@ -69,10 +69,11 @@ The following types are defined **once here** and referenced by ADR-059 and ADR-
 ```ts
 // Preflight gates — values referenced by Action.preflight (§2); semantics elaborated in ADR-059 §6
 type PreflightGate =
-    | 'cluster_health'            // getRecentPerformanceSamples + slot lag < 150
-    | 'account_rent_exempt'       // recipient ATA exists + rent-exempt
-    | 'daily_cap_not_exhausted'   // vault usage cap check
-    | 'dispute_window_open';      // settlement timing gate
+    | 'cluster_health'                 // getRecentPerformanceSamples + slot lag < 150
+    | 'account_rent_exempt'            // recipient ATA exists + rent-exempt
+    | 'daily_cap_not_exhausted'        // SOL-denominated vault daily cap check
+    | 'token_daily_cap_not_exhausted'  // per-mint SPL daily cap check (vault.token_spend_records[mint])
+    | 'dispute_window_open';           // settlement timing gate
 
 // Signing mode — set per-request on ActionContext; selects between custody-free (default) and signed execution
 type SigningMode = 'signed' | 'passthrough';

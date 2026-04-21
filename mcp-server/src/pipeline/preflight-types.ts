@@ -62,10 +62,24 @@ export interface PreflightDeps {
  * than silently bypassing the check.
  */
 export interface PreflightInputContext {
-  /** Required by `daily_cap_not_exhausted`. PDA of the agent's vault. */
+  /**
+   * Required by `daily_cap_not_exhausted` (SOL) and
+   * `token_daily_cap_not_exhausted` (SPL). PDA of the agent's vault.
+   */
   vaultAddress?: string;
   /** Required by `daily_cap_not_exhausted`. Amount requested, in lamports. */
   amountLamports?: bigint;
+  /**
+   * Required by `token_daily_cap_not_exhausted`. SPL mint address whose
+   * per-mint daily cap is being checked.
+   */
+  tokenMint?: string;
+  /**
+   * Required by `token_daily_cap_not_exhausted`. Amount requested, in the
+   * token's base units (i.e. what the on-chain program compares against
+   * `TokenSpendRecord.daily_limit` / `per_tx_limit` — NOT UI units).
+   */
+  tokenAmountBaseUnits?: bigint;
   /** Required by `dispute_window_open`. PDA of the escrow under consideration. */
   escrowAddress?: string;
 }

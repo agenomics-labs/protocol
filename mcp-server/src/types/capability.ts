@@ -14,6 +14,7 @@ export type PreflightGate =
   | "cluster_health"
   | "account_rent_exempt"
   | "daily_cap_not_exhausted"
+  | "token_daily_cap_not_exhausted"
   | "dispute_window_open";
 
 export type SideEffect =
