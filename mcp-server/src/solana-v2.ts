@@ -20,6 +20,7 @@
 
 import {
   createSolanaRpc,
+  createSolanaRpcSubscriptions,
   getAddressEncoder,
   getProgramDerivedAddress,
   address as toAddressBrand,
@@ -52,8 +53,10 @@ export const ASSOCIATED_TOKEN_PROGRAM_ADDRESS: Address =
 // ==================== RPC ====================
 
 type SolanaRpc = ReturnType<typeof createSolanaRpc>;
+export type SolanaRpcSubscriptions = ReturnType<typeof createRpcSubscriptions>;
 
 let _rpc: SolanaRpc | null = null;
+let _rpcSubscriptions: ReturnType<typeof createSolanaRpcSubscriptions> | null = null;
 
 /**
  * Lazily create (or return the cached) Kit RPC client.
@@ -70,10 +73,51 @@ export function createRpc(): SolanaRpc {
 }
 
 /**
- * Reset the cached RPC. Intended for tests only.
+ * Derive a WebSocket URL for the Kit RPC-subscriptions client.
+ *
+ * Precedence (highest → lowest):
+ *   1. `SOLANA_WS_URL`           — explicit override (any ws:// or wss:// URL)
+ *   2. `SOLANA_RPC_URL` rewritten — `http://` → `ws://`, `https://` → `wss://`
+ *   3. `wss://api.devnet.solana.com` — matches the HTTP default above
+ *
+ * Exported for unit tests; the runtime caller should use
+ * {@link createRpcSubscriptions}.
+ */
+export function resolveWsUrl(): string {
+  const explicit = process.env.SOLANA_WS_URL;
+  if (explicit && explicit.length > 0) return explicit;
+  const http = process.env.SOLANA_RPC_URL;
+  if (http && http.length > 0) {
+    if (http.startsWith("https://")) return "wss://" + http.slice("https://".length);
+    if (http.startsWith("http://")) return "ws://" + http.slice("http://".length);
+    // If it's already a ws(s):// URL or something else, pass it through verbatim.
+    return http;
+  }
+  return "wss://api.devnet.solana.com";
+}
+
+/**
+ * Lazily create (or return the cached) Kit RPC-subscriptions (WebSocket)
+ * client.
+ *
+ * Shape mirrors {@link createRpc}: module-level memoization, env-driven URL,
+ * devnet default. Used by `handlers-v2/vault.ts` to build the real
+ * `sendAndConfirmTransactionFactory({ rpc, rpcSubscriptions })` when the
+ * v2 env flag flips on.
+ */
+export function createRpcSubscriptions(): ReturnType<typeof createSolanaRpcSubscriptions> {
+  if (!_rpcSubscriptions) {
+    _rpcSubscriptions = createSolanaRpcSubscriptions(resolveWsUrl());
+  }
+  return _rpcSubscriptions;
+}
+
+/**
+ * Reset the cached RPC + RPC-subscriptions clients. Intended for tests only.
  */
 export function __resetRpcForTests(): void {
   _rpc = null;
+  _rpcSubscriptions = null;
 }
 
 // ==================== SIGNER ====================
