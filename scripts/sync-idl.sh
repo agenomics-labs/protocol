@@ -8,6 +8,9 @@
 # CI enforces that `idl/*.json` matches the output of `anchor build`.
 #
 # Usage: ./scripts/sync-idl.sh
+#
+# For automatic drift prevention at commit time, also run once after
+# cloning: ./scripts/install-hooks.sh
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
