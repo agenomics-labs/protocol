@@ -1,7 +1,7 @@
 # ADR-060: AEAP capability descriptor format — off-chain manifest, on-chain pointer
 
 ## Status
-Proposed
+Accepted
 
 ## Date
 2026-04-21
@@ -46,6 +46,15 @@ Rationale:
 - **Signature** ensures the manifest was published by the agent's authority, not an impostor.
 - **Version** enables schema evolution with compatibility windows.
 
+**Relationship to the existing `AgentProfile.capabilities: Vec<String>`.** `programs/agent-registry/src/state.rs:26` already stores a free-form capability string list, added in earlier ADRs and used for on-chain agent discovery via memcmp-filtered queries (ADR-004, ADR-042). This ADR does **not** remove it. The two systems coexist with clearly divided roles:
+
+| Field | Role | Source of truth |
+|---|---|---|
+| `AgentProfile.capabilities: Vec<String>` (on-chain) | Denormalized **searchable index** for fast discovery — holds a subset of the manifest's capability `name` strings, bounded by existing registry caps. | No — derived view. |
+| `CapabilityManifest.capabilities[]` (off-chain) | Authoritative programmatic contract — typed I/O, cost, required capabilities, preflight, side effects, stability. | Yes. |
+
+On any manifest publish or update, the Registry program MUST re-validate the invariant `Vec<String> ⊆ {manifest.capabilities[].name}`. Drift invalidates the manifest (`manifest_hash` verification fails at the off-chain validator). A future ADR may retire the `Vec<String>` once a capability indexer service replaces the on-chain discovery path; it stays for this ADR.
+
 ### 2. Manifest schema (v1.0)
 
 ```ts
@@ -87,7 +96,9 @@ interface RequiredCapability {
     rationale?: string;
 }
 
-type PreflightGate = 'cluster_health' | 'account_rent_exempt' | 'daily_cap_not_exhausted' | 'dispute_window_open';
+// PreflightGate — canonical definition in ADR-058 §2.1; referenced here, not redeclared.
+// Values: 'cluster_health' | 'account_rent_exempt' | 'daily_cap_not_exhausted' | 'dispute_window_open'.
+type PreflightGate = /* see ADR-058 §2.1 */;
 type SideEffect = 'read-onchain' | 'write-onchain' | 'signs-tx' | 'external-http' | 'emits-event';
 ```
 

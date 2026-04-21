@@ -1,7 +1,7 @@
 # ADR-058: Action shape + CapabilityGatedTool + @solana/keychain-core adoption for mcp-server
 
 ## Status
-Proposed
+Accepted
 
 ## Date
 2026-04-21
@@ -62,6 +62,30 @@ interface Action<I, O> {
 }
 ```
 
+### 2.1 Shared taxonomy types (canonical)
+
+The following types are defined **once here** and referenced by ADR-059 and ADR-060. If a value is added or removed, this section is the single source of truth — downstream ADRs link, not redeclare.
+
+```ts
+// Preflight gates — values referenced by Action.preflight (§2); semantics elaborated in ADR-059 §6
+type PreflightGate =
+    | 'cluster_health'            // getRecentPerformanceSamples + slot lag < 150
+    | 'account_rent_exempt'       // recipient ATA exists + rent-exempt
+    | 'daily_cap_not_exhausted'   // vault usage cap check
+    | 'dispute_window_open';      // settlement timing gate
+
+// Signing mode — set per-request on ActionContext; selects between custody-free (default) and signed execution
+type SigningMode = 'signed' | 'passthrough';
+
+interface ActionContext {
+    mode: SigningMode;
+    signer: SolanaSigner | null;             // non-null iff mode === 'signed'
+    wallet: { capabilities: Set<Capability> };
+    connection: Connection;
+    // ...handler-specific fields
+}
+```
+
 ### 3. Capability taxonomy (default-deny)
 
 ```ts
@@ -107,7 +131,7 @@ function capabilityGated<I, O>(action: Action<I, O>): Action<I, O> {
 
 - **`KeychainSignerAdapter`** (production): wraps any `@solana/keychain-core` backend (Vault/Privy/Turnkey/etc.) as a `SolanaSigner`. This is the default path for real signers.
 - **`KeypairSigner`** (dev only): wraps a local Keypair. Gated behind explicit `--allow-dev-keypair` CLI flag. Fails to boot without the flag.
-- **`PassthroughSigner`** (**default for hosted MCP**): implements `SolanaSigner` but `signTransactions` does not sign — instead, the Action handler returns the unsigned-tx MCP response (§6) and the caller signs with their own wallet. Custody-free MCP by default.
+- **`PassthroughSigner`** (**default for hosted MCP**): **not a `SolanaSigner` implementation** — implementing it would violate `@solana/keychain-core`'s `TransactionPartialSigner` contract (which mandates returning real `SignatureDictionary[]`) and break downstream `framework-kit` helpers that expect a signed artifact. Instead, `PassthroughSigner` is a sentinel represented on `ActionContext` as `mode: 'passthrough'` with `signer: null` (see §2.1). In this mode the Action handler constructs and simulates the transaction, then returns the unsigned-tx MCP response shape (§6); the MCP client signs and submits with its own wallet. Custody-free MCP by default. A handler in `passthrough` mode that dereferences `ctx.signer` is a programmer error — the `CapabilityGatedTool` wrapper (§4) throws `SIGNER_UNAVAILABLE` before calling the handler if the handler declares `requiresSigner: true` while `mode === 'passthrough'`.
 
 ### 6. Unsigned-tx MCP response convention
 

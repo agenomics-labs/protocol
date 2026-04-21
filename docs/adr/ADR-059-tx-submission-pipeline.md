@@ -1,7 +1,7 @@
 # ADR-059: Transaction submission pipeline — framework-kit adoption, replay protection, per-action preflight
 
 ## Status
-Proposed
+Accepted
 
 ## Date
 2026-04-21
@@ -104,44 +104,52 @@ Key differences from agent-kit's `sendTx`:
 - Rebroadcasts on expiry instead of failing.
 - Returns typed `AeapError` (per ADR-058 error shape) on exhaustion.
 
-### 5. Mutex-per-signature replay protection (port from `solana-mpp`)
+### 5. Mutex-per-key replay protection (port from `solana-mpp`, adapted)
 
-Settlement-submit actions (`submitMilestone`, `approveSettlement`, `resolveDispute`) must be idempotent against retry. Port the `solana-mpp` pattern:
+Settlement-submit actions (`submit_milestone`, `approve_milestone`, `resolve_dispute`) must be idempotent against retry. Port the `solana-mpp` pattern, **keyed by explicit input-derived string rather than signature** (because PassthroughSigner is the default — see below):
 
-- Storage: in-memory `Map<Signature, Promise<Result>>` for single-instance deployments; Redis `SET <sig> NX EX <ttl>` for multi-instance.
-- Lifecycle: on verification request, acquire mutex for the signature; if already held, await the in-flight Promise; if completed, return cached Result.
+- Storage: in-memory `Map<IdempotencyKey, Promise<Result>>` for single-instance deployments; Redis `SET <key> NX EX <ttl>` for multi-instance.
+- Lifecycle: on request, acquire mutex for the key; if already held, await the in-flight Promise; if completed, return cached Result.
 - TTL: 10 minutes post-finalization (longer than finality window).
-- Gate: only applies to actions declaring `idempotent: true` (new optional field on `Action<I, O>`).
+- Gate: only applies to actions declaring `idempotent: true`.
 
 ```ts
 interface Action<I, O> {
     // ...ADR-058 fields...
-    idempotent?: boolean;           // if true, enforces mutex-per-signature
-    idempotencyKey?: (input: I) => string;  // defaults to first-signer signature
+    idempotent?: boolean;
+    idempotencyKey?: (input: I) => string;  // REQUIRED if idempotent: true (see keying rules below)
 }
 ```
 
+**Keying rules.** `PassthroughSigner` is the default (ADR-058 §5) — no signature exists at the MCP boundary, so signature-based keying is unavailable. Every idempotent action MUST declare an explicit `idempotencyKey` function derived purely from inputs:
+
+| Action | Recommended key |
+|---|---|
+| `submit_milestone` | `${escrow_pda}:${milestone_index}:submit` |
+| `approve_milestone` | `${escrow_pda}:${milestone_index}:approve` |
+| `reject_milestone` | `${escrow_pda}:${milestone_index}:reject` |
+| `resolve_dispute` | `${dispute_pda}:${resolution_code}` |
+| `resolve_dispute_timeout` | `${dispute_pda}:timeout` |
+
+Registration-time validation: if `idempotent: true` and `idempotencyKey` is unset, the server fails to boot. A signature-based fallback is explicitly **not** provided — requiring a real signer would force every deployment off the custody-free default, which is the wrong tradeoff for correctness of settlement submits.
+
 ### 6. Per-action preflight gates
 
-Preflight is **opt-in per action**, not a global gate:
+Preflight is **opt-in per action**, not a global gate. The `PreflightGate` enum is defined canonically in **ADR-058 §2.1** — this ADR references it rather than redeclaring, so values cannot drift between the MCP action runtime and the manifest schema (ADR-060).
 
 ```ts
-type PreflightGate =
-    | 'cluster_health'            // getRecentPerformanceSamples + slot lag < 150
-    | 'account_rent_exempt'       // recipient ATA exists + rent-exempt
-    | 'daily_cap_not_exhausted'   // vault usage cap check
-    | 'dispute_window_open';      // settlement timing gate
-
 interface Action<I, O> {
     // ...
-    preflight?: PreflightGate[];
+    preflight?: PreflightGate[];   // canonical type in ADR-058 §2.1
 }
 ```
 
 Examples:
-- `submitMilestone`: `['cluster_health', 'account_rent_exempt']`
+- `submit_milestone`: `['cluster_health', 'account_rent_exempt']`
 - `reconfigureVault` (async): no preflight
-- `resolveDispute`: `['dispute_window_open']`
+- `resolve_dispute`: `['dispute_window_open']`
+
+Adding a new gate requires updating ADR-058 §2.1 first; this ADR and ADR-060 inherit the change.
 
 ### 7. Migration scope
 
