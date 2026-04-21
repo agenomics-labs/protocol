@@ -2,61 +2,47 @@
 //
 // Gates are declared in `Action.preflight[]` (type: `PreflightGate` from
 // ADR-058 §2.1 / `src/types/capability.ts`). `executePreflight` runs the
-// declared gates sequentially and returns the first failure. Two gates are
-// implemented here (`cluster_health`, `account_rent_exempt`); the two
-// workflow-bound gates (`daily_cap_not_exhausted`, `dispute_window_open`)
-// are stubbed with a TODO — they require vault/escrow context that isn't
-// plumbed through to this layer yet, so they'll land with the next PR that
-// extends `ActionContext` with protocol-state accessors.
+// declared gates sequentially and returns the first failure.
+//
+// All four gates from ADR-058 §2.1 are implemented:
+//   - `cluster_health`            — getRecentPerformanceSamples + slot lag
+//   - `account_rent_exempt`       — recipient account already rent-exempt
+//   - `daily_cap_not_exhausted`   — vault.daily_limit - vault.spent_today
+//                                   >= requested amount (with UTC-midnight
+//                                   rollover); needs `vaultAddress` +
+//                                   `amountLamports` via PreflightInputContext
+//   - `dispute_window_open`       — escrow.disputed_at.is_some() AND
+//                                   now < escrow.deadline; needs
+//                                   `escrowAddress` via PreflightInputContext
+//
+// The last two gates live in `state-gates.ts` (split out to keep each file
+// under the 500-line project guideline); their public runners + the shared
+// types are re-exported here so existing imports keep working.
 
 import type { PreflightGate } from "../types/capability.js";
 import type { ActionContext, Result } from "../types/action.js";
 import { ok, err } from "../types/action.js";
-import type { Address } from "@solana/kit";
+import type {
+  ClusterHealthRpc,
+  RentExemptRpc,
+  AccountDataRpc,
+  PreflightDeps,
+  PreflightInputContext,
+} from "./preflight-types.js";
+import {
+  runDailyCapNotExhausted,
+  runDisputeWindowOpen,
+  __resetVaultStateCacheForTests,
+} from "./state-gates.js";
 
-// --------------------------------------------------------------------------
-// Minimal RPC surface used by the gates.
-//
-// We DO NOT take the full Kit `SolanaRpc` shape here — that would pin tests
-// to the complete Kit type graph and make mocking painful. Instead each
-// gate declares the narrow method-subset it needs, and `PreflightDeps`
-// unions them so callers can inject a single RPC-like object.
-// --------------------------------------------------------------------------
-
-type Pending<T> = { send(): Promise<T> };
-
-export interface ClusterHealthRpc {
-  getRecentPerformanceSamples(
-    limit?: number,
-  ): Pending<readonly { numSlots: bigint; numTransactions: bigint }[]>;
-  getSlot(): Pending<bigint>;
-}
-
-export interface RentExemptRpc {
-  getMinimumBalanceForRentExemption(size: bigint): Pending<bigint>;
-  getAccountInfo(
-    address: Address,
-    config?: unknown,
-  ): Pending<{
-    value: { lamports: bigint; data?: unknown; space?: bigint } | null;
-  }>;
-}
-
-export interface PreflightDeps {
-  rpc?: ClusterHealthRpc & RentExemptRpc;
-  /**
-   * The set of accounts (and their byte sizes) to check rent-exemption for
-   * when the `account_rent_exempt` gate runs. Handlers typically know which
-   * accounts they're about to touch; until the action shape carries that
-   * metadata, callers supply it here. When unset the gate is a no-op pass.
-   */
-  rentExemptAccounts?: ReadonlyArray<{ address: Address; size: bigint }>;
-  /**
-   * Test hook — the gate caches its result for 10s; tests use this to
-   * reset the cache between cases.
-   */
-  now?: () => number;
-}
+export type {
+  ClusterHealthRpc,
+  RentExemptRpc,
+  AccountDataRpc,
+  PreflightDeps,
+  PreflightInputContext,
+};
+export { __resetVaultStateCacheForTests };
 
 // --------------------------------------------------------------------------
 // cluster_health
@@ -198,14 +184,15 @@ async function runAccountRentExempt(
         .send();
 
       if (info.value === null) continue; // will be created this tx — skip
-      if (info.value.lamports < minBalance) {
+      const lamports = (info.value as { lamports: bigint }).lamports;
+      if (lamports < minBalance) {
         return err({
           code: "PREFLIGHT_FAILED",
-          message: `account_rent_exempt: ${address} below minimum (${info.value.lamports} < ${minBalance})`,
+          message: `account_rent_exempt: ${address} below minimum (${lamports} < ${minBalance})`,
           details: {
             gate: "account_rent_exempt",
             address,
-            lamports: info.value.lamports.toString(),
+            lamports: lamports.toString(),
             minBalance: minBalance.toString(),
           },
         });
@@ -222,34 +209,6 @@ async function runAccountRentExempt(
 }
 
 // --------------------------------------------------------------------------
-// Stubs: daily_cap_not_exhausted, dispute_window_open
-// --------------------------------------------------------------------------
-//
-// TODO(ADR-059 follow-up PR): these gates need vault-policy / escrow-
-// dispute-window state that isn't plumbed through `ActionContext` yet.
-// Both gates return PASS today so that actions which declare them don't
-// break, and fail-closed behavior is added once the state accessors land.
-
-async function runDailyCapNotExhausted(
-  _deps: PreflightDeps,
-  _ctx: ActionContext,
-): Promise<Result<void>> {
-  // TODO: resolve active vault from ctx + read policy.daily_cap + read
-  // today's spent tally, fail closed on over-cap. Needs vault-state accessor.
-  return ok(undefined);
-}
-
-async function runDisputeWindowOpen(
-  _deps: PreflightDeps,
-  _ctx: ActionContext,
-): Promise<Result<void>> {
-  // TODO: resolve escrow from input + compare `now` against
-  // escrow.dispute_deadline_unix. Needs escrow-state accessor + action-input
-  // visibility. Currently PASS so declared actions don't break.
-  return ok(undefined);
-}
-
-// --------------------------------------------------------------------------
 // Orchestrator
 // --------------------------------------------------------------------------
 
@@ -257,11 +216,12 @@ export async function executePreflight(
   gates: PreflightGate[] | undefined,
   ctx: ActionContext,
   deps: PreflightDeps = {},
+  input?: PreflightInputContext,
 ): Promise<Result<void>> {
   if (!gates || gates.length === 0) return ok(undefined);
 
   for (const gate of gates) {
-    const result = await runGate(gate, ctx, deps);
+    const result = await runGate(gate, ctx, deps, input);
     if (!result.ok) return result;
   }
   return ok(undefined);
@@ -271,6 +231,7 @@ async function runGate(
   gate: PreflightGate,
   ctx: ActionContext,
   deps: PreflightDeps,
+  input: PreflightInputContext | undefined,
 ): Promise<Result<void>> {
   switch (gate) {
     case "cluster_health":
@@ -278,9 +239,9 @@ async function runGate(
     case "account_rent_exempt":
       return runAccountRentExempt(deps);
     case "daily_cap_not_exhausted":
-      return runDailyCapNotExhausted(deps, ctx);
+      return runDailyCapNotExhausted(deps, ctx, input);
     case "dispute_window_open":
-      return runDisputeWindowOpen(deps, ctx);
+      return runDisputeWindowOpen(deps, ctx, input);
     default: {
       // Exhaustiveness — if PreflightGate gains a variant, TS will flag this
       const exhaustive: never = gate;

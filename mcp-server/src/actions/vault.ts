@@ -13,6 +13,27 @@ import {
   handleResumeVault,
   handleManageAllowlist,
 } from "../handlers/vault.js";
+import { deriveVaultPDA, getWalletPublicKey } from "../solana.js";
+
+/**
+ * Resolve the default wallet-vault PDA for this process. Used by the
+ * `daily_cap_not_exhausted` preflight gate on vault-spend actions to tell
+ * the gate which on-chain vault account to read. Matches the derivation
+ * the underlying handlers use (see handlers/vault.ts).
+ *
+ * Wrapped in try/catch because `getWalletPublicKey()` loads the wallet
+ * keypair eagerly and will throw in environments without one configured —
+ * the gate handles a `vaultAddress: undefined` as a loud PREFLIGHT_FAILED,
+ * which is the right surface for "no wallet, therefore no vault to check."
+ */
+function defaultVaultAddressOrUndefined(): string | undefined {
+  try {
+    const [pda] = deriveVaultPDA(getWalletPublicKey());
+    return pda.toBase58();
+  } catch {
+    return undefined;
+  }
+}
 
 function wrap<I>(fn: (args: Record<string, unknown>) => Promise<any>) {
   return async (_ctx: any, input: I) => {
@@ -100,6 +121,14 @@ export const vaultTransferAction: Action<
   readOnly: false,
   capabilities: ["sign:vault"],
   preflight: ["cluster_health", "account_rent_exempt", "daily_cap_not_exhausted"],
+  preflightContext: (input) => ({
+    vaultAddress: defaultVaultAddressOrUndefined(),
+    // input.amountSol may be fractional — scale through BigInt safely by
+    // going via the lamports integer representation. Math.round guards
+    // against JS float drift on exactly-representable decimals.
+    amountLamports:
+      BigInt(Math.round(input.amountSol * 1e9)),
+  }),
   requiresSigner: true,
   handler: wrap(handleVaultTransfer),
 };
@@ -127,6 +156,18 @@ export const vaultTokenTransferAction: Action<
   readOnly: false,
   capabilities: ["sign:vault"],
   preflight: ["cluster_health", "account_rent_exempt", "daily_cap_not_exhausted"],
+  // TODO(PR7 multi-token daily cap): The `daily_cap_not_exhausted` gate
+  // currently reads the SOL-denominated `daily_limit_lamports` from the
+  // vault account. Per-mint caps live in `token_spend_records` and need
+  // a second gate flavor (`token_daily_cap_not_exhausted`) that selects
+  // the right record by mint. For PR6 we pass `amountLamports` mapped
+  // from the token's base-unit amount so the action doesn't silently
+  // bypass preflight — but the semantic comparison is a conservative
+  // SOL-vs-base-units check until the per-mint lookup lands.
+  preflightContext: (input) => ({
+    vaultAddress: defaultVaultAddressOrUndefined(),
+    amountLamports: BigInt(Math.round(input.amount)),
+  }),
   requiresSigner: true,
   handler: wrap(handleVaultTokenTransfer),
 };
