@@ -9,9 +9,9 @@ The `category` field on `AgentProfile` is a `String` with no length validation a
 
 ## Decision
 
-Add `require!(category.len() <= 50, AeapError::CategoryTooLong)` validation in both the `register_agent` and `update_profile` instruction handlers. This check runs before any state mutation, providing a clear error message and preventing accounts from entering an inconsistent state.
+Add `require!(category.len() <= 50, AepError::CategoryTooLong)` validation in both the `register_agent` and `update_profile` instruction handlers. This check runs before any state mutation, providing a clear error message and preventing accounts from entering an inconsistent state.
 
-A new error variant `CategoryTooLong` is added to the `AeapError` enum with a descriptive message: "Category exceeds maximum length of 50 characters."
+A new error variant `CategoryTooLong` is added to the `AepError` enum with a descriptive message: "Category exceeds maximum length of 50 characters."
 
 The 50-byte limit aligns with the space reserved in ADR-040's explicit account size calculation.
 
@@ -31,7 +31,7 @@ The 50-byte limit aligns with the space reserved in ADR-040's explicit account s
 
 ## Files Changed
 
-- `programs/aeap/src/instructions/register_agent.rs` -- added `require!(category.len() <= 50, ...)`
-- `programs/aeap/src/instructions/update_profile.rs` -- added `require!(category.len() <= 50, ...)`
-- `programs/aeap/src/errors.rs` -- added `CategoryTooLong` variant to `AeapError`
+- `programs/aep/src/instructions/register_agent.rs` -- added `require!(category.len() <= 50, ...)`
+- `programs/aep/src/instructions/update_profile.rs` -- added `require!(category.len() <= 50, ...)`
+- `programs/aep/src/errors.rs` -- added `CategoryTooLong` variant to `AepError`
 - `tests/agent_registration.ts` -- added test for category exceeding 50 characters

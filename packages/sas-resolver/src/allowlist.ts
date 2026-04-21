@@ -1,7 +1,7 @@
 // ADR-061 §3: credential authority allowlist handling.
 //
-// The v1 AEAP-published credentials are `AEAP_PROTOCOL` and
-// `AEAP_VALIDATORS` — but their concrete pubkeys are environment-
+// The v1 AEP-published credentials are `AEP_PROTOCOL` and
+// `AEP_VALIDATORS` — but their concrete pubkeys are environment-
 // specific (devnet / mainnet-beta may bind different authorities
 // during the bootstrap ceremony, tracked as ADR-063). This package
 // therefore does NOT hardcode the pubkeys; consumers inject them via
@@ -20,7 +20,7 @@ const BASE58_REGEX = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 export interface AllowlistEntry {
   /** Base58 credential authority pubkey. */
   pubkey: string;
-  /** Optional human label ("AEAP_PROTOCOL", "AEAP_VALIDATORS", ...). */
+  /** Optional human label ("AEP_PROTOCOL", "AEP_VALIDATORS", ...). */
   label?: string;
 }
 

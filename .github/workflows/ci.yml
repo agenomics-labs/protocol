@@ -81,16 +81,16 @@ jobs:
         with:
           node-version: "20"
 
-      # mcp-server consumes @aeap/capability-manifest-validator and
-      # @aeap/sas-resolver via `file:` deps. tsc --noEmit in mcp-server
+      # mcp-server consumes @aep/capability-manifest-validator and
+      # @aep/sas-resolver via `file:` deps. tsc --noEmit in mcp-server
       # needs the d.ts output from those packages, so build them first.
-      - name: Build @aeap/capability-manifest-validator
+      - name: Build @aep/capability-manifest-validator
         working-directory: packages/capability-manifest-validator
         run: |
           npm install
           npm run build
 
-      - name: Build @aeap/sas-resolver
+      - name: Build @aep/sas-resolver
         working-directory: packages/sas-resolver
         run: |
           npm install
@@ -162,7 +162,7 @@ jobs:
         continue-on-error: true
 
   # Added alongside the `packages/*` TS packages introduced with ADR-060
-  # (`@aeap/capability-manifest-validator`) and ADR-064 (`@aeap/sas-resolver`).
+  # (`@aep/capability-manifest-validator`) and ADR-064 (`@aep/sas-resolver`).
   # Each package is self-contained (own package.json + tsconfig + tests under
   # node:test + tsx) and must pass type-check and unit tests independently.
   typescript-check-validator:
@@ -217,14 +217,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      # Build the @aeap packages so the `file:` deps + tsx ESM loader
+      # Build the @aep packages so the `file:` deps + tsx ESM loader
       # can resolve their dist/*.js at test runtime.
-      - name: Build @aeap/capability-manifest-validator
+      - name: Build @aep/capability-manifest-validator
         working-directory: packages/capability-manifest-validator
         run: |
           npm install
           npm run build
-      - name: Build @aeap/sas-resolver
+      - name: Build @aep/sas-resolver
         working-directory: packages/sas-resolver
         run: |
           npm install

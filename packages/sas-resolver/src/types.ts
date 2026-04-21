@@ -1,4 +1,4 @@
-// ADR-064 @aeap/sas-resolver — public type surface.
+// ADR-064 @aep/sas-resolver — public type surface.
 //
 // Kept in a separate module so consumers can type-annotate without
 // dragging in the runtime code (schema decoders, resolver class).
@@ -23,8 +23,8 @@ export type ResolverRpc = Rpc<Pick<SolanaRpcApi, "getAccountInfo">> | Rpc<Solana
 /**
  * Configuration for a `SasResolver` instance.
  *
- * Per ADR-061 §3, the allowlist is consumer-owned. The v1 AEAP-published
- * defaults are `AEAP_PROTOCOL` and `AEAP_VALIDATORS` — but this package
+ * Per ADR-061 §3, the allowlist is consumer-owned. The v1 AEP-published
+ * defaults are `AEP_PROTOCOL` and `AEP_VALIDATORS` — but this package
  * does not hardcode them; consumers pass whichever credentials they
  * trust. `packages/sas-resolver/src/allowlist.ts` exposes helpers for
  * building and validating allowlists.
@@ -34,7 +34,7 @@ export interface ResolverConfig {
   rpc: ResolverRpc;
   /** Base58 pubkeys of credential authorities a caller trusts. */
   allowedCredentials: Set<string>;
-  /** Base58 pubkey of the AEAP_AGENT_REPUTATION_v1 schema PDA. */
+  /** Base58 pubkey of the AEP_AGENT_REPUTATION_v1 schema PDA. */
   schemaPda: string;
   /** Test hook — defaults to `() => Math.floor(Date.now() / 1000)` (unix seconds). */
   now?: () => number;
@@ -117,7 +117,7 @@ export interface ResolveOptions {
 }
 
 /**
- * Decoded AEAP_AGENT_REPUTATION_v1 payload (ADR-061 §2).
+ * Decoded AEP_AGENT_REPUTATION_v1 payload (ADR-061 §2).
  *
  * All fields come straight from `attestation.data` except `signer`,
  * `credential`, and `expiry` which come from the attestation account
@@ -211,7 +211,7 @@ export interface ResolverError {
   details?: unknown;
 }
 
-/** Lightweight Result type; mirrors `@aeap/capability-manifest-validator`. */
+/** Lightweight Result type; mirrors `@aep/capability-manifest-validator`. */
 export type Result<T> = { ok: true; value: T } | { ok: false; error: ResolverError };
 
 /**

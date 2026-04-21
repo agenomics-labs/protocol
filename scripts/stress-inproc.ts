@@ -291,7 +291,7 @@ function pickMode(idx: number): Mode {
   return "cancel";
 }
 
-describe("AEAP In-Process Stress", () => {
+describe("AEP In-Process Stress", () => {
   it(`runs ${N} parallel flows (${MODE_MIX})`, async () => {
     const provider = anchor.AnchorProvider.env();
     anchor.setProvider(provider);

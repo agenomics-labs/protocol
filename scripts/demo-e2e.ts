@@ -1,5 +1,5 @@
 /**
- * AEAP End-to-End Demo Script
+ * AEP End-to-End Demo Script
  * ============================
  * Demonstrates the full Agenomics Protocol workflow:
  *
@@ -86,9 +86,9 @@ function info(msg: string) {
 // MAIN DEMO
 // ============================================================================
 
-describe("AEAP End-to-End Demo", () => {
+describe("AEP End-to-End Demo", () => {
 it("runs the full protocol lifecycle", async () => {
-  header("AEAP — Agenomics Protocol: E2E Demo");
+  header("AEP — Agenomics Protocol: E2E Demo");
 
   // Setup provider
   const provider = anchor.AnchorProvider.env();
@@ -370,7 +370,7 @@ it("runs the full protocol lifecycle", async () => {
   // ========================================================================
   // SUMMARY
   // ========================================================================
-  header("Demo Complete — AEAP Full Stack Summary");
+  header("Demo Complete — AEP Full Stack Summary");
 
   console.log(`  ${BOLD}Programs Deployed:${RESET}`);
   info(`Agent Vault:    ${vaultProgram.programId.toBase58()}`);

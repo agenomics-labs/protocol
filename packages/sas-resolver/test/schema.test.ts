@@ -1,4 +1,4 @@
-// ADR-061 §2 schema-layer tests — AEAP_AGENT_REPUTATION_v1 codec +
+// ADR-061 §2 schema-layer tests — AEP_AGENT_REPUTATION_v1 codec +
 // SAS attestation-account header codec. These tests exercise the
 // decoder/encoder in isolation from the resolver so a layout
 // regression surfaces at the schema layer rather than as a
@@ -7,7 +7,7 @@
 import { describe, it } from "node:test";
 import * as assert from "node:assert/strict";
 import {
-  AEAP_AGENT_REPUTATION_V1_SIZE,
+  AEP_AGENT_REPUTATION_V1_SIZE,
   encodeAttestationAccount,
   encodeReputationData,
   parseAttestationAccount,
@@ -16,7 +16,7 @@ import {
   encodeBase58,
 } from "../src/index.js";
 
-describe("AEAP_AGENT_REPUTATION_v1 codec", () => {
+describe("AEP_AGENT_REPUTATION_v1 codec", () => {
   it("round-trips all fields at their max values", () => {
     const fields = {
       score: 10_000,
@@ -25,7 +25,7 @@ describe("AEAP_AGENT_REPUTATION_v1 codec", () => {
       last_updated: 1_700_000_000,
     };
     const bytes = encodeReputationData(fields);
-    assert.equal(bytes.length, AEAP_AGENT_REPUTATION_V1_SIZE);
+    assert.equal(bytes.length, AEP_AGENT_REPUTATION_V1_SIZE);
     assert.deepEqual(parseReputationData(bytes), fields);
   });
 

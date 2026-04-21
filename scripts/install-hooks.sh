@@ -26,7 +26,7 @@ mkdir -p "$HOOKS_DIR"
 
 cat > "$HOOK_PATH" << 'HOOK'
 #!/usr/bin/env bash
-# aeap pre-commit: IDL parity gate.
+# aep pre-commit: IDL parity gate.
 #
 # Runs scripts/sync-idl.sh whenever any programs/**/*.rs or *.toml is
 # staged, then fails the commit if the regenerated idl/*.json has drift

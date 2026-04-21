@@ -438,7 +438,7 @@ describe("ADR-065 SasResolver cache integration", () => {
 // ------------------------------------------------------------------
 
 describe("ADR-065 createCache() factory", () => {
-  it("returns InMemoryCache by default (no AEAP_REDIS_URL)", () => {
+  it("returns InMemoryCache by default (no AEP_REDIS_URL)", () => {
     const c = createCache({});
     assert.ok(c instanceof InMemoryCache);
   });
@@ -450,7 +450,7 @@ describe("ADR-065 createCache() factory", () => {
     const { activeCacheBackend } = await import("../src/cache.js");
     assert.equal(activeCacheBackend({}), "memory");
     assert.equal(
-      activeCacheBackend({ AEAP_REDIS_URL: "redis://localhost:6379" }),
+      activeCacheBackend({ AEP_REDIS_URL: "redis://localhost:6379" }),
       "redis",
     );
   });
@@ -475,13 +475,13 @@ describe("ADR-065 RedisCache via ioredis-mock", () => {
     assert.equal(await cache.get("k1"), null);
   });
 
-  it("applies the aeap:cache: prefix by default", async () => {
+  it("applies the aep:cache: prefix by default", async () => {
     const client = new RedisMock();
     const cache = new RedisCache({ client: client as unknown as import("../src/cache-redis.js").RedisClient });
     await cache.set("foo", "bar", 60_000);
 
     // Peek at raw key — should be prefixed.
-    const raw = await client.get("aeap:cache:foo");
+    const raw = await client.get("aep:cache:foo");
     assert.ok(raw !== null, "expected prefixed key to exist");
     assert.equal(await client.get("foo"), null, "unprefixed key should not exist");
   });
@@ -489,7 +489,7 @@ describe("ADR-065 RedisCache via ioredis-mock", () => {
   it("malformed payload surfaces as miss (not a throw)", async () => {
     const client = new RedisMock();
     // Inject a non-JSON value under the prefixed key.
-    await client.set("aeap:cache:bogus", "not-json{");
+    await client.set("aep:cache:bogus", "not-json{");
     const cache = new RedisCache({ client: client as unknown as import("../src/cache-redis.js").RedisClient });
 
     const hit = await cache.get("bogus");

@@ -1,4 +1,4 @@
-/** AEAP x402 HTTP Payment Relay - verifies on-chain payments, issues JWT access tokens */
+/** AEP x402 HTTP Payment Relay - verifies on-chain payments, issues JWT access tokens */
 import express, { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { Connection, LAMPORTS_PER_SOL } from "@solana/web3.js";
@@ -366,7 +366,7 @@ app.get("/protected", requirePayment, (req: Request, res: Response) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`AEAP x402 Payment Relay listening on http://localhost:${PORT}`);
+  console.log(`AEP x402 Payment Relay listening on http://localhost:${PORT}`);
   console.log(`Recipient: ${PAYMENT_RECIPIENT || "(not configured)"}`);
   console.log(`Required: ${REQUIRED_AMOUNT_SOL} SOL`);
   console.log(`Token expiry: ${TOKEN_EXPIRY_SECONDS}s`);

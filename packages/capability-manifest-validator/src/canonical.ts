@@ -15,7 +15,7 @@ import { sha256 } from "@noble/hashes/sha2";
 export function canonicalJson(obj: unknown): string {
   const out = canonicalize(obj);
   if (typeof out !== "string") {
-    // canonicalize() returns undefined for `undefined` inputs; AEAP
+    // canonicalize() returns undefined for `undefined` inputs; AEP
     // manifests are always objects, so this is a usage error.
     throw new Error(
       "canonicalJson: input is not serializable to canonical JSON",

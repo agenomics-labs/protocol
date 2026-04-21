@@ -6,7 +6,7 @@
 //
 // Single-instance deployments use `InMemoryIdempotencyStore` (this file).
 // Multi-instance deployments opt into `RedisIdempotencyStore`
-// (`./idempotency-redis.ts`) by setting `AEAP_REDIS_URL`. See ADR-059 §5
+// (`./idempotency-redis.ts`) by setting `AEP_REDIS_URL`. See ADR-059 §5
 // "Consequences → Negative" — the Redis backend was deferred in PR5 and is
 // delivered in this PR.
 //
@@ -160,7 +160,7 @@ export class InMemoryIdempotencyStore implements IdempotencyStore {
 /**
  * Build the idempotency store implied by the current process env.
  *
- * - `AEAP_REDIS_URL` set → returns a `RedisIdempotencyStore` bound to that
+ * - `AEP_REDIS_URL` set → returns a `RedisIdempotencyStore` bound to that
  *   URL (multi-instance replay protection).
  * - Otherwise → returns an `InMemoryIdempotencyStore` (single-instance).
  *
@@ -169,7 +169,7 @@ export class InMemoryIdempotencyStore implements IdempotencyStore {
  * side effects.
  */
 export function createIdempotencyStore(): IdempotencyStore {
-  const redisUrl = process.env.AEAP_REDIS_URL;
+  const redisUrl = process.env.AEP_REDIS_URL;
   if (redisUrl && redisUrl.length > 0) {
     // Lazy require — keeps the in-memory path from pulling in `ioredis`.
     // `require` (vs. dynamic `import()`) is deliberate: the factory stays
@@ -186,7 +186,7 @@ export function createIdempotencyStore(): IdempotencyStore {
 
 /** Returns `"redis"` or `"memory"` — used at startup logging. */
 export function activeIdempotencyBackend(): "redis" | "memory" {
-  return process.env.AEAP_REDIS_URL && process.env.AEAP_REDIS_URL.length > 0
+  return process.env.AEP_REDIS_URL && process.env.AEP_REDIS_URL.length > 0
     ? "redis"
     : "memory";
 }

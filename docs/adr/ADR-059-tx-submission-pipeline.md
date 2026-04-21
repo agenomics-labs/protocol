@@ -8,7 +8,7 @@ Accepted
 
 ## Context
 
-AEAP tools build Solana transactions across Vault, Registry, and Settlement programs. Robust tx submission requires:
+AEP tools build Solana transactions across Vault, Registry, and Settlement programs. Robust tx submission requires:
 
 1. **Compute-budget sizing** from simulation (not guessing)
 2. **Priority-fee estimation** that adapts to network congestion
@@ -20,7 +20,7 @@ Ecosystem findings:
 
 - **`framework-kit`** (solana-foundation) ships all the helpers we planned to write: `LatestBlockhashCache` with TTL + auto-refetch, `ComputeBudgetInstruction` helpers (`getSetComputeUnitLimitInstruction`, `getSetComputeUnitPriceInstruction`), `TransactionPrepareRequest` shape with `authority: TransactionSigner | WalletSession`, `lifetime: BlockhashLifetime`, `version: 'auto'`.
 - **`sendaifun/solana-agent-kit`** has a `sendTx` poll loop without blockhash refresh. This is a **known footgun**: the 90s blind poll silently fails on slot expiry.
-- **`solana-mpp`** (sendaifun) ships **mutex-per-signature replay protection** — store-backed consumed-signature set + per-sig mutex lock. Exactly the pattern AEAP needs for settlement submits.
+- **`solana-mpp`** (sendaifun) ships **mutex-per-signature replay protection** — store-backed consumed-signature set + per-sig mutex lock. Exactly the pattern AEP needs for settlement submits.
 - **`solana-mcp-official`** is read-only and contributes no tx-pipeline patterns.
 
 Companion analysis: `docs/SOLANA_ECOSYSTEM_ANALYSIS.md`, `docs/SENDAIFUN_ECOSYSTEM_ANALYSIS.md`.
@@ -29,7 +29,7 @@ Companion analysis: `docs/SOLANA_ECOSYSTEM_ANALYSIS.md`, `docs/SENDAIFUN_ECOSYST
 
 ### 1. Adopt Foundation tx-pipeline packages
 
-`framework-kit` is a repo name, not an npm package. The actual published dependencies AEAP consumes are (verified 2026-04-21):
+`framework-kit` is a repo name, not an npm package. The actual published dependencies AEP consumes are (verified 2026-04-21):
 
 | Package | Version | Role |
 |---|---|---|
@@ -84,7 +84,7 @@ async function estimatePriorityFee(
 
 Kit 6.8.0 already ships `sendAndConfirmTransactionFactory()` + `waitForRecentTransactionConfirmation()`, which internally race signature status against `lastValidBlockHeight` and throw a typed `SolanaError('SOLANA_ERROR__BLOCK_HEIGHT_EXCEEDED')` when the blockhash ages out. What Kit does **not** ship is automatic rebroadcast on expiry — it throws, the caller catches, re-signs with a fresh blockhash, and retries.
 
-AEAP's helper is therefore a thin wrapper (~30% of the original scope):
+AEP's helper is therefore a thin wrapper (~30% of the original scope):
 
 ```ts
 async function sendAndConfirmWithBlockhashExpiry(
@@ -99,16 +99,16 @@ async function sendAndConfirmWithBlockhashExpiry(
             return signed.signatures[0];
         } catch (e) {
             if (isBlockheightExceeded(e) && attempt < opts.maxRetries) continue;   // re-sign + retry
-            throw new AeapError({ code: 'RPC_ERROR', message: String(e) });
+            throw new AepError({ code: 'RPC_ERROR', message: String(e) });
         }
     }
-    throw new AeapError({ code: 'RPC_ERROR', message: 'max retries exceeded' });
+    throw new AepError({ code: 'RPC_ERROR', message: 'max retries exceeded' });
 }
 ```
 
 Key differences from the original ADR draft:
 - We do **not** re-implement the confirmation race or expiry detection — Kit already does this correctly.
-- We only add the catch-refresh-retry loop and the typed `AeapError` wrapper.
+- We only add the catch-refresh-retry loop and the typed `AepError` wrapper.
 - `buildAndSign()` is passed as a thunk so each retry gets a fresh blockhash via the caller's existing Kit pipeline.
 
 ### 5. Mutex-per-key replay protection (port from `solana-mpp`, adapted)
@@ -176,13 +176,13 @@ Rejected. Correct for time-sensitive settlement submit; wrong for async vault re
 Rejected. Two concurrent MCP calls with the same settlement signature (retry, duplicate client) can both enter the verification path and race. Mutex-per-sig forces serialization. Solana's blockhash protects against double-inclusion but not against duplicate server-side verification work or dispute-timing races.
 
 ### Alternative D: Use `solana-mpp` directly as a dependency for replay protection
-Rejected for now. `solana-mpp` is sendaifun's library and is coupled to their HTTP-402 payment flow. Porting the mutex-per-sig pattern (≈50 LoC) is cleaner than importing the dep. Revisit if ADR-062 (MPP canonical conformance) decides AEAP speaks MPP wire format.
+Rejected for now. `solana-mpp` is sendaifun's library and is coupled to their HTTP-402 payment flow. Porting the mutex-per-sig pattern (≈50 LoC) is cleaner than importing the dep. Revisit if ADR-062 (MPP canonical conformance) decides AEP speaks MPP wire format.
 
 ### Alternative E: Redis-only mutex (no in-memory fast path)
 Rejected for single-instance deployments — Redis adds a mandatory dep. In-memory for single-instance, Redis for multi-instance, determined by config.
 
 ### Alternative F: Adopt `kora` as the relayer instead of building our own pipeline
-Rejected for this ADR. `kora` solves a different problem (gasless fee-paying relayer). The AEAP pipeline described here is for AEAP's own tool handlers building and submitting txs. A future ADR may add kora-style relayer integration for gasless agent UX, but that is orthogonal to this pipeline.
+Rejected for this ADR. `kora` solves a different problem (gasless fee-paying relayer). The AEP pipeline described here is for AEP's own tool handlers building and submitting txs. A future ADR may add kora-style relayer integration for gasless agent UX, but that is orthogonal to this pipeline.
 
 ## Consequences
 
@@ -191,7 +191,7 @@ Rejected for this ADR. `kora` solves a different problem (gasless fee-paying rel
 - Closes the known agent-kit slot-expiry footgun.
 - Mutex-per-sig prevents the concurrent-verification race on settlement submits.
 - Per-action preflight gives the right granularity (opt-in).
-- Framework-kit helpers are on `@solana/kit`, aligning AEAP with the Foundation roadmap.
+- Framework-kit helpers are on `@solana/kit`, aligning AEP with the Foundation roadmap.
 
 ### Negative
 - Redis dep for multi-instance replay protection (or accepts single-instance limitation).

@@ -47,10 +47,10 @@ The `+ n / 2` term implements "round half up" behavior for positive values, whic
 
 ## Files Changed
 
-- `programs/aeap/src/state/agent.rs` -- changed `disputed_at: i64` to `disputed_at: Option<i64>`
-- `programs/aeap/src/instructions/dispute.rs` -- updated to set `disputed_at = Some(clock.unix_timestamp)`
-- `programs/aeap/src/instructions/resolve_dispute.rs` -- updated to set `disputed_at = None`
-- `programs/aeap/src/instructions/rate_agent.rs` -- updated avg_rating formula with `+ n / 2` rounding term
-- `programs/aeap/src/state/agent.rs` -- updated `ACCOUNT_SPACE` to reflect 9-byte `Option<i64>`
+- `programs/aep/src/state/agent.rs` -- changed `disputed_at: i64` to `disputed_at: Option<i64>`
+- `programs/aep/src/instructions/dispute.rs` -- updated to set `disputed_at = Some(clock.unix_timestamp)`
+- `programs/aep/src/instructions/resolve_dispute.rs` -- updated to set `disputed_at = None`
+- `programs/aep/src/instructions/rate_agent.rs` -- updated avg_rating formula with `+ n / 2` rounding term
+- `programs/aep/src/state/agent.rs` -- updated `ACCOUNT_SPACE` to reflect 9-byte `Option<i64>`
 - `tests/dispute.ts` -- updated assertions to check for `null` / timestamp instead of `0` / nonzero
 - `tests/rating.ts` -- added test verifying correct rounding behavior

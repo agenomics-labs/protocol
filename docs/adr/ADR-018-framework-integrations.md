@@ -7,24 +7,24 @@ Accepted
 2026-04-15
 
 ## Context
-The AEAP MCP server exposes 20 tools across three domains (Vault, Registry, Settlement). While any MCP-compatible agent can use these tools directly, two major agent frameworks -- ElizaOS and Solana Agent Kit (SAK) -- have their own plugin/tool interfaces. Native plugins for these frameworks lower the adoption barrier by providing idiomatic integrations that framework users expect.
+The AEP MCP server exposes 20 tools across three domains (Vault, Registry, Settlement). While any MCP-compatible agent can use these tools directly, two major agent frameworks -- ElizaOS and Solana Agent Kit (SAK) -- have their own plugin/tool interfaces. Native plugins for these frameworks lower the adoption barrier by providing idiomatic integrations that framework users expect.
 
 The architecture doc (Section 1: Ecosystem Integrations) identifies ElizaOS and Solana Agent Kit as primary integration targets.
 
 ## Decision
-Create two framework-specific plugin files that wrap all 20 AEAP MCP tools:
+Create two framework-specific plugin files that wrap all 20 AEP MCP tools:
 
 ### ElizaOS Plugin (`src/integrations/elizaos-plugin.ts`)
-- Exports an `aeapPlugin` object conforming to ElizaOS's plugin interface (`{ name, description, version, actions }`)
+- Exports an `aepPlugin` object conforming to ElizaOS's plugin interface (`{ name, description, version, actions }`)
 - Each action maps 1:1 to an MCP tool with the same parameters
-- Actions are prefixed with `aeap_` to avoid naming conflicts
+- Actions are prefixed with `aep_` to avoid naming conflicts
 - A `setMcpClient()` function allows injection of the MCP transport layer
 - Uses a factory pattern (`createAction`) to minimize boilerplate across all 20 actions
 - Actions organized into three groups: vault (7), registry (4), settlement (9)
 
 ### Solana Agent Kit Plugin (`src/integrations/solana-agent-kit-plugin.ts`)
-- Exports `aeapTools` array conforming to SAK's tool interface (`{ name, description, inputs, execute }`)
-- Same 1:1 mapping to MCP tools with `aeap_` prefix
+- Exports `aepTools` array conforming to SAK's tool interface (`{ name, description, inputs, execute }`)
+- Same 1:1 mapping to MCP tools with `aep_` prefix
 - Uses a factory pattern (`sakTool`) for consistent tool definitions
 - Input definitions use SAK's `{ name, type, description, required }` format
 
@@ -42,13 +42,13 @@ Rejected because it would duplicate the transaction-building logic from the MCP 
 Rejected because ElizaOS and SAK have fundamentally different plugin interfaces. A single adapter would need runtime framework detection and conditional exports, adding unnecessary complexity.
 
 ### Alternative C: Code generation from MCP tool schemas
-Considered but deferred. For 20 tools the manual approach is maintainable. If AEAP grows beyond 50 tools, a code generator from the tool definitions in `mcp-server/src/tools.ts` would be warranted.
+Considered but deferred. For 20 tools the manual approach is maintainable. If AEP grows beyond 50 tools, a code generator from the tool definitions in `mcp-server/src/tools.ts` would be warranted.
 
 ## Consequences
 
 ### Positive
-- ElizaOS agents can use AEAP with standard plugin installation
-- SAK agents can use AEAP tools alongside existing SAK tools
+- ElizaOS agents can use AEP with standard plugin installation
+- SAK agents can use AEP tools alongside existing SAK tools
 - Thin adapter pattern keeps maintenance cost low
 - Factory pattern ensures consistent naming and parameter mapping
 - Both plugins are dependency-free (only need an MCP client instance)

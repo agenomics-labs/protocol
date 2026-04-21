@@ -1,4 +1,4 @@
-# ADR-060: AEAP capability descriptor format — off-chain manifest, on-chain pointer
+# ADR-060: AEP capability descriptor format — off-chain manifest, on-chain pointer
 
 ## Status
 Accepted
@@ -8,7 +8,7 @@ Accepted
 
 ## Context
 
-AEAP agents need to publish **what they can do** in a machine-readable, typed, signed, versioned format so that other agents and the Settlement program can verify capabilities before engaging.
+AEP agents need to publish **what they can do** in a machine-readable, typed, signed, versioned format so that other agents and the Settlement program can verify capabilities before engaging.
 
 Ecosystem alternatives surveyed:
 
@@ -17,7 +17,7 @@ Ecosystem alternatives surveyed:
 - **`txtx`** (solana-foundation): HCL2 deployment manifests (Terraform-for-web3). Describes deployment runbooks (`solana_program_deployment`, `solana_transfer`). Different abstraction layer — runbook, not capability contract.
 - **`solana-attestation-service` (SAS)**: Schema + attestation + signer model. Powerful for *reputation* (third parties attesting about an agent). Not designed for an agent self-declaring its capabilities + typed I/O + cost estimates.
 
-None of these is a capability descriptor. AEAP must define its own.
+None of these is a capability descriptor. AEP must define its own.
 
 Companion analysis: `docs/SOLANA_ECOSYSTEM_ANALYSIS.md`, `docs/SENDAIFUN_ECOSYSTEM_ANALYSIS.md`.
 
@@ -59,7 +59,7 @@ On any manifest publish or update, the Registry program MUST re-validate the inv
 
 ```ts
 interface CapabilityManifest {
-    $schema: 'https://aeap.dev/schemas/capability-manifest/v1.0.json';
+    $schema: 'https://aep.dev/schemas/capability-manifest/v1.0.json';
     version: '1.0';                          // schema version, not agent version
     agent: {
         pubkey: string;                       // base58 Solana address
@@ -79,7 +79,7 @@ interface Capability {
     input_schema: JsonSchema;                 // strict; $ref allowed
     output_schema: JsonSchema;
     cost_estimate?: CostEstimate;
-    required_capabilities: RequiredCapability[];    // AEAP Capability taxonomy from ADR-058
+    required_capabilities: RequiredCapability[];    // AEP Capability taxonomy from ADR-058
     preflight?: PreflightGate[];              // ADR-059 preflight gates
     side_effects: SideEffect[];               // 'read-onchain' | 'write-onchain' | 'signs-tx' | 'external-http'
     stability: 'experimental' | 'beta' | 'stable';
@@ -118,7 +118,7 @@ Rejected: S3, HTTPS URLs (mutable).
 
 - **Minor version bumps**: additive-only (new optional fields). Consumers MUST accept unknown optional fields.
 - **Major version bumps**: publish a new `$schema` URL; old consumers reject. Registry keeps both `manifest_version` fields during deprecation windows.
-- Validation: AEAP publishes a reference validator crate (`@aeap/capability-manifest-validator`) with JSON Schema bundled.
+- Validation: AEP publishes a reference validator crate (`@aep/capability-manifest-validator`) with JSON Schema bundled.
 
 ### 6. Explicit rejections (see also the Alternatives section)
 
@@ -140,7 +140,7 @@ Anything beyond those three fields — policy programs, cross-program manifest i
 Rejected. A full capability manifest with typed I/O can run to several KB; storing that in an agent-profile account is prohibitively expensive. Off-chain storage with on-chain hash is the standard pattern (mirrors how Metaplex metadata works).
 
 ### Alternative B: Adopt the sendaifun/solana-dev skills format
-Rejected. Markdown + YAML is optimized for LLM consumption, not for programmatic authorization. No typed I/O, no signing, no cost declarations. AEAP will publish **both** — a Markdown skill (for agent discovery / user docs) AND a JSON capability manifest (for programmatic verification) — but they are not the same artifact.
+Rejected. Markdown + YAML is optimized for LLM consumption, not for programmatic authorization. No typed I/O, no signing, no cost declarations. AEP will publish **both** — a Markdown skill (for agent discovery / user docs) AND a JSON capability manifest (for programmatic verification) — but they are not the same artifact.
 
 ### Alternative C: Adopt `txtx` HCL manifests
 Rejected. `txtx` describes *how to deploy* something. A capability manifest describes *what an agent can do*. Different abstractions at different lifecycle stages.
@@ -149,7 +149,7 @@ Rejected. `txtx` describes *how to deploy* something. A capability manifest desc
 Rejected. SAS answers "did X say Y about agent Z?" — it's a reputation / claims substrate. A capability manifest answers "what can agent Z do, and with what cost/signature/I-O shape?" — it's a contract. An agent can have both: a self-published manifest (this ADR) AND a set of SAS attestations linked via `owner_attestation`.
 
 ### Alternative E: JSON-LD with schema.org vocabulary
-Rejected. JSON-LD's open-world semantics don't match AEAP's closed-world validation needs. JSON Schema with a strict `$schema` reference is simpler and verifiable.
+Rejected. JSON-LD's open-world semantics don't match AEP's closed-world validation needs. JSON Schema with a strict `$schema` reference is simpler and verifiable.
 
 ### Alternative F: Protobuf or Borsh binary manifests
 Rejected for v1. JSON is debuggable, inspectable in browsers, and trivial to validate cross-language. Binary formats can be added as a v2 schema if bandwidth becomes a constraint.
@@ -173,7 +173,7 @@ Rejected for v1. JSON is debuggable, inspectable in browsers, and trivial to val
 
 ## Open items
 
-- Manifest validator crate (`@aeap/capability-manifest-validator`) — separate work item.
+- Manifest validator crate (`@aep/capability-manifest-validator`) — separate work item.
 - ADR-061 (Proposed): how agents reference SAS attestations via `owner_attestation` — resolves the SAS-integration-depth open question with manifest-referenced, loosely-coupled resolution.
 - Indexer crate to build a searchable capability index from Registry + IPFS/Arweave — separate work item.
 

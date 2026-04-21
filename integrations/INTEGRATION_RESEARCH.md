@@ -1,4 +1,4 @@
-# AEAP Integration Research
+# AEP Integration Research
 
 Integration analysis for the Agenomics Protocol with three key Solana ecosystem tools and standards.
 
@@ -44,21 +44,21 @@ The protocol is extensible through **payment schemes** (e.g., `erc20`, `spl-toke
 - **SDKs**: TypeScript, Go, and Python client/server libraries available
 - **Extensions**: Service discovery, gasless approvals, authentication protocols
 
-### AEAP Integration Approach
+### AEP Integration Approach
 
-**Goal**: Use AEAP Agent Vaults as x402 payment sources to enable AI agents to pay for services.
+**Goal**: Use AEP Agent Vaults as x402 payment sources to enable AI agents to pay for services.
 
 **Integration Flow**:
 
 ```
-AI Agent (with AEAP Identity)
+AI Agent (with AEP Identity)
     ↓
 Requests protected resource (HTTP GET/POST)
     ↓
 Server responds: 402 Payment Required + PaymentRequirements
     ↓
 Agent constructs PaymentPayload using:
-  - Agent's Vault PDA (AEAP Settlement program)
+  - Agent's Vault PDA (AEP Settlement program)
   - Selected network (solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp)
   - Selected token (USDC)
   - Server's payment address
@@ -68,22 +68,22 @@ Agent signs PaymentPayload with Vault authority
 Agent sends HTTP request with PAYMENT-SIGNATURE header
     ↓
 Server verifies signature & settles via:
-  - AEAP Settlement program (direct), or
+  - AEP Settlement program (direct), or
   - x402 Facilitator (delegated)
 ```
 
 **Key Integration Points**:
 
-1. **Vault as Payment Source**: AEAP's Agent Vault PDA becomes the funding account for x402 transactions
+1. **Vault as Payment Source**: AEP's Agent Vault PDA becomes the funding account for x402 transactions
    - Vault must hold sufficient SPL token balance (USDC recommended)
    - Vault authority must sign the payment payload
    
-2. **Solana Program Integration**: AEAP Settlement program handles:
+2. **Solana Program Integration**: AEP Settlement program handles:
    - Verification of x402 PaymentPayload signatures
    - Token transfer from Agent Vault to merchant/facilitator
    - Event emission for payment logging
 
-3. **Client Library**: Extend AEAP SDK to include:
+3. **Client Library**: Extend AEP SDK to include:
    - `createX402PaymentPayload()` - constructs payload from Vault
    - `signX402Payment()` - signs with Vault authority
    - `submitX402Request()` - sends HTTP request with PAYMENT-SIGNATURE header
@@ -92,8 +92,8 @@ Server verifies signature & settles via:
 
 ```typescript
 // x402 Payment Payload Construction
-interface AeapX402Payment {
-  vaultPda: PublicKey;          // Agent's AEAP Vault
+interface AepX402Payment {
+  vaultPda: PublicKey;          // Agent's AEP Vault
   network: string;              // e.g., "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"
   scheme: string;               // e.g., "spl-token"
   token: PublicKey;             // SPL token mint (USDC)
@@ -105,7 +105,7 @@ interface AeapX402Payment {
 
 // Client-side function signature
 async function createX402PaymentPayload(
-  agent: AeapAgent,
+  agent: AepAgent,
   requirements: PaymentRequirements,
   merchantAddress: PublicKey
 ): Promise<PaymentPayload>
@@ -124,7 +124,7 @@ async function settleX402Payment(
 **~12-16 hours** for an experienced Solana developer with x402 familiarity:
 
 - 2h: Study x402 spec & facilitator integration
-- 3h: Design AEAP Settlement program instruction for x402 payments
+- 3h: Design AEP Settlement program instruction for x402 payments
 - 4h: Implement Settlement program logic (verify signature, transfer tokens, logging)
 - 3h: Build client SDK extensions (payload construction, signing, HTTP submission)
 - 2h: Write tests & documentation
@@ -223,9 +223,9 @@ interface ProviderResult {
 }
 ```
 
-### AEAP Integration Approach
+### AEP Integration Approach
 
-**Goal**: Write an AEAP plugin that enables ElizaOS agents to manage agent identities, wallets, and make payments.
+**Goal**: Write an AEP plugin that enables ElizaOS agents to manage agent identities, wallets, and make payments.
 
 **Plugin Structure**:
 
@@ -237,7 +237,7 @@ interface ProviderResult {
 │   │   ├── createAgentIdentity.ts
 │   │   ├── checkBalance.ts
 │   │   ├── transferTokens.ts
-│   │   └── executeAeapAction.ts
+│   │   └── executeAepAction.ts
 │   ├── evaluators/
 │   │   ├── shouldInitializeAgent.ts
 │   │   └── shouldCheckBalance.ts
@@ -249,23 +249,23 @@ interface ProviderResult {
 
 **Integration Flow**:
 
-1. **At Runtime Init**: Agent auto-initializes AEAP identity if needed
+1. **At Runtime Init**: Agent auto-initializes AEP identity if needed
 2. **Context Injection**: Providers supply agent wallet state & balances to LLM context
-3. **Action Execution**: When LLM decides to pay for service, Action handles AEAP Settlement program interaction
+3. **Action Execution**: When LLM decides to pay for service, Action handles AEP Settlement program interaction
 4. **State Tracking**: Evaluators monitor agent resources and recommend conservation strategies
 
 ### Code Interface Sketch
 
 ```typescript
-// Action: Create AEAP Agent Identity
+// Action: Create AEP Agent Identity
 export const createAgentIdentity: Action = {
-  name: "CREATE_AEAP_IDENTITY",
-  description: "Initialize AEAP identity & vault for this agent",
+  name: "CREATE_AEP_IDENTITY",
+  description: "Initialize AEP identity & vault for this agent",
   validate: async (runtime: IAgentRuntime, message: Memory) => {
-    return !await hasAeapIdentity(runtime.getSetting("agentAddress"));
+    return !await hasAepIdentity(runtime.getSetting("agentAddress"));
   },
   handler: async (runtime: IAgentRuntime, message: Memory) => {
-    const tx = await aeapClient.createAgentIdentity({
+    const tx = await aepClient.createAgentIdentity({
       name: runtime.character.name,
       description: runtime.character.description,
     });
@@ -277,26 +277,26 @@ export const createAgentIdentity: Action = {
 
 // Provider: Agent Wallet State
 export const agentStateProvider: Provider = {
-  name: "AEAP_AGENT_STATE",
-  description: "Provides agent's AEAP wallet state",
+  name: "AEP_AGENT_STATE",
+  description: "Provides agent's AEP wallet state",
   get: async (runtime: IAgentRuntime, message: Memory, state) => {
     const vaultPda = new PublicKey(runtime.getSetting("agentVault"));
     const accountInfo = await connection.getAccountInfo(vaultPda);
-    const aeapState = decodeAeapVault(accountInfo.data);
+    const aepState = decodeAepVault(accountInfo.data);
     
     return {
-      text: `Agent vault: ${vaultPda.toString()}\nBalance: ${aeapState.balance} USDC\nActions used: ${aeapState.actionsCount}`
+      text: `Agent vault: ${vaultPda.toString()}\nBalance: ${aepState.balance} USDC\nActions used: ${aepState.actionsCount}`
     };
   }
 };
 
-// Action: Transfer Tokens via AEAP Settlement
+// Action: Transfer Tokens via AEP Settlement
 export const transferTokens: Action = {
-  name: "TRANSFER_TOKENS_AEAP",
+  name: "TRANSFER_TOKENS_AEP",
   description: "Transfer SPL tokens from agent vault",
   handler: async (runtime: IAgentRuntime, message: Memory) => {
     const vaultPda = new PublicKey(runtime.getSetting("agentVault"));
-    const tx = await aeapClient.settleTransfer({
+    const tx = await aepClient.settleTransfer({
       fromVault: vaultPda,
       toAddress: new PublicKey(message.content.recipient),
       amount: BigInt(message.content.amount),
@@ -313,7 +313,7 @@ export const transferTokens: Action = {
 **~16-20 hours** for an experienced TypeScript/Solana developer:
 
 - 2h: Study ElizaOS plugin architecture & examples
-- 2h: Study AEAP Settlement program interface
+- 2h: Study AEP Settlement program interface
 - 3h: Design plugin structure & interactions (actions, evaluators, providers)
 - 4h: Implement core actions (identity creation, balance checks, transfers)
 - 2h: Implement evaluators (resource monitoring)
@@ -393,16 +393,16 @@ interface Tool {
 3. Return structured result (success/failure, data/error)
 4. Register in plugin's `tools` array
 
-### AEAP Integration Approach
+### AEP Integration Approach
 
-**Goal**: Create a new AEAP plugin for Solana Agent Kit that exposes AEAP Settlement program operations as tools.
+**Goal**: Create a new AEP plugin for Solana Agent Kit that exposes AEP Settlement program operations as tools.
 
-**Plugin Name**: `@solana-agent-kit/plugin-aeap`
+**Plugin Name**: `@solana-agent-kit/plugin-aep`
 
 **Integration Structure**:
 
 ```
-@solana-agent-kit/plugin-aeap/
+@solana-agent-kit/plugin-aep/
 ├── src/
 │   ├── index.ts                 # Plugin export & registration
 │   ├── tools/
@@ -410,7 +410,7 @@ interface Tool {
 │   │   ├── executeAction.ts     # EXECUTE_ACTION tool
 │   │   ├── settlePayment.ts     # SETTLE_PAYMENT tool
 │   │   └── getVaultState.ts     # GET_VAULT_STATE tool
-│   ├── aeap-client.ts           # Client for AEAP Settlement program
+│   ├── aep-client.ts           # Client for AEP Settlement program
 │   └── types.ts
 └── README.md
 ```
@@ -420,8 +420,8 @@ interface Tool {
 ```typescript
 // Tool 1: Create Agent Identity
 const createIdentityTool = {
-  name: "create_aeap_identity",
-  description: "Create a new AEAP agent identity & vault",
+  name: "create_aep_identity",
+  description: "Create a new AEP agent identity & vault",
   inputSchema: {
     type: "object",
     properties: {
@@ -434,8 +434,8 @@ const createIdentityTool = {
 
 // Tool 2: Execute Action (pay for service)
 const executeActionTool = {
-  name: "execute_aeap_action",
-  description: "Execute payment action via AEAP Settlement",
+  name: "execute_aep_action",
+  description: "Execute payment action via AEP Settlement",
   inputSchema: {
     type: "object",
     properties: {
@@ -455,8 +455,8 @@ const executeActionTool = {
 
 // Tool 3: Get Vault State
 const getVaultStateTool = {
-  name: "get_aeap_vault_state",
-  description: "Check AEAP vault balance & status",
+  name: "get_aep_vault_state",
+  description: "Check AEP vault balance & status",
   inputSchema: {
     type: "object",
     properties: {
@@ -469,7 +469,7 @@ const getVaultStateTool = {
 // Tool 4: Settle Payment (x402 integration)
 const settlePaymentTool = {
   name: "settle_x402_payment",
-  description: "Settle x402 payment requirement via AEAP vault",
+  description: "Settle x402 payment requirement via AEP vault",
   inputSchema: {
     type: "object",
     properties: {
@@ -491,17 +491,17 @@ const settlePaymentTool = {
 ```
 LangChain/Vercel AI Agent
     ↓
-Uses SolanaAgentKit + AEAP Plugin
+Uses SolanaAgentKit + AEP Plugin
     ↓
-Calls "create_aeap_identity" tool
+Calls "create_aep_identity" tool
     ↓
-AEAP Plugin → Solana Settlement Program
+AEP Plugin → Solana Settlement Program
     ↓
 Agent vault created & funded
     ↓
-Agent calls "execute_aeap_action" or "settle_x402_payment"
+Agent calls "execute_aep_action" or "settle_x402_payment"
     ↓
-AEAP Plugin constructs & submits transaction
+AEP Plugin constructs & submits transaction
     ↓
 Result returned to agent (success/error)
 ```
@@ -510,9 +510,9 @@ Result returned to agent (success/error)
 
 ```typescript
 // Plugin implementation
-export const aeapPlugin: SolanaAgentKitPlugin = {
-  name: "AEAP Agent Identity & Payments",
-  description: "Tools for AEAP agent identity, wallets, and payments",
+export const aepPlugin: SolanaAgentKitPlugin = {
+  name: "AEP Agent Identity & Payments",
+  description: "Tools for AEP agent identity, wallets, and payments",
   tools: [createIdentityTool, executeActionTool, getVaultStateTool, settlePaymentTool]
 };
 
@@ -521,7 +521,7 @@ async function handleCreateIdentity(params: {
   name: string;
   description?: string;
 }): Promise<ToolResult> {
-  const tx = await aeapClient.createAgentIdentity({
+  const tx = await aepClient.createAgentIdentity({
     name: params.name,
     description: params.description || ""
   });
@@ -531,7 +531,7 @@ async function handleCreateIdentity(params: {
     data: {
       vaultPda: tx.vaultPda.toString(),
       signature: tx.signature,
-      message: `Created AEAP identity ${params.name}`
+      message: `Created AEP identity ${params.name}`
     }
   };
 }
@@ -540,12 +540,12 @@ async function handleCreateIdentity(params: {
 const tools = createVercelAITools(agent, [
   "@solana-agent-kit/plugin-token",
   "@solana-agent-kit/plugin-defi",
-  "@solana-agent-kit/plugin-aeap"  // Add AEAP plugin
+  "@solana-agent-kit/plugin-aep"  // Add AEP plugin
 ]);
 
 // Agent can now call:
-// - "create_aeap_identity"
-// - "execute_aeap_action"  
+// - "create_aep_identity"
+// - "execute_aep_action"  
 // - "settle_x402_payment"
 // - All existing Solana Agent Kit tools
 ```
@@ -555,10 +555,10 @@ const tools = createVercelAITools(agent, [
 **~10-14 hours** for an experienced TypeScript/Solana developer:
 
 - 1h: Study Solana Agent Kit plugin architecture & existing plugins
-- 1h: Study AEAP Settlement program interface
+- 1h: Study AEP Settlement program interface
 - 2h: Design plugin structure & tool definitions
 - 3h: Implement tool handlers (identity, execute, settle, state)
-- 2h: Build AEAP client wrapper for Settlement program
+- 2h: Build AEP client wrapper for Settlement program
 - 2h: Integration tests with LangChain/Vercel AI SDK
 - 1h: Documentation & README
 - 1h: Buffer for debugging

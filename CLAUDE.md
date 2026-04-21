@@ -1,4 +1,4 @@
-# Claude Code Configuration - AEAP
+# Claude Code Configuration - AEP
 
 ## Behavioral Rules (Always Enforced)
 

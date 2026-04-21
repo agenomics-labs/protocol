@@ -1,4 +1,4 @@
-// ADR-061 §2: AEAP_AGENT_REPUTATION_v1 schema layout + decoder.
+// ADR-061 §2: AEP_AGENT_REPUTATION_v1 schema layout + decoder.
 //
 // --------------------------------------------------------------------
 // SDK-dep note
@@ -9,7 +9,7 @@
 //
 //   1. The published `sas-lib@1.0.10` package pins `@solana/kit@^5.0.0`.
 //      ADR-064 (this PR) explicitly targets `@solana/kit@^6.8.0`
-//      (which is the version the rest of the AEAP TS tree is
+//      (which is the version the rest of the AEP TS tree is
 //      standardizing on — see `mcp-server/package.json`).
 //   2. The resolver reads from SAS but never writes; the read surface
 //      is small (one account layout + one schema-data layout) so the
@@ -18,7 +18,7 @@
 //      rationale — it applies symmetrically to the SDK dep too).
 //   3. When/if `sas-lib` updates to kit v6, or the Solana Foundation
 //      publishes a kit-v6-native SDK, migrating this module is a
-//      strictly-local change (no API surface of `@aeap/sas-resolver`
+//      strictly-local change (no API surface of `@aep/sas-resolver`
 //      depends on whether the bytes are decoded by `sas-lib` or by
 //      the code below).
 //
@@ -32,8 +32,8 @@
 
 import type { AttestationReputation, SolanaAttestation } from "./types.js";
 
-/** AEAP_AGENT_REPUTATION_v1 — 16 bytes, little-endian, ADR-061 §2. */
-export const AEAP_AGENT_REPUTATION_V1_SIZE = 16;
+/** AEP_AGENT_REPUTATION_v1 — 16 bytes, little-endian, ADR-061 §2. */
+export const AEP_AGENT_REPUTATION_V1_SIZE = 16;
 
 /**
  * Schema-data layout. Field offsets match ADR-061 §2 exactly:
@@ -54,7 +54,7 @@ export interface ReputationDataFields {
 }
 
 /**
- * Decode the 16-byte AEAP_AGENT_REPUTATION_v1 data slice.
+ * Decode the 16-byte AEP_AGENT_REPUTATION_v1 data slice.
  *
  * Throws on short buffer or on value-range violations — score and
  * dispute_ratio_bps are constrained to 0..10000 per ADR-061 §2. A
@@ -63,9 +63,9 @@ export interface ReputationDataFields {
  * handler will route to `skip + warn`.
  */
 export function parseReputationData(data: Uint8Array): ReputationDataFields {
-  if (data.length < AEAP_AGENT_REPUTATION_V1_SIZE) {
+  if (data.length < AEP_AGENT_REPUTATION_V1_SIZE) {
     throw new Error(
-      `AEAP_AGENT_REPUTATION_v1 data too short: got ${data.length} bytes, expected >= ${AEAP_AGENT_REPUTATION_V1_SIZE}`,
+      `AEP_AGENT_REPUTATION_v1 data too short: got ${data.length} bytes, expected >= ${AEP_AGENT_REPUTATION_V1_SIZE}`,
     );
   }
 
@@ -84,19 +84,19 @@ export function parseReputationData(data: Uint8Array): ReputationDataFields {
     last_updated_big < BigInt(Number.MIN_SAFE_INTEGER)
   ) {
     throw new Error(
-      `AEAP_AGENT_REPUTATION_v1 last_updated out of JS safe-int range: ${last_updated_big}`,
+      `AEP_AGENT_REPUTATION_v1 last_updated out of JS safe-int range: ${last_updated_big}`,
     );
   }
   const last_updated = Number(last_updated_big);
 
   if (score > 10_000) {
     throw new Error(
-      `AEAP_AGENT_REPUTATION_v1 score out of range: ${score} > 10000`,
+      `AEP_AGENT_REPUTATION_v1 score out of range: ${score} > 10000`,
     );
   }
   if (dispute_ratio_bps > 10_000) {
     throw new Error(
-      `AEAP_AGENT_REPUTATION_v1 dispute_ratio_bps out of range: ${dispute_ratio_bps} > 10000`,
+      `AEP_AGENT_REPUTATION_v1 dispute_ratio_bps out of range: ${dispute_ratio_bps} > 10000`,
     );
   }
 
@@ -234,7 +234,7 @@ export function encodeReputationData(fields: ReputationDataFields): Uint8Array {
   if (fields.dispute_ratio_bps > 10_000 || fields.dispute_ratio_bps < 0) {
     throw new Error(`dispute_ratio_bps out of range: ${fields.dispute_ratio_bps}`);
   }
-  const buf = new Uint8Array(AEAP_AGENT_REPUTATION_V1_SIZE);
+  const buf = new Uint8Array(AEP_AGENT_REPUTATION_V1_SIZE);
   const view = new DataView(buf.buffer);
   view.setUint16(0, fields.score, true);
   view.setUint32(2, fields.completed_tasks, true);

@@ -13,15 +13,15 @@
 
 This doc was written before scanning solana-foundation + solana-labs. The Foundation scan changed the strategic picture:
 
-1. **sendaifun is a downstream consumer of Foundation primitives.** Their `solana-mcp` reinvents hot-keypair MCP in a way `solana-mcp-official` deliberately rejects. AEAP's architecture should conform to the Foundation layer (`@solana/kit`, `@solana/keychain-core`, `mpp-sdk`, `solana-mcp-official` tool shape), not sendaifun's shortcuts.
+1. **sendaifun is a downstream consumer of Foundation primitives.** Their `solana-mcp` reinvents hot-keypair MCP in a way `solana-mcp-official` deliberately rejects. AEP's architecture should conform to the Foundation layer (`@solana/kit`, `@solana/keychain-core`, `mpp-sdk`, `solana-mcp-official` tool shape), not sendaifun's shortcuts.
 
-2. **ADR-058 scope collapses ~60%.** `@solana/keychain-core` ships `SolanaSigner` with 9 backends (Vault, Privy, Turnkey, Para, Fireblocks, Dfns, CDP, AWS-KMS, GCP-KMS) — AEAP's planned `BaseWallet` trait becomes dependency adoption + `KeypairSigner` + `PassthroughSigner` adapters. See SOLANA doc.
+2. **ADR-058 scope collapses ~60%.** `@solana/keychain-core` ships `SolanaSigner` with 9 backends (Vault, Privy, Turnkey, Para, Fireblocks, Dfns, CDP, AWS-KMS, GCP-KMS) — AEP's planned `BaseWallet` trait becomes dependency adoption + `KeypairSigner` + `PassthroughSigner` adapters. See SOLANA doc.
 
-3. **ADR-059 scope collapses ~50%.** `framework-kit` already ships blockhash cache + compute-budget injection. AEAP's remaining work is mutex-per-sig (from `solana-mpp`) + per-action preflight flags.
+3. **ADR-059 scope collapses ~50%.** `framework-kit` already ships blockhash cache + compute-budget injection. AEP's remaining work is mutex-per-sig (from `solana-mpp`) + per-action preflight flags.
 
 4. **Two new ADRs**: **ADR-061** (SAS integration depth) and **ADR-062** (MPP canonical wire-format conformance) — neither existed in the original sendaifun-only analysis.
 
-5. **The AEAP-unique surface is narrower than this doc originally estimated** — capability gating + milestone state machine + dispute flow + cross-program CPI coordination. Everything else is composition of Foundation parts (plus port-patterns from `kora`, `commerce-kit`, `fiber`, `token-acl`).
+5. **The AEP-unique surface is narrower than this doc originally estimated** — capability gating + milestone state machine + dispute flow + cross-program CPI coordination. Everything else is composition of Foundation parts (plus port-patterns from `kora`, `commerce-kit`, `fiber`, `token-acl`).
 
 **Where this doc and the SOLANA doc disagree, the SOLANA doc wins.** This doc remains accurate for the *distribution ring* (sendaifun's skills marketplace, plugin-god-mode, create-solana-agent scaffolder) — that analysis is unchanged.
 
@@ -29,9 +29,9 @@ This doc was written before scanning solana-foundation + solana-labs. The Founda
 
 ## Executive Summary
 
-SendAI Fun is building the **agent-toolkit** side of AI+Solana (SDKs, skill marketplaces, MCP servers, scaffolders). AEAP is building the **economic-protocol** side (agent identity, programmable vaults, settlement/escrow). **The two are complementary, not competitive** — SendAI's agents are AEAP's customers.
+SendAI Fun is building the **agent-toolkit** side of AI+Solana (SDKs, skill marketplaces, MCP servers, scaffolders). AEP is building the **economic-protocol** side (agent identity, programmable vaults, settlement/escrow). **The two are complementary, not competitive** — SendAI's agents are AEP's customers.
 
-However, **SendAI's MCP security posture is incompatible with AEAP's trust model.** `solana-mcp` ships a single env-var hot keypair, blanket tool registration, untyped handler returns, and no capability gating. A settlement protocol's MCP endpoint cannot inherit those assumptions. The integration strategy therefore:
+However, **SendAI's MCP security posture is incompatible with AEP's trust model.** `solana-mcp` ships a single env-var hot keypair, blanket tool registration, untyped handler returns, and no capability gating. A settlement protocol's MCP endpoint cannot inherit those assumptions. The integration strategy therefore:
 
 - **Adopts** architecturally-load-bearing shapes (`Action`, `BaseWallet`, tx-pipeline helpers)
 - **Strengthens** them (typed output schemas, default-deny capability gating, custody-free `UnsignedTxWallet`)
@@ -40,10 +40,10 @@ However, **SendAI's MCP security posture is incompatible with AEAP's trust model
 Three concentric distribution rings exist in the sendaifun ecosystem:
 
 1. **Core SDK layer** — `solana-agent-kit` (1656⭐) with its typed plugin system
-2. **MCP server layer** — `solana-mcp`, `solana-mcp-cloudflare` (AEAP already operates here, but with stricter guarantees)
+2. **MCP server layer** — `solana-mcp`, `solana-mcp-cloudflare` (AEP already operates here, but with stricter guarantees)
 3. **Discovery layer** — `skills` marketplace, `solana-new` CLI, `create-solana-agent` scaffolder
 
-The universal primitive across all 21 repos is the **Action shape** — AEAP's variant strengthens it:
+The universal primitive across all 21 repos is the **Action shape** — AEP's variant strengthens it:
 
 ```ts
 interface Action<I, O> {
@@ -51,17 +51,17 @@ interface Action<I, O> {
   similes: string[];
   description: string;
   examples: Example[];
-  readOnly: boolean;               // AEAP addition
-  capabilities: Capability[];       // AEAP addition — default-deny
+  readOnly: boolean;               // AEP addition
+  capabilities: Capability[];       // AEP addition — default-deny
   inputSchema: z.ZodType<I>;
-  outputSchema: z.ZodType<O>;       // AEAP strengthening — no Record<string, any>
+  outputSchema: z.ZodType<O>;       // AEP strengthening — no Record<string, any>
   handler: (ctx, input) => Promise<Result<O>>;
 }
 ```
 
 ### Highest-leverage move (revised)
 
-The highest-leverage move is **not** publishing `@aeap/plugin-solana-agent-kit` — that would force us to mirror SendAI's anti-patterns. The highest-leverage move is **adopting the strengthened `Action` abstraction inside `mcp-server/` first**, with `RemoteSigner` capability gating, and using that as the source from which external artefacts (plugin, skill, scaffolder) are derived. **Architecture before distribution.**
+The highest-leverage move is **not** publishing `@aep/plugin-solana-agent-kit` — that would force us to mirror SendAI's anti-patterns. The highest-leverage move is **adopting the strengthened `Action` abstraction inside `mcp-server/` first**, with `RemoteSigner` capability gating, and using that as the source from which external artefacts (plugin, skill, scaffolder) are derived. **Architecture before distribution.**
 
 ---
 
@@ -111,11 +111,11 @@ Port behavior (not code), all `readOnly: true`, no capabilities required:
 
 These are **derivatives** of Phase 1.A's `Action[]` exports, not net-new code.
 
-#### D-1: Publish `@aeap/plugin-solana-agent-kit`
+#### D-1: Publish `@aep/plugin-solana-agent-kit`
 
 Reference `plugin-god-mode` file layout:
 ```
-packages/plugin-aeap/
+packages/plugin-aep/
 ├── src/
 │   ├── vault/       { tools/, actions/ }
 │   ├── registry/    { tools/, actions/ }
@@ -125,22 +125,22 @@ packages/plugin-aeap/
 └── tsconfig.json
 ```
 
-Users install via `new SolanaAgentKit({ plugins: [aeapPlugin] })` — automatically exposed through `adapter-mcp`, LangChain, Vercel AI, OpenAI, Claude SDK adapters.
+Users install via `new SolanaAgentKit({ plugins: [aepPlugin] })` — automatically exposed through `adapter-mcp`, LangChain, Vercel AI, OpenAI, Claude SDK adapters.
 
-#### D-2: `skills/aeap/SKILL.md` PR to `sendaifun/skills`
+#### D-2: `skills/aep/SKILL.md` PR to `sendaifun/skills`
 
-**DX only, no protocol binding.** Markdown skill teaching agents how to invoke AEAP's MCP tools. PR adds entry to `skills/marketplace.json` + creates `skills/aeap/{SKILL.md, templates/, examples/}`. If the upstream repo disappears, nothing breaks. Explicitly **not** used as a capability/schema format — see *Explicit rejects*.
+**DX only, no protocol binding.** Markdown skill teaching agents how to invoke AEP's MCP tools. PR adds entry to `skills/marketplace.json` + creates `skills/aep/{SKILL.md, templates/, examples/}`. If the upstream repo disappears, nothing breaks. Explicitly **not** used as a capability/schema format — see *Explicit rejects*.
 
-#### D-3: `solana-new` CLI index + optional `create-aeap-agent`
+#### D-3: `solana-new` CLI index + optional `create-aep-agent`
 
 - Submit PR adding `{ slug, title, github_url, raw_url }` to `solana-new/cli/data/solana-skills.json` for CLI auto-indexing
-- Two paths on scaffolder: (A) PR `--aeap` flag to `create-solana-agent`, or (B) publish standalone `create-aeap-agent` mirroring its template structure
+- Two paths on scaffolder: (A) PR `--aep` flag to `create-solana-agent`, or (B) publish standalone `create-aep-agent` mirroring its template structure
 
 ---
 
 ## Tier 2 — Protocol alignment (strategic, deeper)
 
-### 2.1 Adopt `charge` + `session` intent schema in AEAP settlement
+### 2.1 Adopt `charge` + `session` intent schema in AEP settlement
 
 **Reference**: `solana-mpp` (12⭐) — **"Micropayment Protocol"** for Solana SPL, HTTP 402 standard
 
@@ -150,18 +150,18 @@ Users install via `new SolanaAgentKit({ plugins: [aeapPlugin] })` — automatica
 - **Replay protection**: Store-backed consumed-signature set, plus mutex per-sig to prevent concurrent verification races.
 - **Reference-PDA lookup**: deterministic reference PDA embedded in tx makes O(1) on-chain lookup possible.
 
-**Mapping to AEAP**:
+**Mapping to AEP**:
 
-| MPP concept | AEAP equivalent |
+| MPP concept | AEP equivalent |
 |---|---|
 | `charge` intent | Single-tx escrow lock (existing Settlement program) |
 | `session` intent | Agent Vault deposit + metered per-action charging |
 | Reference PDA | Your `vault_nonce` |
 | `findAndVerifyTransfer()` | Should use Anchor event logs or indexed reference (don't scan all recent txs) |
 
-**Gaps AEAP adds on top of MPP**:
-- MPP has no signer identity → AEAP needs Ed25519 per-agent signer enforced by Registry program.
-- MPP bearer tokens are opaque → AEAP needs JWT + vault-ownership proof.
+**Gaps AEP adds on top of MPP**:
+- MPP has no signer identity → AEP needs Ed25519 per-agent signer enforced by Registry program.
+- MPP bearer tokens are opaque → AEP needs JWT + vault-ownership proof.
 
 ### 2.2 Adopt reservation → settlement pattern with micro-USD accounting
 
@@ -182,7 +182,7 @@ wallet login
 - `charged_usd` (actual settle amount)
 - `balance_usd` (remaining vault balance)
 
-**Action for AEAP**: Settlement program should emit matching balance-update events + adopt micro-USD as internal unit for milestone partial payments.
+**Action for AEP**: Settlement program should emit matching balance-update events + adopt micro-USD as internal unit for milestone partial payments.
 
 ### 2.3 Future: Cross-chain bridge to Base USDC
 
@@ -190,7 +190,7 @@ wallet login
 
 **Wire-format gap**:
 - x402-mcp uses EIP-712 sigs + centralized `useFacilitator` HTTP endpoint for verification
-- AEAP settles on-chain via Solana program state
+- AEP settles on-chain via Solana program state
 
 **Bridge requires**:
 - SPL-wrapped USDC on Solana (Wormhole, Allbridge, or native Circle CCTP)
@@ -205,26 +205,26 @@ Priority: **low** — only pursue if significant demand for Base-side agent paym
 
 **Pattern**: `MyMCP extends McpAgent<Env>` — stateful session per user, persisted across requests, OAuth-gated with JWT containing wallet address.
 
-**Use case for AEAP**: if AEAP deploys its MCP server as a hosted service (vs. npx), Durable Objects give free per-agent state machines without running a separate DB for session tracking.
+**Use case for AEP**: if AEP deploys its MCP server as a hosted service (vs. npx), Durable Objects give free per-agent state machines without running a separate DB for session tracking.
 
 ---
 
 ## Tier 3 — Reference patterns (learn, don't integrate)
 
 ### `fraction` (5⭐)
-Rust/Anchor program: 5-party basis-points settlement with clean PDA derivation `("fraction_config", authority, name)` and `("fraction_vault", authority, name)`. Studies well for AEAP's multi-party escrow if expanding beyond 2-party. Hard-coded 5-participant limit, fixed-size array (no Vec). `bot_wallet` parameter suggests keeper-bot-automated payouts.
+Rust/Anchor program: 5-party basis-points settlement with clean PDA derivation `("fraction_config", authority, name)` and `("fraction_vault", authority, name)`. Studies well for AEP's multi-party escrow if expanding beyond 2-party. Hard-coded 5-participant limit, fixed-size array (no Vec). `bot_wallet` parameter suggests keeper-bot-automated payouts.
 
 ### `raycast` (10⭐)
-Dual-schema tool definitions: each tool is both a Raycast "command" (with View/Form UI) and a "tool" (with LLM-ai-instructions). The `ai.instructions` field per tool contains MCP-style system prompts telling the LLM how to resolve tickers, reuse price data across steps, etc. Directly reusable if AEAP wants a Raycast frontend.
+Dual-schema tool definitions: each tool is both a Raycast "command" (with View/Form UI) and a "tool" (with LLM-ai-instructions). The `ai.instructions` field per tool contains MCP-style system prompts telling the LLM how to resolve tickers, reuse price data across steps, etc. Directly reusable if AEP wants a Raycast frontend.
 
 ### `solana-app-kit` (147⭐)
-Full mobile stack already wired: Privy social login + Turnkey passkeys + Dynamic Labs wallets + `@solana-mobile/mobile-wallet-adapter` + MoonPay fiat onramp + Jito MEV priority fee estimation + Redux-persist offline-first state. Copy wholesale if AEAP builds a mobile agent client.
+Full mobile stack already wired: Privy social login + Turnkey passkeys + Dynamic Labs wallets + `@solana-mobile/mobile-wallet-adapter` + MoonPay fiat onramp + Jito MEV priority fee estimation + Redux-persist offline-first state. Copy wholesale if AEP builds a mobile agent client.
 
 ### `trumpit` (14⭐)
 Vercel AI SDK streaming pattern (`for await (const textPart of stream.textStream)`), Privy per-Telegram-ID wallet pattern, Telegramify MarkdownV2 escaping for untrusted LLM output. Reusable Telegram UX patterns.
 
 ### `PToken-Lens` (4⭐)
-Program-log parsing pattern: reconstructs SPL Token instruction call stack from `Program invoke` → `Instruction` → `Program success/failed` log lines. Useful if AEAP wants to audit settlement-tx compute spend or build a tx-inspection tool.
+Program-log parsing pattern: reconstructs SPL Token instruction call stack from `Program invoke` → `Instruction` → `Program success/failed` log lines. Useful if AEP wants to audit settlement-tx compute spend or build a tx-inspection tool.
 
 ---
 
@@ -270,7 +270,7 @@ These gaps are flagged so they don't get silently filled in at PR-review time:
    ```
    Without this, capability gating degenerates into untyped string compares.
 
-2. **Unsigned-tx MCP response convention** (ADR-058) — MCP has no native "return a blob for the client to sign" primitive. Needs an AEAP-side convention:
+2. **Unsigned-tx MCP response convention** (ADR-058) — MCP has no native "return a blob for the client to sign" primitive. Needs an AEP-side convention:
    ```json
    { "type": "unsigned_transaction",
      "serialized_tx": "base64...",
@@ -297,7 +297,7 @@ These gaps are flagged so they don't get silently filled in at PR-review time:
 
 - **ADR-058**: `Action` / `Plugin` / `RemoteSigner` abstraction for `mcp-server/`. Covers `Action<I, O>` contract, capability taxonomy, default-deny gating, `BaseWallet` variants, unsigned-tx response convention, error shape.
 - **ADR-059**: Tx submission pipeline. Canonicalizes compute-budget + priority-fee helpers, blockhash-refresh fix, mutex-per-signature replay protection, per-action preflight flags.
-- **ADR-060**: AEAP capability descriptor format. Off-chain hash-pinned / signed / typed-I/O manifest; Registry stores pointer. Explicitly rejects SendAI's unstructured skills format as a capability schema.
+- **ADR-060**: AEP capability descriptor format. Off-chain hash-pinned / signed / typed-I/O manifest; Registry stores pointer. Explicitly rejects SendAI's unstructured skills format as a capability schema.
 
 ---
 
@@ -440,7 +440,7 @@ PR: P1-A (compute budget / priority fee / blockhash refresh / mutex-per-sig) + P
 - Verification: force blockhash-expiry mid-submit (sleep 90s) → rebroadcasts, doesn't error; `HELIUS_API_KEY` on/off both land.
 
 ### Week 4 — Phase 1.B distribution
-PR D-1 (`@aeap/plugin-solana-agent-kit` alpha). PR D-2 (`skills/aeap/SKILL.md` to sendaifun/skills). PR D-3 (`solana-new` index entry; `create-aeap-agent` path choice).
+PR D-1 (`@aep/plugin-solana-agent-kit` alpha). PR D-2 (`skills/aep/SKILL.md` to sendaifun/skills). PR D-3 (`solana-new` index entry; `create-aep-agent` path choice).
 
 ### Week 5+ — Phase 2 protocol alignment (stretch)
-`solana-mpp` charge/session intent adoption as AEAP settlement schema (ADR, then program work). `x-research-x402` reservation + micro-USD pattern. Cross-chain x402 bridge only on demand.
+`solana-mpp` charge/session intent adoption as AEP settlement schema (ADR, then program work). `x-research-x402` reservation + micro-USD pattern. Cross-chain x402 bridge only on demand.

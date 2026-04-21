@@ -1,7 +1,7 @@
 {
   "name": "@agenomics/indexer",
   "version": "0.1.0",
-  "description": "Off-chain event indexer for AEAP Solana programs",
+  "description": "Off-chain event indexer for AEP Solana programs",
   "main": "index.ts",
   "scripts": {
     "start": "ts-node index.ts",

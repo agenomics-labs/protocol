@@ -1,4 +1,4 @@
-# Architecture Audit: AEAP (Agenomics Protocol)
+# Architecture Audit: AEP (Agenomics Protocol)
 
 **Date:** 2026-04-17
 **Auditor:** Automated deep audit via Claude Code
@@ -6,7 +6,7 @@
 
 ## Executive Summary
 
-The AEAP is a Solana/Anchor protocol enabling autonomous AI agent commerce through three on-chain programs (Agent Vault, Agent Registry, Settlement), an MCP server bridge, off-chain services, and integration plugins. The codebase totals approximately 13,500 lines across Rust and TypeScript with 114 tests and 50 Architecture Decision Records.
+The AEP is a Solana/Anchor protocol enabling autonomous AI agent commerce through three on-chain programs (Agent Vault, Agent Registry, Settlement), an MCP server bridge, off-chain services, and integration plugins. The codebase totals approximately 13,500 lines across Rust and TypeScript with 114 tests and 50 Architecture Decision Records.
 
 **Overall assessment:** The protocol demonstrates strong architectural fundamentals — clean bounded contexts, comprehensive error handling, checked arithmetic, and excellent documentation discipline. However, this audit identified **32 findings** including 1 critical vulnerability, 6 high-severity issues, and 14 medium-severity concerns that should be addressed before mainnet deployment.
 
@@ -104,7 +104,7 @@ In `CreateEscrow`, vault references are stored but never validated on-chain. Cur
 **File:** `src/x402-relay/index.ts:8`
 
 ```typescript
-const JWT_SECRET = process.env.JWT_SECRET || "aeap-x402-dev-secret-change-in-production";
+const JWT_SECRET = process.env.JWT_SECRET || "aep-x402-dev-secret-change-in-production";
 ```
 
 If the environment variable is unset, the relay uses a publicly known secret. Any attacker can forge JWT tokens, completely bypassing payment verification.

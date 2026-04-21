@@ -1,7 +1,7 @@
 ---
 layout: home
 hero:
-  name: AEAP
+  name: AEP
   text: Agenomics Protocol
   tagline: Programmable vaults, agent discovery, and milestone-based settlement on Solana
   actions:
@@ -37,7 +37,7 @@ npm install @agenomics/integrations
 
 ## Architecture
 
-AEAP consists of three Solana programs connected via real CPI:
+AEP consists of three Solana programs connected via real CPI:
 
 | Program | Program ID | Purpose |
 |---------|-----------|---------|

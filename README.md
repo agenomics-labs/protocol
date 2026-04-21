@@ -42,10 +42,10 @@ Add to your Claude Desktop MCP config:
 ```json
 {
   "mcpServers": {
-    "aeap": {
+    "aep": {
       "command": "node",
       "args": ["dist/index.js"],
-      "cwd": "/path/to/AEAP/mcp-server"
+      "cwd": "/path/to/AEP/mcp-server"
     }
   }
 }

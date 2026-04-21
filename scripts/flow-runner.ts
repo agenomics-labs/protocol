@@ -1,5 +1,5 @@
 /**
- * AEAP Flow Runner — parameterized single-flow demo used for parallel testing.
+ * AEP Flow Runner — parameterized single-flow demo used for parallel testing.
  *
  * Env:
  *   FLOW_LABEL   — short tag for console output (e.g. "DISPUTE", "REWORK")
@@ -59,7 +59,7 @@ function deriveAgentProfilePDA(authority: PublicKey): [PublicKey, number] {
 const tag = (msg: string) => `[${LABEL}] ${msg}`;
 const log = (msg: string) => console.log(tag(msg));
 
-describe(`AEAP Flow Runner — ${LABEL}`, () => {
+describe(`AEP Flow Runner — ${LABEL}`, () => {
   it(`runs ${MODE} flow (task ${TASK_ID})`, async () => {
     const provider = anchor.AnchorProvider.env();
     anchor.setProvider(provider);

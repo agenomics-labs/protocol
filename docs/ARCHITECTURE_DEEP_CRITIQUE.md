@@ -1,4 +1,4 @@
-# AEAP Architecture Deep Critique
+# AEP Architecture Deep Critique
 
 **Date:** 2026-04-17
 **Branch:** `claude/architecture-audit-N9QMS`
@@ -987,7 +987,7 @@ tracing. For a protocol aiming at mainnet, this is a significant gap.
 The protocol's biggest unspoken assumption is that clients *want* to
 approve work. Most features (auto-release on approval, slashing on
 "undelivered", dispute resolution framed as exception) encode this.
-But AEAP is designed for *agents* — autonomous programs that
+But AEP is designed for *agents* — autonomous programs that
 transact without human supervision. A malicious agent operator has
 no reputation incentive and arbitrarily many keys. The current
 model protects good agents from unresponsive clients badly (C1) and

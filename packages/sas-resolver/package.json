@@ -1,7 +1,7 @@
 {
-  "name": "@aeap/sas-resolver",
+  "name": "@aep/sas-resolver",
   "version": "0.1.0",
-  "description": "ADR-064 reference resolver for ADR-061 manifest-referenced SAS attestations. Off-chain only; dereferences manifest.agent.owner_attestation, parses AEAP_AGENT_REPUTATION_v1, and surfaces merge helpers for registry + SAS UX.",
+  "description": "ADR-064 reference resolver for ADR-061 manifest-referenced SAS attestations. Off-chain only; dereferences manifest.agent.owner_attestation, parses AEP_AGENT_REPUTATION_v1, and surfaces merge helpers for registry + SAS UX.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -49,7 +49,7 @@
     "test": "node --import tsx --test test/resolver.test.ts test/schema.test.ts test/merge.test.ts test/cache.test.ts"
   },
   "keywords": [
-    "aeap",
+    "aep",
     "solana",
     "sas",
     "solana-attestation-service",

@@ -1,6 +1,6 @@
 # Web3.js v2 Migration Plan
 
-**Protocol**: AEAP
+**Protocol**: AEP
 **Date**: 2026-04-15
 **Current State**: v1 in production (`mcp-server/src/solana.ts`), v2 compatibility layer started (`mcp-server/src/solana-v2.ts`)
 
@@ -287,7 +287,7 @@ The existing `solana.ts` (v1) and `solana-v2.ts` (v2 compat) will be maintained 
 During migration, use environment variable to toggle between v1 and v2 code paths:
 
 ```typescript
-const USE_V2 = process.env.AEAP_WEB3_V2 === "true";
+const USE_V2 = process.env.AEP_WEB3_V2 === "true";
 
 export function getBalance(address: string): Promise<number> {
   if (USE_V2) {

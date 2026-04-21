@@ -95,7 +95,7 @@ async function benchmarkQuery(
 // ---------------------------------------------------------------------------
 
 async function main() {
-  console.log(`\n=== AEAP Agent Discovery Load Test (ADR-022) ===`);
+  console.log(`\n=== AEP Agent Discovery Load Test (ADR-022) ===`);
   console.log(`RPC:        ${RPC_URL}`);
   console.log(`Agents:     ${AGENT_COUNT}`);
   console.log(`Categories: ${CATEGORIES.join(", ")}\n`);

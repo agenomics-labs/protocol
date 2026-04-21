@@ -5,7 +5,7 @@
 
 ## Context
 
-The AEAP Solana programs handle financial operations (vault spending limits, escrow milestones, reputation scoring) where arithmetic edge cases could lead to fund loss or program panics. Traditional unit tests cover known scenarios but miss unexpected input combinations. We need systematic testing of invariants across random inputs to catch overflow bugs, off-by-one errors, and violated assumptions.
+The AEP Solana programs handle financial operations (vault spending limits, escrow milestones, reputation scoring) where arithmetic edge cases could lead to fund loss or program panics. Traditional unit tests cover known scenarios but miss unexpected input combinations. We need systematic testing of invariants across random inputs to catch overflow bugs, off-by-one errors, and violated assumptions.
 
 Cargo-fuzz requires nightly Rust and is incompatible with our stable toolchain pinned for Anchor. The `proptest` crate provides property-based testing on stable Rust with no additional tooling.
 

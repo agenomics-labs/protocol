@@ -29,7 +29,7 @@ export interface ActionContext {
   signer: SolanaSigner | unknown | null;
 }
 
-export type AeapErrorCode =
+export type AepErrorCode =
   | "CAPABILITY_MISSING"
   | "SIGNER_UNAVAILABLE"
   | "PREFLIGHT_FAILED"
@@ -39,18 +39,18 @@ export type AeapErrorCode =
   | "IDEMPOTENCY_VIOLATION"
   | "UNKNOWN";
 
-export interface AeapError {
-  code: AeapErrorCode;
+export interface AepError {
+  code: AepErrorCode;
   message: string;
   details?: Record<string, unknown>;
 }
 
-export type Result<T, E = AeapError> =
+export type Result<T, E = AepError> =
   | { ok: true; data: T }
   | { ok: false; error: E };
 
 export const ok = <T>(data: T): Result<T> => ({ ok: true, data });
-export const err = <T = never>(error: AeapError): Result<T> => ({ ok: false, error });
+export const err = <T = never>(error: AepError): Result<T> => ({ ok: false, error });
 
 export interface Example {
   description: string;

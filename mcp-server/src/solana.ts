@@ -11,12 +11,12 @@ import * as path from "path";
 import * as crypto from "crypto";
 
 /**
- * Solana connection, Anchor programs, and PDA helpers for the AEAP MCP server.
+ * Solana connection, Anchor programs, and PDA helpers for the AEP MCP server.
  *
  * This module initializes:
  * - Solana RPC connection (configurable via SOLANA_RPC_URL)
  * - Wallet keypair (from SOLANA_KEYPAIR_PATH or default Solana CLI path)
- * - Anchor Provider and Program instances for all three AEAP programs
+ * - Anchor Provider and Program instances for all three AEP programs
  * - PDA derivation utilities matching the on-chain program seeds
  */
 

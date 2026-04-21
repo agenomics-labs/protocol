@@ -1,8 +1,8 @@
 ================================================================================
-AEAP MCP SERVER - PROJECT SUMMARY
+AEP MCP SERVER - PROJECT SUMMARY
 ================================================================================
 
-Project: Autonomous Economic Agents Protocol (AEAP) - MCP Server for Solana
+Project: Agent Economy Protocol (AEP) - MCP Server for Solana
 Created: 2026-04-14
 Author: Alejandro (Solana Developer)
 
@@ -11,7 +11,7 @@ OVERVIEW
 ================================================================================
 
 A TypeScript Model Context Protocol (MCP) server that enables AI agents 
-(Claude, ChatGPT, Eliza) to interact with the AEAP on-chain programs on Solana.
+(Claude, ChatGPT, Eliza) to interact with the AEP on-chain programs on Solana.
 
 Three core protocol components:
 1. Agent Vault - Programmable wallets with spending policies
@@ -24,7 +24,7 @@ Total: 12 tools (functions) exposed to AI agents
 PROJECT STRUCTURE
 ================================================================================
 
-aeap-mcp-server/
+aep-mcp-server/
 ├── src/
 │   ├── index.ts          (640 lines) Main MCP server & 12 tool handlers
 │   ├── solana.ts         (167 lines) Solana connection & utilities
@@ -44,60 +44,60 @@ Total: ~2,600 lines of code + documentation
 FILES CREATED
 ================================================================================
 
-1. /sessions/elegant-quirky-davinci/mnt/Solana/aeap/mcp-server/src/index.ts
+1. /sessions/elegant-quirky-davinci/mnt/Solana/aep/mcp-server/src/index.ts
    - MCP Server initialization
    - Tool call routing and request handling
    - 12 handler functions for all tools
    - Error handling and response serialization
 
-2. /sessions/elegant-quirky-davinci/mnt/Solana/aeap/mcp-server/src/tools.ts
+2. /sessions/elegant-quirky-davinci/mnt/Solana/aep/mcp-server/src/tools.ts
    - All 12 tool definitions with metadata
    - Complete JSON schemas for inputs/outputs
    - Type-safe tool name definitions
    - Organized by category (Vault, Registry, Settlement)
 
-3. /sessions/elegant-quirky-davinci/mnt/Solana/aeap/mcp-server/src/solana.ts
+3. /sessions/elegant-quirky-davinci/mnt/Solana/aep/mcp-server/src/solana.ts
    - RPC connection management
    - Wallet keypair loading and caching
    - Balance queries and conversions
    - Transaction building and signing
    - Public key validation utilities
 
-4. /sessions/elegant-quirky-davinci/mnt/Solana/aeap/mcp-server/package.json
+4. /sessions/elegant-quirky-davinci/mnt/Solana/aep/mcp-server/package.json
    - Dependencies: @modelcontextprotocol/sdk, @solana/web3.js, @coral-xyz/anchor
    - Build scripts for TypeScript compilation
    - Development dependencies (TypeScript, @types/node)
 
-5. /sessions/elegant-quirky-davinci/mnt/Solana/aeap/mcp-server/tsconfig.json
+5. /sessions/elegant-quirky-davinci/mnt/Solana/aep/mcp-server/tsconfig.json
    - ES2020 target
    - CommonJS module format
    - Strict mode enabled
    - Source maps for debugging
 
-6. /sessions/elegant-quirky-davinci/mnt/Solana/aeap/mcp-server/README.md
+6. /sessions/elegant-quirky-davinci/mnt/Solana/aep/mcp-server/README.md
    - Complete project documentation
    - Tool reference with parameters and returns
    - Usage examples
    - Production considerations
 
-7. /sessions/elegant-quirky-davinci/mnt/Solana/aeap/mcp-server/SETUP.md
+7. /sessions/elegant-quirky-davinci/mnt/Solana/aep/mcp-server/SETUP.md
    - Quick start instructions
    - Configuration guide
    - Integration with Claude/MCP clients
    - Troubleshooting tips
 
-8. /sessions/elegant-quirky-davinci/mnt/Solana/aeap/mcp-server/ARCHITECTURE.md
+8. /sessions/elegant-quirky-davinci/mnt/Solana/aep/mcp-server/ARCHITECTURE.md
    - System design and data flow
    - Module structure explanation
    - Integration points with on-chain programs
    - Security and performance considerations
 
-9. /sessions/elegant-quirky-davinci/mnt/Solana/aeap/mcp-server/.env.example
+9. /sessions/elegant-quirky-davinci/mnt/Solana/aep/mcp-server/.env.example
    - RPC endpoint configuration
    - Keypair path configuration
    - Program address placeholders
 
-10. /sessions/elegant-quirky-davinci/mnt/Solana/aeap/mcp-server/.gitignore
+10. /sessions/elegant-quirky-davinci/mnt/Solana/aep/mcp-server/.gitignore
     - Node modules, build output, env files
     - IDE configurations, logs, OS files
 
@@ -343,7 +343,7 @@ FILE LOCATIONS
 ================================================================================
 
 All files located in:
-  /sessions/elegant-quirky-davinci/mnt/Solana/aeap/mcp-server/
+  /sessions/elegant-quirky-davinci/mnt/Solana/aep/mcp-server/
 
 Source code:
   src/index.ts    - Main server
@@ -385,11 +385,11 @@ Integrate with Claude Desktop:
 CONTACT & SUPPORT
 ================================================================================
 
-Project: AEAP MCP Server
+Project: AEP MCP Server
 Status: Scaffolding Complete, Ready for On-Chain Integration
 Version: 1.0.0
 
-For production implementation, integrate with on-chain AEAP programs and
+For production implementation, integrate with on-chain AEP programs and
 implement the actual blockchain interactions described in ARCHITECTURE.md.
 
 ================================================================================

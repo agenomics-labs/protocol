@@ -1,5 +1,5 @@
 {
-  "name": "aeap-anchor-workspace",
+  "name": "aep-anchor-workspace",
   "version": "0.1.0",
   "description": "Agenomics Protocol - Anchor Workspace",
   "main": "target/types/index.ts",

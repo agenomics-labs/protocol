@@ -33,5 +33,5 @@ This is performed in the `remove_token_allowlist` handler immediately after the 
 
 ## Files Changed
 
-- `programs/aeap/src/instructions/manage_allowlist.rs` -- added `vault.token_spend_records.retain(|r| r.mint != token_mint)` in `remove_token_allowlist`
+- `programs/aep/src/instructions/manage_allowlist.rs` -- added `vault.token_spend_records.retain(|r| r.mint != token_mint)` in `remove_token_allowlist`
 - `tests/vault_allowlist.ts` -- added test verifying spend records are cleaned on token removal

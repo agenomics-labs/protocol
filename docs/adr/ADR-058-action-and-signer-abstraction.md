@@ -16,7 +16,7 @@ Two external ecosystems were scanned before this ADR:
 
 2. **solana-foundation** ships `@solana/keychain-core` with the `SolanaSigner` trait and **9 production backends** (Vault, Privy, Turnkey, Para, Fireblocks, Dfns, Coinbase CDP, AWS-KMS, GCP-KMS). `solana-mcp-official` defines the canonical MCP tool shape (`SolanaTool { title, description, parameters, outputSchema?, func }`) but is **read-only with zero auth** — it deliberately omits signing.
 
-The gap both ecosystems leave open is **capability-gated, state-mutating MCP with a custody-free default**. That gap is AEAP-specific and must be closed by this ADR.
+The gap both ecosystems leave open is **capability-gated, state-mutating MCP with a custody-free default**. That gap is AEP-specific and must be closed by this ADR.
 
 Companion analysis docs:
 - `docs/SENDAIFUN_ECOSYSTEM_ANALYSIS.md`
@@ -26,7 +26,7 @@ Companion analysis docs:
 
 ### 1. Adopt `@solana/keychain-core` as a peer dependency
 
-Use `SolanaSigner` (verbatim from `@solana/keychain-core`) as AEAP's signer abstraction. Do **not** design a new `BaseWallet` trait from scratch.
+Use `SolanaSigner` (verbatim from `@solana/keychain-core`) as AEP's signer abstraction. Do **not** design a new `BaseWallet` trait from scratch.
 
 ```ts
 export interface SolanaSigner<TAddress extends string = string>
@@ -52,7 +52,7 @@ interface Action<I, O> {
     parameters: ZodRawShape;                 // alias for inputSchema
     outputSchema: z.ZodType<O>;              // STRICTER than SolanaTool — REQUIRED, not optional
 
-    // AEAP additions
+    // AEP additions
     similes: string[];                       // LLM trigger phrases
     examples: Example[];
     readOnly: boolean;
@@ -136,7 +136,7 @@ function capabilityGated<I, O>(action: Action<I, O>): Action<I, O> {
 
 ### 6. Unsigned-tx MCP response convention
 
-MCP has no native primitive for "return a blob for the client to sign." Define an AEAP convention:
+MCP has no native primitive for "return a blob for the client to sign." Define an AEP convention:
 
 ```json
 {
@@ -152,22 +152,22 @@ MCP has no native primitive for "return a blob for the client to sign." Define a
 }
 ```
 
-Calling clients (Claude Code via wallet-adapter, custom runtimes) inspect `type: "unsigned_transaction"` and hand the `serialized_tx` to their wallet for signing. Documented as **required** behavior for any MCP client integrating with AEAP.
+Calling clients (Claude Code via wallet-adapter, custom runtimes) inspect `type: "unsigned_transaction"` and hand the `serialized_tx` to their wallet for signing. Documented as **required** behavior for any MCP client integrating with AEP.
 
 ### 7. Error shape
 
 ```ts
-type Result<T, E = AeapError> =
+type Result<T, E = AepError> =
   | { ok: true; data: T }
   | { ok: false; error: E };
 
-interface AeapError {
-    code: AeapErrorCode;
+interface AepError {
+    code: AepErrorCode;
     message: string;
     details?: Record<string, unknown>;
 }
 
-type AeapErrorCode =
+type AepErrorCode =
     | 'CAPABILITY_MISSING'
     | 'SIGNER_UNAVAILABLE'
     | 'PREFLIGHT_FAILED'
@@ -190,20 +190,20 @@ Consolidate the current two-file-per-domain split into one `Action<I, O>` array 
 - `mcp-server/src/tools/index.ts` is replaced by `mcp-server/src/actions/index.ts` (re-exports + aggregation)
 - `mcp-server/src/index.ts` registers via a new `mcp-server/src/adapters/mcp.ts` adapter
 
-Port `zodToMCPShape()` from sendaifun's `packages/adapter-mcp/src/index.ts` into the new adapter. It flattens Zod into MCP's JSON Schema subset. Known precision loss: discriminated unions, refinements, transforms are flattened — document per-action where this bites. Tools register via MCP SDK `server.registerTool()` (with `outputSchema`) — **not** `server.tool()`, because output schema is required in AEAP's shape.
+Port `zodToMCPShape()` from sendaifun's `packages/adapter-mcp/src/index.ts` into the new adapter. It flattens Zod into MCP's JSON Schema subset. Known precision loss: discriminated unions, refinements, transforms are flattened — document per-action where this bites. Tools register via MCP SDK `server.registerTool()` (with `outputSchema`) — **not** `server.tool()`, because output schema is required in AEP's shape.
 
 **Migration must be non-breaking from the MCP client perspective**: every existing tool `name` + input contract is preserved. Add a snapshot test asserting `mcp/list_tools` returns the same set before/after.
 
 ## Alternatives Considered
 
 ### Alternative A: Write a bespoke `BaseWallet` trait
-Rejected. `@solana/keychain-core` already ships the exact trait we'd design, with 9 production backends. Writing our own adds ~400 LoC and forks from the Foundation roadmap. The only AEAP-specific signer behaviors (unsigned-tx passthrough, dev keypair) fit cleanly as additional `SolanaSigner` implementations, not a new trait.
+Rejected. `@solana/keychain-core` already ships the exact trait we'd design, with 9 production backends. Writing our own adds ~400 LoC and forks from the Foundation roadmap. The only AEP-specific signer behaviors (unsigned-tx passthrough, dev keypair) fit cleanly as additional `SolanaSigner` implementations, not a new trait.
 
 ### Alternative B: Adopt sendaifun's hot-keypair pattern
 Rejected. A settlement/vault MCP endpoint cannot have a drainable signer at the boundary. Sendaifun's model works for read-and-low-stakes-write agent tools; it does not work for an economic protocol.
 
 ### Alternative C: Conform exactly to `solana-mcp-official` (no capability layer)
-Rejected. `solana-mcp-official` is read-only with zero auth — that design is appropriate for doc search and RPC inspection, not for state mutation. AEAP ships state-mutating operations (vault deposit, settlement release, dispute resolution) and must add the gating layer that `solana-mcp-official` deliberately omits.
+Rejected. `solana-mcp-official` is read-only with zero auth — that design is appropriate for doc search and RPC inspection, not for state mutation. AEP ships state-mutating operations (vault deposit, settlement release, dispute resolution) and must add the gating layer that `solana-mcp-official` deliberately omits.
 
 ### Alternative D: Untyped handler returns (`Record<string, any>`)
 Rejected. Breaks typing at LLM consumer boundary + indexer boundary. `outputSchema` required.
@@ -218,7 +218,7 @@ Rejected for v1. `kora`'s model is sound but requires a production-grade policy 
 - Drop-in access to 9 production signer backends (Vault, Privy, Turnkey, Para, Fireblocks, Dfns, CDP, AWS-KMS, GCP-KMS) for any deployment.
 - Default-deny capability gating closes the blanket-registration hole in `solana-mcp`.
 - Typed errors at LLM + indexer boundary eliminate the `any` leak.
-- Custody-free MCP by default (`PassthroughSigner`) — no drainable keypair at the AEAP endpoint.
+- Custody-free MCP by default (`PassthroughSigner`) — no drainable keypair at the AEP endpoint.
 - Non-breaking refactor: existing tool names + parameter shapes preserved via snapshot test.
 
 ### Negative
@@ -230,8 +230,8 @@ Rejected for v1. `kora`'s model is sound but requires a production-grade policy 
 
 ## Open items (tracked for follow-up ADRs)
 
-- **ADR-061 (planned)**: SAS integration depth — whether AEAP Registry references `solana-attestation-service` attestations as reputation substrate.
-- **ADR-062 (planned)**: `mpp-sdk` canonical wire-format conformance if AEAP speaks HTTP-402.
+- **ADR-061 (planned)**: SAS integration depth — whether AEP Registry references `solana-attestation-service` attestations as reputation substrate.
+- **ADR-062 (planned)**: `mpp-sdk` canonical wire-format conformance if AEP speaks HTTP-402.
 
 ## References
 
