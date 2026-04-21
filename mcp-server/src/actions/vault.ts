@@ -228,18 +228,21 @@ export const vaultTokenTransferAction: Action<
   examples: [],
   readOnly: false,
   capabilities: ["sign:vault"],
-  preflight: ["cluster_health", "account_rent_exempt", "daily_cap_not_exhausted"],
-  // TODO(PR7 multi-token daily cap): The `daily_cap_not_exhausted` gate
-  // currently reads the SOL-denominated `daily_limit_lamports` from the
-  // vault account. Per-mint caps live in `token_spend_records` and need
-  // a second gate flavor (`token_daily_cap_not_exhausted`) that selects
-  // the right record by mint. For PR6 we pass `amountLamports` mapped
-  // from the token's base-unit amount so the action doesn't silently
-  // bypass preflight — but the semantic comparison is a conservative
-  // SOL-vs-base-units check until the per-mint lookup lands.
+  preflight: [
+    "cluster_health",
+    "account_rent_exempt",
+    "token_daily_cap_not_exhausted",
+  ],
+  // Per-mint daily cap gate (ADR-058 §2.1 / ADR-059 §6). The SOL-flavored
+  // `daily_cap_not_exhausted` would read `daily_limit_lamports`, which is
+  // the wrong comparand for SPL transfers (different decimal semantics). The
+  // `token_daily_cap_not_exhausted` gate selects the right
+  // `TokenSpendRecord` from `Vault.token_spend_records[mint]` and checks
+  // both `daily_limit` and `per_tx_limit` in the mint's base units.
   preflightContext: (input) => ({
     vaultAddress: defaultVaultAddressOrUndefined(),
-    amountLamports: BigInt(Math.round(input.amount)),
+    tokenMint: input.tokenMintAddress,
+    tokenAmountBaseUnits: BigInt(Math.round(input.amount)),
   }),
   requiresSigner: true,
   handler: wrap(handleVaultTokenTransfer),

@@ -12,6 +12,7 @@
 //     `disputed_at.is_some()` AND `now_seconds < escrow.deadline`.
 
 import type { Address } from "@solana/kit";
+import bs58 from "bs58";
 import type { Result, ActionContext } from "../types/action.js";
 import { ok, err } from "../types/action.js";
 import type {
@@ -200,6 +201,326 @@ export async function runDailyCapNotExhausted(
       details: {
         gate: "daily_cap_not_exhausted",
         vaultAddress: input.vaultAddress,
+      },
+    });
+  }
+}
+
+// --------------------------------------------------------------------------
+// token_daily_cap_not_exhausted
+// --------------------------------------------------------------------------
+//
+// Per-mint daily spend cap check. Decodes the Vault account's
+// `token_spend_records: Vec<TokenSpendRecord>` list, selects the record whose
+// `mint` matches the requested SPL mint, and compares the requested
+// base-unit amount against both the record's `per_tx_limit` and its remaining
+// `daily_limit - spent_today` (with UTC-midnight rollover, same rule as the
+// SOL gate above).
+//
+// On-chain layout (Anchor serialization of `Vault`):
+//
+//   disc (8) + agent_identity (32) + authority (32) + paused (1)
+//   + spent_today_lamports (8) + last_spend_day (8)
+//   + policy: per_tx_limit_lamports (8) + daily_limit_lamports (8)
+//            + max_txs_per_hour (4) + token_allowlist Vec<Pubkey>
+//            + program_allowlist Vec<Pubkey>
+//   + txs_in_current_window (u32) + rate_limit_window_start (i64)
+//   + token_spend_records: Vec<TokenSpendRecord>
+//   + bump (1)
+//
+// Each TokenSpendRecord = 32 (mint) + 8 (per_tx_limit) + 8 (daily_limit)
+//                       + 8 (spent_today) + 8 (last_spend_day) = 64 bytes.
+//
+// Because the preceding policy Vecs are dynamic, we parse forward from a
+// known fixed point rather than hard-coding a single offset. The policy
+// header ends at `VAULT_POLICY_FIXED_END_OFFSET` (just past
+// `max_txs_per_hour`); everything after is variable and must be walked.
+//
+// Fail-open on missing record: if the requested mint is NOT present in
+// `token_spend_records`, the gate fails — a mint that isn't tracked
+// cannot be spent. This matches the on-chain `manage_allowlist(add_token)`
+// flow that seeds a record on add; a missing record means either the
+// mint isn't allowlisted or limits were never configured, both of which
+// should block the spend loudly.
+//
+// TODO(follow-up): `fetchVaultState` and `fetchVaultStateFull` share the
+// getAccountInfo + base64-decode step. Unify once both gates prove stable.
+
+const TOKEN_SPEND_RECORD_SIZE = 32 + 8 + 8 + 8 + 8; // 64
+const VAULT_POLICY_FIXED_END_OFFSET = VAULT_DAILY_LIMIT_OFFSET + 8 + 4; // +u32 max_txs_per_hour
+
+interface TokenSpendRecordDecoded {
+  mint: Buffer; // 32-byte mint pubkey
+  perTxLimit: bigint;
+  dailyLimit: bigint;
+  spentToday: bigint;
+  lastSpendDay: bigint;
+}
+
+interface DecodedVaultFullState {
+  tokenSpendRecords: TokenSpendRecordDecoded[];
+}
+
+interface VaultFullCacheEntry {
+  expiresAt: number;
+  state: DecodedVaultFullState;
+}
+
+const vaultFullStateCache = new Map<string, VaultFullCacheEntry>();
+
+export function __resetVaultFullStateCacheForTests(): void {
+  vaultFullStateCache.clear();
+}
+
+/**
+ * Walk past a `Vec<Pubkey>` (Anchor layout: 4-byte LE length + N*32).
+ * Returns the cursor position immediately after the vec. Throws if the
+ * declared length would read past the buffer or exceeds a plausibility
+ * ceiling (`MAX_TOKEN_ALLOWLIST`/`MAX_PROGRAM_ALLOWLIST` = 10 on-chain;
+ * use 64 here for headroom against layout changes).
+ */
+function skipPubkeyVec(data: Buffer, cursor: number): number {
+  if (data.length < cursor + 4) {
+    throw new Error(`vault account too short for Vec<Pubkey> length at ${cursor}`);
+  }
+  const len = data.readUInt32LE(cursor);
+  if (len > 64) {
+    throw new Error(`vault Vec<Pubkey> length implausible: ${len}`);
+  }
+  const end = cursor + 4 + len * 32;
+  if (data.length < end) {
+    throw new Error(
+      `vault account too short for Vec<Pubkey> body: need ${end}, have ${data.length}`,
+    );
+  }
+  return end;
+}
+
+function decodeVaultFullState(data: Buffer): DecodedVaultFullState {
+  if (data.length < VAULT_POLICY_FIXED_END_OFFSET) {
+    throw new Error(
+      `vault account too short: got ${data.length} bytes, need >= ${VAULT_POLICY_FIXED_END_OFFSET}`,
+    );
+  }
+  let cursor = VAULT_POLICY_FIXED_END_OFFSET;
+  cursor = skipPubkeyVec(data, cursor); // policy.token_allowlist
+  cursor = skipPubkeyVec(data, cursor); // policy.program_allowlist
+
+  // txs_in_current_window (u32) + rate_limit_window_start (i64)
+  cursor += 4 + 8;
+  if (data.length < cursor + 4) {
+    throw new Error(
+      `vault account too short for token_spend_records length at ${cursor}`,
+    );
+  }
+  const recordCount = data.readUInt32LE(cursor);
+  cursor += 4;
+
+  // On-chain MAX_TOKEN_SPEND_RECORDS = 10; 64 is a defensive ceiling.
+  if (recordCount > 64) {
+    throw new Error(`vault token_spend_records length implausible: ${recordCount}`);
+  }
+  const bodyEnd = cursor + recordCount * TOKEN_SPEND_RECORD_SIZE;
+  if (data.length < bodyEnd) {
+    throw new Error(
+      `vault account too short for token_spend_records body: need ${bodyEnd}, have ${data.length}`,
+    );
+  }
+
+  const records: TokenSpendRecordDecoded[] = [];
+  for (let i = 0; i < recordCount; i++) {
+    const base = cursor + i * TOKEN_SPEND_RECORD_SIZE;
+    records.push({
+      // Slice without copy — the returned buffer is used only for equality
+      // checks against the requested mint's 32-byte raw form.
+      mint: data.subarray(base, base + 32),
+      perTxLimit: data.readBigUInt64LE(base + 32),
+      dailyLimit: data.readBigUInt64LE(base + 32 + 8),
+      spentToday: data.readBigUInt64LE(base + 32 + 16),
+      lastSpendDay: data.readBigUInt64LE(base + 32 + 24),
+    });
+  }
+
+  return { tokenSpendRecords: records };
+}
+
+async function fetchVaultFullState(
+  rpc: AccountDataRpc,
+  vaultAddress: Address,
+  now: number,
+): Promise<DecodedVaultFullState> {
+  const cached = vaultFullStateCache.get(vaultAddress);
+  if (cached && cached.expiresAt > now) return cached.state;
+
+  const info = await rpc
+    .getAccountInfo(vaultAddress, { encoding: "base64" })
+    .send();
+
+  if (!info.value || !info.value.data) {
+    throw new Error(`vault account not found: ${vaultAddress}`);
+  }
+  const [b64] = info.value.data;
+  const raw = Buffer.from(b64, "base64");
+  const state = decodeVaultFullState(raw);
+
+  vaultFullStateCache.set(vaultAddress, {
+    expiresAt: now + VAULT_STATE_CACHE_MS,
+    state,
+  });
+  return state;
+}
+
+/**
+ * Decode a base58 mint address into its raw 32-byte form for byte-equality
+ * comparison against on-chain `TokenSpendRecord.mint`.
+ */
+function decodeMintAddress(mint: string): Buffer {
+  const bytes = bs58.decode(mint);
+  if (bytes.length !== 32) {
+    throw new Error(`mint must decode to 32 bytes, got ${bytes.length}`);
+  }
+  return Buffer.from(bytes);
+}
+
+export async function runTokenDailyCapNotExhausted(
+  deps: PreflightDeps,
+  _ctx: ActionContext,
+  input: PreflightInputContext | undefined,
+): Promise<Result<void>> {
+  if (!input?.vaultAddress) {
+    return err({
+      code: "PREFLIGHT_FAILED",
+      message:
+        "token_daily_cap_not_exhausted: missing required input 'vaultAddress' — action must declare preflightContext",
+      details: { gate: "token_daily_cap_not_exhausted" },
+    });
+  }
+  if (!input.tokenMint) {
+    return err({
+      code: "PREFLIGHT_FAILED",
+      message:
+        "token_daily_cap_not_exhausted: missing required input 'tokenMint' — action must declare preflightContext",
+      details: { gate: "token_daily_cap_not_exhausted" },
+    });
+  }
+  if (input.tokenAmountBaseUnits === undefined) {
+    return err({
+      code: "PREFLIGHT_FAILED",
+      message:
+        "token_daily_cap_not_exhausted: missing required input 'tokenAmountBaseUnits' — action must declare preflightContext",
+      details: { gate: "token_daily_cap_not_exhausted" },
+    });
+  }
+  if (!deps.rpc || typeof deps.rpc.getAccountInfo !== "function") {
+    return err({
+      code: "PREFLIGHT_FAILED",
+      message: "token_daily_cap_not_exhausted: no RPC configured",
+      details: { gate: "token_daily_cap_not_exhausted" },
+    });
+  }
+
+  const now = (deps.now ?? Date.now)();
+
+  let mintBytes: Buffer;
+  try {
+    mintBytes = decodeMintAddress(input.tokenMint);
+  } catch (e) {
+    return err({
+      code: "PREFLIGHT_FAILED",
+      message: `token_daily_cap_not_exhausted: invalid tokenMint — ${e instanceof Error ? e.message : String(e)}`,
+      details: {
+        gate: "token_daily_cap_not_exhausted",
+        vaultAddress: input.vaultAddress,
+        tokenMint: input.tokenMint,
+      },
+    });
+  }
+
+  try {
+    const state = await fetchVaultFullState(
+      deps.rpc as AccountDataRpc,
+      input.vaultAddress as Address,
+      now,
+    );
+
+    const record = state.tokenSpendRecords.find((r) => r.mint.equals(mintBytes));
+    if (!record) {
+      return err({
+        code: "PREFLIGHT_FAILED",
+        message: `token_daily_cap_not_exhausted: mint ${input.tokenMint} not tracked by vault (not allowlisted or no limits configured)`,
+        details: {
+          gate: "token_daily_cap_not_exhausted",
+          vaultAddress: input.vaultAddress,
+          tokenMint: input.tokenMint,
+          knownMintsCount: state.tokenSpendRecords.length,
+        },
+      });
+    }
+
+    if (record.perTxLimit < input.tokenAmountBaseUnits) {
+      return err({
+        code: "PREFLIGHT_FAILED",
+        message: `token_daily_cap_not_exhausted: requested ${input.tokenAmountBaseUnits} exceeds per_tx_limit ${record.perTxLimit}`,
+        details: {
+          gate: "token_daily_cap_not_exhausted",
+          vaultAddress: input.vaultAddress,
+          tokenMint: input.tokenMint,
+          perTxLimit: record.perTxLimit.toString(),
+          requestedBaseUnits: input.tokenAmountBaseUnits.toString(),
+        },
+      });
+    }
+
+    const todayDay = BigInt(Math.floor(now / 1000 / SECONDS_PER_DAY));
+    // Mirror the on-chain reset: if the stored day is stale, the next spend
+    // zeroes `spent_today` — treat it as 0 here so we don't reject on a
+    // tally that will be wiped by the same instruction that would settle
+    // this transfer.
+    const effectiveSpent =
+      record.lastSpendDay < todayDay ? 0n : record.spentToday;
+
+    if (record.dailyLimit < effectiveSpent) {
+      return err({
+        code: "PREFLIGHT_FAILED",
+        message:
+          "token_daily_cap_not_exhausted: on-chain spent_today exceeds daily_limit (inconsistent state)",
+        details: {
+          gate: "token_daily_cap_not_exhausted",
+          vaultAddress: input.vaultAddress,
+          tokenMint: input.tokenMint,
+          dailyLimit: record.dailyLimit.toString(),
+          spentToday: record.spentToday.toString(),
+        },
+      });
+    }
+
+    const remaining = record.dailyLimit - effectiveSpent;
+    if (remaining < input.tokenAmountBaseUnits) {
+      return err({
+        code: "PREFLIGHT_FAILED",
+        message: `token_daily_cap_not_exhausted: remaining ${remaining} < requested ${input.tokenAmountBaseUnits}`,
+        details: {
+          gate: "token_daily_cap_not_exhausted",
+          vaultAddress: input.vaultAddress,
+          tokenMint: input.tokenMint,
+          remainingBaseUnits: remaining.toString(),
+          requestedBaseUnits: input.tokenAmountBaseUnits.toString(),
+          dailyLimit: record.dailyLimit.toString(),
+          effectiveSpent: effectiveSpent.toString(),
+          rolledOver: record.lastSpendDay < todayDay,
+        },
+      });
+    }
+
+    return ok(undefined);
+  } catch (e) {
+    return err({
+      code: "PREFLIGHT_FAILED",
+      message: `token_daily_cap_not_exhausted: ${e instanceof Error ? e.message : String(e)}`,
+      details: {
+        gate: "token_daily_cap_not_exhausted",
+        vaultAddress: input.vaultAddress,
+        tokenMint: input.tokenMint,
       },
     });
   }

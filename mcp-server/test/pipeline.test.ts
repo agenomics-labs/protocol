@@ -31,6 +31,7 @@ import {
   executePreflight,
   __resetClusterHealthCacheForTests,
   __resetVaultStateCacheForTests,
+  __resetVaultFullStateCacheForTests,
   type PreflightDeps,
   type PreflightInputContext,
 } from "../src/pipeline/preflight.js";
@@ -574,6 +575,407 @@ describe("PR6 daily_cap_not_exhausted gate", () => {
     );
     assert.equal(r.ok, false);
     if (!r.ok) assert.equal(r.error.code, "PREFLIGHT_FAILED");
+  });
+});
+
+// ==========================================================================
+// token_daily_cap_not_exhausted gate (per-mint SPL daily cap)
+// ==========================================================================
+
+describe("token_daily_cap_not_exhausted gate", () => {
+  beforeEach(() => {
+    __resetClusterHealthCacheForTests();
+    __resetVaultStateCacheForTests();
+    __resetVaultFullStateCacheForTests();
+  });
+
+  const VAULT_ADDR = "VauLt1111111111111111111111111111111111111";
+  const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+  const WSOL_MINT = "So11111111111111111111111111111111111111112";
+  const SECONDS_PER_DAY = 86_400;
+
+  /**
+   * Build an Anchor-serialized Vault account blob that reaches all the way
+   * through `token_spend_records` so the token-cap gate can decode it.
+   *
+   * Layout (aligned with programs/agent-vault/src/state.rs):
+   *   disc (8) + agent_identity (32) + authority (32) + paused (1)
+   *   + spent_today_lamports (8) + last_spend_day (8)
+   *   + policy.per_tx_limit_lamports (8) + policy.daily_limit_lamports (8)
+   *   + policy.max_txs_per_hour (4)
+   *   + policy.token_allowlist   : Vec<Pubkey> (u32 len + N*32)
+   *   + policy.program_allowlist : Vec<Pubkey> (u32 len + M*32)
+   *   + txs_in_current_window (u32) + rate_limit_window_start (i64)
+   *   + token_spend_records : Vec<TokenSpendRecord> (u32 len + K*64)
+   *   + bump (1)
+   *
+   * TokenSpendRecord = mint(32) + per_tx_limit(u64) + daily_limit(u64)
+   *                  + spent_today(u64) + last_spend_day(u64) = 64 bytes.
+   *
+   * `tokenAllowlistLen` / `programAllowlistLen` padding exists to exercise
+   * the decoder's Vec<Pubkey> skip logic — the contents don't matter for the
+   * token-cap gate, only the length-prefix math.
+   */
+  interface TokenRecordFixture {
+    mint: string; // base58 pubkey
+    perTxLimit: bigint;
+    dailyLimit: bigint;
+    spentToday: bigint;
+    lastSpendDay: bigint;
+  }
+  function makeVaultWithTokenRecords(
+    records: TokenRecordFixture[],
+    opts: { tokenAllowlistLen?: number; programAllowlistLen?: number } = {},
+  ): Buffer {
+    const tokenAllowlistLen = opts.tokenAllowlistLen ?? records.length;
+    const programAllowlistLen = opts.programAllowlistLen ?? 0;
+
+    const policyHeader = 8 + 32 + 32 + 1 + 8 + 8 + 8 + 8 + 4; // up to max_txs_per_hour
+    const tokenAllowVecLen = 4 + tokenAllowlistLen * 32;
+    const programAllowVecLen = 4 + programAllowlistLen * 32;
+    const rateLimitLen = 4 + 8; // txs_in_current_window + rate_limit_window_start
+    const tokenRecordsVecLen = 4 + records.length * 64;
+    const bumpLen = 1;
+    const total =
+      policyHeader +
+      tokenAllowVecLen +
+      programAllowVecLen +
+      rateLimitLen +
+      tokenRecordsVecLen +
+      bumpLen;
+
+    const buf = Buffer.alloc(total);
+
+    // All fixed-offset fields we don't care about stay zero. Start writing
+    // from the first variable-length boundary.
+    let c = policyHeader;
+
+    // token_allowlist vec: length + zeroed pubkeys.
+    buf.writeUInt32LE(tokenAllowlistLen, c);
+    c += 4 + tokenAllowlistLen * 32;
+
+    // program_allowlist vec: length + zeroed pubkeys.
+    buf.writeUInt32LE(programAllowlistLen, c);
+    c += 4 + programAllowlistLen * 32;
+
+    // txs_in_current_window (u32) + rate_limit_window_start (i64) — zero.
+    c += rateLimitLen;
+
+    // token_spend_records vec: length + records.
+    buf.writeUInt32LE(records.length, c);
+    c += 4;
+    for (const r of records) {
+      const mintBytes = new PublicKey(r.mint).toBytes();
+      Buffer.from(mintBytes).copy(buf, c);
+      buf.writeBigUInt64LE(r.perTxLimit, c + 32);
+      buf.writeBigUInt64LE(r.dailyLimit, c + 32 + 8);
+      buf.writeBigUInt64LE(r.spentToday, c + 32 + 16);
+      buf.writeBigUInt64LE(r.lastSpendDay, c + 32 + 24);
+      c += 64;
+    }
+    // bump — leave zero.
+    return buf;
+  }
+
+  function mockVaultRpc(vaultBytes: Buffer): PreflightDeps["rpc"] {
+    return {
+      getSlot: () => ({ send: async () => 0n }),
+      getRecentPerformanceSamples: () => ({
+        send: async () => [{ numSlots: 60n, numTransactions: 12_000n }],
+      }),
+      getMinimumBalanceForRentExemption: () => ({ send: async () => 0n }),
+      getAccountInfo: () => ({
+        send: async () => ({
+          value: {
+            lamports: 10_000_000n,
+            data: [vaultBytes.toString("base64"), "base64"] as const,
+          },
+        }),
+      }),
+    };
+  }
+
+  const FIXED_NOW_MS = 1_700_000_000_000;
+  const TODAY_DAY = BigInt(Math.floor(FIXED_NOW_MS / 1000 / SECONDS_PER_DAY));
+
+  it("passes when mint is allowlisted and remaining >= amount", async () => {
+    const vaultBytes = makeVaultWithTokenRecords([
+      {
+        mint: USDC_MINT,
+        perTxLimit: 5_000_000n, // 5 USDC
+        dailyLimit: 10_000_000n, // 10 USDC
+        spentToday: 2_000_000n, // 2 USDC already spent → 8 USDC remaining
+        lastSpendDay: TODAY_DAY,
+      },
+    ]);
+    const r = await executePreflight(
+      ["token_daily_cap_not_exhausted"],
+      ctxWith([]),
+      { rpc: mockVaultRpc(vaultBytes), now: () => FIXED_NOW_MS },
+      {
+        vaultAddress: VAULT_ADDR,
+        tokenMint: USDC_MINT,
+        tokenAmountBaseUnits: 3_000_000n, // 3 USDC
+      },
+    );
+    assert.equal(r.ok, true);
+  });
+
+  it("fails when the requested mint is NOT on the allowlist", async () => {
+    const vaultBytes = makeVaultWithTokenRecords([
+      {
+        mint: USDC_MINT,
+        perTxLimit: 5_000_000n,
+        dailyLimit: 10_000_000n,
+        spentToday: 0n,
+        lastSpendDay: TODAY_DAY,
+      },
+    ]);
+    const r = await executePreflight(
+      ["token_daily_cap_not_exhausted"],
+      ctxWith([]),
+      { rpc: mockVaultRpc(vaultBytes), now: () => FIXED_NOW_MS },
+      {
+        vaultAddress: VAULT_ADDR,
+        tokenMint: WSOL_MINT, // not in records
+        tokenAmountBaseUnits: 1_000_000n,
+      },
+    );
+    assert.equal(r.ok, false);
+    if (!r.ok) {
+      assert.equal(r.error.code, "PREFLIGHT_FAILED");
+      assert.match(r.error.message, /not tracked by vault/);
+      const d = r.error.details as { knownMintsCount: number };
+      assert.equal(d.knownMintsCount, 1);
+    }
+  });
+
+  it("fails when remaining daily cap < requested amount", async () => {
+    const vaultBytes = makeVaultWithTokenRecords([
+      {
+        mint: USDC_MINT,
+        perTxLimit: 10_000_000n, // 10 USDC per-tx (high enough to not fail first)
+        dailyLimit: 10_000_000n, // 10 USDC/day
+        spentToday: 9_500_000n, // 9.5 USDC already spent → 0.5 USDC remaining
+        lastSpendDay: TODAY_DAY,
+      },
+    ]);
+    const r = await executePreflight(
+      ["token_daily_cap_not_exhausted"],
+      ctxWith([]),
+      { rpc: mockVaultRpc(vaultBytes), now: () => FIXED_NOW_MS },
+      {
+        vaultAddress: VAULT_ADDR,
+        tokenMint: USDC_MINT,
+        tokenAmountBaseUnits: 1_000_000n, // 1 USDC — more than remaining 0.5
+      },
+    );
+    assert.equal(r.ok, false);
+    if (!r.ok) {
+      assert.equal(r.error.code, "PREFLIGHT_FAILED");
+      assert.match(r.error.message, /remaining .* < requested/);
+      const d = r.error.details as { rolledOver: boolean };
+      assert.equal(d.rolledOver, false);
+    }
+  });
+
+  it("fails when requested amount exceeds per_tx_limit", async () => {
+    const vaultBytes = makeVaultWithTokenRecords([
+      {
+        mint: USDC_MINT,
+        perTxLimit: 2_000_000n, // 2 USDC per-tx cap
+        dailyLimit: 100_000_000n, // plenty of daily headroom
+        spentToday: 0n,
+        lastSpendDay: TODAY_DAY,
+      },
+    ]);
+    const r = await executePreflight(
+      ["token_daily_cap_not_exhausted"],
+      ctxWith([]),
+      { rpc: mockVaultRpc(vaultBytes), now: () => FIXED_NOW_MS },
+      {
+        vaultAddress: VAULT_ADDR,
+        tokenMint: USDC_MINT,
+        tokenAmountBaseUnits: 3_000_000n, // 3 USDC — exceeds per_tx
+      },
+    );
+    assert.equal(r.ok, false);
+    if (!r.ok) {
+      assert.equal(r.error.code, "PREFLIGHT_FAILED");
+      assert.match(r.error.message, /exceeds per_tx_limit/);
+    }
+  });
+
+  it("rolls over a stale last_spend_day (yesterday's spent_today is treated as 0)", async () => {
+    const vaultBytes = makeVaultWithTokenRecords([
+      {
+        mint: USDC_MINT,
+        perTxLimit: 10_000_000n,
+        dailyLimit: 10_000_000n,
+        spentToday: 9_500_000n, // "from yesterday"
+        lastSpendDay: TODAY_DAY - 1n,
+      },
+    ]);
+    const r = await executePreflight(
+      ["token_daily_cap_not_exhausted"],
+      ctxWith([]),
+      { rpc: mockVaultRpc(vaultBytes), now: () => FIXED_NOW_MS },
+      {
+        vaultAddress: VAULT_ADDR,
+        tokenMint: USDC_MINT,
+        tokenAmountBaseUnits: 9_000_000n, // would fail on yesterday's tally
+      },
+    );
+    assert.equal(
+      r.ok,
+      true,
+      "stale last_spend_day should reset token spent_today and allow full daily cap",
+    );
+  });
+
+  it("selects the correct record when multiple mints are tracked", async () => {
+    // Two mints in allowlist; one is exhausted, the other has room. The gate
+    // must pick the record matching `tokenMint` — mixing them up would be
+    // a silent mis-decode.
+    const vaultBytes = makeVaultWithTokenRecords([
+      {
+        // First: USDC is nearly exhausted
+        mint: USDC_MINT,
+        perTxLimit: 10_000_000n,
+        dailyLimit: 10_000_000n,
+        spentToday: 9_999_000n,
+        lastSpendDay: TODAY_DAY,
+      },
+      {
+        // Second: WSOL has full headroom
+        mint: WSOL_MINT,
+        perTxLimit: 1_000_000_000n,
+        dailyLimit: 5_000_000_000n,
+        spentToday: 0n,
+        lastSpendDay: TODAY_DAY,
+      },
+    ]);
+    // Request WSOL: should pass (second record). A naive decoder that
+    // always returned the first record would fail this request.
+    const r = await executePreflight(
+      ["token_daily_cap_not_exhausted"],
+      ctxWith([]),
+      { rpc: mockVaultRpc(vaultBytes), now: () => FIXED_NOW_MS },
+      {
+        vaultAddress: VAULT_ADDR,
+        tokenMint: WSOL_MINT,
+        tokenAmountBaseUnits: 500_000_000n,
+      },
+    );
+    assert.equal(r.ok, true);
+  });
+
+  it("walks past non-empty token_allowlist/program_allowlist vecs", async () => {
+    // Make sure the decoder isn't assuming the policy Vec<Pubkey>s are empty
+    // — a bug where the offset math omitted their bodies would land the
+    // token_spend_records read on the wrong bytes and the mint lookup would
+    // fail.
+    const vaultBytes = makeVaultWithTokenRecords(
+      [
+        {
+          mint: USDC_MINT,
+          perTxLimit: 5_000_000n,
+          dailyLimit: 10_000_000n,
+          spentToday: 0n,
+          lastSpendDay: TODAY_DAY,
+        },
+      ],
+      { tokenAllowlistLen: 3, programAllowlistLen: 2 },
+    );
+    const r = await executePreflight(
+      ["token_daily_cap_not_exhausted"],
+      ctxWith([]),
+      { rpc: mockVaultRpc(vaultBytes), now: () => FIXED_NOW_MS },
+      {
+        vaultAddress: VAULT_ADDR,
+        tokenMint: USDC_MINT,
+        tokenAmountBaseUnits: 1_000_000n,
+      },
+    );
+    assert.equal(r.ok, true);
+  });
+
+  it("fails loudly when vaultAddress is missing", async () => {
+    const vaultBytes = makeVaultWithTokenRecords([
+      {
+        mint: USDC_MINT,
+        perTxLimit: 10_000_000n,
+        dailyLimit: 10_000_000n,
+        spentToday: 0n,
+        lastSpendDay: TODAY_DAY,
+      },
+    ]);
+    const r = await executePreflight(
+      ["token_daily_cap_not_exhausted"],
+      ctxWith([]),
+      { rpc: mockVaultRpc(vaultBytes), now: () => FIXED_NOW_MS },
+      {
+        tokenMint: USDC_MINT,
+        tokenAmountBaseUnits: 1_000_000n,
+      } as PreflightInputContext,
+    );
+    assert.equal(r.ok, false);
+    if (!r.ok) {
+      assert.equal(r.error.code, "PREFLIGHT_FAILED");
+      assert.match(r.error.message, /vaultAddress/);
+    }
+  });
+
+  it("fails loudly when tokenMint is missing", async () => {
+    const vaultBytes = makeVaultWithTokenRecords([
+      {
+        mint: USDC_MINT,
+        perTxLimit: 10_000_000n,
+        dailyLimit: 10_000_000n,
+        spentToday: 0n,
+        lastSpendDay: TODAY_DAY,
+      },
+    ]);
+    const r = await executePreflight(
+      ["token_daily_cap_not_exhausted"],
+      ctxWith([]),
+      { rpc: mockVaultRpc(vaultBytes), now: () => FIXED_NOW_MS },
+      {
+        vaultAddress: VAULT_ADDR,
+        tokenAmountBaseUnits: 1_000_000n,
+      } as PreflightInputContext,
+    );
+    assert.equal(r.ok, false);
+    if (!r.ok) {
+      assert.equal(r.error.code, "PREFLIGHT_FAILED");
+      assert.match(r.error.message, /tokenMint/);
+    }
+  });
+
+  it("fails loudly when tokenAmountBaseUnits is missing", async () => {
+    const vaultBytes = makeVaultWithTokenRecords([
+      {
+        mint: USDC_MINT,
+        perTxLimit: 10_000_000n,
+        dailyLimit: 10_000_000n,
+        spentToday: 0n,
+        lastSpendDay: TODAY_DAY,
+      },
+    ]);
+    const r = await executePreflight(
+      ["token_daily_cap_not_exhausted"],
+      ctxWith([]),
+      { rpc: mockVaultRpc(vaultBytes), now: () => FIXED_NOW_MS },
+      {
+        vaultAddress: VAULT_ADDR,
+        tokenMint: USDC_MINT,
+      } as PreflightInputContext,
+    );
+    assert.equal(r.ok, false);
+    if (!r.ok) {
+      assert.equal(r.error.code, "PREFLIGHT_FAILED");
+      assert.match(r.error.message, /tokenAmountBaseUnits/);
+    }
   });
 });
 
