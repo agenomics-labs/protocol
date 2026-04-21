@@ -491,6 +491,124 @@
       ]
     },
     {
+      "name": "update_manifest",
+      "docs": [
+        "ADR-060: publish or rotate the off-chain capability manifest pointer.",
+        "",
+        "Args:",
+        "- `manifest_cid`: 64-byte pointer to off-chain manifest (IPFS CIDv1",
+        "string or Arweave tx ID), zero-padded. M5 resolution chose",
+        "`[u8; 64]` for CIDv1 + Arweave headroom.",
+        "- `manifest_hash`: SHA-256 of the RFC-8785 canonical-JSON manifest.",
+        "- `manifest_signature`: Ed25519 signature over `manifest_hash` by the",
+        "agent's `authority`. Verified via the paired ed25519-program",
+        "sig-verify instruction (standard Solana pattern — in-program",
+        "ed25519 is prohibitively expensive in compute units).",
+        "- `manifest_version`: packed semver (high byte = major, low byte = minor).",
+        "- `manifest_capability_names`: the full list of capability names",
+        "declared in the off-chain manifest. On-chain we assert",
+        "`agent_profile.capabilities ⊆ manifest_capability_names` per",
+        "ADR-060 §1 \"Relationship to existing\". The caller supplies the",
+        "list out-of-band because the manifest body itself is off-chain."
+      ],
+      "discriminator": [
+        232,
+        75,
+        222,
+        229,
+        60,
+        55,
+        168,
+        49
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "agent_profile"
+          ]
+        },
+        {
+          "name": "agent_profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "instructions_sysvar",
+          "docs": [
+            "canonical sysvar pubkey. Used to locate the paired ed25519-program",
+            "sig-verify instruction in the current transaction."
+          ],
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "manifest_cid",
+          "type": {
+            "array": [
+              "u8",
+              64
+            ]
+          }
+        },
+        {
+          "name": "manifest_hash",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "manifest_signature",
+          "type": {
+            "array": [
+              "u8",
+              64
+            ]
+          }
+        },
+        {
+          "name": "manifest_version",
+          "type": "u16"
+        },
+        {
+          "name": "manifest_capability_names",
+          "type": {
+            "vec": "string"
+          }
+        }
+      ]
+    },
+    {
       "name": "update_profile",
       "discriminator": [
         98,
@@ -873,6 +991,19 @@
       ]
     },
     {
+      "name": "ManifestUpdated",
+      "discriminator": [
+        105,
+        65,
+        152,
+        106,
+        54,
+        175,
+        253,
+        179
+      ]
+    },
+    {
       "name": "ReputationStaked",
       "discriminator": [
         12,
@@ -995,6 +1126,31 @@
       "code": 6013,
       "name": "NotSuspended",
       "msg": "clear_suspension requires status == Suspended and slash_count >= 3"
+    },
+    {
+      "code": 6014,
+      "name": "InvalidManifestSignature",
+      "msg": "Ed25519 signature over manifest_hash failed verification against the authority pubkey"
+    },
+    {
+      "code": 6015,
+      "name": "CapabilitySubsetViolation",
+      "msg": "On-chain capabilities are not a subset of the supplied manifest capability name list"
+    },
+    {
+      "code": 6016,
+      "name": "InvalidManifestVersion",
+      "msg": "Manifest version must be non-zero (packed semver: high=major, low=minor)"
+    },
+    {
+      "code": 6017,
+      "name": "MissingEd25519Instruction",
+      "msg": "update_manifest requires a paired Ed25519 precompile instruction in the same transaction"
+    },
+    {
+      "code": 6018,
+      "name": "Ed25519InstructionMismatch",
+      "msg": "The paired Ed25519 instruction does not match the supplied manifest_hash / manifest_signature / authority"
     }
   ],
   "types": [
@@ -1023,8 +1179,21 @@
       "docs": [
         "AgentProfile: The core account representing a registered agent.",
         "",
-        "ADR-040: Account space is explicitly calculated as 1243 bytes",
-        "(1043 serialized max + 200 safety margin)."
+        "ADR-040: Account space is explicitly calculated as 1405 bytes",
+        "(1243 baseline + 162 bytes for the ADR-060 manifest fields:",
+        "manifest_cid 64 + manifest_hash 32 + manifest_signature 64 + manifest_version 2 = 162).",
+        "",
+        "ADR-060 adds four manifest fields that point to an off-chain capability",
+        "manifest (IPFS CIDv1 or Arweave tx ID). The on-chain fields are the",
+        "integrity commitment; the manifest body is off-chain. M5 resolution:",
+        "`manifest_cid` is `[u8; 64]` to fit CIDv1 string encodings (≤ ~60 chars)",
+        "or Arweave 43-char base64url tx IDs with headroom. Unused bytes are",
+        "zero-padded; readers trim trailing 0x00.",
+        "",
+        "The existing `capabilities: Vec<String>` stays as a denormalized on-chain",
+        "search index (ADR-060 §1 \"Relationship\"); the manifest is the source of",
+        "truth. `update_manifest` re-validates the invariant",
+        "`capabilities ⊆ manifest.capabilities[].name`."
       ],
       "type": {
         "kind": "struct",
@@ -1116,6 +1285,37 @@
           {
             "name": "bump",
             "type": "u8"
+          },
+          {
+            "name": "manifest_cid",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "manifest_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "manifest_signature",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "manifest_version",
+            "type": "u16"
           }
         ]
       }
@@ -1228,6 +1428,49 @@
                 "name": "AgentStatus"
               }
             }
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ManifestUpdated",
+      "docs": [
+        "ADR-060: emitted when an agent publishes or rotates their off-chain",
+        "capability manifest pointer. Subscribers can use this to pin IPFS",
+        "content, refresh the capability index, or invalidate caches."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "manifest_cid",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "manifest_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "manifest_version",
+            "type": "u16"
           },
           {
             "name": "timestamp",
