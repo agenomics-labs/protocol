@@ -1,0 +1,286 @@
+// ADR-061 §2: AEAP_AGENT_REPUTATION_v1 schema layout + decoder.
+//
+// --------------------------------------------------------------------
+// SDK-dep note
+// --------------------------------------------------------------------
+// ADR-064 allows either depending on an official SAS TS SDK or
+// implementing a minimal fetch + account decoder manually on top of
+// @solana/kit primitives. We chose the manual path for v1 because:
+//
+//   1. The published `sas-lib@1.0.10` package pins `@solana/kit@^5.0.0`.
+//      ADR-064 (this PR) explicitly targets `@solana/kit@^6.8.0`
+//      (which is the version the rest of the AEAP TS tree is
+//      standardizing on — see `mcp-server/package.json`).
+//   2. The resolver reads from SAS but never writes; the read surface
+//      is small (one account layout + one schema-data layout) so the
+//      cost of wrapping it is low and the benefit of not pinning to
+//      SAS's SDK upgrade cadence is real (ADR-061 §1 loose-coupling
+//      rationale — it applies symmetrically to the SDK dep too).
+//   3. When/if `sas-lib` updates to kit v6, or the Solana Foundation
+//      publishes a kit-v6-native SDK, migrating this module is a
+//      strictly-local change (no API surface of `@aeap/sas-resolver`
+//      depends on whether the bytes are decoded by `sas-lib` or by
+//      the code below).
+//
+// The layouts below are derived from the SAS program's account struct
+// as documented in ADR-061 §2 (schema data layout) and the SAS repo's
+// account schema (attestation account header). Anything that drifts
+// from the canonical SAS layout shows up immediately as a decode
+// failure in `parseAttestationAccount`, which the resolver routes to
+// its skip-with-warn path (§4 row 4g).
+// --------------------------------------------------------------------
+
+import type { AttestationReputation, SolanaAttestation } from "./types.js";
+
+/** AEAP_AGENT_REPUTATION_v1 — 16 bytes, little-endian, ADR-061 §2. */
+export const AEAP_AGENT_REPUTATION_V1_SIZE = 16;
+
+/**
+ * Schema-data layout. Field offsets match ADR-061 §2 exactly:
+ *   U16 score           [0..2)
+ *   U32 completed_tasks [2..6)
+ *   U16 dispute_ratio   [6..8)
+ *   I64 last_updated    [8..16)
+ *
+ * SAS uses little-endian typed encoding (ADR-061 §2 "SAS typed
+ * encoding, not Borsh"). This matches the solana-attestation-service
+ * reference encoder; cross-checked manually.
+ */
+export interface ReputationDataFields {
+  score: number;
+  completed_tasks: number;
+  dispute_ratio_bps: number;
+  last_updated: number;
+}
+
+/**
+ * Decode the 16-byte AEAP_AGENT_REPUTATION_v1 data slice.
+ *
+ * Throws on short buffer or on value-range violations — score and
+ * dispute_ratio_bps are constrained to 0..10000 per ADR-061 §2. A
+ * value outside that range indicates either a schema mismatch upstream
+ * or a malicious attestation; either way the resolver's §4-row-4g
+ * handler will route to `skip + warn`.
+ */
+export function parseReputationData(data: Uint8Array): ReputationDataFields {
+  if (data.length < AEAP_AGENT_REPUTATION_V1_SIZE) {
+    throw new Error(
+      `AEAP_AGENT_REPUTATION_v1 data too short: got ${data.length} bytes, expected >= ${AEAP_AGENT_REPUTATION_V1_SIZE}`,
+    );
+  }
+
+  // DataView gives us little-endian reads without manual shifting.
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+
+  const score = view.getUint16(0, true);
+  const completed_tasks = view.getUint32(2, true);
+  const dispute_ratio_bps = view.getUint16(6, true);
+  // I64 — use getBigInt64 and clamp to safe-integer range. The field
+  // holds a unix-seconds timestamp; any value outside JS safe-int
+  // range is already a decode failure rather than a value to preserve.
+  const last_updated_big = view.getBigInt64(8, true);
+  if (
+    last_updated_big > BigInt(Number.MAX_SAFE_INTEGER) ||
+    last_updated_big < BigInt(Number.MIN_SAFE_INTEGER)
+  ) {
+    throw new Error(
+      `AEAP_AGENT_REPUTATION_v1 last_updated out of JS safe-int range: ${last_updated_big}`,
+    );
+  }
+  const last_updated = Number(last_updated_big);
+
+  if (score > 10_000) {
+    throw new Error(
+      `AEAP_AGENT_REPUTATION_v1 score out of range: ${score} > 10000`,
+    );
+  }
+  if (dispute_ratio_bps > 10_000) {
+    throw new Error(
+      `AEAP_AGENT_REPUTATION_v1 dispute_ratio_bps out of range: ${dispute_ratio_bps} > 10000`,
+    );
+  }
+
+  return { score, completed_tasks, dispute_ratio_bps, last_updated };
+}
+
+/**
+ * Combine the schema-data fields with the attestation-account header
+ * fields to produce the public `AttestationReputation` shape.
+ *
+ * Note: `expiry: 0` means "no expiry" in the SAS account layout; we
+ * map that to `undefined` so the public type's `expiry?: number` is
+ * unambiguous.
+ */
+export function toAttestationReputation(
+  fields: ReputationDataFields,
+  attestation: Pick<SolanaAttestation, "signer" | "credential" | "expiry">,
+): AttestationReputation {
+  const out: AttestationReputation = {
+    score: fields.score,
+    completed_tasks: fields.completed_tasks,
+    dispute_ratio_bps: fields.dispute_ratio_bps,
+    last_updated: fields.last_updated,
+    signer: attestation.signer,
+    credential: attestation.credential,
+  };
+  if (attestation.expiry && attestation.expiry > 0) {
+    out.expiry = attestation.expiry;
+  }
+  return out;
+}
+
+// --------------------------------------------------------------------
+// SAS attestation account layout (manual decoder — see SDK-dep note).
+// --------------------------------------------------------------------
+//
+// Fixed-size header followed by a length-prefixed data blob:
+//
+//   offset  field          bytes   type
+//   -------------------------------------------------
+//   0       discriminator  1       u8   (attestation tag = 2)
+//   1       nonce          32      Pubkey (per-credential uniqueness)
+//   33      credential     32      Pubkey
+//   65      schema         32      Pubkey
+//   97      subject        32      Pubkey
+//   129     signer         32      Pubkey
+//   161     expiry         8       i64  (0 = no expiry)
+//   169     data_len       4       u32  (LE)
+//   173     data           data_len bytes
+//
+// Total fixed prefix: 173 bytes, then `data_len` bytes.
+//
+// The 0-byte discriminator value at offset 0 (`2`) is a conservative
+// marker — if/when the real SAS layout adds more account types with
+// the same struct size, consumers can relax this check by passing the
+// raw bytes directly into `parseReputationData` and skipping
+// `parseAttestationAccount`. We keep the check on by default so that
+// accidentally pointing `owner_attestation` at a non-attestation
+// account fails fast rather than producing nonsense reputation data.
+
+const ATTESTATION_ACCOUNT_TAG = 2;
+const ATTESTATION_HEADER_SIZE = 173;
+
+export interface RawAttestationAccount {
+  /** Per-credential nonce (as 32 base58 bytes, stored verbatim). */
+  nonce: Uint8Array;
+  /** Referenced credential authority (32 bytes). */
+  credential: Uint8Array;
+  /** Referenced schema PDA (32 bytes). */
+  schema: Uint8Array;
+  /** Subject pubkey (32 bytes) — the agent authority the claim is about. */
+  subject: Uint8Array;
+  /** Signer pubkey (32 bytes). */
+  signer: Uint8Array;
+  /** Unix expiry (seconds), 0 = no expiry. */
+  expiry: number;
+  /** Raw typed-schema data (caller passes to `parseReputationData`). */
+  data: Uint8Array;
+}
+
+/**
+ * Decode an attestation account. Throws on any shape violation so
+ * callers can route to the §4 skip-with-warn path.
+ */
+export function parseAttestationAccount(bytes: Uint8Array): RawAttestationAccount {
+  if (bytes.length < ATTESTATION_HEADER_SIZE) {
+    throw new Error(
+      `SAS attestation account too short: got ${bytes.length} bytes, expected >= ${ATTESTATION_HEADER_SIZE}`,
+    );
+  }
+  const discriminator = bytes[0];
+  if (discriminator !== ATTESTATION_ACCOUNT_TAG) {
+    throw new Error(
+      `SAS attestation account discriminator mismatch: got ${discriminator}, expected ${ATTESTATION_ACCOUNT_TAG}`,
+    );
+  }
+
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+  const nonce = bytes.slice(1, 33);
+  const credential = bytes.slice(33, 65);
+  const schema = bytes.slice(65, 97);
+  const subject = bytes.slice(97, 129);
+  const signer = bytes.slice(129, 161);
+
+  const expiry_big = view.getBigInt64(161, true);
+  if (
+    expiry_big > BigInt(Number.MAX_SAFE_INTEGER) ||
+    expiry_big < BigInt(Number.MIN_SAFE_INTEGER)
+  ) {
+    throw new Error(`SAS attestation expiry out of JS safe-int range: ${expiry_big}`);
+  }
+  const expiry = Number(expiry_big);
+
+  const data_len = view.getUint32(169, true);
+  if (bytes.length < ATTESTATION_HEADER_SIZE + data_len) {
+    throw new Error(
+      `SAS attestation account truncated: header says data_len=${data_len} but total bytes=${bytes.length}`,
+    );
+  }
+  const data = bytes.slice(ATTESTATION_HEADER_SIZE, ATTESTATION_HEADER_SIZE + data_len);
+
+  return { nonce, credential, schema, subject, signer, expiry, data };
+}
+
+/**
+ * Helper for producers (tests, SDKs that want to round-trip). Encodes
+ * the schema data back into its 16-byte little-endian form. Mirrors
+ * `parseReputationData`.
+ */
+export function encodeReputationData(fields: ReputationDataFields): Uint8Array {
+  if (fields.score > 10_000 || fields.score < 0) {
+    throw new Error(`score out of range: ${fields.score}`);
+  }
+  if (fields.dispute_ratio_bps > 10_000 || fields.dispute_ratio_bps < 0) {
+    throw new Error(`dispute_ratio_bps out of range: ${fields.dispute_ratio_bps}`);
+  }
+  const buf = new Uint8Array(AEAP_AGENT_REPUTATION_V1_SIZE);
+  const view = new DataView(buf.buffer);
+  view.setUint16(0, fields.score, true);
+  view.setUint32(2, fields.completed_tasks, true);
+  view.setUint16(6, fields.dispute_ratio_bps, true);
+  view.setBigInt64(8, BigInt(fields.last_updated), true);
+  return buf;
+}
+
+/**
+ * Mirror of `parseAttestationAccount` — encodes a raw attestation
+ * account for tests. Consumers producing real attestations go through
+ * SAS itself; this is only used in the test harness.
+ */
+export function encodeAttestationAccount(params: {
+  nonce: Uint8Array;
+  credential: Uint8Array;
+  schema: Uint8Array;
+  subject: Uint8Array;
+  signer: Uint8Array;
+  expiry: number;
+  data: Uint8Array;
+}): Uint8Array {
+  assertLen(params.nonce, 32, "nonce");
+  assertLen(params.credential, 32, "credential");
+  assertLen(params.schema, 32, "schema");
+  assertLen(params.subject, 32, "subject");
+  assertLen(params.signer, 32, "signer");
+
+  const total = ATTESTATION_HEADER_SIZE + params.data.length;
+  const buf = new Uint8Array(total);
+  buf[0] = ATTESTATION_ACCOUNT_TAG;
+  buf.set(params.nonce, 1);
+  buf.set(params.credential, 33);
+  buf.set(params.schema, 65);
+  buf.set(params.subject, 97);
+  buf.set(params.signer, 129);
+
+  const view = new DataView(buf.buffer);
+  view.setBigInt64(161, BigInt(params.expiry), true);
+  view.setUint32(169, params.data.length, true);
+  buf.set(params.data, ATTESTATION_HEADER_SIZE);
+  return buf;
+}
+
+function assertLen(bytes: Uint8Array, expected: number, name: string): void {
+  if (bytes.length !== expected) {
+    throw new Error(`${name} must be ${expected} bytes, got ${bytes.length}`);
+  }
+}

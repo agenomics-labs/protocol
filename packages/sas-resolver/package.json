@@ -1,0 +1,62 @@
+{
+  "name": "@aeap/sas-resolver",
+  "version": "0.1.0",
+  "description": "ADR-064 reference resolver for ADR-061 manifest-referenced SAS attestations. Off-chain only; dereferences manifest.agent.owner_attestation, parses AEAP_AGENT_REPUTATION_v1, and surfaces merge helpers for registry + SAS UX.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./resolver": {
+      "types": "./dist/resolver.d.ts",
+      "import": "./dist/resolver.js"
+    },
+    "./schema": {
+      "types": "./dist/schema.d.ts",
+      "import": "./dist/schema.js"
+    },
+    "./allowlist": {
+      "types": "./dist/allowlist.d.ts",
+      "import": "./dist/allowlist.js"
+    },
+    "./merge": {
+      "types": "./dist/merge.d.ts",
+      "import": "./dist/merge.js"
+    },
+    "./types": {
+      "types": "./dist/types.d.ts",
+      "import": "./dist/types.js"
+    }
+  },
+  "files": [
+    "dist/**",
+    "src/**",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "node --import tsx --test test/resolver.test.ts test/schema.test.ts test/merge.test.ts"
+  },
+  "keywords": [
+    "aeap",
+    "solana",
+    "sas",
+    "solana-attestation-service",
+    "reputation",
+    "resolver"
+  ],
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@noble/curves": "^1.4.0",
+    "@solana/kit": "^6.8.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.9.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.2.2"
+  }
+}
