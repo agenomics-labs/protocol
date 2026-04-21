@@ -15,8 +15,21 @@ pub const AGENT_VAULT_PROGRAM_ID: Pubkey = pubkey!("4wjdJPbp59gjUcVsp7gcc8XmcAeW
 
 /// AgentProfile: The core account representing a registered agent.
 ///
-/// ADR-040: Account space is explicitly calculated as 1243 bytes
-/// (1043 serialized max + 200 safety margin).
+/// ADR-040: Account space is explicitly calculated as 1405 bytes
+/// (1243 baseline + 162 bytes for the ADR-060 manifest fields:
+///  manifest_cid 64 + manifest_hash 32 + manifest_signature 64 + manifest_version 2 = 162).
+///
+/// ADR-060 adds four manifest fields that point to an off-chain capability
+/// manifest (IPFS CIDv1 or Arweave tx ID). The on-chain fields are the
+/// integrity commitment; the manifest body is off-chain. M5 resolution:
+/// `manifest_cid` is `[u8; 64]` to fit CIDv1 string encodings (≤ ~60 chars)
+/// or Arweave 43-char base64url tx IDs with headroom. Unused bytes are
+/// zero-padded; readers trim trailing 0x00.
+///
+/// The existing `capabilities: Vec<String>` stays as a denormalized on-chain
+/// search index (ADR-060 §1 "Relationship"); the manifest is the source of
+/// truth. `update_manifest` re-validates the invariant
+/// `capabilities ⊆ manifest.capabilities[].name`.
 #[account]
 pub struct AgentProfile {
     pub authority: Pubkey,
@@ -37,6 +50,22 @@ pub struct AgentProfile {
     pub updated_at: i64,
     pub reputation_stake: ReputationStake,
     pub bump: u8,
+    // ADR-060: capability manifest pointer + integrity commitment.
+    // Zero-initialized on register; populated via `update_manifest`.
+    pub manifest_cid: [u8; 64],          // 64 bytes — CIDv1 string or Arweave tx ID, zero-padded
+    pub manifest_hash: [u8; 32],         // 32 bytes — SHA-256 of RFC-8785 canonical-JSON manifest
+    pub manifest_signature: [u8; 64],    // 64 bytes — Ed25519 signature over manifest_hash by authority
+    pub manifest_version: u16,           // 2 bytes — high byte = major, low byte = minor
+}
+
+impl AgentProfile {
+    /// ADR-040 explicit space calc. Do NOT drift from the `space = ...`
+    /// literal in `contexts.rs::RegisterAgent`.
+    ///
+    /// Baseline (pre-ADR-060): 1243 bytes (see earlier history).
+    /// ADR-060 additions: 64 + 32 + 64 + 2 = 162 bytes.
+    /// Total: 1405 bytes.
+    pub const SPACE: usize = 1405;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, AnchorSerialize, AnchorDeserialize)]

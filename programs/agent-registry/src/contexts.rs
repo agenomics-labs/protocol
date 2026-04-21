@@ -9,7 +9,10 @@ pub struct RegisterAgent<'info> {
     #[account(
         init,
         payer = authority,
-        space = 1243, // ADR-040: explicit serialized size
+        // ADR-040 / ADR-060: explicit serialized size. Baseline 1243 +
+        // 162 bytes for the ADR-060 manifest fields = 1405 bytes. Keep
+        // this constant in lockstep with `AgentProfile::SPACE`.
+        space = AgentProfile::SPACE,
         seeds = [authority.key().as_ref(), b"agent-profile"],
         bump
     )]
@@ -165,4 +168,31 @@ pub struct DeregisterAgent<'info> {
         bump = agent_profile.bump
     )]
     pub agent_profile: Account<'info, AgentProfile>,
+}
+
+/// ADR-060: Publish or rotate the off-chain capability manifest pointer.
+///
+/// The `authority` signer constraint guarantees that only the registered
+/// agent can mutate its own manifest fields. The context exposes the
+/// Instructions sysvar so the handler can verify the paired
+/// ed25519-precompile signature-verification instruction appears in the
+/// same transaction (standard Solana pattern for Ed25519 verification —
+/// in-program verification is prohibitively expensive in compute units).
+#[derive(Accounts)]
+pub struct UpdateManifest<'info> {
+    pub authority: Signer<'info>,
+
+    #[account(
+        mut,
+        has_one = authority,
+        seeds = [authority.key().as_ref(), b"agent-profile"],
+        bump = agent_profile.bump
+    )]
+    pub agent_profile: Account<'info, AgentProfile>,
+
+    /// CHECK: Instructions sysvar — read-only, address checked against the
+    /// canonical sysvar pubkey. Used to locate the paired ed25519-program
+    /// sig-verify instruction in the current transaction.
+    #[account(address = anchor_lang::solana_program::sysvar::instructions::ID)]
+    pub instructions_sysvar: UncheckedAccount<'info>,
 }

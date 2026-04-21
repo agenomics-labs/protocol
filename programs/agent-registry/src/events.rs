@@ -70,3 +70,15 @@ pub struct SuspensionCleared {
     pub new_reputation_score: u64,
     pub timestamp: i64,
 }
+
+/// ADR-060: emitted when an agent publishes or rotates their off-chain
+/// capability manifest pointer. Subscribers can use this to pin IPFS
+/// content, refresh the capability index, or invalidate caches.
+#[event]
+pub struct ManifestUpdated {
+    pub authority: Pubkey,
+    pub manifest_cid: [u8; 64],
+    pub manifest_hash: [u8; 32],
+    pub manifest_version: u16,
+    pub timestamp: i64,
+}
