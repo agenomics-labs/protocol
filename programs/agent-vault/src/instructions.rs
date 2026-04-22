@@ -44,7 +44,12 @@ pub fn update_policy(
     per_tx_limit_lamports: u64,
     max_txs_per_hour: u32,
 ) -> Result<()> {
-    // Authority verified by has_one constraint (ADR-041)
+    // Authority verified by has_one constraint (ADR-041).
+    // NOTE (ADR-069): `update_policy` intentionally does NOT rotate
+    // `agent_identity`. Callers must use `update_agent_identity` for that —
+    // rotation is a distinct operation with its own audit event
+    // (`AgentIdentityUpdated`) so indexers can distinguish a policy tweak
+    // from a hot-key rotation.
     let vault = &mut ctx.accounts.vault;
     vault.policy.daily_limit_lamports = daily_limit_lamports;
     vault.policy.per_tx_limit_lamports = per_tx_limit_lamports;
@@ -55,6 +60,41 @@ pub fn update_policy(
         daily_limit: daily_limit_lamports,
         per_tx_limit: per_tx_limit_lamports,
         max_txs_per_hour,
+    });
+
+    Ok(())
+}
+
+/// ADR-069 (SEC-2): Rotate the vault's `agent_identity` hot key.
+///
+/// `agent_identity` is the off-chain agent runtime's signing key and is one
+/// of two keys (alongside `authority`) accepted as a signer for
+/// `execute_transfer` / `execute_token_transfer`. It is **expected to be
+/// rotated** on any of:
+///
+/// - Suspected compromise of the agent runtime (leaked log, lost device,
+///   terminated contractor access).
+/// - Routine cadence (ADR-069 suggests 90 days for long-running agents).
+/// - Migration of the agent runtime between hosts.
+///
+/// Rotation is instantaneous: the old key cannot sign the next transfer after
+/// this instruction lands. The daily spend window, rate-limit counters, and
+/// token spend records are intentionally preserved — rotation is a key-swap,
+/// not a vault reset.
+///
+/// Authority is verified by `has_one = authority` on the context.
+pub fn update_agent_identity(
+    ctx: Context<UpdateAgentIdentity>,
+    new_agent_identity: Pubkey,
+) -> Result<()> {
+    let vault = &mut ctx.accounts.vault;
+    let old_identity = vault.agent_identity;
+    vault.agent_identity = new_agent_identity;
+
+    emit!(AgentIdentityUpdated {
+        vault: ctx.accounts.vault.key(),
+        old_identity,
+        new_identity: new_agent_identity,
     });
 
     Ok(())

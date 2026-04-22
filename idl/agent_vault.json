@@ -540,6 +540,69 @@
       "args": []
     },
     {
+      "name": "update_agent_identity",
+      "docs": [
+        "ADR-069 (SEC-2): Rotate `vault.agent_identity`.",
+        "",
+        "`agent_identity` is a **hot key** — the off-chain agent runtime's",
+        "signing key, distinct from the human-custodied `authority`. It should",
+        "be rotated on any compromise of the agent runtime or on a routine",
+        "cadence. Only the vault `authority` (verified via `has_one` on the",
+        "context) can rotate it.",
+        "",
+        "Emits `AgentIdentityUpdated { vault, old_identity, new_identity }`.",
+        "Does not touch balances, policies, daily-spend counters, or rate-limit",
+        "counters — rotation is a pure key-swap."
+      ],
+      "discriminator": [
+        133,
+        153,
+        86,
+        40,
+        165,
+        20,
+        149,
+        42
+      ],
+      "accounts": [
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "authority"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "vault"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "new_agent_identity",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
       "name": "update_policy",
       "docs": [
         "Updates the vault's spending policy (limits and rate limits).",
@@ -618,6 +681,19 @@
     }
   ],
   "events": [
+    {
+      "name": "AgentIdentityUpdated",
+      "discriminator": [
+        170,
+        105,
+        175,
+        58,
+        163,
+        9,
+        85,
+        119
+      ]
+    },
     {
       "name": "AllowlistUpdated",
       "discriminator": [
@@ -826,6 +902,34 @@
     }
   ],
   "types": [
+    {
+      "name": "AgentIdentityUpdated",
+      "docs": [
+        "Emitted when the vault authority rotates `agent_identity` via",
+        "`update_agent_identity`. Indexers should treat this as the authoritative",
+        "signal that the old identity key is no longer authorized to sign",
+        "`execute_transfer` / `execute_token_transfer` on this vault.",
+        "",
+        "See ADR-069 for the design rationale (SEC-2 from DEEP-AUDIT-2026-04-22)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "old_identity",
+            "type": "pubkey"
+          },
+          {
+            "name": "new_identity",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
     {
       "name": "AllowlistUpdated",
       "type": {

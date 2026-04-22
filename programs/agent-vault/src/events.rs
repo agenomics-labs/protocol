@@ -9,6 +9,19 @@ pub struct VaultInitialized {
     pub per_tx_limit: u64,
 }
 
+/// Emitted when the vault authority rotates `agent_identity` via
+/// `update_agent_identity`. Indexers should treat this as the authoritative
+/// signal that the old identity key is no longer authorized to sign
+/// `execute_transfer` / `execute_token_transfer` on this vault.
+///
+/// See ADR-069 for the design rationale (SEC-2 from DEEP-AUDIT-2026-04-22).
+#[event]
+pub struct AgentIdentityUpdated {
+    pub vault: Pubkey,
+    pub old_identity: Pubkey,
+    pub new_identity: Pubkey,
+}
+
 #[event]
 pub struct PolicyUpdated {
     pub vault: Pubkey,

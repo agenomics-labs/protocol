@@ -53,6 +53,33 @@ pub struct ManageAllowlist<'info> {
     pub authority: Signer<'info>,
 }
 
+/// ADR-069 (SEC-2): Context for rotating `vault.agent_identity`.
+///
+/// `agent_identity` is a **hot key**: it is supplied by the authority at
+/// `initialize_vault` with no on-chain validation, and it is one of two keys
+/// (alongside `authority`) accepted as a signer for `execute_transfer` /
+/// `execute_token_transfer`. Compromise of the off-chain agent-runtime key
+/// bound to `agent_identity` means an attacker can drain up to the daily cap
+/// indefinitely — and the human-custodied `authority` cannot revoke it
+/// without this dedicated rotation path.
+///
+/// Rotation is deliberately unilateral: `has_one = authority` gates the
+/// context with no multisig requirement. The threat model assumes `authority`
+/// is the human-custodied root of trust; forcing multisig would defeat the
+/// fast-rotation design goal (see ADR-069 Alternatives Considered).
+#[derive(Accounts)]
+pub struct UpdateAgentIdentity<'info> {
+    #[account(
+        mut,
+        has_one = authority @ VaultError::Unauthorized,
+        seeds = [b"vault", authority.key().as_ref()],
+        bump
+    )]
+    pub vault: Account<'info, Vault>,
+
+    pub authority: Signer<'info>,
+}
+
 #[derive(Accounts)]
 pub struct ManageProgramAllowlist<'info> {
     #[account(

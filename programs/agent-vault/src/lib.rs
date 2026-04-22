@@ -53,6 +53,24 @@ pub mod agent_vault {
         )
     }
 
+    /// ADR-069 (SEC-2): Rotate `vault.agent_identity`.
+    ///
+    /// `agent_identity` is a **hot key** — the off-chain agent runtime's
+    /// signing key, distinct from the human-custodied `authority`. It should
+    /// be rotated on any compromise of the agent runtime or on a routine
+    /// cadence. Only the vault `authority` (verified via `has_one` on the
+    /// context) can rotate it.
+    ///
+    /// Emits `AgentIdentityUpdated { vault, old_identity, new_identity }`.
+    /// Does not touch balances, policies, daily-spend counters, or rate-limit
+    /// counters — rotation is a pure key-swap.
+    pub fn update_agent_identity(
+        ctx: Context<UpdateAgentIdentity>,
+        new_agent_identity: Pubkey,
+    ) -> Result<()> {
+        instructions::update_agent_identity(ctx, new_agent_identity)
+    }
+
     /// Adds a token to the vault's allowlist with per-mint `per_tx_limit` and
     /// `daily_limit` expressed in the token's base units (findings #13/#14).
     /// Calling with an already-listed mint updates its limits without

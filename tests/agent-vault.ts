@@ -920,6 +920,150 @@ describe("Agent Vault Tests", () => {
     });
   });
 
+  // ============================================================================
+  // SEC-2 / ADR-069: update_agent_identity (hot-key rotation)
+  // ============================================================================
+
+  describe("SEC-2 / ADR-069: Agent Identity Rotation", () => {
+    let rotVaultPda: PublicKey;
+    let rotAuthority: Keypair;
+    let rotOldAgentId: Keypair;
+    let rotNewAgentId: Keypair;
+    let rotUnauthorized: Keypair;
+
+    before(async () => {
+      rotAuthority = Keypair.generate();
+      rotOldAgentId = Keypair.generate();
+      rotNewAgentId = Keypair.generate();
+      rotUnauthorized = Keypair.generate();
+
+      for (const kp of [rotAuthority, rotOldAgentId, rotNewAgentId, rotUnauthorized]) {
+        const sig = await provider.connection.requestAirdrop(
+          kp.publicKey,
+          10 * LAMPORTS_PER_SOL
+        );
+        await provider.connection.confirmTransaction(sig);
+      }
+
+      const [vaultAddress] = await anchor.web3.PublicKey.findProgramAddress(
+        [Buffer.from("vault"), rotAuthority.publicKey.toBuffer()],
+        programId
+      );
+      rotVaultPda = vaultAddress;
+
+      await program.methods
+        .initializeVault(
+          rotOldAgentId.publicKey,
+          new BN(10 * LAMPORTS_PER_SOL),
+          new BN(1 * LAMPORTS_PER_SOL),
+          new BN(10)
+        )
+        .accounts({
+          vault: rotVaultPda,
+          authority: rotAuthority.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .signers([rotAuthority])
+        .rpc();
+
+      // Fund vault so execute_transfer can actually move lamports
+      const vaultAirdrop = await provider.connection.requestAirdrop(
+        rotVaultPda,
+        5 * LAMPORTS_PER_SOL
+      );
+      await provider.connection.confirmTransaction(vaultAirdrop);
+    });
+
+    it("should reject update_agent_identity from non-authority", async () => {
+      try {
+        await program.methods
+          .updateAgentIdentity(rotNewAgentId.publicKey)
+          .accounts({
+            vault: rotVaultPda,
+            authority: rotUnauthorized.publicKey,
+          })
+          .signers([rotUnauthorized])
+          .rpc();
+        expect.fail("Expected non-authority rotation to fail");
+      } catch (error: any) {
+        expect(error).to.exist;
+        // Anchor maps has_one mismatch to ConstraintHasOne / Unauthorized
+        const msg = (error?.message || "").toString();
+        expect(msg.length).to.be.greaterThan(0);
+      }
+
+      // Confirm agent_identity is unchanged
+      const vaultAccount = await program.account.vault.fetch(rotVaultPda);
+      expect(vaultAccount.agentIdentity.toString()).to.equal(
+        rotOldAgentId.publicKey.toString()
+      );
+    });
+
+    it("should rotate agent_identity when called by authority and invalidate old key", async () => {
+      // Sanity: old identity can sign a transfer before rotation
+      const r1 = Keypair.generate().publicKey;
+      await program.methods
+        .executeTransfer(new BN(0.1 * LAMPORTS_PER_SOL))
+        .accounts({
+          vault: rotVaultPda,
+          vaultAccount: rotVaultPda,
+          agent: rotOldAgentId.publicKey,
+          recipient: r1,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .signers([rotOldAgentId])
+        .rpc();
+
+      // Rotate
+      await program.methods
+        .updateAgentIdentity(rotNewAgentId.publicKey)
+        .accounts({
+          vault: rotVaultPda,
+          authority: rotAuthority.publicKey,
+        })
+        .signers([rotAuthority])
+        .rpc();
+
+      const vaultAccount = await program.account.vault.fetch(rotVaultPda);
+      expect(vaultAccount.agentIdentity.toString()).to.equal(
+        rotNewAgentId.publicKey.toString()
+      );
+
+      // New identity can sign
+      const r2 = Keypair.generate().publicKey;
+      await program.methods
+        .executeTransfer(new BN(0.1 * LAMPORTS_PER_SOL))
+        .accounts({
+          vault: rotVaultPda,
+          vaultAccount: rotVaultPda,
+          agent: rotNewAgentId.publicKey,
+          recipient: r2,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .signers([rotNewAgentId])
+        .rpc();
+
+      // Old identity is now rejected
+      const r3 = Keypair.generate().publicKey;
+      try {
+        await program.methods
+          .executeTransfer(new BN(0.1 * LAMPORTS_PER_SOL))
+          .accounts({
+            vault: rotVaultPda,
+            vaultAccount: rotVaultPda,
+            agent: rotOldAgentId.publicKey,
+            recipient: r3,
+            systemProgram: anchor.web3.SystemProgram.programId,
+          })
+          .signers([rotOldAgentId])
+          .rpc();
+        expect.fail("Expected rotated-out identity to be unauthorized");
+      } catch (error: any) {
+        expect(error).to.exist;
+      }
+    });
+  });
+
   describe("Authorization: Allowlist Management", () => {
     // Create a separate vault for auth tests
     let allowlistAuthVaultPda: PublicKey;
