@@ -24,7 +24,16 @@ export const PreflightGateSchema = z.enum([
   "daily_cap_not_exhausted",
   "dispute_window_open",
 ]);
-export type PreflightGate = z.infer<typeof PreflightGateSchema>;
+
+/** Known preflight-gate literals. Extensible: new values may be added in minor releases. */
+export type KnownPreflightGate = z.infer<typeof PreflightGateSchema>;
+
+/**
+ * Extensible: new values may be added in minor releases.
+ *
+ * Exhaustive `switch` consumers should keep a `default` branch.
+ */
+export type PreflightGate = KnownPreflightGate | (string & {});
 
 export const SideEffectSchema = z.enum([
   "read-onchain",
@@ -33,10 +42,28 @@ export const SideEffectSchema = z.enum([
   "external-http",
   "emits-event",
 ]);
-export type SideEffect = z.infer<typeof SideEffectSchema>;
+
+/** Known side-effect literals. Extensible: new values may be added in minor releases. */
+export type KnownSideEffect = z.infer<typeof SideEffectSchema>;
+
+/**
+ * Extensible: new values may be added in minor releases.
+ *
+ * Exhaustive `switch` consumers should keep a `default` branch.
+ */
+export type SideEffect = KnownSideEffect | (string & {});
 
 export const StabilitySchema = z.enum(["experimental", "beta", "stable"]);
-export type Stability = z.infer<typeof StabilitySchema>;
+
+/** Known stability literals. Extensible: new values may be added in minor releases. */
+export type KnownStability = z.infer<typeof StabilitySchema>;
+
+/**
+ * Extensible: new values may be added in minor releases.
+ *
+ * Exhaustive `switch` consumers should keep a `default` branch.
+ */
+export type Stability = KnownStability | (string & {});
 
 export const CostEstimateSchema = z.object({
   unit: z.enum(["micro_usd", "lamports"]),
