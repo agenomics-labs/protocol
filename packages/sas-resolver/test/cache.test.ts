@@ -15,13 +15,15 @@ import {
   createCache,
   SasResolver,
   RedisCache,
+  buildAllowlist,
+  type CacheBackend,
+} from "../src/index.js";
+import {
   encodeAttestationAccount,
   encodeReputationData,
   encodeBase58,
   base58Decode,
-  buildAllowlist,
-  type CacheBackend,
-} from "../src/index.js";
+} from "./fixtures.js";
 
 // `ioredis-mock` is a CJS module; bridge it into ESM via createRequire.
 const require = createRequire(import.meta.url);
@@ -118,6 +120,10 @@ function makeResolver(
     rpc: rpc as unknown as import("../src/types.js").ResolverRpc,
     allowedCredentials: buildAllowlist([ALLOWED_CREDENTIAL]),
     schemaPda: SCHEMA_PDA,
+    // Cache tests do not plant a schema-PDA response, so strict init
+    // cannot succeed. Opt out — the SEC-15 strict-init path has its
+    // own coverage in resolver.test.ts (ADR-076 §2 suite).
+    strict: false,
     now: opts.now ?? (() => NOW_SECONDS),
     warn: () => {},
     ...(opts.cache !== undefined ? { cache: opts.cache } : {}),
