@@ -438,6 +438,8 @@ describe("Settlement Protocol Tests", () => {
           providerTokenAccount: providerTokenAccount,
           registryProgram: REGISTRY_PROGRAM_ID,
           providerProfile: providerProfilePDA,
+          // SEC-1: external authority anchor for Registry UpdateReputation CPI.
+          providerAuthority: provider_account.publicKey,
           settlementAuthority: SETTLEMENT_AUTHORITY_PDA,
           protocolConfig: PROTOCOL_CONFIG_PDA,
           tokenProgram: TOKEN_PROGRAM_ID,
@@ -483,6 +485,8 @@ describe("Settlement Protocol Tests", () => {
           providerTokenAccount: providerTokenAccount,
           registryProgram: REGISTRY_PROGRAM_ID,
           providerProfile: providerProfilePDA,
+          // SEC-1: external authority anchor for Registry UpdateReputation CPI.
+          providerAuthority: provider_account.publicKey,
           settlementAuthority: SETTLEMENT_AUTHORITY_PDA,
           protocolConfig: PROTOCOL_CONFIG_PDA,
           tokenProgram: TOKEN_PROGRAM_ID,
@@ -748,6 +752,8 @@ describe("Settlement Protocol Tests", () => {
           providerTokenAccount: providerTokenAccount,
           registryProgram: REGISTRY_PROGRAM_ID,
           providerProfile: providerProfilePDA,
+          // SEC-1: external authority anchor for Registry UpdateReputation CPI.
+          providerAuthority: provider_account.publicKey,
           settlementAuthority: SETTLEMENT_AUTHORITY_PDA,
           protocolConfig: PROTOCOL_CONFIG_PDA,
           tokenProgram: TOKEN_PROGRAM_ID,
@@ -937,6 +943,8 @@ describe("Settlement Protocol Tests", () => {
           providerTokenAccount: providerTokenAccount,
           registryProgram: REGISTRY_PROGRAM_ID,
           providerProfile: providerProfilePDA,
+          // SEC-1: external authority anchor for Registry UpdateReputation CPI.
+          providerAuthority: provider_account.publicKey,
           settlementAuthority: SETTLEMENT_AUTHORITY_PDA,
           protocolConfig: PROTOCOL_CONFIG_PDA,
           tokenProgram: TOKEN_PROGRAM_ID,
@@ -1227,6 +1235,8 @@ describe("Settlement Protocol Tests", () => {
             providerTokenAccount: providerTokenAccount,
             registryProgram: REGISTRY_PROGRAM_ID,
             providerProfile: providerProfilePDA,
+            // SEC-1: external authority anchor for Registry UpdateReputation CPI.
+            providerAuthority: provider_account.publicKey,
             settlementAuthority: SETTLEMENT_AUTHORITY_PDA,
           protocolConfig: PROTOCOL_CONFIG_PDA,
             tokenProgram: TOKEN_PROGRAM_ID,
@@ -1619,6 +1629,8 @@ describe("Settlement Protocol Tests", () => {
           providerTokenAccount: expProviderTA,
           registryProgram: REGISTRY_PROGRAM_ID,
           providerProfile: provProfilePDA,
+          // SEC-1: external authority anchor for Registry UpdateReputation CPI.
+          providerAuthority: expProvider.publicKey,
           settlementAuthority: SETTLEMENT_AUTHORITY_PDA,
           protocolConfig: PROTOCOL_CONFIG_PDA,
           tokenProgram: TOKEN_PROGRAM_ID,
@@ -1646,6 +1658,8 @@ describe("Settlement Protocol Tests", () => {
           providerTokenAccount: expProviderTA,
           registryProgram: REGISTRY_PROGRAM_ID,
           providerProfile: provProfilePDA,
+          // SEC-1: external authority anchor for Registry UpdateReputation CPI.
+          providerAuthority: expProvider.publicKey,
           settlementAuthority: SETTLEMENT_AUTHORITY_PDA,
           protocolConfig: PROTOCOL_CONFIG_PDA,
           tokenProgram: TOKEN_PROGRAM_ID,
@@ -1775,6 +1789,8 @@ describe("Settlement Protocol Tests", () => {
             clientTokenAccount: toClientTA,
             registryProgram: REGISTRY_PROGRAM_ID,
             providerProfile: provProfilePDA,
+            // SEC-1: external authority anchor for Registry UpdateReputation CPI.
+            providerAuthority: toProvider.publicKey,
             settlementAuthority: SETTLEMENT_AUTHORITY_PDA,
           protocolConfig: PROTOCOL_CONFIG_PDA,
             tokenProgram: TOKEN_PROGRAM_ID,
@@ -1844,6 +1860,8 @@ describe("Settlement Protocol Tests", () => {
             clientTokenAccount: toClientTA,
             registryProgram: REGISTRY_PROGRAM_ID,
             providerProfile: provProfilePDA,
+            // SEC-1: external authority anchor for Registry UpdateReputation CPI.
+            providerAuthority: toProvider.publicKey,
             settlementAuthority: SETTLEMENT_AUTHORITY_PDA,
           protocolConfig: PROTOCOL_CONFIG_PDA,
             tokenProgram: TOKEN_PROGRAM_ID,

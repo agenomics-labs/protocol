@@ -45,4 +45,18 @@ pub enum AgentRegistryError {
     MissingEd25519Instruction,
     #[msg("The paired Ed25519 instruction does not match the supplied manifest_hash / manifest_signature / authority")]
     Ed25519InstructionMismatch,
+
+    // SEC-4 (per ADR-070, in-flight): deregister_agent was orphaning the
+    // `reputation-stake` PDA, and a subsequent register_agent with the same
+    // authority reset slash_count / Suspended state. Refuse deregister
+    // while any stake remains; require an explicit full unstake first.
+    #[msg("Cannot deregister while reputation stake is present; call unstake_reputation for the full amount first (SEC-4)")]
+    StakePresentOnDeregister,
+
+    // SEC-11 (per ADR-075, in-flight): the slashing path did
+    // `(-reputation_delta) as u64` which panics in debug for
+    // `reputation_delta == i64::MIN`. Use `checked_neg` and surface the
+    // overflow as a typed error rather than a panic.
+    #[msg("Reputation delta magnitude overflows i64 negation (delta == i64::MIN); governance must choose a valid slash magnitude (SEC-11)")]
+    ReputationDeltaOverflow,
 }

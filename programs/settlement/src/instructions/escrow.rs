@@ -244,6 +244,9 @@ pub fn approve_milestone(
         escrow.status = EscrowStatus::Completed;
 
         // Finding #19: use governance-owned delta, not the compile-time const.
+        // SEC-1: pass `provider_authority` (= escrow.provider, address-
+        // constrained) so the Registry's new external-seed anchor is
+        // satisfied.
         update_provider_reputation(
             provider_key,
             escrow.released_amount,
@@ -252,6 +255,7 @@ pub fn approve_milestone(
             rating,
             ctx.accounts.registry_program.to_account_info(),
             ctx.accounts.provider_profile.to_account_info(),
+            ctx.accounts.provider_authority.to_account_info(),
             ctx.accounts.settlement_authority.to_account_info(),
             ctx.bumps.settlement_authority,
         )?;
@@ -476,6 +480,7 @@ pub fn expire_escrow(ctx: Context<ExpireEscrow>) -> Result<()> {
 
     if should_slash {
         // Finding #19: governance-owned delta; rating=0 — expiry is an auto-slash.
+        // SEC-1: pass `provider_authority` (= escrow.provider) — see cpi.rs.
         update_provider_reputation(
             provider_key,
             0,
@@ -484,6 +489,7 @@ pub fn expire_escrow(ctx: Context<ExpireEscrow>) -> Result<()> {
             0,
             ctx.accounts.registry_program.to_account_info(),
             ctx.accounts.provider_profile.to_account_info(),
+            ctx.accounts.provider_authority.to_account_info(),
             ctx.accounts.settlement_authority.to_account_info(),
             ctx.bumps.settlement_authority,
         )?;

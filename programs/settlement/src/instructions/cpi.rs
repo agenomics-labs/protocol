@@ -29,6 +29,13 @@ use crate::events::*;
 /// `approve_milestone` (the client's explicit ratification step) supplies a
 /// non-zero value. Slash/expire/dispute paths pass 0 because no rating
 /// judgment exists on those paths.
+///
+/// SEC-1 (per ADR-068, in-flight): the Registry's `UpdateReputation`
+/// account struct now requires an explicit `authority` account whose
+/// `.key()` anchors the `agent_profile` PDA derivation. Callers pass
+/// `escrow.provider` (via a new `provider_authority: UncheckedAccount`
+/// constrained with `address = escrow.provider`). This closes the
+/// self-referential-seed hole in the pre-fix Registry context.
 pub fn update_provider_reputation<'info>(
     provider: Pubkey,
     earnings: u64,
@@ -37,6 +44,7 @@ pub fn update_provider_reputation<'info>(
     rating: u8,
     registry_program: AccountInfo<'info>,
     provider_profile: AccountInfo<'info>,
+    provider_authority: AccountInfo<'info>,
     settlement_authority: AccountInfo<'info>,
     settlement_authority_bump: u8,
 ) -> Result<()> {
@@ -44,6 +52,7 @@ pub fn update_provider_reputation<'info>(
     let cpi_signer: &[&[&[u8]]] = &[signer_seeds];
 
     let cpi_accounts = agent_registry::cpi::accounts::UpdateReputation {
+        authority: provider_authority,
         agent_profile: provider_profile,
         settlement_authority,
     };
