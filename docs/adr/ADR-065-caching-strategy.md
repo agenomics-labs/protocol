@@ -1,10 +1,12 @@
 # ADR-065: Caching strategy for multi-hop agent resolution — per-layer TTLs, dual in-memory / Redis backends
 
 ## Status
-Proposed
+Accepted
 
 ## Date
 2026-04-21
+
+> **Accepted 2026-04-22.** Implementation landed in PR #15 (`feat(sas-resolver): ADR-065 caching — per-layer TTLs, in-memory + Redis backends`) and is in production use by `@agenomics/sas-resolver`. The in-memory and Redis backends, per-layer TTL policy, `maxAge` opt-in strict-staleness knob, and `CacheMetrics` surface all ship as specified below. Status flip is documentation-only; no content changes to §§1-8.
 
 ## Context
 
