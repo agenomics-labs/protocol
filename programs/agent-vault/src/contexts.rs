@@ -136,10 +136,26 @@ pub struct ExecuteTokenTransfer<'info> {
     )]
     pub vault_token_account: Account<'info, TokenAccount>,
 
-    /// The recipient's token account. Must match the source mint.
+    /// The recipient's token account.
+    ///
+    /// Constraints:
+    /// - Mint must match `vault_token_account.mint` (already-mitigated per
+    ///   DEEP-AUDIT-2026-04-22 Audit 1 finding SEC-6 — retained as-is).
+    /// - ADR-072 (SEC-6): The recipient account must NOT be the vault's own
+    ///   token account (the exact same account) AND its SPL owner must not
+    ///   be the vault PDA. This blocks a self-transfer loop that would
+    ///   otherwise let a griefer (or a compromised `agent_identity`) burn
+    ///   rate-limit slots and exhaust the hourly window during incident
+    ///   response — every self-transfer is a no-op at the token-program
+    ///   layer but still increments `txs_in_current_window`.
+    ///
+    /// Note: the recipient-mint match was already present pre-ADR-072; the
+    /// recipient-owner / self-account checks are the net-new SEC-6 fix.
     #[account(
         mut,
         constraint = recipient_token_account.mint == vault_token_account.mint @ VaultError::TokenNotAllowed,
+        constraint = recipient_token_account.key() != vault_token_account.key() @ VaultError::SelfTransferNotAllowed,
+        constraint = recipient_token_account.owner != vault.key() @ VaultError::SelfTransferNotAllowed,
     )]
     pub recipient_token_account: Account<'info, TokenAccount>,
 

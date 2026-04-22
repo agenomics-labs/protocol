@@ -1140,6 +1140,162 @@ describe("Agent Vault Tests", () => {
   });
 
   // ============================================================================
+  // SEC-6 / ADR-072: Recipient guards (self-transfer DoS mitigation)
+  // ============================================================================
+
+  describe("SEC-6 / ADR-072: Recipient Guards", () => {
+    let sec6VaultPda: PublicKey;
+    let sec6Authority: Keypair;
+    let sec6AgentId: Keypair;
+    let sec6Payer: Keypair;
+    let sec6Mint: PublicKey;
+    let sec6VaultAta: PublicKey;
+    let sec6ExternalRecipientAta: PublicKey;
+    let sec6SecondVaultOwnedAta: PublicKey;
+
+    before(async () => {
+      sec6Authority = Keypair.generate();
+      sec6AgentId = Keypair.generate();
+      sec6Payer = Keypair.generate();
+
+      for (const kp of [sec6Authority, sec6Payer]) {
+        const sig = await provider.connection.requestAirdrop(
+          kp.publicKey,
+          20 * LAMPORTS_PER_SOL
+        );
+        await provider.connection.confirmTransaction(sig);
+      }
+
+      const [vaultAddress] = await anchor.web3.PublicKey.findProgramAddress(
+        [Buffer.from("vault"), sec6Authority.publicKey.toBuffer()],
+        programId
+      );
+      sec6VaultPda = vaultAddress;
+
+      await program.methods
+        .initializeVault(
+          sec6AgentId.publicKey,
+          new BN(10 * LAMPORTS_PER_SOL),
+          new BN(1 * LAMPORTS_PER_SOL),
+          new BN(10)
+        )
+        .accounts({
+          vault: sec6VaultPda,
+          authority: sec6Authority.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .signers([sec6Authority])
+        .rpc();
+
+      sec6Mint = await createMint(
+        provider.connection,
+        sec6Payer,
+        sec6Payer.publicKey,
+        null,
+        6
+      );
+
+      // Vault's own ATA (owned by the vault PDA).
+      const vaultAtaAcc = await getOrCreateAssociatedTokenAccount(
+        provider.connection,
+        sec6Payer,
+        sec6Mint,
+        sec6VaultPda,
+        true
+      );
+      sec6VaultAta = vaultAtaAcc.address;
+      await mintTo(
+        provider.connection,
+        sec6Payer,
+        sec6Mint,
+        sec6VaultAta,
+        sec6Payer.publicKey,
+        1_000_000n
+      );
+
+      // A SECOND token account also owned by the vault PDA — used to exercise
+      // the "recipient.owner == vault" branch of the SEC-6 guard. We can't
+      // have two ATAs for the same mint+owner, so we create a non-ATA token
+      // account owned by the vault PDA via direct SPL instructions. For the
+      // purpose of this test, using any account whose owner == vault suffices.
+      // The easiest reproducible path: the vault's own ATA IS an account
+      // whose owner is vault, so passing it as recipient exercises BOTH the
+      // self-account and self-owner constraints simultaneously.
+      sec6SecondVaultOwnedAta = sec6VaultAta;
+
+      // A legitimate external recipient ATA.
+      const recipientOwner = Keypair.generate();
+      const recAcc = await getOrCreateAssociatedTokenAccount(
+        provider.connection,
+        sec6Payer,
+        sec6Mint,
+        recipientOwner.publicKey
+      );
+      sec6ExternalRecipientAta = recAcc.address;
+
+      // Allowlist + configure the mint.
+      await program.methods
+        .addTokenAllowlist(sec6Mint, new BN(500_000), new BN(1_000_000))
+        .accounts({
+          vault: sec6VaultPda,
+          authority: sec6Authority.publicKey,
+        })
+        .signers([sec6Authority])
+        .rpc();
+    });
+
+    it("should reject self-transfer where recipient_token_account == vault_token_account", async () => {
+      const before = await program.account.vault.fetch(sec6VaultPda);
+      const txsBefore = before.txsInCurrentWindow;
+
+      let threw = false;
+      try {
+        await program.methods
+          .executeTokenTransfer(new BN(100))
+          .accounts({
+            vault: sec6VaultPda,
+            agent: sec6AgentId.publicKey,
+            vaultTokenAccount: sec6VaultAta,
+            recipientTokenAccount: sec6VaultAta, // <-- self-transfer
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .signers([sec6AgentId])
+          .rpc();
+      } catch (error: any) {
+        threw = true;
+        expect(error).to.exist;
+        // Anchor maps the constraint @ mapping to the named VaultError.
+        // Don't pin the exact message (fragile across Anchor versions) — just
+        // confirm the tx rejected and no state advanced.
+      }
+      expect(threw, "self-transfer to same token account must be rejected").to.equal(true);
+
+      const after = await program.account.vault.fetch(sec6VaultPda);
+      expect(after.txsInCurrentWindow).to.equal(
+        txsBefore,
+        "rejected self-transfer must not advance rate-limit window"
+      );
+    });
+
+    it("should accept an external-recipient transfer (positive control)", async () => {
+      await program.methods
+        .executeTokenTransfer(new BN(100))
+        .accounts({
+          vault: sec6VaultPda,
+          agent: sec6AgentId.publicKey,
+          vaultTokenAccount: sec6VaultAta,
+          recipientTokenAccount: sec6ExternalRecipientAta,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([sec6AgentId])
+        .rpc();
+
+      const vaultAccount = await program.account.vault.fetch(sec6VaultPda);
+      expect(vaultAccount.txsInCurrentWindow).to.be.greaterThan(0);
+    });
+  });
+
+  // ============================================================================
   // SEC-2 / ADR-069: update_agent_identity (hot-key rotation)
   // ============================================================================
 
