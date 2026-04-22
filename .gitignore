@@ -45,3 +45,6 @@ target/
 dist/
 build/
 *.rlib
+
+# Local signer keypairs — NEVER commit
+.keys/
