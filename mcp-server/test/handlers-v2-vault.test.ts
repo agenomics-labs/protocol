@@ -28,12 +28,17 @@ import {
   encodeU64Le,
   encodeExecuteTransferData,
   buildExecuteTransferInstruction,
+  buildDefaultSendAndConfirm,
   SYSTEM_PROGRAM_ADDRESS,
   type VaultTransferV2Rpc,
   type VaultTransferV2Deps,
 } from "../src/handlers-v2/vault.js";
 import { deriveVaultPDA, publicKeyToAddress } from "../src/solana.js";
-import { VAULT_PROGRAM_ADDRESS } from "../src/solana-v2.js";
+import {
+  VAULT_PROGRAM_ADDRESS,
+  __resetRpcForTests,
+  resolveWsUrl,
+} from "../src/solana-v2.js";
 import { AccountRole } from "@solana/kit";
 
 // ==========================================================================
@@ -415,5 +420,84 @@ describe("actions/vault — env flag dispatch", () => {
     assert.equal(vaultTransferV2Action.name, "vault_transfer_v2");
     assert.equal(vaultTransferV2Action.requiresSigner, true);
     assert.ok(vaultTransferV2Action.capabilities.includes("sign:vault" as any));
+  });
+});
+
+// ==========================================================================
+// §5. Default sendAndConfirm dep construction (ADR-012 / feat/v2-sendandconfirm-wiring)
+// ==========================================================================
+//
+// Proves the default-dep wiring path for `sendAndConfirm` constructs a real
+// callable backed by Kit's `sendAndConfirmTransactionFactory`. We do NOT
+// exercise the network — construction must succeed lazily (factory build is
+// deferred to first call) so the default-deps overload is safe to instantiate
+// in non-RPC environments (the prior stub threw unconditionally, which was
+// the Step-9b smoke-test regression this PR closes).
+
+describe("handlers-v2/vault — default sendAndConfirm dep construction", () => {
+  it("buildDefaultSendAndConfirm returns a real callable without throwing on construction (replaces the old throwing stub)", () => {
+    // Minimal RPC stub — never called because we don't invoke the returned
+    // callable. This proves construction is side-effect-free (the Kit factory
+    // is built lazily on first invocation, not up-front), which is what
+    // closes the Step-9b smoke-test regression: the default-dep path used to
+    // throw unconditionally on construction access; it now yields a real
+    // function ready to talk to Kit's sendAndConfirmTransactionFactory.
+    const rpc: VaultTransferV2Rpc = {
+      getLatestBlockhash: () => ({ send: async () => { throw new Error("not used"); } }),
+      simulateTransaction: () => ({ send: async () => { throw new Error("not used"); } }),
+      getRecentPrioritizationFees: () => ({ send: async () => { throw new Error("not used"); } }),
+    };
+
+    // Guard env so lazy WS-URL resolution (if any implementation detail ever
+    // touches env at construction time) resolves to a dummy endpoint.
+    const prevRpc = process.env.SOLANA_RPC_URL;
+    const prevWs = process.env.SOLANA_WS_URL;
+    process.env.SOLANA_RPC_URL = "https://example.invalid";
+    process.env.SOLANA_WS_URL = "wss://example.invalid";
+    __resetRpcForTests();
+    try {
+      const fn = buildDefaultSendAndConfirm(rpc);
+      assert.equal(typeof fn, "function", "must return a callable");
+      // Deliberately do NOT invoke `fn` — that would build the WS client and
+      // try to reach the network. We are proving construction-path wiring,
+      // not end-to-end tx submission. The happy/retry paths of the pipeline
+      // are already covered by the existing integration-lite tests above.
+    } finally {
+      if (prevRpc === undefined) delete process.env.SOLANA_RPC_URL;
+      else process.env.SOLANA_RPC_URL = prevRpc;
+      if (prevWs === undefined) delete process.env.SOLANA_WS_URL;
+      else process.env.SOLANA_WS_URL = prevWs;
+      __resetRpcForTests();
+    }
+  });
+
+  it("resolveWsUrl derives wss:// from SOLANA_RPC_URL and honors SOLANA_WS_URL override", () => {
+    const prevRpc = process.env.SOLANA_RPC_URL;
+    const prevWs = process.env.SOLANA_WS_URL;
+    try {
+      // https → wss
+      delete process.env.SOLANA_WS_URL;
+      process.env.SOLANA_RPC_URL = "https://api.devnet.solana.com";
+      assert.equal(resolveWsUrl(), "wss://api.devnet.solana.com");
+
+      // http → ws
+      process.env.SOLANA_RPC_URL = "http://localhost:8899";
+      assert.equal(resolveWsUrl(), "ws://localhost:8899");
+
+      // explicit override wins
+      process.env.SOLANA_WS_URL = "wss://override.example.com";
+      process.env.SOLANA_RPC_URL = "https://ignored.example.com";
+      assert.equal(resolveWsUrl(), "wss://override.example.com");
+
+      // unset both → devnet default
+      delete process.env.SOLANA_WS_URL;
+      delete process.env.SOLANA_RPC_URL;
+      assert.equal(resolveWsUrl(), "wss://api.devnet.solana.com");
+    } finally {
+      if (prevRpc === undefined) delete process.env.SOLANA_RPC_URL;
+      else process.env.SOLANA_RPC_URL = prevRpc;
+      if (prevWs === undefined) delete process.env.SOLANA_WS_URL;
+      else process.env.SOLANA_WS_URL = prevWs;
+    }
   });
 });
