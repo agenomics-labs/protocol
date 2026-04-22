@@ -34,6 +34,7 @@ import {
   compileTransaction,
   getBase64EncodedWireTransaction,
   getSignatureFromTransaction,
+  sendAndConfirmTransactionFactory,
   AccountRole,
   type Address,
   type Blockhash,
@@ -50,6 +51,7 @@ import {
 } from "../solana.js";
 import {
   createRpc,
+  createRpcSubscriptions,
   VAULT_PROGRAM_ADDRESS,
 } from "../solana-v2.js";
 import {
@@ -324,6 +326,49 @@ export async function handleVaultTransferV2(
 
 // ==================== INTERNAL: default deps wiring ====================
 
+/**
+ * Build the production `SendAndConfirm` callable backed by Kit's
+ * `sendAndConfirmTransactionFactory`. Construction is deferred to the first
+ * invocation so:
+ *
+ *   (a) the WS client (and any env-lookup errors) are materialized lazily —
+ *       tests that pass their own `sendAndConfirm` never touch the network;
+ *   (b) a synchronous factory-construction failure is caught inside the
+ *       confirm pipeline and surfaced as a typed `RPC_ERROR` through
+ *       `sendAndConfirmWithBlockhashExpiry` rather than as a generic
+ *       `PROGRAM_ERROR` from the outer handler try/catch.
+ *
+ * The factory's own `SOLANA_ERROR__BLOCK_HEIGHT_EXCEEDED` expiry error is
+ * detected upstream by `isBlockHeightExceeded` and drives the retry loop.
+ *
+ * NOTE: Kit 6.8 signature (verified against
+ *   mcp-server/node_modules/@solana/kit/dist/types/send-and-confirm-transaction.d.ts):
+ *     sendAndConfirmTransactionFactory({ rpc, rpcSubscriptions })
+ *       → (transaction, { commitment, ... }) => Promise<void>
+ */
+export function buildDefaultSendAndConfirm(
+  rpc: VaultTransferV2Rpc,
+): SendAndConfirm {
+  let cached: ((tx: unknown, cfg: unknown) => Promise<void>) | null = null;
+  return async (signed: SignedTransactionLike): Promise<void> => {
+    if (!cached) {
+      cached = sendAndConfirmTransactionFactory({
+        // The structural VaultTransferV2Rpc subset is a proper narrowing of
+        // Kit's full RPC; the factory only reaches for GetSignatureStatusesApi +
+        // SendTransactionApi + GetEpochInfoApi at call time.
+        rpc: rpc as unknown as Parameters<typeof sendAndConfirmTransactionFactory>[0]["rpc"],
+        rpcSubscriptions: createRpcSubscriptions() as unknown as Parameters<
+          typeof sendAndConfirmTransactionFactory
+        >[0]["rpcSubscriptions"],
+      }) as unknown as (tx: unknown, cfg: unknown) => Promise<void>;
+    }
+    // `signed` is a `FullySignedTransaction & TransactionWithLastValidBlockHeight`
+    // produced by `signTransactionMessageWithSigners` over a message that
+    // already had its blockhash lifetime set. The factory consumes it verbatim.
+    return cached(signed, { commitment: "confirmed" });
+  };
+}
+
 function resolveDeps(override?: Partial<VaultTransferV2Deps>): VaultTransferV2Deps {
   // Default wallet / signer / PDAs derived from the existing v1 path so
   // there is NO duplicate keypair / PDA logic. This is the seam ADR-012
@@ -350,18 +395,7 @@ function resolveDeps(override?: Partial<VaultTransferV2Deps>): VaultTransferV2De
   const rpc = override?.rpc ?? (createRpc() as unknown as VaultTransferV2Rpc);
 
   const sendAndConfirm =
-    override?.sendAndConfirm ??
-    (async () => {
-      // In production this gets wired to Kit's sendAndConfirmTransactionFactory
-      // by the MCP server bootstrap when the v2 env flag flips on. We throw
-      // here so an env flag turned on without a configured sendAndConfirm is
-      // surfaced loudly rather than silently failing.
-      throw new Error(
-        "handleVaultTransferV2: no sendAndConfirm dep wired. " +
-          "In production this should be sendAndConfirmTransactionFactory({ rpc, rpcSubscriptions }). " +
-          "In tests, pass a stub via deps.sendAndConfirm.",
-      );
-    });
+    override?.sendAndConfirm ?? buildDefaultSendAndConfirm(rpc);
 
   return {
     rpc,
