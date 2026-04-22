@@ -377,50 +377,96 @@ pub fn execute_token_transfer(
         bump = vault.bump;
     }
 
-    // Rate limit check and update + per-token daily limit enforcement
+    // ADR-071 (SEC-5): Reordered so all validation that can fail runs BEFORE
+    // any counter mutation. Previously the rate-limit window counter was
+    // incremented between the allowlist check and the TokenSpendRecord lookup,
+    // which meant a tx destined to fail with `TokenNotConfigured` would still
+    // burn a rate-limit slot at mid-handler — and while the Solana runtime
+    // rolls persistent state back on tx failure today, the ordering is
+    // fragile: any future refactor that persists the counter before a later
+    // failing read (or adds a CPI that flushes state mid-handler) would
+    // reintroduce the DoS.
+    //
+    // Target ordering now matches the pre-lamport-mutation discipline used
+    // in `execute_transfer` above:
+    //   1. TokenSpendRecord lookup (fail fast on TokenNotConfigured).
+    //   2. Per-tx token limit check.
+    //   3. Per-mint daily limit check (pure read).
+    //   4. Global rate-limit window check (pure read).
+    //   5. All counter mutations (daily spent, window start, window count) —
+    //      only after every validation has passed.
+    //
+    // The default-allow-all allowlist semantics in `state.rs:110-114`
+    // (empty allowlist = all mints allowed) is the more severe variant of
+    // this finding and is deferred to a separate policy-change ADR (ADR-073
+    // track) — this commit preserves existing semantics while fixing the
+    // immediate ordering hazard.
     {
         let vault = &mut ctx.accounts.vault;
-        let time_since_window_start = clock.unix_timestamp - vault.rate_limit_window_start;
-        if time_since_window_start >= 3600 {
-            vault.rate_limit_window_start = clock.unix_timestamp;
-            vault.txs_in_current_window = 0;
-        }
-        require!(
-            vault.txs_in_current_window < vault.policy.max_txs_per_hour,
-            VaultError::RateLimitExceeded
-        );
-        vault.txs_in_current_window = vault.txs_in_current_window.saturating_add(1);
 
-        // Findings #13/#14: Per-mint per-tx + daily enforcement in the token's
-        // own base units. The record MUST exist — add_token_allowlist is now
-        // the only way to authorize a mint for transfers, and it always
-        // creates/updates the TokenSpendRecord with explicit limits.
         let mint = ctx.accounts.vault_token_account.mint;
         let current_day = (clock.unix_timestamp / 86400) as u64;
 
+        // (1) TokenSpendRecord lookup — fail BEFORE touching any counter.
+        // Findings #13/#14: Per-mint per-tx + daily enforcement in the token's
+        // own base units. The record MUST exist — add_token_allowlist is the
+        // only way to authorize a mint for transfers, and it always
+        // creates/updates the TokenSpendRecord with explicit limits.
         let record_idx = vault
             .token_spend_records
             .iter()
             .position(|r| r.mint == mint)
             .ok_or(VaultError::TokenNotConfigured)?;
-        let record = &mut vault.token_spend_records[record_idx];
 
-        // Per-tx limit (#13) — enforced in the mint's base units.
+        // (2) Per-tx limit (#13) — pure read against the record.
+        {
+            let record = &vault.token_spend_records[record_idx];
+            require!(
+                amount <= record.per_tx_limit,
+                VaultError::PerTxTokenLimitExceeded
+            );
+        }
+
+        // (3) Per-mint daily limit (#14) — compute the projected spent value
+        // without mutating yet; the day-rollover reset and the post-spend
+        // update both happen in phase (5) below.
+        let (projected_spent, resets_day) = {
+            let record = &vault.token_spend_records[record_idx];
+            let effective_spent = if current_day > record.last_spend_day {
+                0
+            } else {
+                record.spent_today
+            };
+            let projected = effective_spent.saturating_add(amount);
+            require!(
+                projected <= record.daily_limit,
+                VaultError::TokenDailyLimitExceeded
+            );
+            (projected, current_day > record.last_spend_day)
+        };
+
+        // (4) Global rate-limit window — pure read. Compute the post-window
+        // state but defer the write to phase (5).
+        let time_since_window_start = clock.unix_timestamp - vault.rate_limit_window_start;
+        let (new_window_start, new_window_count) = if time_since_window_start >= 3600 {
+            (clock.unix_timestamp, 0u32)
+        } else {
+            (vault.rate_limit_window_start, vault.txs_in_current_window)
+        };
         require!(
-            amount <= record.per_tx_limit,
-            VaultError::PerTxTokenLimitExceeded
+            new_window_count < vault.policy.max_txs_per_hour,
+            VaultError::RateLimitExceeded
         );
 
-        // Daily limit (#14) — reset the window if the day rolled over.
-        if current_day > record.last_spend_day {
-            record.spent_today = 0;
+        // (5) Mutations — only after every validation has passed.
+        vault.rate_limit_window_start = new_window_start;
+        vault.txs_in_current_window = new_window_count.saturating_add(1);
+
+        let record = &mut vault.token_spend_records[record_idx];
+        if resets_day {
             record.last_spend_day = current_day;
         }
-        require!(
-            record.spent_today.saturating_add(amount) <= record.daily_limit,
-            VaultError::TokenDailyLimitExceeded
-        );
-        record.spent_today = record.spent_today.saturating_add(amount);
+        record.spent_today = projected_spent;
     }
 
     // CPI transfer with vault PDA as signer
