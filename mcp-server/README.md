@@ -82,6 +82,12 @@ export SOLANA_KEYPAIR_PATH="/path/to/keypair.json"
 # Redis-backed store. Idempotent action results are JSON-serialized
 # under key prefix `aep:idem:` with a 10-minute TTL.
 export AEP_REDIS_URL="redis://localhost:6379"
+
+# IPFS HTTP gateway base URL for capability-manifest fetches (ADR-060 §3).
+# Must be a gateway root — the handler appends "/ipfs/<cid>" itself. Defaults
+# to "https://ipfs.io". Set to a local Kubo daemon ("http://localhost:8080")
+# to avoid public-gateway rate limits and propagation delays.
+export AEP_IPFS_GATEWAY="http://localhost:8080"
 ```
 
 ### Replay-protection backend (`AEP_REDIS_URL`)

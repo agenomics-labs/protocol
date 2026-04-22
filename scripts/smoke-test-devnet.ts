@@ -100,6 +100,54 @@ function fabricateManifest(agentPubkey: PublicKey, name: string): any {
 // Pack packed-semver 1.0 as high-byte=1, low-byte=0 → 0x0100 (256).
 const MANIFEST_VERSION_V1_0 = (1 << 8) | 0;
 
+/**
+ * POST the canonical manifest bytes to a Kubo HTTP API at `apiBase` and
+ * return the resulting CIDv1. Throws on any transport / HTTP / parse error —
+ * caller is expected to catch and degrade to the synthetic-CID fallback.
+ *
+ * We hand-build the multipart/form-data body because Node's native `fetch`
+ * FormData stringifies Uint8Array bodies instead of sending them as an
+ * octet-stream part, which Kubo rejects with "file argument 'path' is
+ * required".
+ */
+async function pinCanonicalManifest(
+  apiBase: string,
+  canonicalBytes: Uint8Array,
+): Promise<string> {
+  const boundary =
+    "----aep-smoke-" + Math.random().toString(16).slice(2) + Date.now().toString(16);
+  const preamble =
+    `--${boundary}\r\n` +
+    `Content-Disposition: form-data; name="file"; filename="manifest.json"\r\n` +
+    `Content-Type: application/json\r\n\r\n`;
+  const epilogue = `\r\n--${boundary}--\r\n`;
+  const body = Buffer.concat([
+    Buffer.from(preamble, "utf-8"),
+    Buffer.from(canonicalBytes),
+    Buffer.from(epilogue, "utf-8"),
+  ]);
+  const url =
+    apiBase.replace(/\/+$/, "") + "/api/v0/add?pin=true&cid-version=1";
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` },
+    body,
+  });
+  if (!resp.ok) {
+    throw new Error(`Kubo API returned HTTP ${resp.status} at ${url}`);
+  }
+  const text = await resp.text();
+  // Kubo's /add response is line-delimited JSON when pinning a single file
+  // you still get one JSON object; parse the first non-empty line.
+  const firstLine = text.split("\n").find((l) => l.trim().length > 0);
+  if (!firstLine) throw new Error(`Empty response body from ${url}`);
+  const parsed = JSON.parse(firstLine) as { Hash?: string };
+  if (typeof parsed.Hash !== "string" || parsed.Hash.length === 0) {
+    throw new Error(`Kubo /add response missing Hash field: ${firstLine}`);
+  }
+  return parsed.Hash;
+}
+
 // Spawn the MCP server as a stdio subprocess and drive it via line-delimited JSON-RPC.
 class McpStdioClient {
   private proc: ChildProcessWithoutNullStreams;
@@ -218,56 +266,75 @@ async function main() {
   );
 
   // ==================== Step 3: vault creation ====================
+  // Idempotent: if the vault PDA is already initialized (prior smoke run with
+  // the same wallet), skip `initializeVault` rather than surface an
+  // "account already in use" error. Step 5 still verifies the on-chain state.
   console.log("\n--- Step 3: Vault Program ---");
   const vaultProgram = new Program(loadIdl("agent_vault"), provider);
   const [vaultPDA] = PublicKey.findProgramAddressSync(
     [Buffer.from("vault"), testKp.publicKey.toBuffer()],
     VAULT_PROGRAM_ID,
   );
-  try {
-    await vaultProgram.methods
-      .initializeVault(
-        testKp.publicKey,
-        new BN(LAMPORTS_PER_SOL),
-        new BN(LAMPORTS_PER_SOL / 10),
-        10,
-      )
-      .accounts({ vault: vaultPDA, authority: testKp.publicKey })
-      .signers([testKp])
-      .rpc();
-    console.log(`  Vault created: ${vaultPDA.toBase58()}`);
-  } catch (e) {
-    console.log(`  Vault creation failed: ${(e as Error).message}`);
+  const existingVaultInfo = await connection.getAccountInfo(vaultPDA);
+  if (existingVaultInfo) {
+    console.log(
+      `  Vault already exists at ${vaultPDA.toBase58()} — re-run, skipping init`,
+    );
+  } else {
+    try {
+      await vaultProgram.methods
+        .initializeVault(
+          testKp.publicKey,
+          new BN(LAMPORTS_PER_SOL),
+          new BN(LAMPORTS_PER_SOL / 10),
+          10,
+        )
+        .accounts({ vault: vaultPDA, authority: testKp.publicKey })
+        .signers([testKp])
+        .rpc();
+      console.log(`  Vault created: ${vaultPDA.toBase58()}`);
+    } catch (e) {
+      console.log(`  Vault creation failed: ${(e as Error).message}`);
+    }
   }
 
   // ==================== Step 4: agent registration ====================
+  // Idempotent: same guard as Step 3. If the agent-profile PDA already holds
+  // account data, skip `registerAgent` (re-run scenario). Step 5 verifies.
   console.log("\n--- Step 4: Registry Program ---");
   const registryProgram = new Program(loadIdl("agent_registry"), provider);
   const [profilePDA] = PublicKey.findProgramAddressSync(
     [testKp.publicKey.toBuffer(), Buffer.from("agent-profile")],
     REGISTRY_PROGRAM_ID,
   );
-  try {
-    await registryProgram.methods
-      .registerAgent(
-        "SmokeTestAgent",
-        "Devnet smoke test agent",
-        "testing",
-        ["smoke-test"],
-        { perTask: {} },
-        new BN(1000),
-        [testKp.publicKey],
-      )
-      .accounts({
-        authority: testKp.publicKey,
-        agentProfile: profilePDA,
-        vault: vaultPDA,
-      })
-      .signers([testKp])
-      .rpc();
-    console.log(`  Agent registered: ${profilePDA.toBase58()}`);
-  } catch (e) {
-    console.log(`  Registration failed: ${(e as Error).message}`);
+  const existingProfileInfo = await connection.getAccountInfo(profilePDA);
+  if (existingProfileInfo) {
+    console.log(
+      `  Agent profile already exists at ${profilePDA.toBase58()} — re-run, skipping init`,
+    );
+  } else {
+    try {
+      await registryProgram.methods
+        .registerAgent(
+          "SmokeTestAgent",
+          "Devnet smoke test agent",
+          "testing",
+          ["smoke-test"],
+          { perTask: {} },
+          new BN(1000),
+          [testKp.publicKey],
+        )
+        .accounts({
+          authority: testKp.publicKey,
+          agentProfile: profilePDA,
+          vault: vaultPDA,
+        })
+        .signers([testKp])
+        .rpc();
+      console.log(`  Agent registered: ${profilePDA.toBase58()}`);
+    } catch (e) {
+      console.log(`  Registration failed: ${(e as Error).message}`);
+    }
   }
 
   // ==================== Step 5: verify on-chain state ====================
@@ -311,9 +378,54 @@ async function main() {
   const manifestHash = validatorMod.manifestHash(manifest); // 32 bytes
   const { ed25519 } = await dynImport<typeof import("@noble/curves/ed25519")>("@noble/curves/ed25519");
   const sigBytes = ed25519.sign(manifestHash, testKp.secretKey.slice(0, 32));
+
+  // Attempt to pin the canonical manifest bytes to a local IPFS daemon so
+  // Step 8 can fetch the real bytes via AEP_IPFS_GATEWAY and the validator
+  // round-trips the live hash + signature. If the daemon is not reachable,
+  // fall back to the synthetic "bafy + 60*a" CID — Step 8 then fails cleanly
+  // with an IPFS-404 rather than a contrived hash mismatch, and the operator
+  // sees the install-Kubo prompt in docs/SMOKE_TESTING.md.
+  const ipfsApi =
+    process.env.AEP_IPFS_API_URL || "http://localhost:5001";
+  const ipfsGateway =
+    process.env.AEP_IPFS_GATEWAY || "http://localhost:8080";
+  let realCid: string | null = null;
+  try {
+    realCid = await pinCanonicalManifest(ipfsApi, canonicalBytes);
+  } catch (e) {
+    console.log(
+      `  IPFS pin unavailable at ${ipfsApi} (${(e as Error).message}) — falling back to synthetic CID.`,
+    );
+    console.log(
+      `  See docs/SMOKE_TESTING.md "Manual devnet" for local-daemon setup.`,
+    );
+  }
   const cidBytes = new Uint8Array(64);
-  // Synthetic CID: "bafy" + 60 'a' chars, zero-padded in the on-chain [u8; 64].
-  const cidStr = "bafy" + "a".repeat(56);
+  let cidStr: string;
+  if (realCid) {
+    if (Buffer.byteLength(realCid, "utf-8") > 64) {
+      console.log(
+        `  Pinned CID (${realCid.length} chars) > 64 bytes — falling back to synthetic.`,
+      );
+      cidStr = "bafy" + "a".repeat(56);
+      realCid = null;
+    } else {
+      cidStr = realCid;
+      console.log(`  Pinned manifest to IPFS → CID ${realCid}`);
+      // Verify the gateway can serve it (local daemon, tight loop).
+      try {
+        const r = await fetch(`${ipfsGateway.replace(/\/+$/, "")}/ipfs/${realCid}`);
+        console.log(`  Gateway round-trip: HTTP ${r.status} (${ipfsGateway})`);
+      } catch (e) {
+        console.log(
+          `  Gateway check failed: ${(e as Error).message} — handler will error when it tries to fetch.`,
+        );
+      }
+    }
+  } else {
+    // Synthetic CID: "bafy" + 60 'a' chars, zero-padded in the on-chain [u8; 64].
+    cidStr = "bafy" + "a".repeat(56);
+  }
   new TextEncoder().encodeInto(cidStr, cidBytes);
 
   try {
@@ -385,9 +497,15 @@ async function main() {
   console.log("\n--- Step 8: MCP server dispatch — get_agent_reputation ---");
   const walletPath = path.resolve(PROJECT_ROOT, ".smoke-test-wallet.json");
   fs.writeFileSync(walletPath, JSON.stringify(Array.from(testKp.secretKey)));
-  const mcpEnv = {
+  // Baseline env for every subprocess in Steps 8-10. AEP_IPFS_GATEWAY points
+  // to the local Kubo node when Step 6 successfully pinned the manifest; if
+  // it didn't, we still pass the gateway so the failure mode is an IPFS-404
+  // (expected degraded path documented in SMOKE_TESTING.md) rather than the
+  // handler hitting a non-existent default.
+  const mcpEnv: NodeJS.ProcessEnv = {
     SOLANA_RPC_URL: rpcUrl,
     WALLET_PATH: walletPath,
+    AEP_IPFS_GATEWAY: ipfsGateway,
     // Leave SAS env vars unset — we want the "sas-not-configured" branch.
   };
   let mcpOk = true;

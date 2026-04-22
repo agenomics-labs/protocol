@@ -70,10 +70,89 @@ cd ../../mcp-server && npm run build
 cd mcp-server && npm install
 ```
 
+#### Optional: local IPFS (Kubo) for Step 6 / Step 8 end-to-end proof
+
+Step 6 pins the fabricated capability manifest to an IPFS daemon and records
+the real CID on chain. Step 8 then spawns the MCP server with
+`AEP_IPFS_GATEWAY` pointed at that same daemon's HTTP gateway, so the
+`get_agent_reputation` handler fetches the real pinned bytes, re-hashes them,
+and verifies the on-chain Ed25519 signature — a true end-to-end manifest
+round-trip.
+
+If Kubo is not installed the script falls back to the synthetic
+`bafy + 60*a` CID. The on-chain write still succeeds (exercising `update_manifest`),
+but Step 8's handler returns an IPFS-404 when it tries to fetch. That is the
+documented degraded path — not a regression — but you lose the full-stack
+confidence of Step 8.
+
+Install options (pick one):
+
+```bash
+# Option 1 — prebuilt binary (no root required)
+curl -sS -o /tmp/kubo.tar.gz \
+  https://dist.ipfs.tech/kubo/v0.29.0/kubo_v0.29.0_linux-amd64.tar.gz
+tar xzf /tmp/kubo.tar.gz -C /tmp && mkdir -p ~/.local/bin
+cp /tmp/kubo/ipfs ~/.local/bin/ipfs
+export PATH="$HOME/.local/bin:$PATH"
+ipfs --version                            # kubo 0.29.x
+
+# Option 2 — snap
+sudo snap install ipfs
+
+# Option 3 — apt (Ubuntu 24.04+; may not be packaged)
+sudo apt install kubo
+```
+
+Initialize and start the daemon (first time only):
+
+```bash
+ipfs init 2>/dev/null || true            # idempotent
+
+# If port 8080 is already in use on this host, pick a free port:
+#   ipfs config Addresses.Gateway /ip4/127.0.0.1/tcp/8082
+#   ipfs config --json Gateway.PublicGateways \
+#     '{"localhost":{"UseSubdomains":false,"Paths":["/ipfs","/ipns"]}}'
+# (the PublicGateways override disables subdomain redirects; without it the
+# daemon 301-redirects every path request to <cid>.ipfs.localhost:<port>)
+
+nohup ipfs daemon > /tmp/ipfs-daemon.log 2>&1 &
+for i in $(seq 1 15); do
+  curl -sf -X POST http://localhost:5001/api/v0/version > /dev/null 2>&1 \
+    && { echo "daemon ready"; break; } || sleep 1
+done
+
+# When finished: pkill -f "ipfs daemon" (or `kill %1` if it's still a shell job)
+```
+
+The smoke script talks to the daemon via two env vars (both optional,
+defaults match Kubo's out-of-the-box ports):
+
+| Var                    | Default                    | Purpose                          |
+| ---------------------- | -------------------------- | -------------------------------- |
+| `AEP_IPFS_API_URL`     | `http://localhost:5001`    | Kubo HTTP API (multipart `/add`) |
+| `AEP_IPFS_GATEWAY`     | `http://localhost:8080`    | Kubo HTTP gateway (manifest GET) |
+
+A local gateway beats a public one (`ipfs.io`) for this test because:
+
+- **No rate limits** — the smoke test runs in tight loops during development
+  and hammering the public gateway trips throttling mid-run.
+- **No propagation delay** — a content just pinned on a public node is not
+  guaranteed to be retrievable through `ipfs.io` for tens of seconds while
+  the DHT propagates; the local daemon serves from its own blockstore
+  immediately.
+- **Deterministic failure mode** — a local 404 clearly means "pin failed",
+  not "public gateway is sad today".
+
 ### Run
 
 ```bash
 SOLANA_RPC_URL=https://api.devnet.solana.com \
+  npx ts-node scripts/smoke-test-devnet.ts
+
+# Or, if you picked non-default IPFS ports:
+SOLANA_RPC_URL=https://api.devnet.solana.com \
+AEP_IPFS_API_URL=http://localhost:5001 \
+AEP_IPFS_GATEWAY=http://localhost:8082 \
   npx ts-node scripts/smoke-test-devnet.ts
 ```
 
@@ -88,7 +167,7 @@ SOLANA_RPC_URL=https://api.devnet.solana.com \
 | 5 | On-chain state | Vault authority + agent name/category/status all match |
 | 6 | `update_manifest` (ADR-060) | `manifest_hash matches local: true`; `manifest_signature matches local: true`; `manifest_version = 0x100` |
 | 7 | Validator round-trip | Clean manifest `ok=true`; tampered manifest `ok=false`, code ≠ `INVALID_INPUT` (must be one of `HASH_MISMATCH` / `SCHEMA_INVALID` / `SIGNATURE_MISMATCH` depending on which byte was flipped) |
-| 8 | MCP `get_agent_reputation` | `tools/list` returns `get_agent_reputation` among N tools; `tools/call` response contains `sas-not-configured` (stub signal, since no SAS env vars set) |
+| 8 | MCP `get_agent_reputation` | `tools/list` returns `get_agent_reputation` among N tools. With local IPFS: `tools/call` response contains the manifest summary (`name`, `agentVersion`, `publishedAt`) **and** `sas-not-configured` in the `sas` field. Without local IPFS: handler hits the synthetic CID and returns an IPFS-404 — documented degraded path, expected unless Kubo is set up per the optional section above. |
 | 9 | v2 `vault_transfer` parity | v1 dispatch succeeds; v2 dispatch succeeds; `v2 warning emitted: true` (one-line stderr log `"routing vault_transfer through the Kit v2 pipeline"`) |
 | 10 | Preflight denial proof | Response contains `PREFLIGHT_FAILED` AND `daily_cap_not_exhausted`; `CAPABILITY_MISSING` NOT present (sanity — the caller holds `sign:vault`) |
 | 11-13 | SAS bootstrap (conditional) | If `AEP_SAS_SCHEMA_PDA` + `AEP_SAS_ALLOWED_CREDENTIALS` are set, the script reports the env detection. Otherwise: `"SAS not bootstrapped on devnet — skipping steps 11-13"` — this is expected until the SAS program is live on devnet |
