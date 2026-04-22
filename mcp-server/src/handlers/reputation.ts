@@ -154,24 +154,40 @@ async function getSasHandle(): Promise<SasHandle> {
 // Manifest fetch — naive public-gateway HTTP GET. v1 scope.
 // --------------------------------------------------------------------------
 
-const DEFAULT_IPFS_GATEWAY = "https://ipfs.io/ipfs";
+/**
+ * Default gateway base URL (no trailing `/ipfs` — that is appended per request
+ * so `AEP_IPFS_GATEWAY` can be set to any gateway root, e.g. a local Kubo node
+ * at `http://localhost:8080`).
+ */
+const DEFAULT_IPFS_GATEWAY_BASE = "https://ipfs.io";
 
 /**
- * Fetch a manifest body from IPFS via a public HTTP gateway.
+ * Fetch a manifest body from IPFS via an HTTP gateway.
  *
- * Configurable via `AEP_IPFS_GATEWAY` (trailing slashes stripped). This is
- * intentionally minimal — no pinning, no caching, no content verification
- * beyond what `validateManifest` performs once the bytes arrive. A production
- * deployment would front this with a pinned gateway or a local IPFS node.
+ * Gateway base is configurable via the `AEP_IPFS_GATEWAY` env var (trailing
+ * slashes stripped). The final URL is `${base}/ipfs/${cid}`, so the value
+ * must be the gateway root (e.g. `http://localhost:8080` or
+ * `https://ipfs.io`), NOT `.../ipfs`. Defaults to `https://ipfs.io`.
+ *
+ * This is intentionally minimal — no pinning, no caching, no content
+ * verification beyond what `validateManifest` performs once the bytes
+ * arrive. A production deployment would front this with a pinned gateway
+ * or a local IPFS node.
+ *
+ * Local-node usage (preferred for testing — no rate limits, no propagation
+ * delays):
+ *
+ *   ipfs daemon &                           # starts HTTP gateway on :8080
+ *   AEP_IPFS_GATEWAY=http://localhost:8080 \
+ *     npm start
  */
 async function fetchManifestFromIpfs(
   cid: string,
 ): Promise<{ bytes: Uint8Array; json: unknown }> {
-  const base = (process.env.AEP_IPFS_GATEWAY || DEFAULT_IPFS_GATEWAY).replace(
-    /\/+$/,
-    "",
-  );
-  const url = `${base}/${encodeURIComponent(cid)}`;
+  const base = (
+    process.env.AEP_IPFS_GATEWAY || DEFAULT_IPFS_GATEWAY_BASE
+  ).replace(/\/+$/, "");
+  const url = `${base}/ipfs/${encodeURIComponent(cid)}`;
   const resp = await fetch(url);
   if (!resp.ok) {
     throw new Error(
