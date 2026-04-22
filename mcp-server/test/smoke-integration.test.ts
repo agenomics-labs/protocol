@@ -22,6 +22,13 @@ import { describe, it, before } from "node:test";
 import * as assert from "node:assert/strict";
 import { Keypair } from "@solana/web3.js";
 import { ed25519 } from "@noble/curves/ed25519";
+import {
+  encodeBase58,
+  base58Decode,
+  base64Encode,
+  encodeReputationData,
+  encodeAttestationAccount,
+} from "./test-fixtures.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Dyn = any;
@@ -80,7 +87,7 @@ function mockRpc(map: Map<string, Uint8Array | null>) {
           state.callCount++;
           const bytes = map.get(String(addr));
           if (bytes === undefined || bytes === null) return { value: null };
-          return { value: { data: [R.base64Encode(bytes), "base64" as const] } };
+          return { value: { data: [base64Encode(bytes), "base64" as const] } };
         },
       };
     },
@@ -94,15 +101,15 @@ interface AttArgs {
   data?: { score: number; completed_tasks: number; dispute_ratio_bps: number; last_updated: number };
 }
 function buildAtt(a: AttArgs): Uint8Array {
-  const data = R.encodeReputationData(
+  const data = encodeReputationData(
     a.data ?? { score: 8500, completed_tasks: 42, dispute_ratio_bps: 50, last_updated: Math.floor(Date.now() / 1000) },
   );
-  return R.encodeAttestationAccount({
+  return encodeAttestationAccount({
     nonce: rand32(7),
-    credential: R.base58Decode(a.credential),
-    schema: R.base58Decode(a.schemaPda),
-    subject: R.base58Decode(a.subject),
-    signer: R.base58Decode(a.signer),
+    credential: base58Decode(a.credential),
+    schema: base58Decode(a.schemaPda),
+    subject: base58Decode(a.subject),
+    signer: base58Decode(a.signer),
     expiry: a.expiry ?? 0,
     data,
   });
@@ -111,10 +118,10 @@ function buildAtt(a: AttArgs): Uint8Array {
 /** Shared SAS "environment" — schema PDA, allowlisted credential, untrusted one. */
 function sasEnv() {
   return {
-    SCHEMA: R.encodeBase58(rand32(101)),
-    CRED_OK: R.encodeBase58(rand32(102)),
-    CRED_UNTRUSTED: R.encodeBase58(rand32(103)),
-    SIGNER: R.encodeBase58(rand32(104)),
+    SCHEMA: encodeBase58(rand32(101)),
+    CRED_OK: encodeBase58(rand32(102)),
+    CRED_UNTRUSTED: encodeBase58(rand32(103)),
+    SIGNER: encodeBase58(rand32(104)),
   };
 }
 
@@ -128,6 +135,10 @@ function makeResolver(
     rpc,
     allowedCredentials: R.buildAllowlist([env.CRED_OK]),
     schemaPda: env.SCHEMA,
+    // Smoke mocks never canned-respond for the schema PDA owner check
+    // (ADR-076 §2). The resolver unit tests cover strict init directly;
+    // here we opt out so the existing §4 failure-mode rows still run.
+    strict: false,
     now: () => opts?.nowSecs ?? Math.floor(Date.now() / 1000),
     warn: () => void 0,
   });
@@ -205,7 +216,7 @@ describe("smoke/integration: capability-manifest-validator", () => {
 
   it("canonicalBytes round-trips to canonicalJson exactly", () => {
     const m = makeManifest(Keypair.generate().publicKey.toBase58(), "X");
-    assert.equal(new TextDecoder().decode(V.canonicalBytes(m)), V.canonicalJson(m));
+    assert.equal(new TextDecoder().decode(V.unstable_canonicalBytes(m)), V.unstable_canonicalJson(m));
   });
 });
 
@@ -217,7 +228,7 @@ describe("smoke/integration: SasResolver ADR-061 §4 failure modes", () => {
   it("HAPPY: attestation fields surfaced with score / credential / signer", async () => {
     const env = sasEnv();
     const subject = Keypair.generate();
-    const attPk = R.encodeBase58(rand32(200));
+    const attPk = encodeBase58(rand32(200));
     const now = 1_900_000_000;
     const bytes = buildAtt({
       schemaPda: env.SCHEMA, credential: env.CRED_OK, signer: env.SIGNER,
@@ -253,7 +264,7 @@ describe("smoke/integration: SasResolver ADR-061 §4 failure modes", () => {
   it("row 4b — attestation account missing → absent:true", async () => {
     const env = sasEnv();
     const subject = Keypair.generate();
-    const attPk = R.encodeBase58(rand32(201));
+    const attPk = encodeBase58(rand32(201));
     const { resolver } = makeResolver(new Map([[attPk, null]]), env);
     const res = await resolver.resolve(
       { agent: { pubkey: subject.publicKey.toBase58(), owner_attestation: attPk } },
@@ -266,8 +277,8 @@ describe("smoke/integration: SasResolver ADR-061 §4 failure modes", () => {
   it("row 4c — schema mismatch → absent:true", async () => {
     const env = sasEnv();
     const subject = Keypair.generate();
-    const attPk = R.encodeBase58(rand32(202));
-    const wrongSchema = R.encodeBase58(rand32(299));
+    const attPk = encodeBase58(rand32(202));
+    const wrongSchema = encodeBase58(rand32(299));
     const bytes = buildAtt({
       schemaPda: wrongSchema, credential: env.CRED_OK, signer: env.SIGNER,
       subject: subject.publicKey.toBase58(),
@@ -284,7 +295,7 @@ describe("smoke/integration: SasResolver ADR-061 §4 failure modes", () => {
   it("row 4d — credential not in allowlist → absent:true", async () => {
     const env = sasEnv();
     const subject = Keypair.generate();
-    const attPk = R.encodeBase58(rand32(203));
+    const attPk = encodeBase58(rand32(203));
     const bytes = buildAtt({
       schemaPda: env.SCHEMA, credential: env.CRED_UNTRUSTED, signer: env.SIGNER,
       subject: subject.publicKey.toBase58(),
@@ -301,7 +312,7 @@ describe("smoke/integration: SasResolver ADR-061 §4 failure modes", () => {
   it("row 4e — expired attestation → absent:true + stale:true", async () => {
     const env = sasEnv();
     const subject = Keypair.generate();
-    const attPk = R.encodeBase58(rand32(204));
+    const attPk = encodeBase58(rand32(204));
     const now = 1_900_000_000;
     const bytes = buildAtt({
       schemaPda: env.SCHEMA, credential: env.CRED_OK, signer: env.SIGNER,
@@ -323,7 +334,7 @@ describe("smoke/integration: SasResolver ADR-061 §4 failure modes", () => {
     const env = sasEnv();
     const subject = Keypair.generate();
     const other = Keypair.generate();
-    const attPk = R.encodeBase58(rand32(205));
+    const attPk = encodeBase58(rand32(205));
     const bytes = buildAtt({
       schemaPda: env.SCHEMA, credential: env.CRED_OK, signer: env.SIGNER,
       subject: other.publicKey.toBase58(), // NOT the caller's subject
@@ -340,7 +351,7 @@ describe("smoke/integration: SasResolver ADR-061 §4 failure modes", () => {
   it("row 4g — truncated data slice → absent:true (data parse failure)", async () => {
     const env = sasEnv();
     const subject = Keypair.generate();
-    const attPk = R.encodeBase58(rand32(206));
+    const attPk = encodeBase58(rand32(206));
     const full = buildAtt({
       schemaPda: env.SCHEMA, credential: env.CRED_OK, signer: env.SIGNER,
       subject: subject.publicKey.toBase58(),
@@ -364,7 +375,7 @@ describe("smoke/integration: SasResolver ADR-061 §4 failure modes", () => {
     const env = sasEnv();
     const { resolver } = makeResolver(new Map(), env);
     const res = await resolver.resolve(
-      { agent: { pubkey: Keypair.generate().publicKey.toBase58(), owner_attestation: R.encodeBase58(rand32(3)) } },
+      { agent: { pubkey: Keypair.generate().publicKey.toBase58(), owner_attestation: encodeBase58(rand32(3)) } },
       "not-base58!!!",
     );
     assert.equal(res.ok, false);
@@ -380,7 +391,7 @@ describe("smoke/integration: SasResolver cache", () => {
   it("repeat resolve() → 1 RPC call (cache hit on the second)", async () => {
     const env = sasEnv();
     const subject = Keypair.generate();
-    const attPk = R.encodeBase58(rand32(400));
+    const attPk = encodeBase58(rand32(400));
     const bytes = buildAtt({
       schemaPda: env.SCHEMA, credential: env.CRED_OK, signer: env.SIGNER,
       subject: subject.publicKey.toBase58(),
@@ -396,7 +407,7 @@ describe("smoke/integration: SasResolver cache", () => {
   it("`maxAge: 0` bypass → 2 RPC calls for 2 consecutive requests", async () => {
     const env = sasEnv();
     const subject = Keypair.generate();
-    const attPk = R.encodeBase58(rand32(401));
+    const attPk = encodeBase58(rand32(401));
     const bytes = buildAtt({
       schemaPda: env.SCHEMA, credential: env.CRED_OK, signer: env.SIGNER,
       subject: subject.publicKey.toBase58(),
@@ -412,7 +423,7 @@ describe("smoke/integration: SasResolver cache", () => {
   it("cacheMetrics reports hits and misses", async () => {
     const env = sasEnv();
     const subject = Keypair.generate();
-    const attPk = R.encodeBase58(rand32(402));
+    const attPk = encodeBase58(rand32(402));
     const bytes = buildAtt({
       schemaPda: env.SCHEMA, credential: env.CRED_OK, signer: env.SIGNER,
       subject: subject.publicKey.toBase58(),
@@ -437,7 +448,7 @@ describe("smoke/integration: validator + resolver composed", () => {
   it("clean manifest + valid attestation → merged view has both signals", async () => {
     const env = sasEnv();
     const agent = Keypair.generate();
-    const attPk = R.encodeBase58(rand32(601));
+    const attPk = encodeBase58(rand32(601));
     const manifest = makeManifest(agent.publicKey.toBase58(), "AgentMerged", attPk);
     const hash = V.manifestHash(manifest);
 
