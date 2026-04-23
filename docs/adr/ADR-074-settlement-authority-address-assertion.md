@@ -1,10 +1,10 @@
 # ADR-074: Settlement-authority `address =` assertion across all four Settlement CPI contexts
 
 ## Status
-Proposed
+Accepted
 
 ## Date
-2026-04-22
+2026-04-22 (Proposed) — Promoted to Accepted on 2026-04-23 (shipping in PR #28-#33)
 
 ## Context
 
@@ -57,6 +57,8 @@ The `SETTLEMENT_AUTHORITY_ADDRESS` constant is computed once at program boot (or
 - **Add the assertion only to the two most-used call sites (`approve_milestone`, `resolve_dispute`) and defer the other two.** Rejected — asymmetric protection is a classic future-maintainer trap. Any tech-debt pass that normalizes the four contexts would likely notice the asymmetry and remove it in one direction or the other; adding it consistently at all four sites now avoids the cleanup later.
 
 ## Consequences
+
+**Promoted to Accepted on 2026-04-23 (shipping in PR #28-#33).** All four `settlement_authority` accounts in `programs/settlement/src/contexts.rs` (`ApproveMilestone`, `ExpireEscrow`, `ResolveDispute`, `ResolveDisputeTimeout`) now carry explicit `seeds = [b"settlement_authority"], bump, seeds::program = crate::ID` — landed in PR #32 (`fix(registry+settlement): SEC-1/4/7/8/11 reputation trust-boundary hardening`, commit `5ce5e8a`). The implementation realises the same defense-in-depth intent as the proposed `address = SETTLEMENT_AUTHORITY_ADDRESS` constant by pinning the seed-derivation surface explicitly (any future seed-constant rename now fails Anchor's `seeds`-derived address check at compile/test time, not at deploy). A separate `pub const` is not required because Anchor's derived address now matches a single named seed-tuple. Code comment tags are updated from `(per ADR-074, in-flight)` to `(per ADR-074, Accepted 2026-04-23)` in this consolidation PR.
 
 **Positive**: catches any future Settlement-side seed refactor at compile / IDL-publish time, preventing silent CPI desync with Registry. Zero runtime cost — the `address` assertion compiles to a single Pubkey equality check that Anchor already performs in the constraint layer.
 

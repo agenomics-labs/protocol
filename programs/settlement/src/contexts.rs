@@ -158,7 +158,7 @@ pub struct ApproveMilestone<'info> {
     )]
     pub provider_profile: UncheckedAccount<'info>,
 
-    /// SEC-1 (per ADR-068, in-flight): external authority anchor for the
+    /// SEC-1 (per ADR-068, Accepted 2026-04-23): external authority anchor for the
     /// Registry's `UpdateReputation` CPI. The Registry now pins
     /// `agent_profile` via `has_one = authority` + seeds derived from
     /// `authority.key()` instead of the self-referential
@@ -172,7 +172,7 @@ pub struct ApproveMilestone<'info> {
 
     /// Settlement authority PDA — this program's signing authority for CPI calls.
     /// The Registry program verifies this PDA as a signer with seeds::program = SETTLEMENT_PROGRAM_ID.
-    /// SEC-8 (per ADR-074, in-flight): `seeds::program` is already the
+    /// SEC-8 (per ADR-074, Accepted 2026-04-23): `seeds::program` is already the
     /// program's own ID by default, but making it explicit blocks any
     /// future refactor from silently changing the derivation surface.
     /// CHECK: Derived from this program's ID; seeds verified by Anchor.
@@ -287,13 +287,13 @@ pub struct ResolveDispute<'info> {
     )]
     pub provider_profile: UncheckedAccount<'info>,
 
-    /// SEC-1 (per ADR-068, in-flight): external authority anchor for the
+    /// SEC-1 (per ADR-068, Accepted 2026-04-23): external authority anchor for the
     /// Registry `UpdateReputation` CPI. See `ApproveMilestone` for rationale.
     /// CHECK: address-constrained to `escrow.provider`.
     #[account(address = escrow.provider)]
     pub provider_authority: UncheckedAccount<'info>,
 
-    /// SEC-8 (per ADR-074, in-flight): explicit `seeds::program = crate::ID`.
+    /// SEC-8 (per ADR-074, Accepted 2026-04-23): explicit `seeds::program = crate::ID`.
     /// CHECK: Settlement authority PDA for CPI signing.
     #[account(
         seeds = [b"settlement_authority"],
@@ -353,13 +353,13 @@ pub struct ResolveDisputeTimeout<'info> {
     )]
     pub provider_profile: UncheckedAccount<'info>,
 
-    /// SEC-1 (per ADR-068, in-flight): external authority anchor for the
+    /// SEC-1 (per ADR-068, Accepted 2026-04-23): external authority anchor for the
     /// Registry `UpdateReputation` CPI. See `ApproveMilestone` for rationale.
     /// CHECK: address-constrained to `escrow.provider`.
     #[account(address = escrow.provider)]
     pub provider_authority: UncheckedAccount<'info>,
 
-    /// SEC-8 (per ADR-074, in-flight): explicit `seeds::program = crate::ID`.
+    /// SEC-8 (per ADR-074, Accepted 2026-04-23): explicit `seeds::program = crate::ID`.
     /// CHECK: Settlement authority PDA for CPI signing.
     #[account(
         seeds = [b"settlement_authority"],
@@ -454,13 +454,13 @@ pub struct ExpireEscrow<'info> {
     )]
     pub provider_profile: UncheckedAccount<'info>,
 
-    /// SEC-1 (per ADR-068, in-flight): external authority anchor for the
+    /// SEC-1 (per ADR-068, Accepted 2026-04-23): external authority anchor for the
     /// Registry `UpdateReputation` CPI. See `ApproveMilestone` for rationale.
     /// CHECK: address-constrained to `escrow.provider`.
     #[account(address = escrow.provider)]
     pub provider_authority: UncheckedAccount<'info>,
 
-    /// SEC-8 (per ADR-074, in-flight): explicit `seeds::program = crate::ID`.
+    /// SEC-8 (per ADR-074, Accepted 2026-04-23): explicit `seeds::program = crate::ID`.
     /// CHECK: Settlement authority PDA for CPI signing.
     #[account(
         seeds = [b"settlement_authority"],

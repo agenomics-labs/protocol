@@ -1,10 +1,10 @@
 # ADR-072: Token transfer recipient guards and self-transfer DoS mitigation
 
 ## Status
-Proposed
+Accepted
 
 ## Date
-2026-04-22
+2026-04-22 (Proposed) — Promoted to Accepted on 2026-04-23 (shipping in PR #28-#33)
 
 ## Context
 
@@ -53,6 +53,8 @@ Add recipient guards to `programs/agent-vault::execute_token_transfer`:
 - **Rate-limit at the recipient level instead of globally.** Rejected — introduces per-recipient state that must be initialized and garbage-collected; the global rate limit plus self-transfer guard is a strictly simpler solution to the same attack class.
 
 ## Consequences
+
+**Promoted to Accepted on 2026-04-23 (shipping in PR #28-#33).** Both constraints landed on `main` in PR #29 (`fix(agent-vault): security fixes SEC-2, SEC-5, SEC-6`, commit `925fd66`) at `programs/agent-vault/src/contexts.rs:154-159` (`recipient_token_account.key() != vault_token_account.key()` and `recipient_token_account.owner != vault.key()`), wired to the new `VaultError::SelfTransferNotAllowed` variant. The handler-layer belt-and-braces `require!` is co-located in the `execute_token_transfer` prelude. Code comment tags are updated from `(per ADR-072, in-flight)` to `(per ADR-072, Accepted 2026-04-23)` in this consolidation PR.
 
 **Positive**: closes the self-transfer DoS vector; makes the recipient constraint explicit and auditable in `contexts.rs`; reinforces the rate-limit ordering fix from ADR-071 by ensuring burned slots represent real external-destination transfer attempts.
 

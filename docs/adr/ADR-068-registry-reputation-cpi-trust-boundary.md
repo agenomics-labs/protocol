@@ -1,10 +1,10 @@
 # ADR-068: Registry `UpdateReputation` CPI trust boundary — bind `agent_profile` to `escrow.provider`
 
 ## Status
-Proposed
+Accepted
 
 ## Date
-2026-04-22
+2026-04-22 (Proposed) — Promoted to Accepted on 2026-04-23 (shipping in PR #28-#33)
 
 ## Context
 
@@ -45,6 +45,8 @@ The audit flagged this same anti-pattern in SEC-1 (Registry `UpdateReputation`) 
 - **Lock CPI path behind a program-ID allowlist only.** Rejected — program-ID allowlists already exist; the flaw is *within* a legitimate call from the allowlisted Settlement program.
 
 ## Consequences
+
+**Promoted to Accepted on 2026-04-23 (shipping in PR #28-#33).** The Registry-side `UpdateReputation` `provider_authority` anchor and the four Settlement-side CPI call sites were landed on `main` in PR #32 (`fix(registry+settlement): SEC-1/4/7/8/11 reputation trust-boundary hardening`, commit `5ce5e8a`). All four CPI call sites pass `escrow.provider` through the new `provider_authority: UncheckedAccount` constrained with `address = escrow.provider`. Code comment tags are updated from `(per ADR-068, in-flight)` to `(per ADR-068, Accepted 2026-04-23)` in this consolidation PR.
 
 **Positive**: eliminates cross-agent reputation forgery; hardens the single most critical trust edge in the protocol. Aligns Registry with standard Anchor `has_one` idiom, removing a future-maintainer trap.
 

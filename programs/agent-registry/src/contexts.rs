@@ -66,7 +66,7 @@ pub struct UpdateStatus<'info> {
     pub agent_profile: Account<'info, AgentProfile>,
 }
 
-/// SEC-1 (per ADR-068, in-flight): the `UpdateReputation` context pins the
+/// SEC-1 (per ADR-068, Accepted 2026-04-23): the `UpdateReputation` context pins the
 /// target `agent_profile` to an externally-supplied `authority` account. The
 /// pre-fix version derived the PDA from `agent_profile.authority.as_ref()`
 /// — a self-reference that let Anchor "validate" the seed against the very

@@ -30,7 +30,7 @@ use crate::events::*;
 /// non-zero value. Slash/expire/dispute paths pass 0 because no rating
 /// judgment exists on those paths.
 ///
-/// SEC-1 (per ADR-068, in-flight): the Registry's `UpdateReputation`
+/// SEC-1 (per ADR-068, Accepted 2026-04-23): the Registry's `UpdateReputation`
 /// account struct now requires an explicit `authority` account whose
 /// `.key()` anchors the `agent_profile` PDA derivation. Callers pass
 /// `escrow.provider` (via a new `provider_authority: UncheckedAccount`
