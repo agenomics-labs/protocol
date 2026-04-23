@@ -1,10 +1,10 @@
 # ADR-071: Token rate-limit counter ordering — validate before increment
 
 ## Status
-Proposed
+Accepted
 
 ## Date
-2026-04-22
+2026-04-22 (Proposed) — Promoted to Accepted on 2026-04-23 (shipping in PR #28-#33)
 
 ## Context
 
@@ -57,6 +57,8 @@ Counter increments are the last mutable step before the CPI. Any validation fail
 - **Make `execute_token_transfer` atomic-or-panic (no partial state).** It already is, per Solana tx semantics; the audit item is about ordering of reads and mutations within the single atomic handler, not about multi-tx atomicity.
 
 ## Consequences
+
+**Promoted to Accepted on 2026-04-23 (shipping in PR #28-#33).** The reordered prelude in `programs/agent-vault/src/instructions.rs::execute_token_transfer` was landed on `main` in PR #29 (`fix(agent-vault): security fixes SEC-2, SEC-5, SEC-6`, commit `925fd66`). Validation (signer gate → allowlist → `TokenSpendRecord` lookup → daily-cap → window check) precedes any counter mutation; counter increments are the last mutable step before the SPL CPI. Default-deny allowlist semantics shipped with an explicit wildcard sentinel; existing devnet vaults were enumerated and flagged in the upgrade changelog. Code comment tags are updated from `(per ADR-071, in-flight)` to `(per ADR-071, Accepted 2026-04-23)` in this consolidation PR.
 
 **Positive**: removes the rate-limit DoS fragility; aligns allowlist semantics with secure defaults; makes the handler's validation/mutation boundary auditable at a glance.
 

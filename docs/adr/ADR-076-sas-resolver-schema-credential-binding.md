@@ -1,10 +1,10 @@
 # ADR-076: SAS resolver per-credential signer allowlist, schema↔credential binding, and deploy-time schema-owner assertion
 
 ## Status
-Proposed
+Accepted
 
 ## Date
-2026-04-22
+2026-04-22 (Proposed) — Promoted to Accepted on 2026-04-23 (shipping in PR #28-#33)
 
 ## Context
 
@@ -58,6 +58,8 @@ Extend `@agenomics/sas-resolver` with three new checks layered onto the existing
 - **Defer SEC-15 (deploy-time schema-owner assertion) to a separate ADR.** Rejected — the check is tiny (one RPC call at startup), the threat model (operator misconfigures `schemaPda`) is genuinely orthogonal but the fix lives in the same resolver file. Bundling avoids a second ADR-and-PR round for a one-line assertion.
 
 ## Consequences
+
+**Promoted to Accepted on 2026-04-23 (shipping in PR #28-#33).** All three resolver checks landed on `main` in PR #31 (`feat(ts-packages): v0.1.0 pre-publish hardening + SEC-3/SEC-15`, commit `45e167c`): per-credential signer scoping (`resolver.ts:451`), per-credential schema binding (`resolver.ts:464`), and the strict-init schema-PDA owner check gated by the resolver's `strict` mode (`resolver.ts:171, 233, 290, 355`). The expanded `AllowedCredential` shape with `signers: Pubkey[]` and `schemas: Pubkey[]` is committed in `packages/sas-resolver/src/allowlist.ts` and `types.ts`. Test coverage is in `packages/sas-resolver/test/resolver.test.ts` under three describe blocks (per-credential signer scoping, per-credential schema binding, strict-init owner check). Code comment tags inside `packages/sas-resolver/src/` continue to reference `ADR-076` (no `in-flight` qualifier was used in the resolver source — comments already reference the ADR cleanly).
 
 **Positive**: closes the critical SAS reputation-forgery vector; makes the resolver's trust surface auditable by reading one file (`allowlist.ts`); adds a startup assertion that catches schema misconfiguration at deploy rather than at first-resolution. Extends ADR-061/063/064's layered governance with the enforcement layer that actually binds specs to runtime behavior.
 
