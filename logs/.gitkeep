@@ -1,0 +1,8 @@
+# Tracked-but-empty marker so the `logs/` directory exists in fresh checkouts.
+#
+# `scripts/mainnet-deploy.sh` writes deploy logs to
+# `logs/mainnet-deploy-<UTC-ISO8601>.log`. The log files themselves are
+# excluded by the repo-root `*.log` rule in `.gitignore`; rotation to
+# long-term storage is operator-driven and out of scope for this repo.
+#
+# See ADR-080 §5.

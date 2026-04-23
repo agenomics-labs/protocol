@@ -1,0 +1,30 @@
+# config/AUDIT_REPORT_HASHES
+#
+# Format: one line per audited binary, in `sha256sum --check` syntax:
+#   <64 hex chars><two spaces><relative path from PROJECT_ROOT>
+#
+# Lifecycle (per ADR-080 §2):
+#   1. The external auditor (per ADR-036) computes SHA-256 over the three
+#      `target/deploy/*.so` artifacts they audited and supplies the hashes
+#      as part of the audit deliverable.
+#   2. A maintainer commits this file in a dedicated PR (one PR per audit,
+#      never amended after merge). The PR title references the audit-report
+#      ID and the commit SHA the auditor reviewed.
+#   3. The mainnet deployer rebuilds locally from the same tagged commit
+#      using the toolchain pinned by ADR-013 (Anchor 0.31.1 + Solana
+#      platform-tools v1.52).
+#   4. `scripts/mainnet-deploy.sh` runs `sha256sum --check --strict` against
+#      this file at PROJECT_ROOT; any mismatch aborts the deploy.
+#
+# Template values: 64 zeros are intentional placeholders. With the template
+# in place, every invocation of `mainnet-deploy.sh` (including devnet
+# rehearsals run with AEP_DEPLOY_DRY_RUN=1) hits the hash-check gate and
+# fails loud — exactly as designed. The first invocation that successfully
+# clears this gate is the production deploy that follows an audit cycle.
+#
+# Lines beginning with `#` are stripped by mainnet-deploy.sh before being
+# fed to `sha256sum --check`; do not rely on `sha256sum` itself supporting
+# comment lines (it does not in coreutils).
+0000000000000000000000000000000000000000000000000000000000000000  target/deploy/agent_vault.so
+0000000000000000000000000000000000000000000000000000000000000000  target/deploy/agent_registry.so
+0000000000000000000000000000000000000000000000000000000000000000  target/deploy/settlement.so

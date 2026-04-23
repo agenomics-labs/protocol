@@ -1,0 +1,55 @@
+name: ShellCheck
+
+# Mandatory static-analysis gate for every shell script under scripts/.
+# Authoritative reference: docs/adr/ADR-080-mainnet-deploy-safety-mandates.md §7.
+#
+# This workflow is BLOCKING. A failing run prevents merge. The system
+# `shellcheck` package from Ubuntu's archive is used (not a third-party
+# action) so the critical-path workflow has minimal supply-chain surface.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: shellcheck-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shellcheck:
+    name: ShellCheck (scripts/*.sh)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends shellcheck
+          shellcheck --version
+
+      - name: Run shellcheck on scripts/*.sh
+        # --severity=warning: info/style noise filtered out (ADR-080 §7).
+        # --external-sources: follow `source` directives if any are added.
+        # No `continue-on-error` — this is a blocking gate.
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(scripts/*.sh)
+          if (( ${#files[@]} == 0 )); then
+            echo "No shell scripts found under scripts/. Nothing to check."
+            exit 0
+          fi
+          echo "Checking ${#files[@]} script(s):"
+          printf "  %s\n" "${files[@]}"
+          shellcheck --severity=warning --external-sources "${files[@]}"
+
+      - name: Self-test mainnet-deploy.sh
+        # Exercises the script's gate logic without invoking solana CLI.
+        # Per ADR-080 §6, this is the smoke test that guarantees gate-logic
+        # changes do not silently break the script-load path.
+        run: |
+          chmod +x scripts/mainnet-deploy.sh
+          scripts/mainnet-deploy.sh --self-test
