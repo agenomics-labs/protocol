@@ -53,6 +53,33 @@ pub struct ManageAllowlist<'info> {
     pub authority: Signer<'info>,
 }
 
+/// ADR-069 (SEC-2): Context for rotating `vault.agent_identity`.
+///
+/// `agent_identity` is a **hot key**: it is supplied by the authority at
+/// `initialize_vault` with no on-chain validation, and it is one of two keys
+/// (alongside `authority`) accepted as a signer for `execute_transfer` /
+/// `execute_token_transfer`. Compromise of the off-chain agent-runtime key
+/// bound to `agent_identity` means an attacker can drain up to the daily cap
+/// indefinitely — and the human-custodied `authority` cannot revoke it
+/// without this dedicated rotation path.
+///
+/// Rotation is deliberately unilateral: `has_one = authority` gates the
+/// context with no multisig requirement. The threat model assumes `authority`
+/// is the human-custodied root of trust; forcing multisig would defeat the
+/// fast-rotation design goal (see ADR-069 Alternatives Considered).
+#[derive(Accounts)]
+pub struct UpdateAgentIdentity<'info> {
+    #[account(
+        mut,
+        has_one = authority @ VaultError::Unauthorized,
+        seeds = [b"vault", authority.key().as_ref()],
+        bump
+    )]
+    pub vault: Account<'info, Vault>,
+
+    pub authority: Signer<'info>,
+}
+
 #[derive(Accounts)]
 pub struct ManageProgramAllowlist<'info> {
     #[account(
@@ -109,10 +136,26 @@ pub struct ExecuteTokenTransfer<'info> {
     )]
     pub vault_token_account: Account<'info, TokenAccount>,
 
-    /// The recipient's token account. Must match the source mint.
+    /// The recipient's token account.
+    ///
+    /// Constraints:
+    /// - Mint must match `vault_token_account.mint` (already-mitigated per
+    ///   DEEP-AUDIT-2026-04-22 Audit 1 finding SEC-6 — retained as-is).
+    /// - ADR-072 (SEC-6): The recipient account must NOT be the vault's own
+    ///   token account (the exact same account) AND its SPL owner must not
+    ///   be the vault PDA. This blocks a self-transfer loop that would
+    ///   otherwise let a griefer (or a compromised `agent_identity`) burn
+    ///   rate-limit slots and exhaust the hourly window during incident
+    ///   response — every self-transfer is a no-op at the token-program
+    ///   layer but still increments `txs_in_current_window`.
+    ///
+    /// Note: the recipient-mint match was already present pre-ADR-072; the
+    /// recipient-owner / self-account checks are the net-new SEC-6 fix.
     #[account(
         mut,
         constraint = recipient_token_account.mint == vault_token_account.mint @ VaultError::TokenNotAllowed,
+        constraint = recipient_token_account.key() != vault_token_account.key() @ VaultError::SelfTransferNotAllowed,
+        constraint = recipient_token_account.owner != vault.key() @ VaultError::SelfTransferNotAllowed,
     )]
     pub recipient_token_account: Account<'info, TokenAccount>,
 
