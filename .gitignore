@@ -43,6 +43,7 @@ ruvector.db
 # Claude Code runtime artifacts
 .claude-flow/
 .claude/local/
+.claude/worktrees/
 .swarm/
 
 # Build artifacts
