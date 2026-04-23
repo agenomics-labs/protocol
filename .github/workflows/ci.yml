@@ -9,7 +9,7 @@ on:
 jobs:
   rust-check:
     name: Rust Check & Test
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v4
 
@@ -44,7 +44,7 @@ jobs:
 
   security-audit:
     name: Security Audit
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v4
 
@@ -78,7 +78,7 @@ jobs:
   # equivalent of `npm install`).
   typescript-check-mcp:
     name: TypeScript Check (mcp-server)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     # ADR-088: mcp-server's tsc resolves Anchor IDL types through the
     # `src/idl/types.d.ts` re-export shim, which points at
     # `target/types/*.ts` — a build artifact of `anchor-build`. We wait
@@ -135,7 +135,7 @@ jobs:
   # at build time.
   typescript-check-indexer:
     name: TypeScript Check (indexer)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -151,7 +151,7 @@ jobs:
   # Finding #22: same gap for the x402 relay.
   typescript-check-x402-relay:
     name: TypeScript Check (x402-relay)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -170,7 +170,7 @@ jobs:
   # node:test + tsx) and must pass type-check and unit tests independently.
   typescript-check-validator:
     name: TypeScript Check (capability-manifest-validator)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -187,7 +187,7 @@ jobs:
 
   typescript-check-sas-resolver:
     name: TypeScript Check (sas-resolver)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -213,7 +213,7 @@ jobs:
   # tests block regressions.
   mcp-server-tests:
     name: mcp-server unit tests
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     # ADR-088: same Anchor-types dependency as `typescript-check-mcp`.
     # The new `idl-typed-decode.test.ts` exercises the typed
     # `IdlAccounts<AgentRegistry>["agentProfile"]` shape, which only
@@ -247,7 +247,7 @@ jobs:
   # lockfile), this job fails — preventing lockfile drift.
   lockfile-determinism:
     name: Lockfile determinism check
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -274,7 +274,7 @@ jobs:
   # main; diff-only on PRs to keep PR latency low.
   secret-scan:
     name: Secret Scan
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -307,7 +307,7 @@ jobs:
   # so maintainers can seed the baseline on first run.
   anchor-build:
     name: Anchor Build & IDL Diff
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     env:
       # Agave 3.1.13 ships platform-tools v1.52 (Rust 1.89 + cargo 1.89),
       # which is the first Solana/Agave release whose bundled cargo can
@@ -419,7 +419,7 @@ jobs:
   # are shared; Solana/Anchor versions come from the same pinned env vars.
   anchor-integration:
     name: Anchor Integration Tests
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     needs: anchor-build
     env:
       SOLANA_VERSION: v3.1.13
