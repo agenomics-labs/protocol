@@ -217,6 +217,11 @@ const DISCRIMINATOR_MAP: Record<string, string> = {
   // ADR-082 / audit-2026-04-23 item 6: ManifestUpdated (agent-registry,
   // ADR-060). Was silently classified as `event_<hex>` fallback before.
   "6941986a36affdb3": "ManifestUpdated",
+  // ADR-094: propose_reputation_delta emits this event. Registry is now the
+  // single source of reputation truth; agents table should update from this.
+  "483cc896eed8c2fc": "ReputationDeltaProposed",
+  // ADR-096: in-place migration events (schema version bump).
+  "3afb734612e65fa4": "AgentMigrated",
 
   // agent-vault
   b42bcf021247034b: "VaultInitialized",
@@ -424,6 +429,36 @@ const EVENT_DECODERS: Record<string, EventDecoder> = {
     manifest_cid: r.hexBytes(64),
     manifest_hash: r.hexBytes(32),
     manifest_version: r.u16(),
+    timestamp: i64ToJson(r.i64()),
+  }),
+
+  // ADR-094: ReputationDeltaProposed (agent-registry).
+  // Wire layout from programs/agent-registry/src/events.rs:
+  //   pub authority: Pubkey
+  //   pub delta: i16
+  //   pub reason: u8
+  //   pub old_score: u8
+  //   pub new_score: u8
+  //   pub timestamp: i64
+  ReputationDeltaProposed: (r) => ({
+    authority: r.pubkey(),
+    delta: r.u16(),    // i16 in Rust wire-encodes as u16 (little-endian, two's complement)
+    reason: r.u8(),
+    old_score: r.u8(),
+    new_score: r.u8(),
+    timestamp: i64ToJson(r.i64()),
+  }),
+
+  // ADR-096: AgentMigrated (agent-registry).
+  // Wire layout from programs/agent-registry/src/events.rs:
+  //   pub authority: Pubkey
+  //   pub old_version: u8
+  //   pub new_version: u8
+  //   pub timestamp: i64
+  AgentMigrated: (r) => ({
+    authority: r.pubkey(),
+    old_version: r.u8(),
+    new_version: r.u8(),
     timestamp: i64ToJson(r.i64()),
   }),
 
@@ -655,6 +690,20 @@ function updateAgentFromEvent(
       WHERE authority = ?
     `);
     stmt.run(score, taskCompleted, authority);
+    return;
+  }
+
+  // ADR-094: ReputationDeltaProposed — the new authoritative reputation path.
+  // new_score is already clamped to [0, 100] by the registry instruction.
+  if (event.name === "ReputationDeltaProposed") {
+    if (!authority) return;
+    const newScore = coerceScore(data.new_score);
+    db.prepare(`
+      UPDATE agents SET
+        reputation_score = ?,
+        last_updated = datetime('now')
+      WHERE authority = ?
+    `).run(newScore, authority);
     return;
   }
 

@@ -82,3 +82,28 @@ pub struct ManifestUpdated {
     pub manifest_version: u16,
     pub timestamp: i64,
 }
+
+/// ADR-096: emitted when `migrate_agent_profile` successfully bumps the
+/// schema version. Indexers can use this to track which accounts have
+/// been migrated and alert when stragglers remain.
+#[event]
+pub struct AgentMigrated {
+    pub authority: Pubkey,
+    pub old_version: u8,
+    pub new_version: u8,
+    pub timestamp: i64,
+}
+
+/// ADR-094: emitted when `propose_reputation_delta` successfully applies a
+/// validated delta. Subscribers (indexers, governance dashboards) can track
+/// every reputation change through this single event, regardless of the
+/// originating source (Settlement, future slashing circuits, etc.).
+#[event]
+pub struct ReputationDeltaProposed {
+    pub authority: Pubkey,
+    pub delta: i16,
+    pub reason: u8,
+    pub old_score: u8,
+    pub new_score: u8,
+    pub timestamp: i64,
+}
