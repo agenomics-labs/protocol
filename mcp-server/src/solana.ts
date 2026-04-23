@@ -5,7 +5,22 @@ import {
   LAMPORTS_PER_SOL,
   Transaction,
 } from "@solana/web3.js";
-import { AnchorProvider, Program, BN } from "@coral-xyz/anchor";
+// ADR-091: @coral-xyz/anchor is published as CommonJS. Under Node's strict
+// ESM loader (Node 20 in CI), `import { BN } from "@coral-xyz/anchor"`
+// fails with "does not provide an export named 'BN'" because Node's
+// named-import detector only sees what the CJS analyzer can statically
+// prove. Symbols below that threshold (BN here) need to come off the
+// default export at runtime.
+//
+// Pattern: `import anchor from "@coral-xyz/anchor"` lifts the runtime
+// values off the default export; a separate `import type { ... }`
+// re-establishes the typed surface (type-only imports emit no JS so they
+// bypass the CJS-named-export check).
+import anchor from "@coral-xyz/anchor";
+const { AnchorProvider, Program, BN } = anchor;
+import type { AnchorProvider as _AnchorProvider, Program as _Program, Idl } from "@coral-xyz/anchor";
+type AnchorProvider = _AnchorProvider;
+type Program = _Program;
 import * as fs from "fs";
 import * as path from "path";
 import * as crypto from "crypto";
