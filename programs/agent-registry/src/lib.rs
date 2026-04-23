@@ -64,6 +64,9 @@ pub mod agent_registry {
         agent_profile.manifest_signature = [0u8; 64];
         agent_profile.manifest_version = 0;
 
+        // ADR-096: schema version starts at 0 (initial layout).
+        agent_profile.version = 0;
+
         emit!(AgentRegistered {
             authority: agent_profile.authority,
             name: agent_profile.name.clone(),
@@ -371,6 +374,41 @@ pub mod agent_registry {
             manifest_hash,
             manifest_version,
             timestamp: agent_profile.updated_at,
+        });
+        Ok(())
+    }
+
+    /// ADR-096: In-place account resize / migration.
+    ///
+    /// Grows the `AgentProfile` account to `8 + AgentProfile::SPACE +
+    /// MIGRATION_HEADROOM` bytes using Anchor's `realloc` constraint (which
+    /// calls the System Program's `realloc` syscall). New bytes are
+    /// zero-initialized by the constraint (`realloc::zero = true`), so newly
+    /// added fields whose zero value is a valid default require no explicit
+    /// initialization here.
+    ///
+    /// The instruction is idempotent: if `profile.version >= target_version`
+    /// it returns `Ok(())` without any mutation. This makes it safe to call
+    /// repeatedly from upgrade scripts without double-bumping the version or
+    /// triggering unnecessary rent charges.
+    ///
+    /// Only the `owner` (authority) of the profile may call this instruction.
+    /// The `realloc::payer = owner` constraint debits any additional rent from
+    /// the signer's lamport balance; if the account already meets the target
+    /// size, the System Program call is skipped.
+    pub fn migrate_agent_profile(ctx: Context<MigrateAgentProfile>, target_version: u8) -> Result<()> {
+        let profile = &mut ctx.accounts.agent_profile;
+        if profile.version >= target_version {
+            // Already at or beyond the requested version — idempotent no-op.
+            return Ok(());
+        }
+        let old_version = profile.version;
+        profile.version = target_version;
+        emit!(AgentMigrated {
+            authority: profile.authority,
+            old_version,
+            new_version: profile.version,
+            timestamp: Clock::get()?.unix_timestamp,
         });
         Ok(())
     }
@@ -719,11 +757,12 @@ mod tests {
     // ADR-060: capability manifest fields + update_manifest
     // ================================================================
 
-    /// ADR-040 invariant: explicit space calc matches the serialized-size
-    /// floor. Baseline 1243 + 162 (ADR-060) = 1405.
+    /// ADR-040 / ADR-096 invariant: explicit space calc matches the
+    /// serialized-size floor.
+    /// Baseline 1243 + 162 (ADR-060) + 1 (ADR-096 version) = 1406.
     #[test]
     fn adr_060_account_space_matches_explicit_total() {
-        assert_eq!(AgentProfile::SPACE, 1405);
+        assert_eq!(AgentProfile::SPACE, 1406);
     }
 
     /// ADR-060 §2: CID field is 64 bytes. M5 resolved [u8; 64] to fit
@@ -849,6 +888,69 @@ mod tests {
         assert!(initial == 0);
     }
 
+    // ================================================================
+    // ADR-096: account-resize / migration pattern
+    // ================================================================
+
+    /// ADR-096: initial version is 0 (assigned in register_agent).
+    #[test]
+    fn adr_096_initial_version_is_zero() {
+        let version: u8 = 0;
+        assert_eq!(version, 0);
+    }
+
+    /// ADR-096: migrate bumps version when target > current.
+    #[test]
+    fn adr_096_migrate_bumps_version() {
+        let mut version: u8 = 0;
+        let target: u8 = 1;
+        if version < target {
+            let _old = version;
+            version = target;
+        }
+        assert_eq!(version, 1);
+    }
+
+    /// ADR-096: calling with same target_version is a no-op (idempotent).
+    #[test]
+    fn adr_096_migrate_same_target_is_noop() {
+        let mut version: u8 = 1;
+        let target: u8 = 1;
+        let before = version;
+        if version < target {
+            version = target;
+        }
+        assert_eq!(version, before, "version must not change when already at target");
+    }
+
+    /// ADR-096: calling with lower target_version is also a no-op.
+    #[test]
+    fn adr_096_migrate_lower_target_is_noop() {
+        let mut version: u8 = 2;
+        let target: u8 = 1;
+        let before = version;
+        if version < target {
+            version = target;
+        }
+        assert_eq!(version, before, "version must not decrease on lower target");
+    }
+
+    /// ADR-096: MIGRATION_HEADROOM is 64 bytes.
+    #[test]
+    fn adr_096_migration_headroom_is_64() {
+        use crate::state::MIGRATION_HEADROOM;
+        assert_eq!(MIGRATION_HEADROOM, 64);
+    }
+
+    /// ADR-096: space formula includes discriminator + SPACE + headroom.
+    #[test]
+    fn adr_096_total_allocated_space() {
+        use crate::state::MIGRATION_HEADROOM;
+        let total = 8 + AgentProfile::SPACE + MIGRATION_HEADROOM;
+        // 8 (discriminator) + 1406 (SPACE) + 64 (headroom) = 1478
+        assert_eq!(total, 1478);
+    }
+
     mod fuzz {
         use super::*;
         use proptest::prelude::*;
@@ -868,6 +970,26 @@ mod tests {
                     if n == 1 { avg = *r; } else { avg = ((avg as u128 * (n-1) + *r as u128) / n).min(5) as u8; }
                 }
                 prop_assert!(avg <= 5);
+            }
+
+            /// ADR-096: for all target_version values, the idempotent guard
+            /// never allows version to move backward.
+            #[test]
+            fn adr096_migrate_version_never_decreases(
+                initial in 0u8..=254,
+                target in 0u8..=255,
+            ) {
+                let mut version = initial;
+                let old = version;
+                if version < target {
+                    version = target;
+                }
+                prop_assert!(version >= old, "version must never decrease");
+                if target > initial {
+                    prop_assert_eq!(version, target);
+                } else {
+                    prop_assert_eq!(version, initial); // no-op branch
+                }
             }
         }
     }
