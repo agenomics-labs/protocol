@@ -41,11 +41,16 @@ pub fn initialize_protocol_config(ctx: Context<InitializeProtocolConfig>) -> Res
 /// Sanity bounds (enforced here, not in the context, so error messages are
 /// actionable for governance callers):
 /// - `min_escrow_amount` must be > 0.
-/// - `dispute_timeout_seconds` must be > 0.
+/// - `dispute_timeout_seconds` must be > 0, <= MAX_DISPUTE_TIMEOUT_SECONDS.
 /// - Positive-reward delta must stay non-negative; slash deltas must stay
 ///   non-positive. Flipping the sign of a slash delta would turn a slash
-///   into a reward and vice-versa — almost always a bug. Authority can
-///   still push the magnitudes arbitrarily.
+///   into a reward and vice-versa — almost always a bug.
+/// - SEC-11 (per ADR-075, in-flight): slash deltas also have a lower
+///   bound. The registry's slashing path negates the delta and applies it
+///   via `saturating_sub`; a delta of `i64::MIN` panics the negation in
+///   debug and is nonsensical in any mode. `MIN_REPUTATION_DELTA` caps the
+///   magnitude far below `i64::MIN` so the registry-side `checked_neg` is
+///   never actually exercised on a reachable config — belt-and-braces.
 pub fn update_protocol_config(
     ctx: Context<UpdateProtocolConfig>,
     min_escrow_amount: Option<u64>,
@@ -75,11 +80,20 @@ pub fn update_protocol_config(
         config.reputation_delta_task_completed = v;
     }
     if let Some(v) = reputation_delta_dispute_loss {
-        require!(v <= 0, SettlementError::InvalidProtocolConfigValue);
+        // SEC-11: close the lower-bound hole. `v <= 0` alone admits
+        // `i64::MIN`, which the registry's negation panics on in debug.
+        require!(
+            v <= 0 && v >= MIN_REPUTATION_DELTA,
+            SettlementError::InvalidProtocolConfigValue
+        );
         config.reputation_delta_dispute_loss = v;
     }
     if let Some(v) = reputation_delta_expiry_undelivered {
-        require!(v <= 0, SettlementError::InvalidProtocolConfigValue);
+        // SEC-11: same rationale as `reputation_delta_dispute_loss`.
+        require!(
+            v <= 0 && v >= MIN_REPUTATION_DELTA,
+            SettlementError::InvalidProtocolConfigValue
+        );
         config.reputation_delta_expiry_undelivered = v;
     }
 

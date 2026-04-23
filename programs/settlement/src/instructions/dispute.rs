@@ -116,6 +116,11 @@ pub fn resolve_dispute(
     if client_refund > 0 && is_resolver {
         // Finding #19: governance-owned delta, not the compile-time const.
         // rating=0: dispute-loss slash, no user rating applies.
+        // SEC-1: pass `provider_authority` (= escrow.provider) — see cpi.rs.
+        // SEC-7: the `is_resolver` flag is now always true when we reach
+        // here (None-resolver disputes can no longer enter resolve_dispute),
+        // but the compound check keeps the slash guarded against the
+        // `client_refund == 0` case (no slash when provider won).
         let delta = ctx.accounts.protocol_config.reputation_delta_dispute_loss;
         update_provider_reputation(
             provider_key,
@@ -125,6 +130,7 @@ pub fn resolve_dispute(
             0,
             ctx.accounts.registry_program.to_account_info(),
             ctx.accounts.provider_profile.to_account_info(),
+            ctx.accounts.provider_authority.to_account_info(),
             ctx.accounts.settlement_authority.to_account_info(),
             ctx.bumps.settlement_authority,
         )?;
@@ -201,6 +207,16 @@ pub fn resolve_dispute_timeout(ctx: Context<ResolveDisputeTimeout>) -> Result<()
     escrow.status = EscrowStatus::Completed;
 
     // Finding #19: governance-owned delta; rating=0 — timeout slash, no user rating.
+    // SEC-1: pass `provider_authority` (= escrow.provider) — see cpi.rs.
+    //
+    // SEC-7 note: this instruction is now the ONLY exit path for a dispute
+    // with `dispute_resolver == None`. `resolve_dispute` rejects such
+    // disputes at the account-constraint layer with
+    // `NoResolverRequiresTimeout`. The timeout path refunds the full
+    // remaining balance symmetrically to the client and applies the
+    // standard dispute-loss slash, which is economically neutral (the
+    // client gets their money back; the provider takes a reputation hit
+    // for failing to deliver).
     update_provider_reputation(
         provider_key,
         0,
@@ -209,6 +225,7 @@ pub fn resolve_dispute_timeout(ctx: Context<ResolveDisputeTimeout>) -> Result<()
         0,
         ctx.accounts.registry_program.to_account_info(),
         ctx.accounts.provider_profile.to_account_info(),
+        ctx.accounts.provider_authority.to_account_info(),
         ctx.accounts.settlement_authority.to_account_info(),
         ctx.bumps.settlement_authority,
     )?;

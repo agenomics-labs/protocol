@@ -241,6 +241,12 @@ export async function handleApproveMilestone(args: Record<string, unknown>) {
       providerTokenAccount: providerTokenAccount,
       registryProgram: REGISTRY_PROGRAM_ID,
       providerProfile: providerProfilePDA,
+      // SEC-1 (per ADR-068, in-flight): external authority anchor for the
+      // Registry UpdateReputation CPI. Supplied as `escrow.provider` (the
+      // only value that satisfies the Registry's new `has_one = authority`
+      // + external-seeds constraint). Pre-fix Registry self-referenced the
+      // PDA seed, which silently accepted any AgentProfile.
+      providerAuthority: provider,
       settlementAuthority: settlementAuthorityPDA,
       protocolConfig: protocolConfigPDA,
       tokenProgram: TOKEN_PROGRAM_ID,
