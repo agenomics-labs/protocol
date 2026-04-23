@@ -220,7 +220,8 @@ const DISCRIMINATOR_MAP: Record<string, string> = {
   // ADR-094: propose_reputation_delta emits this event. Registry is now the
   // single source of reputation truth; agents table should update from this.
   "483cc896eed8c2fc": "ReputationDeltaProposed",
-  // ADR-096: in-place migration events (schema version bump).
+  // ADR-096: AgentMigrated — emitted by migrate_agent_profile when the
+  // schema version is successfully bumped. sha256("event:AgentMigrated")[0..8].
   "3afb734612e65fa4": "AgentMigrated",
 
   // agent-vault
@@ -403,6 +404,19 @@ const EVENT_DECODERS: Record<string, EventDecoder> = {
   SuspensionCleared: (r) => ({
     authority: r.pubkey(),
     new_reputation_score: u64ToJson(r.u64()),
+    timestamp: i64ToJson(r.i64()),
+  }),
+
+  // ADR-096: AgentMigrated (agent-registry).
+  // Wire layout from programs/agent-registry/src/events.rs:
+  //   pub authority: Pubkey
+  //   pub old_version: u8
+  //   pub new_version: u8
+  //   pub timestamp: i64
+  AgentMigrated: (r) => ({
+    authority: r.pubkey(),
+    old_version: r.u8(),
+    new_version: r.u8(),
     timestamp: i64ToJson(r.i64()),
   }),
 
