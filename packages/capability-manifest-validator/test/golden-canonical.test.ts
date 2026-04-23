@@ -15,9 +15,11 @@ import { describe, it } from "node:test";
 import * as assert from "node:assert/strict";
 import {
   manifestHash,
+  MANIFEST_HASH_DOMAIN_PREFIX,
   unstable_canonicalBytes,
   unstable_canonicalJson,
 } from "../src/index.js";
+import { sha256 } from "@noble/hashes/sha2";
 
 // ------------------------------------------------------------------
 // Checked-in golden vector — generated with canonicalize@2.0.0 + the
@@ -67,9 +69,16 @@ const GOLDEN_CANONICAL_JSON =
   '"published_at":"2026-04-22T00:00:00Z",' +
   '"version":"1.0"}';
 
-/** SHA-256 of UTF-8 bytes of GOLDEN_CANONICAL_JSON. */
+/**
+ * SHA-256(MANIFEST_HASH_DOMAIN_PREFIX || UTF-8(GOLDEN_CANONICAL_JSON)).
+ *
+ * ADR-092: the domain separator "AEP_CAPABILITY_MANIFEST_V1\0" is prepended
+ * before hashing. The old unprefixed hash was:
+ *   7aebddca0dedc0c35e7c52d3a2a88f05034a85fbdc480efb943e3e19db6bb3fb
+ * Any stored manifest_hash computed before ADR-092 must be recomputed.
+ */
 const GOLDEN_HASH_HEX =
-  "7aebddca0dedc0c35e7c52d3a2a88f05034a85fbdc480efb943e3e19db6bb3fb";
+  "5a88e0a5c78f0d9da1de5813b8653397545fdfa6af4da55a4dc8f8ad6ecb51be";
 
 describe("ADR-060 golden canonical-JSON vector", () => {
   it("unstable_canonicalJson produces the checked-in canonical string", () => {
@@ -110,5 +119,59 @@ describe("ADR-060 golden canonical-JSON vector", () => {
       $schema: GOLDEN_MANIFEST.$schema,
     };
     assert.deepEqual(manifestHash(reversed), manifestHash(GOLDEN_MANIFEST));
+  });
+});
+
+describe("ADR-092 domain-separation guard", () => {
+  it("MANIFEST_HASH_DOMAIN_PREFIX is the expected 27-byte UTF-8 encoding", () => {
+    // "AEP_CAPABILITY_MANIFEST_V1" (26 chars) + null byte = 27 bytes.
+    assert.equal(MANIFEST_HASH_DOMAIN_PREFIX.length, 27);
+    const decoded = new TextDecoder("utf-8").decode(
+      MANIFEST_HASH_DOMAIN_PREFIX.slice(0, 26),
+    );
+    assert.equal(decoded, "AEP_CAPABILITY_MANIFEST_V1");
+    // Final byte must be the null terminator.
+    assert.equal(MANIFEST_HASH_DOMAIN_PREFIX[26], 0);
+  });
+
+  it("manifestHash includes the domain prefix in the preimage (regression guard)", () => {
+    // Compute SHA-256 WITHOUT the domain prefix (old behaviour).
+    const canonicalBytes = new TextEncoder().encode(GOLDEN_CANONICAL_JSON);
+    const hashWithoutPrefix = sha256(canonicalBytes);
+    const hexWithoutPrefix = Array.from(hashWithoutPrefix, (b) =>
+      b.toString(16).padStart(2, "0"),
+    ).join("");
+
+    // The current manifestHash MUST differ from the no-prefix variant.
+    const hashWithPrefix = manifestHash(GOLDEN_MANIFEST);
+    const hexWithPrefix = Array.from(hashWithPrefix, (b) =>
+      b.toString(16).padStart(2, "0"),
+    ).join("");
+
+    assert.notEqual(
+      hexWithPrefix,
+      hexWithoutPrefix,
+      "manifestHash must not equal SHA-256(canonicalJson) — domain prefix is missing",
+    );
+
+    // And the prefix-included hash must match the checked-in golden vector.
+    assert.equal(hexWithPrefix, GOLDEN_HASH_HEX);
+  });
+
+  it("manually constructed domain-prefixed hash matches manifestHash output", () => {
+    // Build the expected hash by hand: SHA-256(prefix || canonicalBytes).
+    const canonicalBytes = new TextEncoder().encode(GOLDEN_CANONICAL_JSON);
+    const combined = new Uint8Array(
+      MANIFEST_HASH_DOMAIN_PREFIX.length + canonicalBytes.length,
+    );
+    combined.set(MANIFEST_HASH_DOMAIN_PREFIX);
+    combined.set(canonicalBytes, MANIFEST_HASH_DOMAIN_PREFIX.length);
+    const expected = sha256(combined);
+
+    assert.deepEqual(
+      manifestHash(GOLDEN_MANIFEST),
+      expected,
+      "manifestHash preimage must be SHA-256(MANIFEST_HASH_DOMAIN_PREFIX || canonicalJsonBytes)",
+    );
   });
 });
