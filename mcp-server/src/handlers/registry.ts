@@ -18,7 +18,7 @@ import {
 } from "../solana.js";
 import { SystemProgram } from "@solana/web3.js";
 import type { IdlAccounts } from "@coral-xyz/anchor";
-import type { AgentRegistry } from "../idl/types";
+import type { AgentRegistry } from "../idl/types.js";
 
 // ADR-088: Anchor decodes `AgentProfile` into this exact shape (BN for u64,
 // PublicKey for pubkey, etc.). The alias keeps internal hydration helpers

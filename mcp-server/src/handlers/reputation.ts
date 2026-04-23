@@ -39,7 +39,7 @@ import {
   formatPricingModel,
 } from "./formatters.js";
 import type { IdlAccounts } from "@coral-xyz/anchor";
-import type { AgentRegistry } from "../idl/types";
+import type { AgentRegistry } from "../idl/types.js";
 import { serverLogger } from "../util/logger.js";
 
 // ADR-088: typed AgentProfile shape — `manifest_cid: [u8; 64]` etc. land as

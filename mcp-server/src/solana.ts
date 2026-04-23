@@ -20,7 +20,7 @@ import anchor from "@coral-xyz/anchor";
 const { AnchorProvider, Program, BN } = anchor;
 import type { AnchorProvider as _AnchorProvider, Program as _Program, Idl } from "@coral-xyz/anchor";
 type AnchorProvider = _AnchorProvider;
-type Program = _Program;
+type Program<T extends Idl = Idl> = _Program<T>;
 import * as fs from "fs";
 import * as path from "path";
 import * as crypto from "crypto";
@@ -33,7 +33,7 @@ import { assertKeyfilePermissions } from "./transport/auth-gate.js";
 // the on-chain program. They are re-exported through `./idl/types` so the
 // import lands inside this package's `rootDir` (avoiding TS6059) while the
 // canonical type definitions still live alongside `target/idl/`.
-import type { AgentRegistry, AgentVault, Settlement } from "./idl/types";
+import type { AgentRegistry, AgentVault, Settlement } from "./idl/types.js";
 
 // ADR-091: __dirname is not available in ESM (NodeNext). Shim it from import.meta.url.
 const __filename = fileURLToPath(import.meta.url);
