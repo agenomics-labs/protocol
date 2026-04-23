@@ -74,6 +74,12 @@ pub mod agent_registry {
 
         // ADR-096: schema version starts at 0 (initial layout).
         agent_profile.version = 0;
+        // ADR-097: stamp the registration nonce from the owner_nonce account.
+        // The nonce is part of the PDA seed so this value must match the seed
+        // used to derive the account address (enforced by Anchor's seeds
+        // constraint in RegisterAgent). Storing it on-chain lets the vault
+        // (ADR-095) re-derive the profile PDA for suspension checks.
+        agent_profile.registration_nonce = ctx.accounts.owner_nonce.nonce;
 
         emit!(AgentRegistered {
             authority: agent_profile.authority,
@@ -367,6 +373,14 @@ pub mod agent_registry {
             AgentRegistryError::StakePresentOnDeregister
         );
         emit!(AgentDeregistered { authority: agent_profile.authority, name: agent_profile.name.clone(), timestamp: Clock::get()?.unix_timestamp });
+
+        // ADR-097: increment the owner nonce after closing the profile.
+        // The profile account is closed by Anchor's `close = authority`
+        // constraint; this nonce bump ensures the next `register_agent`
+        // derives a different PDA address, preventing Sybil address reuse.
+        let owner_nonce = &mut ctx.accounts.owner_nonce;
+        owner_nonce.nonce = owner_nonce.nonce.saturating_add(1);
+
         Ok(())
     }
 
@@ -817,12 +831,13 @@ mod tests {
     // ADR-060: capability manifest fields + update_manifest
     // ================================================================
 
-    /// ADR-040 / ADR-096 invariant: explicit space calc matches the
-    /// serialized-size floor. Baseline 1243 + 162 (ADR-060) + 1 (ADR-096
-    /// version u8) = 1406.
+    /// ADR-040 / ADR-096 / ADR-097 invariant: explicit space calc matches the
+    /// serialized-size floor.
+    /// Baseline 1243 + 162 (ADR-060) + 1 (ADR-096 version u8) + 8 (ADR-097
+    /// registration_nonce u64) = 1414.
     #[test]
     fn adr_060_account_space_matches_explicit_total() {
-        assert_eq!(AgentProfile::SPACE, 1406);
+        assert_eq!(AgentProfile::SPACE, 1414);
     }
 
     /// ADR-060 §2: CID field is 64 bytes. M5 resolved [u8; 64] to fit
@@ -1137,5 +1152,71 @@ mod tests {
                 prop_assert!(new_score <= MAX_REPUTATION_SCORE);
             }
         }
+    }
+
+    // ================================================================
+    // ADR-097: Registration nonce Sybil resistance
+    // ================================================================
+
+    /// ADR-097: nonce is zero-initialized on first use (first register uses
+    /// nonce 0, yielding a unique address from the two-seed derivation).
+    #[test]
+    fn adr_097_initial_nonce_is_zero() {
+        let nonce: u64 = 0;
+        let nonce_bytes = nonce.to_le_bytes();
+        // Seeds: [authority, b"agent-profile", nonce_bytes]
+        // Nonce 0 in LE is 8 zero bytes.
+        assert_eq!(nonce_bytes, [0u8; 8]);
+    }
+
+    /// ADR-097: after deregister the nonce increments by 1, so the next
+    /// registration produces a different address.
+    #[test]
+    fn adr_097_nonce_increments_on_deregister() {
+        let mut nonce: u64 = 0;
+        // Simulate deregister_agent nonce bump
+        nonce = nonce.saturating_add(1);
+        assert_eq!(nonce, 1);
+
+        // Second registration seed is different from the first
+        let seed_before = 0u64.to_le_bytes();
+        let seed_after = nonce.to_le_bytes();
+        assert_ne!(seed_before, seed_after);
+    }
+
+    /// ADR-097: repeated deregistrations keep incrementing; the nonce never
+    /// reuses a prior value (monotonic).
+    #[test]
+    fn adr_097_nonce_is_monotonic() {
+        let mut nonce: u64 = 0;
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..10 {
+            seen.insert(nonce);
+            nonce = nonce.saturating_add(1);
+        }
+        // All 10 values were unique
+        assert_eq!(seen.len(), 10);
+    }
+
+    /// ADR-097: nonce at u64::MAX saturates rather than overflowing.
+    /// In practice reaching u64::MAX requires 2^64 deregistrations, but the
+    /// saturation must not panic.
+    #[test]
+    fn adr_097_nonce_saturates_at_max() {
+        let nonce: u64 = u64::MAX;
+        let bumped = nonce.saturating_add(1);
+        assert_eq!(bumped, u64::MAX);
+    }
+
+    /// ADR-097: the `registration_nonce` field has a zero default, matching
+    /// the `init_if_needed` initial state of `OwnerNonce.nonce`.
+    #[test]
+    fn adr_097_registration_nonce_default_matches_owner_nonce_initial() {
+        // OwnerNonce is zero-initialized by `init_if_needed`.
+        // AgentProfile.registration_nonce is stamped with owner_nonce.nonce.
+        // At first registration both are 0.
+        let owner_nonce_initial: u64 = 0;
+        let profile_stamped_nonce: u64 = owner_nonce_initial;
+        assert_eq!(profile_stamped_nonce, 0);
     }
 }

@@ -40,6 +40,36 @@
           ]
         },
         {
+          "name": "owner_nonce",
+          "docs": [
+            "ADR-097: Read-only nonce account for `agent_profile` PDA seed."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114,
+                  45,
+                  110,
+                  111,
+                  110,
+                  99,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
           "name": "agent_profile",
           "writable": true,
           "pda": {
@@ -65,6 +95,11 @@
                   108,
                   101
                 ]
+              },
+              {
+                "kind": "account",
+                "path": "owner_nonce.nonce",
+                "account": "OwnerNonce"
               }
             ]
           }
@@ -109,6 +144,39 @@
           ]
         },
         {
+          "name": "owner_nonce",
+          "docs": [
+            "ADR-097: Mutable nonce account. The handler increments `nonce` after",
+            "closing the profile, ensuring the next `register_agent` produces a",
+            "different PDA address."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114,
+                  45,
+                  110,
+                  111,
+                  110,
+                  99,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
           "name": "agent_profile",
           "writable": true,
           "pda": {
@@ -134,6 +202,11 @@
                   108,
                   101
                 ]
+              },
+              {
+                "kind": "account",
+                "path": "owner_nonce.nonce",
+                "account": "OwnerNonce"
               }
             ]
           }
@@ -234,6 +307,41 @@
           "signer": true
         },
         {
+          "name": "owner_nonce",
+          "docs": [
+            "ADR-097: Per-owner nonce counter. `init_if_needed` creates it on",
+            "the first registration; subsequent registrations (after a deregister)",
+            "find it already initialized with an incremented `nonce` value.",
+            "",
+            "Space: 8 (discriminator) + 8 (nonce u64) = 16 bytes."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114,
+                  45,
+                  110,
+                  111,
+                  110,
+                  99,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
           "name": "agent_profile",
           "writable": true,
           "pda": {
@@ -259,6 +367,11 @@
                   108,
                   101
                 ]
+              },
+              {
+                "kind": "account",
+                "path": "owner_nonce.nonce",
+                "account": "OwnerNonce"
               }
             ]
           }
@@ -399,6 +512,36 @@
           ]
         },
         {
+          "name": "owner_nonce",
+          "docs": [
+            "ADR-097: Read-only nonce account for `agent_profile` PDA seed."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114,
+                  45,
+                  110,
+                  111,
+                  110,
+                  99,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
           "name": "agent_profile",
           "writable": true,
           "pda": {
@@ -424,6 +567,11 @@
                   108,
                   101
                 ]
+              },
+              {
+                "kind": "account",
+                "path": "owner_nonce.nonce",
+                "account": "OwnerNonce"
               }
             ]
           }
@@ -499,6 +647,36 @@
           ]
         },
         {
+          "name": "owner_nonce",
+          "docs": [
+            "ADR-097: Read-only nonce account for `agent_profile` PDA seed."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114,
+                  45,
+                  110,
+                  111,
+                  110,
+                  99,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
           "name": "agent_profile",
           "writable": true,
           "pda": {
@@ -524,6 +702,11 @@
                   108,
                   101
                 ]
+              },
+              {
+                "kind": "account",
+                "path": "owner_nonce.nonce",
+                "account": "OwnerNonce"
               }
             ]
           }
@@ -619,6 +802,36 @@
           ]
         },
         {
+          "name": "owner_nonce",
+          "docs": [
+            "ADR-097: Read-only nonce account for `agent_profile` PDA seed."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114,
+                  45,
+                  110,
+                  111,
+                  110,
+                  99,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
           "name": "agent_profile",
           "writable": true,
           "pda": {
@@ -644,6 +857,11 @@
                   108,
                   101
                 ]
+              },
+              {
+                "kind": "account",
+                "path": "owner_nonce.nonce",
+                "account": "OwnerNonce"
               }
             ]
           }
@@ -718,6 +936,36 @@
           ]
         },
         {
+          "name": "owner_nonce",
+          "docs": [
+            "ADR-097: Read-only nonce account for `agent_profile` PDA seed."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114,
+                  45,
+                  110,
+                  111,
+                  110,
+                  99,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
           "name": "agent_profile",
           "writable": true,
           "pda": {
@@ -743,6 +991,11 @@
                   108,
                   101
                 ]
+              },
+              {
+                "kind": "account",
+                "path": "owner_nonce.nonce",
+                "account": "OwnerNonce"
               }
             ]
           }
@@ -825,6 +1078,37 @@
           ]
         },
         {
+          "name": "owner_nonce",
+          "docs": [
+            "ADR-097: Read-only nonce account for `agent_profile` PDA seed.",
+            "Seeded by `[authority.key(), b\"owner-nonce\"]`."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114,
+                  45,
+                  110,
+                  111,
+                  110,
+                  99,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
           "name": "agent_profile",
           "writable": true,
           "pda": {
@@ -850,6 +1134,11 @@
                   108,
                   101
                 ]
+              },
+              {
+                "kind": "account",
+                "path": "owner_nonce.nonce",
+                "account": "OwnerNonce"
               }
             ]
           }
@@ -1123,6 +1412,36 @@
           ]
         },
         {
+          "name": "owner_nonce",
+          "docs": [
+            "ADR-097: Read-only nonce account for `agent_profile` PDA seed."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114,
+                  45,
+                  110,
+                  111,
+                  110,
+                  99,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
           "name": "agent_profile",
           "writable": true,
           "pda": {
@@ -1148,6 +1467,11 @@
                   108,
                   101
                 ]
+              },
+              {
+                "kind": "account",
+                "path": "owner_nonce.nonce",
+                "account": "OwnerNonce"
               }
             ]
           }
@@ -1177,6 +1501,19 @@
         87,
         86,
         205
+      ]
+    },
+    {
+      "name": "OwnerNonce",
+      "discriminator": [
+        44,
+        80,
+        115,
+        195,
+        32,
+        200,
+        29,
+        163
       ]
     }
   ],
@@ -1505,10 +1842,10 @@
       "docs": [
         "AgentProfile: The core account representing a registered agent.",
         "",
-        "ADR-040: Account space is explicitly calculated as 1406 bytes",
+        "ADR-040: Account space is explicitly calculated as 1414 bytes",
         "(1243 baseline + 162 bytes for the ADR-060 manifest fields:",
         "manifest_cid 64 + manifest_hash 32 + manifest_signature 64 + manifest_version 2 = 162,",
-        "+ 1 byte for ADR-096 version: u8 = 1406).",
+        "+ 1 byte for ADR-096 version: u8 + 8 bytes for ADR-097 registration_nonce: u64 = 1414).",
         "",
         "ADR-060 adds four manifest fields that point to an off-chain capability",
         "manifest (IPFS CIDv1 or Arweave tx ID). The on-chain fields are the",
@@ -1521,6 +1858,11 @@
         "search index (ADR-060 §1 \"Relationship\"); the manifest is the source of",
         "truth. `update_manifest` re-validates the invariant",
         "`capabilities ⊆ manifest.capabilities[].name`.",
+        "",
+        "ADR-097: `registration_nonce` is included in the PDA seed to prevent",
+        "Sybil reuse via close-then-reopen. The nonce is taken from the owner's",
+        "`OwnerNonce` account at registration time and incremented on deregister.",
+        "Zero-value default is valid (first registration uses nonce 0).",
         "",
         "ADR-096: `version` is the schema version for in-place migration. Set to",
         "`0` on creation; incremented by `migrate_agent_profile`."
@@ -1650,6 +1992,37 @@
           {
             "name": "version",
             "type": "u8"
+          },
+          {
+            "name": "registration_nonce",
+            "docs": [
+              "ADR-097: monotonic registration nonce included in PDA seed.",
+              "Prevents address reuse after close (Sybil resistance)."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OwnerNonce",
+      "docs": [
+        "ADR-097: Per-owner monotonic nonce counter.",
+        "Seeded by `[authority.key().as_ref(), b\"owner-nonce\"]`.",
+        "Initialized to 0 on first `register_agent` (via `init_if_needed`).",
+        "Incremented by `deregister_agent` so subsequent registrations derive a",
+        "different `agent_profile` PDA, preventing Sybil address reuse."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "nonce",
+            "docs": [
+              "The current nonce value. Used as part of the `agent_profile` PDA seed",
+              "on `register_agent`. Incremented on `deregister_agent`."
+            ],
+            "type": "u64"
           }
         ]
       }

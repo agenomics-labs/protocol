@@ -186,6 +186,81 @@
           ]
         },
         {
+          "name": "agent_profile",
+          "docs": [
+            "ADR-095: The agent's Registry profile. Read-only cross-program account.",
+            "Suspension check is done in the instruction handler."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.profile_nonce",
+                "account": "Vault"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                58,
+                152,
+                159,
+                38,
+                133,
+                79,
+                251,
+                15,
+                87,
+                50,
+                154,
+                60,
+                143,
+                112,
+                72,
+                173,
+                150,
+                146,
+                57,
+                236,
+                63,
+                162,
+                74,
+                120,
+                90,
+                248,
+                41,
+                19,
+                87,
+                106,
+                1,
+                253
+              ]
+            }
+          }
+        },
+        {
           "name": "vault_token_account",
           "docs": [
             "The vault's token account (source of SPL tokens). Must be owned by the vault PDA."
@@ -292,6 +367,83 @@
           "relations": [
             "vault"
           ]
+        },
+        {
+          "name": "agent_profile",
+          "docs": [
+            "ADR-095: The agent's Registry profile. Read-only cross-program account.",
+            "The constraint enforces that the agent is not suspended. The PDA seed",
+            "uses `vault.profile_nonce` (recorded at `initialize_vault` time) so",
+            "that the derivation matches the live profile PDA (ADR-097)."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.profile_nonce",
+                "account": "Vault"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                58,
+                152,
+                159,
+                38,
+                133,
+                79,
+                251,
+                15,
+                87,
+                50,
+                154,
+                60,
+                143,
+                112,
+                72,
+                173,
+                150,
+                146,
+                57,
+                236,
+                63,
+                162,
+                74,
+                120,
+                90,
+                248,
+                41,
+                19,
+                87,
+                106,
+                1,
+                253
+              ]
+            }
+          }
         },
         {
           "name": "recipient",
@@ -947,6 +1099,11 @@
       "code": 6020,
       "name": "SelfTransferNotAllowed",
       "msg": "Recipient token account must not be owned by the vault (self-transfer)"
+    },
+    {
+      "code": 6021,
+      "name": "AgentSuspended",
+      "msg": "Agent is suspended in the Registry; transfers are blocked until suspension is cleared"
     }
   ],
   "types": [
@@ -1247,6 +1404,17 @@
               "PDA bump seed for vault signing in CPIs."
             ],
             "type": "u8"
+          },
+          {
+            "name": "profile_nonce",
+            "docs": [
+              "ADR-097: the registration nonce of the owner's AgentProfile PDA at",
+              "`initialize_vault` time. Used as the third seed component when",
+              "deriving the `agent_profile` PDA in `execute_transfer` and",
+              "`execute_token_transfer` so the vault always points at the live",
+              "profile, not a stale one from a prior registration cycle."
+            ],
+            "type": "u64"
           }
         ]
       }

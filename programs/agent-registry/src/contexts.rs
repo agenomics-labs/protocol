@@ -1,24 +1,44 @@
 use anchor_lang::prelude::*;
-use crate::state::{AgentProfile, AGENT_VAULT_PROGRAM_ID, MIGRATION_HEADROOM, SETTLEMENT_PROGRAM_ID};
+use crate::state::{AgentProfile, OwnerNonce, AGENT_VAULT_PROGRAM_ID, MIGRATION_HEADROOM, SETTLEMENT_PROGRAM_ID};
 use crate::errors::AgentRegistryError;
 
+/// ADR-097: `RegisterAgent` now includes the `owner_nonce` account.
+///
+/// `owner_nonce` is initialized on the first registration (via
+/// `init_if_needed`) so callers do not need a separate "create nonce" step.
+/// The current `nonce` value is consumed as the third PDA seed for
+/// `agent_profile`, preventing Sybil address reuse after close-then-reopen.
 #[derive(Accounts)]
 pub struct RegisterAgent<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
 
+    /// ADR-097: Per-owner nonce counter. `init_if_needed` creates it on
+    /// the first registration; subsequent registrations (after a deregister)
+    /// find it already initialized with an incremented `nonce` value.
+    ///
+    /// Space: 8 (discriminator) + 8 (nonce u64) = 16 bytes.
+    #[account(
+        init_if_needed,
+        payer = authority,
+        space = 8 + 8,
+        seeds = [authority.key().as_ref(), b"owner-nonce"],
+        bump
+    )]
+    pub owner_nonce: Account<'info, OwnerNonce>,
+
     #[account(
         init,
         payer = authority,
-        // ADR-040 / ADR-060 / ADR-096: explicit serialized size.
+        // ADR-040 / ADR-060 / ADR-096 / ADR-097: explicit serialized size.
         // Baseline 1243 + 162 bytes (ADR-060 manifest fields) + 1 byte
-        // (ADR-096 version field) = 1406 bytes (AgentProfile::SPACE).
-        // MIGRATION_HEADROOM (64) is reserved for the next 2-3 field
-        // additions; accounts begin with the headroom so future
-        // `migrate_agent_profile` calls can avoid a realloc entirely.
+        // (ADR-096 version field) + 8 bytes (ADR-097 registration_nonce u64)
+        // = 1414 bytes (AgentProfile::SPACE). MIGRATION_HEADROOM (64) is
+        // reserved for the next 2-3 field additions; accounts begin with the
+        // headroom so future `migrate_agent_profile` calls can avoid a realloc.
         // Keep this in lockstep with `AgentProfile::SPACE`.
         space = 8 + AgentProfile::SPACE + MIGRATION_HEADROOM,
-        seeds = [authority.key().as_ref(), b"agent-profile"],
+        seeds = [authority.key().as_ref(), b"agent-profile", &owner_nonce.nonce.to_le_bytes()],
         bump
     )]
     pub agent_profile: Account<'info, AgentProfile>,
@@ -44,27 +64,45 @@ pub struct RegisterAgent<'info> {
     pub system_program: Program<'info, System>,
 }
 
+/// ADR-097: `UpdateProfile` includes `owner_nonce` to re-derive the profile
+/// PDA with the nonce component.
 #[derive(Accounts)]
 pub struct UpdateProfile<'info> {
     pub authority: Signer<'info>,
 
+    /// ADR-097: Read-only nonce account. Provides the nonce component for the
+    /// `agent_profile` PDA seed derivation.
+    #[account(
+        seeds = [authority.key().as_ref(), b"owner-nonce"],
+        bump
+    )]
+    pub owner_nonce: Account<'info, OwnerNonce>,
+
     #[account(
         mut,
         has_one = authority,
-        seeds = [authority.key().as_ref(), b"agent-profile"],
+        seeds = [authority.key().as_ref(), b"agent-profile", &owner_nonce.nonce.to_le_bytes()],
         bump = agent_profile.bump
     )]
     pub agent_profile: Account<'info, AgentProfile>,
 }
 
+/// ADR-097: `UpdateStatus` includes `owner_nonce` for PDA derivation.
 #[derive(Accounts)]
 pub struct UpdateStatus<'info> {
     pub authority: Signer<'info>,
 
+    /// ADR-097: Read-only nonce account for `agent_profile` PDA seed.
+    #[account(
+        seeds = [authority.key().as_ref(), b"owner-nonce"],
+        bump
+    )]
+    pub owner_nonce: Account<'info, OwnerNonce>,
+
     #[account(
         mut,
         has_one = authority,
-        seeds = [authority.key().as_ref(), b"agent-profile"],
+        seeds = [authority.key().as_ref(), b"agent-profile", &owner_nonce.nonce.to_le_bytes()],
         bump = agent_profile.bump
     )]
     pub agent_profile: Account<'info, AgentProfile>,
@@ -90,6 +128,9 @@ pub struct UpdateStatus<'info> {
 /// supplies `authority = escrow.provider`, which is already enforced equal
 /// to the seed of `provider_profile` on the Settlement side (belt-and-
 /// braces across programs).
+///
+/// ADR-097: `owner_nonce` is included to re-derive the PDA with the nonce
+/// component. Settlement CPI callers must also pass this account.
 #[derive(Accounts)]
 pub struct UpdateReputation<'info> {
     /// CHECK: The authority whose profile is being updated. Used as the
@@ -97,10 +138,18 @@ pub struct UpdateReputation<'info> {
     /// `agent_profile.authority` via `has_one = authority`.
     pub authority: UncheckedAccount<'info>,
 
+    /// ADR-097: Read-only nonce account for `agent_profile` PDA seed.
+    /// Seeded by `[authority.key(), b"owner-nonce"]`.
+    #[account(
+        seeds = [authority.key().as_ref(), b"owner-nonce"],
+        bump
+    )]
+    pub owner_nonce: Account<'info, OwnerNonce>,
+
     #[account(
         mut,
         has_one = authority @ AgentRegistryError::UnauthorizedCaller,
-        seeds = [authority.key().as_ref(), b"agent-profile"],
+        seeds = [authority.key().as_ref(), b"agent-profile", &owner_nonce.nonce.to_le_bytes()],
         bump = agent_profile.bump
     )]
     pub agent_profile: Account<'info, AgentProfile>,
@@ -115,15 +164,23 @@ pub struct UpdateReputation<'info> {
     pub settlement_authority: UncheckedAccount<'info>,
 }
 
+/// ADR-097: `StakeReputation` includes `owner_nonce` for PDA derivation.
 #[derive(Accounts)]
 pub struct StakeReputation<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
 
+    /// ADR-097: Read-only nonce account for `agent_profile` PDA seed.
+    #[account(
+        seeds = [authority.key().as_ref(), b"owner-nonce"],
+        bump
+    )]
+    pub owner_nonce: Account<'info, OwnerNonce>,
+
     #[account(
         mut,
         has_one = authority,
-        seeds = [authority.key().as_ref(), b"agent-profile"],
+        seeds = [authority.key().as_ref(), b"agent-profile", &owner_nonce.nonce.to_le_bytes()],
         bump = agent_profile.bump
     )]
     pub agent_profile: Account<'info, AgentProfile>,
@@ -141,15 +198,23 @@ pub struct StakeReputation<'info> {
     pub system_program: Program<'info, System>,
 }
 
+/// ADR-097: `UnstakeReputation` includes `owner_nonce` for PDA derivation.
 #[derive(Accounts)]
 pub struct UnstakeReputation<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
 
+    /// ADR-097: Read-only nonce account for `agent_profile` PDA seed.
+    #[account(
+        seeds = [authority.key().as_ref(), b"owner-nonce"],
+        bump
+    )]
+    pub owner_nonce: Account<'info, OwnerNonce>,
+
     #[account(
         mut,
         has_one = authority,
-        seeds = [authority.key().as_ref(), b"agent-profile"],
+        seeds = [authority.key().as_ref(), b"agent-profile", &owner_nonce.nonce.to_le_bytes()],
         bump = agent_profile.bump
     )]
     pub agent_profile: Account<'info, AgentProfile>,
@@ -173,29 +238,51 @@ pub struct UnstakeReputation<'info> {
 /// that breaks the permanent-suspension trap. The authority self-signs
 /// but pays with half their reputation score. After clearing, the agent
 /// is moved to `Paused` (not `Active`) so re-activation is deliberate.
+///
+/// ADR-097: `owner_nonce` included for PDA derivation.
 #[derive(Accounts)]
 pub struct ClearSuspension<'info> {
     pub authority: Signer<'info>,
 
+    /// ADR-097: Read-only nonce account for `agent_profile` PDA seed.
+    #[account(
+        seeds = [authority.key().as_ref(), b"owner-nonce"],
+        bump
+    )]
+    pub owner_nonce: Account<'info, OwnerNonce>,
+
     #[account(
         mut,
         has_one = authority,
-        seeds = [authority.key().as_ref(), b"agent-profile"],
+        seeds = [authority.key().as_ref(), b"agent-profile", &owner_nonce.nonce.to_le_bytes()],
         bump = agent_profile.bump
     )]
     pub agent_profile: Account<'info, AgentProfile>,
 }
 
+/// ADR-097: `DeregisterAgent` closes `agent_profile` and increments
+/// `owner_nonce.nonce` so the next registration uses a different PDA address.
+/// The `owner_nonce` account is mutable because the handler increments it.
 #[derive(Accounts)]
 pub struct DeregisterAgent<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
 
+    /// ADR-097: Mutable nonce account. The handler increments `nonce` after
+    /// closing the profile, ensuring the next `register_agent` produces a
+    /// different PDA address.
+    #[account(
+        mut,
+        seeds = [authority.key().as_ref(), b"owner-nonce"],
+        bump
+    )]
+    pub owner_nonce: Account<'info, OwnerNonce>,
+
     #[account(
         mut,
         has_one = authority,
         close = authority,
-        seeds = [authority.key().as_ref(), b"agent-profile"],
+        seeds = [authority.key().as_ref(), b"agent-profile", &owner_nonce.nonce.to_le_bytes()],
         bump = agent_profile.bump
     )]
     pub agent_profile: Account<'info, AgentProfile>,
@@ -245,14 +332,23 @@ pub struct ProposeReputationDelta<'info> {
 /// ed25519-precompile signature-verification instruction appears in the
 /// same transaction (standard Solana pattern for Ed25519 verification —
 /// in-program verification is prohibitively expensive in compute units).
+///
+/// ADR-097: `owner_nonce` included for PDA derivation.
 #[derive(Accounts)]
 pub struct UpdateManifest<'info> {
     pub authority: Signer<'info>,
 
+    /// ADR-097: Read-only nonce account for `agent_profile` PDA seed.
+    #[account(
+        seeds = [authority.key().as_ref(), b"owner-nonce"],
+        bump
+    )]
+    pub owner_nonce: Account<'info, OwnerNonce>,
+
     #[account(
         mut,
         has_one = authority,
-        seeds = [authority.key().as_ref(), b"agent-profile"],
+        seeds = [authority.key().as_ref(), b"agent-profile", &owner_nonce.nonce.to_le_bytes()],
         bump = agent_profile.bump
     )]
     pub agent_profile: Account<'info, AgentProfile>,
