@@ -146,6 +146,10 @@ pub struct Milestone {
     pub description_hash: [u8; 32],
     pub amount: u64,
     pub status: MilestoneStatus,
+    /// ADR-102: slot after which a slash may be applied for this milestone.
+    /// Set to `submission_slot + grace_period_slots` by `submit_milestone`.
+    /// Zero (default / no grace requested) means slashing is always permitted.
+    pub grace_ends_at: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, AnchorSerialize, AnchorDeserialize)]

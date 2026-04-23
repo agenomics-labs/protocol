@@ -63,20 +63,23 @@ jobs:
         with:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
+          cache: "npm"
+
+      # ADR-089: install once at workspace root with `npm ci` against the
+      # committed lockfile; per-workspace builds/tests run against the
+      # hoisted node_modules tree.
+      - name: Install workspace deps (npm ci)
+        run: npm ci --no-audit --no-fund
 
       - name: Build + test capability-manifest-validator
-        working-directory: packages/capability-manifest-validator
         run: |
-          npm install --no-audit --no-fund
-          npm run build
-          npm test
+          npm run build --workspace @agenomics/capability-manifest-validator
+          npm test --workspace @agenomics/capability-manifest-validator
 
       - name: Build + test sas-resolver
-        working-directory: packages/sas-resolver
         run: |
-          npm install --no-audit --no-fund
-          npm run build
-          npm test
+          npm run build --workspace @agenomics/sas-resolver
+          npm test --workspace @agenomics/sas-resolver
 
   publish:
     name: Publish to npm
@@ -91,12 +94,15 @@ jobs:
         with:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
+          cache: "npm"
+
+      - name: Install workspace deps (npm ci)
+        run: npm ci --no-audit --no-fund
 
       # capability-manifest-validator has no workspace deps — publish first.
       - name: Publish @agenomics/capability-manifest-validator
         working-directory: packages/capability-manifest-validator
         run: |
-          npm install --no-audit --no-fund
           npm run build
           npm publish --provenance --access public
         env:
@@ -108,7 +114,6 @@ jobs:
       - name: Publish @agenomics/sas-resolver
         working-directory: packages/sas-resolver
         run: |
-          npm install --no-audit --no-fund
           npm run build
           npm publish --provenance --access public
         env:

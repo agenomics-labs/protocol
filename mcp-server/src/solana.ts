@@ -5,10 +5,26 @@ import {
   LAMPORTS_PER_SOL,
   Transaction,
 } from "@solana/web3.js";
-import { AnchorProvider, Program, BN } from "@coral-xyz/anchor";
+// ADR-091: @coral-xyz/anchor is published as CommonJS. Under Node's strict
+// ESM loader (Node 20 in CI), `import { BN } from "@coral-xyz/anchor"`
+// fails with "does not provide an export named 'BN'" because Node's
+// named-import detector only sees what the CJS analyzer can statically
+// prove. Symbols below that threshold (BN here) need to come off the
+// default export at runtime.
+//
+// Pattern: `import anchor from "@coral-xyz/anchor"` lifts the runtime
+// values off the default export; a separate `import type { ... }`
+// re-establishes the typed surface (type-only imports emit no JS so they
+// bypass the CJS-named-export check).
+import anchor from "@coral-xyz/anchor";
+const { AnchorProvider, Program, BN } = anchor;
+import type { AnchorProvider as _AnchorProvider, Program as _Program, Idl } from "@coral-xyz/anchor";
+type AnchorProvider = _AnchorProvider;
+type Program<T extends Idl = Idl> = _Program<T>;
 import * as fs from "fs";
 import * as path from "path";
 import * as crypto from "crypto";
+import { fileURLToPath } from "url";
 import { assertKeyfilePermissions } from "./transport/auth-gate.js";
 
 // ADR-088: Anchor IDL types are the source of typing truth for the cached
@@ -17,7 +33,11 @@ import { assertKeyfilePermissions } from "./transport/auth-gate.js";
 // the on-chain program. They are re-exported through `./idl/types` so the
 // import lands inside this package's `rootDir` (avoiding TS6059) while the
 // canonical type definitions still live alongside `target/idl/`.
-import type { AgentRegistry, AgentVault, Settlement } from "./idl/types";
+import type { AgentRegistry, AgentVault, Settlement } from "./idl/types.js";
+
+// ADR-091: __dirname is not available in ESM (NodeNext). Shim it from import.meta.url.
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 /**
  * Solana connection, Anchor programs, and PDA helpers for the AEP MCP server.

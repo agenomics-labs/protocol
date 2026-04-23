@@ -28,6 +28,7 @@
 //     error (they are the same conceptual request). Callers that want
 //     retry-on-error must vary the key.
 
+import { createRequire } from "node:module";
 import type { Result } from "../types/action.js";
 
 // --------------------------------------------------------------------------
@@ -171,12 +172,14 @@ export class InMemoryIdempotencyStore implements IdempotencyStore {
 export function createIdempotencyStore(): IdempotencyStore {
   const redisUrl = process.env.AEP_REDIS_URL;
   if (redisUrl && redisUrl.length > 0) {
-    // Lazy require — keeps the in-memory path from pulling in `ioredis`.
-    // `require` (vs. dynamic `import()`) is deliberate: the factory stays
-    // synchronous so the module-level singleton accessor below can remain
-    // a simple `function(): IdempotencyStore`.
+    // ADR-091: ESM (NodeNext) doesn't expose synchronous `require`. Use
+    // `createRequire(import.meta.url)` to load the redis backend lazily
+    // without making `createIdempotencyStore` async — preserves the
+    // singleton accessor's `function(): IdempotencyStore` shape. The
+    // CommonJS-load trick is local and contained; no ripple to callers.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const mod = require("./idempotency-redis.js") as {
+    const requireCJS = createRequire(import.meta.url);
+    const mod = requireCJS("./idempotency-redis.js") as {
       RedisIdempotencyStore: new (opts: { url: string }) => IdempotencyStore;
     };
     return new mod.RedisIdempotencyStore({ url: redisUrl });

@@ -52,16 +52,17 @@ pub struct CreateEscrow<'info> {
 
     /// Escrow state account — dynamically sized based on milestone count.
     ///
-    /// Space formula: 298 + (milestones_data.len() * 41)
+    /// Space formula: 298 + (milestones_data.len() * 49)
     /// Fixed: 8 (disc) + 160 (5 pubkeys) + 16 (amounts) + 4 (vec prefix)
     ///   + 1 (status) + 8 (task_id) + 32 (desc_hash) + 16 (timestamps)
     ///   + 33 (dispute_resolver Option) + 9 (disputed_at Option) + 1 (bump)
     ///   + 10 (margin) = 298
-    /// Per milestone: 32 (desc_hash) + 8 (amount) + 1 (status) = 41
+    /// Per milestone: 32 (desc_hash) + 8 (amount) + 1 (status)
+    ///   + 8 (grace_ends_at u64, ADR-102) = 49
     #[account(
         init,
         payer = client,
-        space = 298 + (milestones_data.len() * 41),
+        space = 298 + (milestones_data.len() * 49),
         seeds = [b"escrow", client.key().as_ref(), provider.key().as_ref(), &task_id.to_le_bytes()],
         bump
     )]

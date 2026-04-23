@@ -156,7 +156,7 @@ function toHex(bytes: Uint8Array): string {
 }
 
 // Re-export types and helpers for consumer convenience.
-export { manifestHash } from "./canonical.js";
+export { manifestHash, MANIFEST_HASH_DOMAIN_PREFIX } from "./canonical.js";
 
 // DEEP-AUDIT-2026-04-22 Audit 2: canonicalJson / canonicalBytes were
 // previously public. Demoted to `unstable_` prefixed aliases because

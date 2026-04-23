@@ -71,6 +71,11 @@ jobs:
         run: cargo audit
         continue-on-error: true
 
+  # ADR-089: npm workspaces + committed unified lockfile + `npm ci` everywhere.
+  # A single `npm ci` at the workspace root installs every workspace member's
+  # deps into a hoisted node_modules tree. Subsequent jobs all run from a fresh
+  # checkout, so each one re-runs `npm ci` (it is the lockfile-pinned, no-write
+  # equivalent of `npm install`).
   typescript-check-mcp:
     name: TypeScript Check (mcp-server)
     runs-on: ubuntu-latest
@@ -86,6 +91,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: "npm"
+
+      # `npm ci` at the workspace root installs every workspace member.
+      # No per-workspace `npm install` invocations needed.
+      - name: Install workspace deps (npm ci)
+        run: npm ci --no-audit --no-fund
 
       - name: Download Anchor-generated TS types
         uses: actions/download-artifact@v4
@@ -97,20 +108,10 @@ jobs:
       # @agenomics/sas-resolver via `file:` deps. tsc --noEmit in mcp-server
       # needs the d.ts output from those packages, so build them first.
       - name: Build @agenomics/capability-manifest-validator
-        working-directory: packages/capability-manifest-validator
-        run: |
-          npm install
-          npm run build
+        run: npm run build --workspace @agenomics/capability-manifest-validator
 
       - name: Build @agenomics/sas-resolver
-        working-directory: packages/sas-resolver
-        run: |
-          npm install
-          npm run build
-
-      - name: Install mcp-server deps
-        working-directory: mcp-server
-        run: npm install
+        run: npm run build --workspace @agenomics/sas-resolver
 
       - name: Type check
         working-directory: mcp-server
@@ -123,10 +124,9 @@ jobs:
 
       # Finding #22: npm audit at `high` severity. Runs advisory-only for
       # the same reason cargo-audit does — a newly disclosed issue should
-      # be visible without torpedoing unrelated PRs.
+      # be visible without torpedoing unrelated PRs. Workspace-aware.
       - name: npm audit (high)
-        working-directory: mcp-server
-        run: npm audit --audit-level=high
+        run: npm audit --audit-level=high --workspaces --include-workspace-root
         continue-on-error: true
 
   # Finding #22: the indexer lives in `src/indexer/` with its own package.json
@@ -136,47 +136,33 @@ jobs:
   typescript-check-indexer:
     name: TypeScript Check (indexer)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: src/indexer
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-
-      - run: npm install
-
+          cache: "npm"
+      - name: Install workspace deps (npm ci)
+        run: npm ci --no-audit --no-fund
       - name: Type check
+        working-directory: src/indexer
         run: npx tsc --noEmit
-
-      - name: npm audit (high)
-        run: npm audit --audit-level=high
-        continue-on-error: true
 
   # Finding #22: same gap for the x402 relay.
   typescript-check-x402-relay:
     name: TypeScript Check (x402-relay)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: src/x402-relay
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-
-      - run: npm install
-
+          cache: "npm"
+      - name: Install workspace deps (npm ci)
+        run: npm ci --no-audit --no-fund
       - name: Type check
+        working-directory: src/x402-relay
         run: npx tsc --noEmit
-
-      - name: npm audit (high)
-        run: npm audit --audit-level=high
-        continue-on-error: true
 
   # Added alongside the `packages/*` TS packages introduced with ADR-060
   # (`@agenomics/capability-manifest-validator`) and ADR-064 (`@agenomics/sas-resolver`).
@@ -185,42 +171,41 @@ jobs:
   typescript-check-validator:
     name: TypeScript Check (capability-manifest-validator)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: packages/capability-manifest-validator
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - run: npm install
+          cache: "npm"
+      - name: Install workspace deps (npm ci)
+        run: npm ci --no-audit --no-fund
       - name: Type check
+        working-directory: packages/capability-manifest-validator
         run: npx tsc --noEmit
       - name: Unit tests
-        run: npm test
-      - name: npm audit (high)
-        run: npm audit --audit-level=high
-        continue-on-error: true
+        run: npm test --workspace @agenomics/capability-manifest-validator
 
   typescript-check-sas-resolver:
     name: TypeScript Check (sas-resolver)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: packages/sas-resolver
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - run: npm install
+          cache: "npm"
+      - name: Install workspace deps (npm ci)
+        run: npm ci --no-audit --no-fund
+      # sas-resolver depends on capability-manifest-validator at runtime via
+      # @agenomics/* package; both build/test independently but resolver tests
+      # need the validator's compiled JS.
+      - name: Build @agenomics/capability-manifest-validator
+        run: npm run build --workspace @agenomics/capability-manifest-validator
       - name: Type check
+        working-directory: packages/sas-resolver
         run: npx tsc --noEmit
       - name: Unit tests
-        run: npm test
-      - name: npm audit (high)
-        run: npm audit --audit-level=high
-        continue-on-error: true
+        run: npm test --workspace @agenomics/sas-resolver
 
   # mcp-server also has pipeline + action-shape tests under node:test + tsx
   # (see `test/*.test.ts`). The existing `typescript-check-mcp` job only runs
@@ -239,29 +224,49 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: "npm"
       - name: Download Anchor-generated TS types
         uses: actions/download-artifact@v4
         with:
           name: anchor-types
           path: target/types
-      # Build the @aep packages so the `file:` deps + tsx ESM loader
+      - name: Install workspace deps (npm ci)
+        run: npm ci --no-audit --no-fund
+      # Build the @agenomics/* packages so the `file:` deps + tsx ESM loader
       # can resolve their dist/*.js at test runtime.
       - name: Build @agenomics/capability-manifest-validator
-        working-directory: packages/capability-manifest-validator
-        run: |
-          npm install
-          npm run build
+        run: npm run build --workspace @agenomics/capability-manifest-validator
       - name: Build @agenomics/sas-resolver
-        working-directory: packages/sas-resolver
-        run: |
-          npm install
-          npm run build
-      - name: Install mcp-server deps
-        working-directory: mcp-server
-        run: npm install
+        run: npm run build --workspace @agenomics/sas-resolver
       - name: Unit tests (node:test + tsx)
-        working-directory: mcp-server
-        run: npm test
+        run: npm test --workspace @agenomics/mcp-server
+
+  # ADR-089 §5: lockfile-determinism gate. Verifies `npm ci` from a fresh
+  # clone produces output identical to the committed lockfile. If a developer
+  # edits package.json without running `npm install` (which would update the
+  # lockfile), this job fails — preventing lockfile drift.
+  lockfile-determinism:
+    name: Lockfile determinism check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: npm ci from clean clone (must match lockfile exactly)
+        run: |
+          # `npm ci` exits non-zero if package.json and package-lock.json
+          # disagree — that is the gate. We additionally snapshot the
+          # lockfile hash before/after to surface any silent rewrites.
+          before=$(sha256sum package-lock.json | awk '{print $1}')
+          npm ci --no-audit --no-fund
+          after=$(sha256sum package-lock.json | awk '{print $1}')
+          if [ "$before" != "$after" ]; then
+            echo "::error::package-lock.json was rewritten by npm ci. Run 'npm install' locally and commit the result."
+            diff <(echo "$before") <(echo "$after") || true
+            exit 1
+          fi
+          echo "Lockfile sha256 stable across npm ci: $after"
 
   # S-xcut-05: mandatory secret-scan gate. A leaked on-chain private key
   # has direct blast radius against the protocol's authorities, so this
@@ -482,11 +487,9 @@ jobs:
           fi
 
       - name: Install npm test deps
-        # `package-lock.json` is gitignored (see .gitignore), so `npm ci`
-        # can't run. `npm install --no-audit --no-fund` keeps output quiet
-        # and is deterministic enough for a green-path test gate (Anchor
-        # 0.31.1 + web3.js 1.95.x are both pinned in package.json).
-        run: npm install --no-audit --no-fund
+        # ADR-089: workspace lockfile is committed; use `npm ci` for
+        # bit-identical installs across CI runs.
+        run: npm ci --no-audit --no-fund
 
       - name: Anchor test (solana-test-validator + ts-mocha)
         env:

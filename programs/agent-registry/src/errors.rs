@@ -59,4 +59,10 @@ pub enum AgentRegistryError {
     // overflow as a typed error rather than a panic.
     #[msg("Reputation delta magnitude overflows i64 negation (delta == i64::MIN); governance must choose a valid slash magnitude (SEC-11)")]
     ReputationDeltaOverflow,
+
+    // ADR-094: propose_reputation_delta rejects calls where |delta| exceeds
+    // MAX_DELTA_PER_CALL (10). This caps single-call reputation manipulation
+    // and makes large shifts require multiple observable transactions.
+    #[msg("Reputation delta magnitude exceeds MAX_DELTA_PER_CALL (10); split into smaller increments")]
+    ReputationDeltaExceedsMax,
 }

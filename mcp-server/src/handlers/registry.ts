@@ -18,7 +18,7 @@ import {
 } from "../solana.js";
 import { SystemProgram } from "@solana/web3.js";
 import type { IdlAccounts } from "@coral-xyz/anchor";
-import type { AgentRegistry } from "../idl/types";
+import type { AgentRegistry } from "../idl/types.js";
 
 // ADR-088: Anchor decodes `AgentProfile` into this exact shape (BN for u64,
 // PublicKey for pubkey, etc.). The alias keeps internal hydration helpers
@@ -34,6 +34,9 @@ import {
   formatPricingModel,
   formatAgentStatus,
 } from "./formatters.js";
+import { serverLogger } from "../util/logger.js";
+
+const log = serverLogger.child({ handler: "registry" });
 
 /**
  * Register this agent in the on-chain registry.
@@ -234,9 +237,9 @@ export async function handleDiscoverAgents(args: Record<string, unknown>) {
         return hydrated;
       }
     } catch (err) {
-      console.warn(
-        `[discoverAgents] indexer path failed (${(err as Error).message}); ` +
-          `falling back to on-chain scan.`
+      log.warn(
+        { err: (err as Error).message, fallback: "on-chain-scan" },
+        "discoverAgents indexer path failed; falling back to on-chain scan",
       );
     }
   }
