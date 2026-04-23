@@ -24,6 +24,7 @@ type Program = _Program;
 import * as fs from "fs";
 import * as path from "path";
 import * as crypto from "crypto";
+import { fileURLToPath } from "url";
 import { assertKeyfilePermissions } from "./transport/auth-gate.js";
 
 // ADR-088: Anchor IDL types are the source of typing truth for the cached
@@ -33,6 +34,10 @@ import { assertKeyfilePermissions } from "./transport/auth-gate.js";
 // import lands inside this package's `rootDir` (avoiding TS6059) while the
 // canonical type definitions still live alongside `target/idl/`.
 import type { AgentRegistry, AgentVault, Settlement } from "./idl/types";
+
+// ADR-091: __dirname is not available in ESM (NodeNext). Shim it from import.meta.url.
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 /**
  * Solana connection, Anchor programs, and PDA helpers for the AEP MCP server.
