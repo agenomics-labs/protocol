@@ -12,6 +12,20 @@ use contexts::*;
 
 declare_id!("8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh");
 
+// ADR-092: Domain tag for manifest hash — prevents cross-protocol signature replay.
+// Clients must compute manifest_raw_hash = sha256(canonical_json) and then the
+// on-chain program derives manifest_hash = sha256(MANIFEST_HASH_DOMAIN || manifest_raw_hash)
+// before passing it to the ed25519 precompile verifier.
+pub const MANIFEST_HASH_DOMAIN: &[u8] = b"AEP_CAPABILITY_MANIFEST_V1\x00";
+
+/// ADR-092: Compute the domain-separated manifest hash from the raw SHA-256 of
+/// canonical JSON. The tagged hash is what gets stored on-chain and what the
+/// ed25519 signature must cover.
+pub fn tagged_manifest_hash(raw_hash: &[u8; 32]) -> [u8; 32] {
+    use anchor_lang::solana_program::hash::hashv;
+    hashv(&[MANIFEST_HASH_DOMAIN, raw_hash]).to_bytes()
+}
+
 #[program]
 pub mod agent_registry {
     use super::*;
@@ -308,16 +322,21 @@ pub mod agent_registry {
     }
 
     /// ADR-060: publish or rotate the off-chain capability manifest pointer.
+    /// ADR-092: domain-separated manifest hash to prevent cross-protocol sig replay.
     ///
     /// Args:
     /// - `manifest_cid`: 64-byte pointer to off-chain manifest (IPFS CIDv1
     ///   string or Arweave tx ID), zero-padded. M5 resolution chose
     ///   `[u8; 64]` for CIDv1 + Arweave headroom.
-    /// - `manifest_hash`: SHA-256 of the RFC-8785 canonical-JSON manifest.
-    /// - `manifest_signature`: Ed25519 signature over `manifest_hash` by the
-    ///   agent's `authority`. Verified via the paired ed25519-program
-    ///   sig-verify instruction (standard Solana pattern — in-program
-    ///   ed25519 is prohibitively expensive in compute units).
+    /// - `manifest_raw_hash`: SHA-256 of the RFC-8785 canonical-JSON manifest
+    ///   (before domain tagging). The on-chain program applies the domain
+    ///   separator: `manifest_hash = sha256(MANIFEST_HASH_DOMAIN || manifest_raw_hash)`.
+    ///   The client's ed25519 signature must cover this tagged hash.
+    /// - `manifest_signature`: Ed25519 signature over the domain-tagged hash
+    ///   (`tagged_manifest_hash(manifest_raw_hash)`) by the agent's `authority`.
+    ///   Verified via the paired ed25519-program sig-verify instruction
+    ///   (standard Solana pattern — in-program ed25519 is prohibitively
+    ///   expensive in compute units).
     /// - `manifest_version`: packed semver (high byte = major, low byte = minor).
     /// - `manifest_capability_names`: the full list of capability names
     ///   declared in the off-chain manifest. On-chain we assert
@@ -327,7 +346,7 @@ pub mod agent_registry {
     pub fn update_manifest(
         ctx: Context<UpdateManifest>,
         manifest_cid: [u8; 64],
-        manifest_hash: [u8; 32],
+        manifest_raw_hash: [u8; 32],
         manifest_signature: [u8; 64],
         manifest_version: u16,
         manifest_capability_names: Vec<String>,
@@ -347,6 +366,12 @@ pub mod agent_registry {
                 AgentRegistryError::CapabilitySubsetViolation
             );
         }
+
+        // ADR-092: apply domain separator before passing to the ed25519
+        // precompile verifier. The client must have signed the tagged hash,
+        // not the raw SHA-256. This enforces that a raw sha256(canonical_json)
+        // signature from another protocol cannot be replayed here.
+        let manifest_hash = tagged_manifest_hash(&manifest_raw_hash);
 
         // Ed25519 signature verification via the paired sig-verify precompile.
         // Compute-cost note: in-program ed25519 burns ~150k CU per verify,
@@ -847,6 +872,66 @@ mod tests {
         let initial: u16 = 0;
         // update_manifest rejects version == 0.
         assert!(initial == 0);
+    }
+
+    // ================================================================
+    // ADR-092: manifest hash domain separation
+    // ================================================================
+
+    /// ADR-092: tagged_manifest_hash must equal sha256(MANIFEST_HASH_DOMAIN || raw_hash).
+    /// We cross-check the output against a manual two-pass hash using
+    /// `solana_program::hash::hashv` directly.
+    #[test]
+    fn adr_092_tagged_manifest_hash_applies_domain_separator() {
+        use anchor_lang::solana_program::hash::hashv;
+
+        let raw_hash = [0x42u8; 32];
+        let result = tagged_manifest_hash(&raw_hash);
+
+        // Independent computation for cross-check.
+        let expected = hashv(&[MANIFEST_HASH_DOMAIN, &raw_hash]).to_bytes();
+        assert_eq!(result, expected, "tagged hash must match sha256(domain || raw)");
+    }
+
+    /// ADR-092: two different raw hashes must produce two different tagged hashes
+    /// (domain tagging must not collapse distinct inputs).
+    #[test]
+    fn adr_092_tagged_manifest_hash_is_injective() {
+        let raw_a = [0x01u8; 32];
+        let raw_b = [0x02u8; 32];
+        assert_ne!(
+            tagged_manifest_hash(&raw_a),
+            tagged_manifest_hash(&raw_b),
+            "distinct raw hashes must produce distinct tagged hashes"
+        );
+    }
+
+    /// ADR-092: the tagged hash must differ from the raw hash — the domain
+    /// separator must have a visible effect on the output.
+    #[test]
+    fn adr_092_tagged_manifest_hash_differs_from_raw() {
+        let raw_hash = [0xABu8; 32];
+        let tagged = tagged_manifest_hash(&raw_hash);
+        assert_ne!(
+            tagged, raw_hash,
+            "domain-tagged hash must not equal the raw input hash"
+        );
+    }
+
+    /// ADR-092: MANIFEST_HASH_DOMAIN must be exactly 27 bytes (26 UTF-8 chars
+    /// + 1 null terminator) matching the spec in the ADR.
+    #[test]
+    fn adr_092_domain_constant_has_expected_length() {
+        assert_eq!(
+            MANIFEST_HASH_DOMAIN.len(),
+            27,
+            "domain tag must be 26 chars + null byte = 27 bytes"
+        );
+        assert_eq!(
+            MANIFEST_HASH_DOMAIN.last(),
+            Some(&0u8),
+            "domain tag must be null-terminated"
+        );
     }
 
     mod fuzz {

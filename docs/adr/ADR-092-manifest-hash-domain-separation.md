@@ -21,23 +21,31 @@ for the other in contexts that rely on the hash alone (e.g. on-chain
 
 ## Decision
 
-Prepend the domain separator `"AEP_CAPABILITY_MANIFEST_V1\x00"` (UTF-8 encoded,
-null-byte terminated) to the canonical JSON bytes before hashing:
+Clients compute `manifest_raw_hash = sha256(canonical_json)`. The on-chain
+program derives the final hash by prepending the domain separator before
+verification and storage:
 
 ```
-hash = SHA-256(domainPrefix || canonicalJson)
+manifest_hash = sha256("AEP_CAPABILITY_MANIFEST_V1\x00" || manifest_raw_hash)
 ```
 
-where `domainPrefix = Buffer.from("AEP_CAPABILITY_MANIFEST_V1\0", "utf8")` (27 bytes).
+The Rust constant:
+```rust
+pub const MANIFEST_HASH_DOMAIN: &[u8] = b"AEP_CAPABILITY_MANIFEST_V1\x00";
+```
+
+The `update_manifest` instruction argument is renamed from `manifest_hash` to
+`manifest_raw_hash` (the pre-tagging sha256). The program calls
+`tagged_manifest_hash(&manifest_raw_hash)` and passes the result to the
+ed25519 precompile verifier. The client's signature must cover the tagged hash.
 
 The null byte terminates the domain string, preventing length-extension ambiguity:
 a future prefix `"AEP_CAPABILITY_MANIFEST_V12"` (no null) cannot be made to
 collide by prepending `"AEP_CAPABILITY_MANIFEST_V1\0..."` bytes.
 
-The constant `MANIFEST_HASH_DOMAIN_PREFIX` is exported from the package so
-callers can reference it when building their own verification tooling.
-
-This is a breaking change for any stored hashes; callers must rehash on upgrade.
+The TypeScript package also exports `MANIFEST_HASH_DOMAIN_PREFIX` so off-chain
+tooling can replicate the two-pass computation. This is a breaking change for
+any stored hashes; callers must rehash on upgrade.
 
 ## Alternatives
 
@@ -64,6 +72,7 @@ This is a breaking change for any stored hashes; callers must rehash on upgrade.
 
 ## References
 
-- Architecture Audit 2026-04-23, Item 17, Sec 6.3
-- ADR-060 (capability manifest spec)
-- ADR-026 (3-tier model routing)
+- Architecture Audit 2026-04-23, Item 17, §6.3 (cross-protocol signature replay)
+- ADR-060 (capability manifest specification)
+- `programs/agent-registry/src/lib.rs` — `MANIFEST_HASH_DOMAIN`, `tagged_manifest_hash`, `update_manifest`
+- `packages/capability-manifest-validator/src/canonical.ts` — TypeScript `MANIFEST_HASH_DOMAIN_PREFIX`
