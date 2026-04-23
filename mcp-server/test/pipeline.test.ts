@@ -25,8 +25,11 @@ import { RedisIdempotencyStore } from "../src/pipeline/idempotency-redis.js";
 // `quit`, …). We treat it as an opaque `RedisClient` for typing here — the
 // Redis store only needs structural compatibility (see RedisClient in
 // ../src/pipeline/idempotency-redis.ts).
-// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
-const IoRedisMock = require("ioredis-mock") as new () => any;
+// ADR-091: under ESM the prior `require("ioredis-mock")` no longer works.
+// `import IoRedisMock from "ioredis-mock"` resolves the CJS default export
+// shape correctly via Node's interop layer.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+import IoRedisMock from "ioredis-mock";
 import {
   executePreflight,
   __resetClusterHealthCacheForTests,

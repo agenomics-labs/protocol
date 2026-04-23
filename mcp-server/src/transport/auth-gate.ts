@@ -31,6 +31,9 @@ import * as fs from "fs";
 import * as http from "http";
 import * as net from "net";
 import * as path from "path";
+import { serverLogger } from "../util/logger.js";
+
+const log = serverLogger.child({ component: "mcp-auth" });
 
 // ==================== TRANSPORT POSTURE DETECTION ====================
 
@@ -274,10 +277,14 @@ export function makeBearerAuthMiddleware(
 }
 
 function defaultDeniedLogger(e: HttpAuthDeniedEvent): void {
-  // Stderr — stdout is reserved for the MCP transport's stdio mode.
-  // eslint-disable-next-line no-console
-  console.error(
-    `mcp-auth: rejected ${e.reason} from ${e.remoteAddress ?? "unknown"} ${e.url ?? ""}`.trim(),
+  // ADR-090 structured log — stderr-bound JSON, redaction-policy-aware.
+  log.warn(
+    {
+      reason: e.reason,
+      remote_address: e.remoteAddress,
+      url: e.url,
+    },
+    "mcp-auth: request rejected",
   );
 }
 
@@ -357,12 +364,11 @@ export function assertKeyfilePermissions(keyPath: string): void {
 
 /**
  * Emit a single-line startup banner describing the active transport posture.
- * Stderr only (stdout is reserved for stdio MCP framing).
+ * Routed through the ADR-090 logger — stderr-bound JSON, structured fields.
  */
 export function logTransportPosture(posture: TransportPosture): void {
   const line = renderPostureLine(posture);
-  // eslint-disable-next-line no-console
-  console.error(`MCP transport: ${line}`);
+  log.info({ posture_summary: line, mode: posture.mode }, "MCP transport posture");
 }
 
 export function renderPostureLine(posture: TransportPosture): string {
