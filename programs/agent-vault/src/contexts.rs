@@ -98,15 +98,27 @@ pub struct ExecuteTransfer<'info> {
     /// The vault PDA — serves as both state account and SOL source.
     /// ADR-029: Removed vestigial vault_account field; the vault PDA itself
     /// holds SOL and is used directly for lamport transfers.
+    ///
+    /// ADR-093: Seeds use the externally-known `authority` account key rather
+    /// than `vault.authority` read from stored account data. This eliminates
+    /// the self-referential pattern (needing to load the vault to find the
+    /// seeds needed to find the vault). The `has_one` constraint verifies
+    /// that `authority` matches `vault.authority`.
     #[account(
         mut,
-        seeds = [b"vault", vault.authority.key().as_ref()],
+        has_one = authority @ VaultError::Unauthorized,
+        seeds = [b"vault", authority.key().as_ref()],
         bump
     )]
     pub vault: Account<'info, Vault>,
 
     /// The signer must be the agent authority or the vault authority.
     pub agent: Signer<'info>,
+
+    /// The vault authority — used as a canonical PDA seed (ADR-093).
+    /// Not required to be a signer; the `agent` field carries the signature.
+    /// CHECK: Verified via `has_one = authority` on the vault account.
+    pub authority: UncheckedAccount<'info>,
 
     /// CHECK: The recipient of the SOL transfer; validated in instruction handler.
     #[account(mut)]
@@ -119,15 +131,24 @@ pub struct ExecuteTransfer<'info> {
 
 #[derive(Accounts)]
 pub struct ExecuteTokenTransfer<'info> {
+    /// ADR-093: Seeds use the externally-known `authority` account key rather
+    /// than `vault.authority` read from stored account data. The `has_one`
+    /// constraint verifies that `authority` matches `vault.authority`.
     #[account(
         mut,
-        seeds = [b"vault", vault.authority.key().as_ref()],
+        has_one = authority @ VaultError::Unauthorized,
+        seeds = [b"vault", authority.key().as_ref()],
         bump
     )]
     pub vault: Account<'info, Vault>,
 
     /// The signer must be the agent authority or the vault authority.
     pub agent: Signer<'info>,
+
+    /// The vault authority — used as a canonical PDA seed (ADR-093).
+    /// Not required to be a signer; the `agent` field carries the signature.
+    /// CHECK: Verified via `has_one = authority` on the vault account.
+    pub authority: UncheckedAccount<'info>,
 
     /// The vault's token account (source of SPL tokens). Must be owned by the vault PDA.
     #[account(

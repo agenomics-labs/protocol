@@ -9,7 +9,10 @@
     "mcp-server",
     "src/indexer",
     "src/x402-relay",
-    "dashboard"
+    "dashboard",
+    "sdk/idl",
+    "sdk/action-runtime",
+    "sdk/client"
   ],
   "scripts": {
     "build": "anchor build",
