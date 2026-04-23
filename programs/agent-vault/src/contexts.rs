@@ -1,5 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{Token, TokenAccount};
+use agent_registry::state::{AgentProfile, AgentStatus};
 
 use crate::state::Vault;
 use crate::errors::VaultError;
@@ -8,13 +9,13 @@ use crate::errors::VaultError;
 /// 8 (disc) + 32 (agent_id) + 32 (authority) + 1 (paused) + 8 (spent_today) + 8 (last_day)
 /// + VaultPolicy: 8+8+4+324+324=668 + 4 (txs_window) + 8 (rate_start)
 /// + 4+(10*(32+8+8+8+8))=644 (token_spend_records, now carrying per-mint limits)
-/// + 1 (bump) = 1414 + 200 margin = 1614
+/// + 1 (bump) + 8 (profile_nonce, ADR-095/097) = 1422 + 200 margin = 1622
 #[derive(Accounts)]
 pub struct InitializeVault<'info> {
     #[account(
         init,
         payer = authority,
-        space = 1614,
+        space = 1622,
         seeds = [b"vault", authority.key().as_ref()],
         bump
     )]
@@ -93,20 +94,60 @@ pub struct ManageProgramAllowlist<'info> {
     pub authority: Signer<'info>,
 }
 
+/// ADR-095: `ExecuteTransfer` now includes the `agent_profile` account from
+/// the Registry program. An Anchor constraint blocks the transfer if the
+/// agent's status is `Suspended` in the Registry.
+///
+/// The `agent_profile` PDA is derived using the same seeds as the Registry:
+/// `[authority.key(), b"agent-profile", vault.profile_nonce.to_le_bytes()]`.
+/// The nonce was recorded at `initialize_vault` time from the owner's
+/// `OwnerNonce` account (ADR-097), ensuring the vault always points to the
+/// live profile PDA, not a stale one from a prior registration cycle.
 #[derive(Accounts)]
 pub struct ExecuteTransfer<'info> {
     /// The vault PDA — serves as both state account and SOL source.
     /// ADR-029: Removed vestigial vault_account field; the vault PDA itself
     /// holds SOL and is used directly for lamport transfers.
+    ///
+    /// ADR-093: Seeds use the externally-known `authority` account key rather
+    /// than `vault.authority` read from stored account data. This eliminates
+    /// the self-referential pattern (needing to load the vault to find the
+    /// seeds needed to find the vault). The `has_one` constraint verifies
+    /// that `authority` matches `vault.authority`.
     #[account(
         mut,
-        seeds = [b"vault", vault.authority.key().as_ref()],
+        has_one = authority @ VaultError::Unauthorized,
+        seeds = [b"vault", authority.key().as_ref()],
         bump
     )]
     pub vault: Account<'info, Vault>,
 
     /// The signer must be the agent authority or the vault authority.
     pub agent: Signer<'info>,
+
+    /// The vault authority — used as a canonical PDA seed (ADR-093).
+    /// Not required to be a signer; the `agent` field carries the signature.
+    /// CHECK: Verified via `has_one = authority` on the vault account.
+    pub authority: UncheckedAccount<'info>,
+
+    /// ADR-095: The agent's Registry profile. Read-only cross-program account.
+    /// The constraint enforces that the agent is not suspended. The PDA seed
+    /// uses `vault.profile_nonce` (recorded at `initialize_vault` time) so
+    /// that the derivation matches the live profile PDA (ADR-097).
+    ///
+    /// CHECK: PDA derivation is validated by the seeds constraint using
+    /// `authority.key()` and `vault.profile_nonce`. The suspension check
+    /// is done explicitly in the instruction handler using `AgentStatus`.
+    #[account(
+        seeds = [
+            authority.key().as_ref(),
+            b"agent-profile",
+            &vault.profile_nonce.to_le_bytes(),
+        ],
+        seeds::program = agent_registry::ID,
+        bump
+    )]
+    pub agent_profile: Account<'info, AgentProfile>,
 
     /// CHECK: The recipient of the SOL transfer; validated in instruction handler.
     #[account(mut)]
@@ -117,17 +158,46 @@ pub struct ExecuteTransfer<'info> {
 
 // ADR-050: ExecuteProgramCall removed — see lib.rs comment.
 
+/// ADR-095: `ExecuteTokenTransfer` now includes the `agent_profile` account
+/// from the Registry program for the suspension gate (same rationale as
+/// `ExecuteTransfer` above).
 #[derive(Accounts)]
 pub struct ExecuteTokenTransfer<'info> {
+    /// ADR-093: Seeds use the externally-known `authority` account key rather
+    /// than `vault.authority` read from stored account data. The `has_one`
+    /// constraint verifies that `authority` matches `vault.authority`.
     #[account(
         mut,
-        seeds = [b"vault", vault.authority.key().as_ref()],
+        has_one = authority @ VaultError::Unauthorized,
+        seeds = [b"vault", authority.key().as_ref()],
         bump
     )]
     pub vault: Account<'info, Vault>,
 
     /// The signer must be the agent authority or the vault authority.
     pub agent: Signer<'info>,
+
+    /// The vault authority — used as a canonical PDA seed (ADR-093).
+    /// Not required to be a signer; the `agent` field carries the signature.
+    /// CHECK: Verified via `has_one = authority` on the vault account.
+    pub authority: UncheckedAccount<'info>,
+
+    /// ADR-095: The agent's Registry profile. Read-only cross-program account.
+    /// Suspension check is done in the instruction handler.
+    ///
+    /// CHECK: PDA derivation is validated by the seeds constraint using
+    /// `authority.key()` and `vault.profile_nonce`. The suspension check
+    /// is done explicitly in the instruction handler using `AgentStatus`.
+    #[account(
+        seeds = [
+            authority.key().as_ref(),
+            b"agent-profile",
+            &vault.profile_nonce.to_le_bytes(),
+        ],
+        seeds::program = agent_registry::ID,
+        bump
+    )]
+    pub agent_profile: Account<'info, AgentProfile>,
 
     /// The vault's token account (source of SPL tokens). Must be owned by the vault PDA.
     #[account(
@@ -186,4 +256,18 @@ pub struct ResumeVault<'info> {
     pub vault: Account<'info, Vault>,
 
     pub authority: Signer<'info>,
+}
+
+/// Helper: check that the agent is not suspended. Called at the top of
+/// `execute_transfer` and `execute_token_transfer`.
+///
+/// ADR-095: Suspension check is done in the handler (not as an Anchor
+/// `constraint`) because `AgentStatus` is a non-primitive enum that requires
+/// a pattern match, not a simple boolean expression.
+pub fn require_not_suspended(agent_profile: &AgentProfile) -> Result<()> {
+    require!(
+        agent_profile.status != AgentStatus::Suspended,
+        VaultError::AgentSuspended
+    );
+    Ok(())
 }

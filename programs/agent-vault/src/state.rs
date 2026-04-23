@@ -64,6 +64,13 @@ pub struct Vault {
 
     /// PDA bump seed for vault signing in CPIs.
     pub bump: u8,
+
+    /// ADR-095 / ADR-097: The registration nonce of the agent's current
+    /// `AgentProfile` PDA at the time this vault was initialized. Used by
+    /// `execute_transfer` and `execute_token_transfer` to re-derive the
+    /// profile PDA address for the suspension check. Must match the nonce
+    /// stamped in `AgentProfile.registration_nonce`.
+    pub profile_nonce: u64,
 }
 
 // ADR-039: AuditEntry struct removed — auditing is done via emit! events,
