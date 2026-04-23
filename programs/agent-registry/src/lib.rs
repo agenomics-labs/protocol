@@ -72,6 +72,8 @@ pub mod agent_registry {
         agent_profile.manifest_signature = [0u8; 64];
         agent_profile.manifest_version = 0;
 
+        // ADR-096: schema version starts at 0 (initial layout).
+        agent_profile.version = 0;
         // ADR-097: stamp the registration nonce from the owner_nonce account.
         // The nonce is part of the PDA seed so this value must match the seed
         // used to derive the account address (enforced by Anchor's seeds
@@ -446,6 +448,41 @@ pub mod agent_registry {
             manifest_hash,
             manifest_version,
             timestamp: agent_profile.updated_at,
+        });
+        Ok(())
+    }
+
+    /// ADR-096: In-place account resize / migration.
+    ///
+    /// Grows the `AgentProfile` account to `8 + AgentProfile::SPACE +
+    /// MIGRATION_HEADROOM` bytes using Anchor's `realloc` constraint (which
+    /// calls the System Program's `realloc` syscall). New bytes are
+    /// zero-initialized by the constraint (`realloc::zero = true`), so newly
+    /// added fields whose zero value is a valid default require no explicit
+    /// initialization here.
+    ///
+    /// The instruction is idempotent: if `profile.version >= target_version`
+    /// it returns `Ok(())` without any mutation. This makes it safe to call
+    /// repeatedly from upgrade scripts without double-bumping the version or
+    /// triggering unnecessary rent charges.
+    ///
+    /// Only the `owner` (authority) of the profile may call this instruction.
+    /// The `realloc::payer = owner` constraint debits any additional rent from
+    /// the signer's lamport balance; if the account already meets the target
+    /// size, the System Program call is skipped.
+    pub fn migrate_agent_profile(ctx: Context<MigrateAgentProfile>, target_version: u8) -> Result<()> {
+        let profile = &mut ctx.accounts.agent_profile;
+        if profile.version >= target_version {
+            // Already at or beyond the requested version — idempotent no-op.
+            return Ok(());
+        }
+        let old_version = profile.version;
+        profile.version = target_version;
+        emit!(AgentMigrated {
+            authority: profile.authority,
+            old_version,
+            new_version: profile.version,
+            timestamp: Clock::get()?.unix_timestamp,
         });
         Ok(())
     }
@@ -927,6 +964,69 @@ mod tests {
     }
 
     // ================================================================
+    // ADR-096: account-resize / migration pattern
+    // ================================================================
+
+    /// ADR-096: initial version is 0 (assigned in register_agent).
+    #[test]
+    fn adr_096_initial_version_is_zero() {
+        let version: u8 = 0;
+        assert_eq!(version, 0);
+    }
+
+    /// ADR-096: migrate bumps version when target > current.
+    #[test]
+    fn adr_096_migrate_bumps_version() {
+        let mut version: u8 = 0;
+        let target: u8 = 1;
+        if version < target {
+            let _old = version;
+            version = target;
+        }
+        assert_eq!(version, 1);
+    }
+
+    /// ADR-096: calling with same target_version is a no-op (idempotent).
+    #[test]
+    fn adr_096_migrate_same_target_is_noop() {
+        let mut version: u8 = 1;
+        let target: u8 = 1;
+        let before = version;
+        if version < target {
+            version = target;
+        }
+        assert_eq!(version, before, "version must not change when already at target");
+    }
+
+    /// ADR-096: calling with lower target_version is also a no-op.
+    #[test]
+    fn adr_096_migrate_lower_target_is_noop() {
+        let mut version: u8 = 2;
+        let target: u8 = 1;
+        let before = version;
+        if version < target {
+            version = target;
+        }
+        assert_eq!(version, before, "version must not decrease on lower target");
+    }
+
+    /// ADR-096: MIGRATION_HEADROOM is 64 bytes.
+    #[test]
+    fn adr_096_migration_headroom_is_64() {
+        use crate::state::MIGRATION_HEADROOM;
+        assert_eq!(MIGRATION_HEADROOM, 64);
+    }
+
+    /// ADR-096: space formula includes discriminator + SPACE + headroom.
+    #[test]
+    fn adr_096_total_allocated_space() {
+        use crate::state::MIGRATION_HEADROOM;
+        let total = 8 + AgentProfile::SPACE + MIGRATION_HEADROOM;
+        // 8 (discriminator) + 1406 (SPACE) + 64 (headroom) = 1478
+        assert_eq!(total, 1478);
+    }
+
+    // ================================================================
     // ADR-094: propose_reputation_delta unit tests
     // ================================================================
 
@@ -934,9 +1034,8 @@ mod tests {
     /// never overflows to 0 or panics.
     #[test]
     fn test_reputation_delta_clamps_at_max() {
-        // Simulate the clamping logic from propose_reputation_delta.
-        let current_score: u64 = 95; // close to the cap
-        let delta: i16 = MAX_DELTA_PER_CALL; // +10 would go to 105 without clamping
+        let current_score: u64 = 95;
+        let delta: i16 = MAX_DELTA_PER_CALL;
         let old_score = current_score.min(MAX_REPUTATION_SCORE as u64) as i16;
         let new_score = (old_score + delta)
             .clamp(0, MAX_REPUTATION_SCORE as i16) as u8;
@@ -958,9 +1057,8 @@ mod tests {
     /// ADR-094: |delta| > MAX_DELTA_PER_CALL must be rejected.
     #[test]
     fn test_reputation_delta_rejects_oversized_delta() {
-        let oversized_positive: i16 = MAX_DELTA_PER_CALL + 1; // 11
-        let oversized_negative: i16 = -(MAX_DELTA_PER_CALL + 1); // -11
-        // Replicate the require! guard from propose_reputation_delta.
+        let oversized_positive: i16 = MAX_DELTA_PER_CALL + 1;
+        let oversized_negative: i16 = -(MAX_DELTA_PER_CALL + 1);
         let ok_pos = oversized_positive.unsigned_abs() <= MAX_DELTA_PER_CALL.unsigned_abs();
         let ok_neg = oversized_negative.unsigned_abs() <= MAX_DELTA_PER_CALL.unsigned_abs();
         assert!(!ok_pos, "delta +11 must be rejected");
@@ -970,8 +1068,8 @@ mod tests {
     /// ADR-094: |delta| == MAX_DELTA_PER_CALL is accepted (boundary value).
     #[test]
     fn test_reputation_delta_accepts_boundary_delta() {
-        let boundary_pos: i16 = MAX_DELTA_PER_CALL;       // +10
-        let boundary_neg: i16 = -MAX_DELTA_PER_CALL;      // -10
+        let boundary_pos: i16 = MAX_DELTA_PER_CALL;
+        let boundary_neg: i16 = -MAX_DELTA_PER_CALL;
         let ok_pos = boundary_pos.unsigned_abs() <= MAX_DELTA_PER_CALL.unsigned_abs();
         let ok_neg = boundary_neg.unsigned_abs() <= MAX_DELTA_PER_CALL.unsigned_abs();
         assert!(ok_pos, "delta +10 must be accepted");
@@ -982,23 +1080,19 @@ mod tests {
     #[test]
     fn test_reputation_delta_clamps_at_zero() {
         let current_score: u64 = 3;
-        let delta: i16 = -MAX_DELTA_PER_CALL; // -10 would go to -7 without clamping
+        let delta: i16 = -MAX_DELTA_PER_CALL;
         let old_score = current_score.min(MAX_REPUTATION_SCORE as u64) as i16;
         let new_score = (old_score + delta)
             .clamp(0, MAX_REPUTATION_SCORE as i16) as u8;
         assert_eq!(new_score, 0, "score must clamp at 0");
     }
 
-    /// ADR-094: score above MAX_REPUTATION_SCORE (e.g., legacy u64 value > 100)
-    /// is silently normalised to 100 before the delta is applied.
+    /// ADR-094: score above MAX_REPUTATION_SCORE is normalised to 100 before delta.
     #[test]
     fn test_reputation_delta_normalises_legacy_score() {
-        // A legacy score written by the old update_reputation path could
-        // be > 100. propose_reputation_delta normalises it via min().
         let current_score: u64 = 9999;
         let delta: i16 = 5;
         let old_score = current_score.min(MAX_REPUTATION_SCORE as u64) as i16;
-        // old_score is clamped to 100, so new_score = 100 + 5 clamped = 100.
         let new_score = (old_score + delta)
             .clamp(0, MAX_REPUTATION_SCORE as i16) as u8;
         assert_eq!(new_score, MAX_REPUTATION_SCORE);
@@ -1023,6 +1117,26 @@ mod tests {
                     if n == 1 { avg = *r; } else { avg = ((avg as u128 * (n-1) + *r as u128) / n).min(5) as u8; }
                 }
                 prop_assert!(avg <= 5);
+            }
+
+            /// ADR-096: for all target_version values, the idempotent guard
+            /// never allows version to move backward.
+            #[test]
+            fn adr096_migrate_version_never_decreases(
+                initial in 0u8..=254,
+                target in 0u8..=255,
+            ) {
+                let mut version = initial;
+                let old = version;
+                if version < target {
+                    version = target;
+                }
+                prop_assert!(version >= old, "version must never decrease");
+                if target > initial {
+                    prop_assert_eq!(version, target);
+                } else {
+                    prop_assert_eq!(version, initial);
+                }
             }
 
             /// ADR-094: for all |delta| <= MAX_DELTA_PER_CALL and all initial

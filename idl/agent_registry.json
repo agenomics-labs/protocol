@@ -215,6 +215,80 @@
       "args": []
     },
     {
+      "name": "migrate_agent_profile",
+      "docs": [
+        "ADR-096: In-place account resize / migration.",
+        "",
+        "Grows the `AgentProfile` account to `8 + AgentProfile::SPACE +",
+        "MIGRATION_HEADROOM` bytes using Anchor's `realloc` constraint. New bytes",
+        "are zero-initialized by the constraint (`realloc::zero = true`), so newly",
+        "added fields whose zero value is a valid default require no explicit",
+        "initialization here.",
+        "",
+        "The instruction is idempotent: if `profile.version >= target_version`",
+        "it returns `Ok(())` without any mutation.",
+        "",
+        "Only the `owner` (authority) of the profile may call this instruction."
+      ],
+      "discriminator": [
+        180,
+        28,
+        7,
+        129,
+        35,
+        192,
+        140,
+        105
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "agent_profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "target_version",
+          "type": "u8"
+        }
+      ]
+    },
+    {
       "name": "register_agent",
       "discriminator": [
         135,

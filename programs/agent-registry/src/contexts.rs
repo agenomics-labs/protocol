@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use crate::state::{AgentProfile, OwnerNonce, AGENT_VAULT_PROGRAM_ID, SETTLEMENT_PROGRAM_ID};
+use crate::state::{AgentProfile, OwnerNonce, AGENT_VAULT_PROGRAM_ID, MIGRATION_HEADROOM, SETTLEMENT_PROGRAM_ID};
 use crate::errors::AgentRegistryError;
 
 /// ADR-097: `RegisterAgent` now includes the `owner_nonce` account.
@@ -30,11 +30,14 @@ pub struct RegisterAgent<'info> {
     #[account(
         init,
         payer = authority,
-        // ADR-040 / ADR-060 / ADR-097: explicit serialized size.
-        // Baseline 1243 + 162 bytes (ADR-060 manifest fields) +
-        // 8 bytes (ADR-097 registration_nonce u64) = 1413 bytes.
+        // ADR-040 / ADR-060 / ADR-096 / ADR-097: explicit serialized size.
+        // Baseline 1243 + 162 bytes (ADR-060 manifest fields) + 1 byte
+        // (ADR-096 version field) + 8 bytes (ADR-097 registration_nonce u64)
+        // = 1414 bytes (AgentProfile::SPACE). MIGRATION_HEADROOM (64) is
+        // reserved for the next 2-3 field additions; accounts begin with the
+        // headroom so future `migrate_agent_profile` calls can avoid a realloc.
         // Keep this in lockstep with `AgentProfile::SPACE`.
-        space = AgentProfile::SPACE,
+        space = 8 + AgentProfile::SPACE + MIGRATION_HEADROOM,
         seeds = [authority.key().as_ref(), b"agent-profile", &owner_nonce.nonce.to_le_bytes()],
         bump
     )]
@@ -355,4 +358,43 @@ pub struct UpdateManifest<'info> {
     /// sig-verify instruction in the current transaction.
     #[account(address = anchor_lang::solana_program::sysvar::instructions::ID)]
     pub instructions_sysvar: UncheckedAccount<'info>,
+}
+
+/// ADR-096: Context for `migrate_agent_profile`.
+///
+/// Resizes an existing `AgentProfile` to the current canonical size
+/// (`8 + AgentProfile::SPACE + MIGRATION_HEADROOM`) using Anchor's
+/// `realloc` constraint. New bytes are zero-initialized via
+/// `realloc::zero = true`, which ensures any new fields added in a
+/// future upgrade have a valid default state without explicit writes.
+///
+/// Only the account's `owner` (authority) may trigger migration; this
+/// prevents an adversary from resizing arbitrary accounts and draining
+/// the `owner` payer. The instruction is idempotent — calling it when
+/// the account is already the right size or when `version` already
+/// meets `target_version` is a safe no-op.
+#[derive(Accounts)]
+pub struct MigrateAgentProfile<'info> {
+    /// The authority that owns this `AgentProfile`. Named `owner` here to
+    /// keep the signer semantics distinct from the `authority` field name
+    /// used in `UpdateReputation` (where authority is an UncheckedAccount).
+    #[account(mut)]
+    pub owner: Signer<'info>,
+
+    #[account(
+        mut,
+        // Explicit constraint: agent_profile.authority must equal owner.key().
+        // Using `constraint` (rather than `has_one = authority`) avoids
+        // ambiguity when the signer field is named `owner` but the stored
+        // field is `authority`.
+        constraint = agent_profile.authority == owner.key() @ AgentRegistryError::UnauthorizedCaller,
+        seeds = [owner.key().as_ref(), b"agent-profile"],
+        bump = agent_profile.bump,
+        realloc = 8 + AgentProfile::SPACE + MIGRATION_HEADROOM,
+        realloc::payer = owner,
+        realloc::zero = true,
+    )]
+    pub agent_profile: Account<'info, AgentProfile>,
+
+    pub system_program: Program<'info, System>,
 }
