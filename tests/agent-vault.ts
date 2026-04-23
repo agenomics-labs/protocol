@@ -286,8 +286,8 @@ describe("Agent Vault Tests", () => {
         .executeTransfer(new BN(transferAmount))
         .accounts({
           vault: vaultPda,
-          vaultAccount: vaultPda,
           agent: agentIdentity.publicKey,
+          authority: authority.publicKey,
           recipient: recipient.publicKey,
           systemProgram: anchor.web3.SystemProgram.programId,
         })
@@ -309,8 +309,8 @@ describe("Agent Vault Tests", () => {
           .executeTransfer(new BN(transferAmount))
           .accounts({
             vault: vaultPda,
-            vaultAccount: vaultPda,
             agent: agentIdentity.publicKey,
+            authority: authority.publicKey,
             recipient: newRecipient,
             systemProgram: anchor.web3.SystemProgram.programId,
           })
@@ -387,8 +387,8 @@ describe("Agent Vault Tests", () => {
           .executeTransfer(new BN(excessiveAmount))
           .accounts({
             vault: vaultPda,
-            vaultAccount: vaultPda,
             agent: agentIdentity.publicKey,
+            authority: authority.publicKey,
             recipient: recipient.publicKey,
             systemProgram: anchor.web3.SystemProgram.programId,
           })
@@ -412,8 +412,8 @@ describe("Agent Vault Tests", () => {
         .executeTransfer(new BN(perTxLimit))
         .accounts({
           vault: vaultPda,
-          vaultAccount: vaultPda,
           agent: agentIdentity.publicKey,
+          authority: authority.publicKey,
           recipient: newRecipient,
           systemProgram: anchor.web3.SystemProgram.programId,
         })
@@ -480,8 +480,8 @@ describe("Agent Vault Tests", () => {
         .executeTransfer(new BN(transferAmount))
         .accounts({
           vault: dailyLimitVaultPda,
-          vaultAccount: dailyLimitVaultPda,
           agent: dailyLimitAgentId.publicKey,
+          authority: dailyLimitAuthority.publicKey,
           recipient: recipient1,
           systemProgram: anchor.web3.SystemProgram.programId,
         })
@@ -495,8 +495,8 @@ describe("Agent Vault Tests", () => {
           .executeTransfer(new BN(transferAmount))
           .accounts({
             vault: dailyLimitVaultPda,
-            vaultAccount: dailyLimitVaultPda,
             agent: dailyLimitAgentId.publicKey,
+            authority: dailyLimitAuthority.publicKey,
             recipient: recipient2,
             systemProgram: anchor.web3.SystemProgram.programId,
           })
@@ -570,8 +570,8 @@ describe("Agent Vault Tests", () => {
           .executeTransfer(new BN(0.1 * LAMPORTS_PER_SOL))
           .accounts({
             vault: pauseVaultPda,
-            vaultAccount: pauseVaultPda,
             agent: pauseAgentId.publicKey,
+            authority: pauseAuthority.publicKey,
             recipient: recipient.publicKey,
             systemProgram: anchor.web3.SystemProgram.programId,
           })
@@ -602,8 +602,8 @@ describe("Agent Vault Tests", () => {
         .executeTransfer(new BN(0.1 * LAMPORTS_PER_SOL))
         .accounts({
           vault: pauseVaultPda,
-          vaultAccount: pauseVaultPda,
           agent: pauseAgentId.publicKey,
+          authority: pauseAuthority.publicKey,
           recipient: newRecipient,
           systemProgram: anchor.web3.SystemProgram.programId,
         })
@@ -670,8 +670,8 @@ describe("Agent Vault Tests", () => {
           .executeTransfer(new BN(transferAmount))
           .accounts({
             vault: rateLimitVaultPda,
-            vaultAccount: rateLimitVaultPda,
             agent: rateLimitAgentId.publicKey,
+            authority: rateLimitAuthority.publicKey,
             recipient: newRecipient,
             systemProgram: anchor.web3.SystemProgram.programId,
           })
@@ -693,8 +693,8 @@ describe("Agent Vault Tests", () => {
           .executeTransfer(new BN(transferAmount))
           .accounts({
             vault: rateLimitVaultPda,
-            vaultAccount: rateLimitVaultPda,
             agent: rateLimitAgentId.publicKey,
+            authority: rateLimitAuthority.publicKey,
             recipient: newRecipient,
             systemProgram: anchor.web3.SystemProgram.programId,
           })
@@ -1099,6 +1099,7 @@ describe("Agent Vault Tests", () => {
           .accounts({
             vault: emptyVaultPda,
             agent: emptyAgent.publicKey,
+            authority: emptyAuth.publicKey,
             vaultTokenAccount: emptyVaultAta.address,
             recipientTokenAccount: badRecipientAta.address,
             tokenProgram: TOKEN_PROGRAM_ID,
@@ -1127,6 +1128,7 @@ describe("Agent Vault Tests", () => {
         .accounts({
           vault: sec5VaultPda,
           agent: sec5AgentId.publicKey,
+          authority: sec5Authority.publicKey,
           vaultTokenAccount: vaultAtaConfigured,
           recipientTokenAccount: recipientAtaConfigured,
           tokenProgram: TOKEN_PROGRAM_ID,
@@ -1255,6 +1257,7 @@ describe("Agent Vault Tests", () => {
           .accounts({
             vault: sec6VaultPda,
             agent: sec6AgentId.publicKey,
+            authority: sec6Authority.publicKey,
             vaultTokenAccount: sec6VaultAta,
             recipientTokenAccount: sec6VaultAta, // <-- self-transfer
             tokenProgram: TOKEN_PROGRAM_ID,
@@ -1283,6 +1286,7 @@ describe("Agent Vault Tests", () => {
         .accounts({
           vault: sec6VaultPda,
           agent: sec6AgentId.publicKey,
+          authority: sec6Authority.publicKey,
           vaultTokenAccount: sec6VaultAta,
           recipientTokenAccount: sec6ExternalRecipientAta,
           tokenProgram: TOKEN_PROGRAM_ID,
@@ -1381,8 +1385,8 @@ describe("Agent Vault Tests", () => {
         .executeTransfer(new BN(0.1 * LAMPORTS_PER_SOL))
         .accounts({
           vault: rotVaultPda,
-          vaultAccount: rotVaultPda,
           agent: rotOldAgentId.publicKey,
+          authority: rotAuthority.publicKey,
           recipient: r1,
           systemProgram: anchor.web3.SystemProgram.programId,
         })
@@ -1410,8 +1414,8 @@ describe("Agent Vault Tests", () => {
         .executeTransfer(new BN(0.1 * LAMPORTS_PER_SOL))
         .accounts({
           vault: rotVaultPda,
-          vaultAccount: rotVaultPda,
           agent: rotNewAgentId.publicKey,
+          authority: rotAuthority.publicKey,
           recipient: r2,
           systemProgram: anchor.web3.SystemProgram.programId,
         })
@@ -1425,8 +1429,8 @@ describe("Agent Vault Tests", () => {
           .executeTransfer(new BN(0.1 * LAMPORTS_PER_SOL))
           .accounts({
             vault: rotVaultPda,
-            vaultAccount: rotVaultPda,
             agent: rotOldAgentId.publicKey,
+            authority: rotAuthority.publicKey,
             recipient: r3,
             systemProgram: anchor.web3.SystemProgram.programId,
           })

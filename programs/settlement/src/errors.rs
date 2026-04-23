@@ -93,4 +93,10 @@ pub enum SettlementError {
     /// drain the escrow without the neutral-resolver slashing signal.
     #[msg("Cannot resolve_dispute when dispute_resolver is None; use resolve_dispute_timeout (SEC-7)")]
     NoResolverRequiresTimeout,
+
+    /// ADR-102: A slash was attempted while the milestone is still within
+    /// its grace window. Caller must wait until
+    /// `Clock::get()?.slot >= milestone.grace_ends_at` before slashing.
+    #[msg("Milestone is within grace period; slash not permitted yet (ADR-102)")]
+    MilestoneInGracePeriod,
 }

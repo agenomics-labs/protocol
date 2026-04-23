@@ -12,6 +12,14 @@ use contexts::*;
 
 declare_id!("8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh");
 
+// ADR-094: Reputation policy constants owned by Registry (not Settlement).
+/// Maximum valid reputation score. Scores are clamped to this value on update.
+pub const MAX_REPUTATION_SCORE: u8 = 100;
+/// Maximum absolute delta allowed per `propose_reputation_delta` call.
+/// Caps single-call manipulation and makes large shifts observable across
+/// multiple transactions.
+pub const MAX_DELTA_PER_CALL: i16 = 10;
+
 #[program]
 pub mod agent_registry {
     use super::*;
@@ -171,6 +179,58 @@ pub mod agent_registry {
 
         agent_profile.updated_at = Clock::get()?.unix_timestamp;
         emit!(ReputationUpdated { authority: agent_profile.authority, new_reputation_score: agent_profile.reputation_score, reputation_delta, task_completed, timestamp: agent_profile.updated_at });
+        Ok(())
+    }
+
+    /// ADR-094: Invert the reputation trust hierarchy.
+    ///
+    /// Previously Settlement called `update_reputation` as a privileged setter
+    /// and imposed no score upper bound (scores grow to u64::MAX). This
+    /// instruction is the new entry point: Registry owns and enforces the
+    /// policy (`[0, MAX_REPUTATION_SCORE]`, `|delta| <= MAX_DELTA_PER_CALL`).
+    ///
+    /// Authorization: caller must present the Settlement program's
+    /// `settlement_authority` PDA as a signer (SEC-1 pattern from ADR-068).
+    ///
+    /// `reason` is a caller-supplied reason code:
+    ///   0 = task_completed (positive delta)
+    ///   1 = dispute_loss   (negative delta)
+    ///   2 = expiry_undelivered (negative delta)
+    ///   3-255 = reserved for future governance/slashing sources
+    pub fn propose_reputation_delta(
+        ctx: Context<ProposeReputationDelta>,
+        delta: i16,
+        reason: u8,
+    ) -> Result<()> {
+        // Validation: |delta| must not exceed the per-call cap.
+        // `i16::unsigned_abs()` returns `u16`; MAX_DELTA_PER_CALL is 10, well
+        // within u16 range, so the cast is lossless.
+        require!(
+            delta.unsigned_abs() <= MAX_DELTA_PER_CALL.unsigned_abs(),
+            AgentRegistryError::ReputationDeltaExceedsMax
+        );
+
+        let agent_profile = &mut ctx.accounts.agent_profile;
+
+        // Clamp the resulting score to [0, MAX_REPUTATION_SCORE].
+        // This cannot overflow: i16 + i16 fits in i32; clamp is lossless.
+        let old_score = agent_profile.reputation_score.min(MAX_REPUTATION_SCORE as u64) as i16;
+        let new_score = (old_score + delta)
+            .clamp(0, MAX_REPUTATION_SCORE as i16) as u8;
+
+        let old_score_u8 = old_score as u8;
+        agent_profile.reputation_score = new_score as u64;
+        agent_profile.updated_at = Clock::get()?.unix_timestamp;
+
+        emit!(ReputationDeltaProposed {
+            authority: agent_profile.authority,
+            delta,
+            reason,
+            old_score: old_score_u8,
+            new_score,
+            timestamp: agent_profile.updated_at,
+        });
+
         Ok(())
     }
 
@@ -758,8 +818,8 @@ mod tests {
     // ================================================================
 
     /// ADR-040 / ADR-096 invariant: explicit space calc matches the
-    /// serialized-size floor.
-    /// Baseline 1243 + 162 (ADR-060) + 1 (ADR-096 version) = 1406.
+    /// serialized-size floor. Baseline 1243 + 162 (ADR-060) + 1 (ADR-096
+    /// version u8) = 1406.
     #[test]
     fn adr_060_account_space_matches_explicit_total() {
         assert_eq!(AgentProfile::SPACE, 1406);
@@ -951,6 +1011,78 @@ mod tests {
         assert_eq!(total, 1478);
     }
 
+    // ================================================================
+    // ADR-094: propose_reputation_delta unit tests
+    // ================================================================
+
+    /// ADR-094: score at MAX_REPUTATION_SCORE + positive delta clamps at 100,
+    /// never overflows to 0 or panics.
+    #[test]
+    fn test_reputation_delta_clamps_at_max() {
+        let current_score: u64 = 95;
+        let delta: i16 = MAX_DELTA_PER_CALL;
+        let old_score = current_score.min(MAX_REPUTATION_SCORE as u64) as i16;
+        let new_score = (old_score + delta)
+            .clamp(0, MAX_REPUTATION_SCORE as i16) as u8;
+        assert_eq!(new_score, MAX_REPUTATION_SCORE, "score must clamp at 100");
+        assert!(new_score <= MAX_REPUTATION_SCORE);
+    }
+
+    /// ADR-094: score already at 100 + any positive delta stays at 100.
+    #[test]
+    fn test_reputation_delta_clamps_at_max_already_at_cap() {
+        let current_score: u64 = 100;
+        let delta: i16 = 5;
+        let old_score = current_score.min(MAX_REPUTATION_SCORE as u64) as i16;
+        let new_score = (old_score + delta)
+            .clamp(0, MAX_REPUTATION_SCORE as i16) as u8;
+        assert_eq!(new_score, 100);
+    }
+
+    /// ADR-094: |delta| > MAX_DELTA_PER_CALL must be rejected.
+    #[test]
+    fn test_reputation_delta_rejects_oversized_delta() {
+        let oversized_positive: i16 = MAX_DELTA_PER_CALL + 1;
+        let oversized_negative: i16 = -(MAX_DELTA_PER_CALL + 1);
+        let ok_pos = oversized_positive.unsigned_abs() <= MAX_DELTA_PER_CALL.unsigned_abs();
+        let ok_neg = oversized_negative.unsigned_abs() <= MAX_DELTA_PER_CALL.unsigned_abs();
+        assert!(!ok_pos, "delta +11 must be rejected");
+        assert!(!ok_neg, "delta -11 must be rejected");
+    }
+
+    /// ADR-094: |delta| == MAX_DELTA_PER_CALL is accepted (boundary value).
+    #[test]
+    fn test_reputation_delta_accepts_boundary_delta() {
+        let boundary_pos: i16 = MAX_DELTA_PER_CALL;
+        let boundary_neg: i16 = -MAX_DELTA_PER_CALL;
+        let ok_pos = boundary_pos.unsigned_abs() <= MAX_DELTA_PER_CALL.unsigned_abs();
+        let ok_neg = boundary_neg.unsigned_abs() <= MAX_DELTA_PER_CALL.unsigned_abs();
+        assert!(ok_pos, "delta +10 must be accepted");
+        assert!(ok_neg, "delta -10 must be accepted");
+    }
+
+    /// ADR-094: score at 0 minus any delta clamps to 0, never underflows.
+    #[test]
+    fn test_reputation_delta_clamps_at_zero() {
+        let current_score: u64 = 3;
+        let delta: i16 = -MAX_DELTA_PER_CALL;
+        let old_score = current_score.min(MAX_REPUTATION_SCORE as u64) as i16;
+        let new_score = (old_score + delta)
+            .clamp(0, MAX_REPUTATION_SCORE as i16) as u8;
+        assert_eq!(new_score, 0, "score must clamp at 0");
+    }
+
+    /// ADR-094: score above MAX_REPUTATION_SCORE is normalised to 100 before delta.
+    #[test]
+    fn test_reputation_delta_normalises_legacy_score() {
+        let current_score: u64 = 9999;
+        let delta: i16 = 5;
+        let old_score = current_score.min(MAX_REPUTATION_SCORE as u64) as i16;
+        let new_score = (old_score + delta)
+            .clamp(0, MAX_REPUTATION_SCORE as i16) as u8;
+        assert_eq!(new_score, MAX_REPUTATION_SCORE);
+    }
+
     mod fuzz {
         use super::*;
         use proptest::prelude::*;
@@ -988,8 +1120,21 @@ mod tests {
                 if target > initial {
                     prop_assert_eq!(version, target);
                 } else {
-                    prop_assert_eq!(version, initial); // no-op branch
+                    prop_assert_eq!(version, initial);
                 }
+            }
+
+            /// ADR-094: for all |delta| <= MAX_DELTA_PER_CALL and all initial
+            /// scores in [0, 100], the result always stays in [0, 100].
+            #[test]
+            fn adr094_propose_delta_always_in_range(
+                initial in 0u8..=100u8,
+                delta in -10i16..=10i16,
+            ) {
+                let old_score = initial as i16;
+                let new_score = (old_score + delta)
+                    .clamp(0, MAX_REPUTATION_SCORE as i16) as u8;
+                prop_assert!(new_score <= MAX_REPUTATION_SCORE);
             }
         }
     }

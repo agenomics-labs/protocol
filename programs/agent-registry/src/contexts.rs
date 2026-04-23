@@ -201,6 +201,42 @@ pub struct DeregisterAgent<'info> {
     pub agent_profile: Account<'info, AgentProfile>,
 }
 
+/// ADR-094: Context for `propose_reputation_delta` — the new trust-hierarchy
+/// entry point for reputation updates. Settlement (and any future authorized
+/// caller) proposes a signed delta; Registry validates and applies it.
+///
+/// Authorization: `settlement_authority` is the CPI signer PDA derived by the
+/// Settlement program. The `seeds::program = SETTLEMENT_PROGRAM_ID` constraint
+/// proves the PDA was derived by Settlement, not forged by a third party.
+/// Combined with `signer`, this cryptographically proves the call originated
+/// from the Settlement program via `invoke_signed`.
+#[derive(Accounts)]
+pub struct ProposeReputationDelta<'info> {
+    /// CHECK: The agent whose reputation is being updated. Used as the external
+    /// seed anchor for `agent_profile` and constrained equal to
+    /// `agent_profile.authority` via `has_one = authority`.
+    pub authority: UncheckedAccount<'info>,
+
+    #[account(
+        mut,
+        has_one = authority @ AgentRegistryError::UnauthorizedCaller,
+        seeds = [authority.key().as_ref(), b"agent-profile"],
+        bump = agent_profile.bump
+    )]
+    pub agent_profile: Account<'info, AgentProfile>,
+
+    /// CHECK: Settlement authority PDA — must sign via invoke_signed.
+    /// seeds::program ensures this PDA was derived by the Settlement program,
+    /// proving the call originated there (SEC-1 pattern from ADR-068).
+    #[account(
+        signer,
+        seeds = [b"settlement_authority"],
+        bump,
+        seeds::program = SETTLEMENT_PROGRAM_ID
+    )]
+    pub settlement_authority: UncheckedAccount<'info>,
+}
+
 /// ADR-060: Publish or rotate the off-chain capability manifest pointer.
 ///
 /// The `authority` signer constraint guarantees that only the registered

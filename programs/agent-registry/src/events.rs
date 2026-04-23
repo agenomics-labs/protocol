@@ -93,3 +93,17 @@ pub struct AgentMigrated {
     pub new_version: u8,
     pub timestamp: i64,
 }
+
+/// ADR-094: emitted when `propose_reputation_delta` successfully applies a
+/// validated delta. Subscribers (indexers, governance dashboards) can track
+/// every reputation change through this single event, regardless of the
+/// originating source (Settlement, future slashing circuits, etc.).
+#[event]
+pub struct ReputationDeltaProposed {
+    pub authority: Pubkey,
+    pub delta: i16,
+    pub reason: u8,
+    pub old_score: u8,
+    pub new_score: u8,
+    pub timestamp: i64,
+}
