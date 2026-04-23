@@ -1,7 +1,7 @@
 # ADR-053: Compile-Time Protocol Parameters — v2 Governance Roadmap
 
 ## Status
-Accepted
+Accepted (v1 compile-time decision still in force); v2 ProtocolConfig account is live per ADR-075 (Accepted 2026-04-23). On full ADR-075 enforcement maturity, this ADR will be marked Superseded.
 
 ## Date
 2026-04-17
