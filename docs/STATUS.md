@@ -4,7 +4,7 @@ Point-in-time map of where the codebase, devnet deployment, and governance
 stand. Update when shipping meaningful PRs; see the **Resume checklist**
 at the bottom for restarting work after time away.
 
-_Last updated: 2026-04-22 (§4 rebootstrapped after signer key loss)_
+_Last updated: 2026-04-22 (§4 multisig re-bootstrapped; §7.A steps 1-5 complete)_
 
 ## 1. Codebase / main
 
@@ -87,23 +87,25 @@ Holding until the SAS bootstrap ceremony (§6) proves the resolver's full real-c
 Recent ADR trail:
 - ADR-058/059/060 — MCP architecture track (Action shape, tx pipeline, manifest)
 - ADR-061 — SAS integration model (Accepted, option B: manifest-references-SAS)
-- ADR-063 — SAS credential authority governance (Proposed; bootstrap ceremony hasn't run)
+- ADR-063 — SAS credential authority governance (Proposed; bootstrap partially complete — credential + schema live, attestation pending)
 - ADR-064 — `@agenomics/sas-resolver` TS package (implemented in PR #12)
 - ADR-065 — Caching strategy (implemented in PR #15; ADR text still Proposed)
 
 ## 7. Outstanding work (priority order)
 
 ### A. SAS bootstrap ceremony (blocks v0.1.0 publish confidence)
-Actually execute ADR-063. Requires:
-1. Confirm SAS program `22zoJMtdu4tQc2PzL74ZUT7FrwgB1Udec8DdW4yw4BdG` behavior on devnet (deployed, verified)
-2. Decide: use Squads multisig (`6QUUP7...`) as `AEP_PROTOCOL` credential authority from day one, or bootstrap as single-sig + rotate. **Recommendation**: multisig from day one since it's already live.
-3. Hand-build SAS instruction builders (sas-lib pins `@solana/kit@^5` incompatible with our `@solana/kit@^6.8`; resolver already uses manual decoder for reads)
-4. Create `AEP_AGENT_REPUTATION_v1` schema PDA
-5. Create `AEP_PROTOCOL` credential PDA signed by multisig
-6. Issue one test attestation
-7. Update `scripts/smoke-test-devnet.ts` Steps 11-13 to use the real PDAs
-8. Re-run full smoke to prove resolver's on-chain path
-9. Update ADR-063 status to Accepted; document the live PDAs
+Execute ADR-063. Progress:
+1. ✅ SAS program `22zoJMtdu4tQc2PzL74ZUT7FrwgB1Udec8DdW4yw4BdG` confirmed live on devnet.
+2. ✅ Multisig-from-day-one chosen; `AEP_PROTOCOL` authority = Squads vault PDA `Exs7cm5dKZNr5c7rBAcq52EHUs7nxDWiZtHXzTEh3LPo` (vaultIndex=0 of multisig `EHdxwBkcS...`).
+3. ✅ Hand-built SAS ix encoders (`createCredential`, `createSchema`) in `scripts/bootstrap-sas-credential-devnet.ts` — byte layouts traced against sas-lib@1.0.10 Codama codegen.
+4. ✅ `AEP_AGENT_REPUTATION_v1` schema PDA `CTJevNKpYeBAfG6r5CJHb2HuwV4obJeWGeqHQVCKiUVT` live (layout `[1,2,1,8]` = U16/U32/U16/I64).
+5. ✅ `AEP_PROTOCOL` credential PDA `GvDdPwwqV9wfEaRh1LjLYhjDRFkMxCDRdepVeHGMfRhS` live, signed via 2-of-3 multisig.
+6. ⏳ Issue one test attestation (next PR: `bootstrap-sas-attestation-devnet.ts`).
+7. ⏳ Update `scripts/smoke-test-devnet.ts` Steps 11-13 to use the real PDAs (`AEP_SAS_SCHEMA_PDA`, `AEP_SAS_ALLOWED_CREDENTIALS`).
+8. ⏳ Re-run full smoke to prove resolver's on-chain path.
+9. ⏳ Update ADR-063 status to Accepted; document the live PDAs in the ADR itself.
+
+Authoritative SAS bootstrap record: `scripts/.sas-devnet.json`.
 
 ### B. Publish `v0.1.0`
 After (A) succeeds:
