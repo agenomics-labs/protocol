@@ -6,6 +6,23 @@ Proposed
 ## Date
 2026-04-21
 
+> **Devnet bootstrap update (2026-04-22):** the `AEP_PROTOCOL` credential PDA and the `AEP_AGENT_REPUTATION_v1` schema PDA were created on devnet under the Squads v4 2-of-3 multisig per §5 (devnet dry run). Live PDAs are recorded in `scripts/.sas-devnet.json`. This ADR remains **Proposed** — not Accepted — because the items under "Pending items before Accept" below are still open. The devnet dry run does not satisfy §5 mainnet-ceremony pre-conditions.
+
+## Pending items before Accept
+
+Per Deep-Audit 2026-04-22 (Audit 3 gaps #2 and #9), ADR-063 cannot move to Accepted until all of the following are resolved. Each is a separate blocker; none is optional:
+
+1. **Slots 4-5 of the `AEP_PROTOCOL` 3-of-5 multisig are populated.** §1.1 lists role descriptions (community-elected, security researcher) but names no humans. Populating these slots is a governance decision outside the mandate of this ADR's author — it runs through the §2 proposal process once the process itself is live.
+2. **Auditor contact is registered** for the §6 emergency path. §3's "simple-majority + auditor co-sign" emergency threshold requires a designated, pre-registered external signer whose sole role is emergency co-signing. No such signer is currently identified; the emergency "fast path" therefore does not exist in practice.
+3. **`docs/governance/signers.md` is published** (referenced in §7 but not present in-repo). Signer pubkeys for both credentials must be listed, with the community-elected slot and the auditor co-signer disclosing real-world identity per §7.
+4. **Transparency-log publisher is shipped** (Audit 3 gap #9). §7 requires hourly JSON writes to `governance/attestation-log/YYYY-MM/`; no worker exists. A > 24h publication gap is a declared transparency incident — launching §5's mainnet ceremony before the publisher is live means declaring the incident on day 1.
+5. **Emergency runbook is scripted** (Audit 3 gap #8). §6.1's T+2h suspend / T+24h rotate / T+7d audit sequence has no operational script (`scripts/emergency-suspend-credential.ts`), no auditor contact list, no transparency-log publisher for retroactive flagging. The spec exists only on paper.
+6. **End-to-end multisig flow exercised with an independent human signer** (Audit 3 gap #7). The current `bootstrap-sas-credential-devnet.ts` flow loads signer-1 and signer-2 from local disk — same operator controls both approvals. One ceremony must run where signer 2 is a different human on a different machine before Accept.
+
+Items 1-3 are governance-process items (require human-recruitment + real-world coordination, not code). Items 4-6 are tooling/rehearsal items (shippable via follow-up PRs). All must land before this ADR is promoted to Accepted; promotion itself is a documentation-only follow-up PR at that time.
+
+Related: ADR-077 (defers `AEP_VALIDATORS` bootstrap to T+90 post-mainnet) is explicitly dependent on items 1 and 4 being resolved before its own pre-conditions open. ADR-078 (program upgrade-authority transfer) and ADR-079 (operator key hygiene) cross-reference this ADR as a mainnet prerequisite.
+
 ## Context
 
 ADR-061 (Accepted) resolved *how* AEP integrates with `solana-attestation-service` (SAS) — option B, manifest-referenced attestations, with the Registry retaining authoritative reputation state. ADR-061 §3 named two SAS credentials at v1:
