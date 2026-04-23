@@ -32,9 +32,13 @@ import {
   PublicKey,
 } from "../solana.js";
 import { createRpc } from "../solana-v2.js";
-import { formatAgentStatus } from "./formatters.js";
+import {
+  formatAgentStatus,
+  formatPricingModel,
+} from "./formatters.js";
 import type { IdlAccounts } from "@coral-xyz/anchor";
 import type { AgentRegistry } from "../idl/types";
+import { serverLogger } from "../util/logger.js";
 
 // ADR-088: typed AgentProfile shape — `manifest_cid: [u8; 64]` etc. land as
 // `number[]` of fixed length, `reputation_score: u64` as `BN`, etc. The
@@ -42,6 +46,8 @@ import type { AgentRegistry } from "../idl/types";
 // used to carry are gone — the IDL now tells us each field's exact type.
 // Exported so tests can synthesise fixtures against the same shape.
 export type AgentProfileAccount = IdlAccounts<AgentRegistry>["agentProfile"];
+
+const log = serverLogger.child({ handler: "reputation" });
 
 // --------------------------------------------------------------------------
 // ESM dynamic-import shim (see module header note).
@@ -104,11 +110,12 @@ async function getSasHandle(): Promise<SasHandle> {
   if (!schemaPda || !allowedRaw) {
     if (!_sasConfigWarned) {
       _sasConfigWarned = true;
-      console.error(
-        "[get_agent_reputation] AEP_SAS_SCHEMA_PDA and/or " +
-          "AEP_SAS_ALLOWED_CREDENTIALS is unset — running with SAS " +
-          "resolution disabled. Every resolve() call returns " +
-          "{ absent: true, reason: 'sas-not-configured' }.",
+      log.warn(
+        {
+          AEP_SAS_SCHEMA_PDA: schemaPda ? "set" : "unset",
+          AEP_SAS_ALLOWED_CREDENTIALS: allowedRaw ? "set" : "unset",
+        },
+        "SAS not configured — get_agent_reputation will return absent:true for every subject",
       );
     }
     _sasHandle = {

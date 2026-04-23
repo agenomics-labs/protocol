@@ -20,18 +20,19 @@ import {
 } from "../handlers/vault.js";
 import { handleVaultTransferV2 } from "../handlers-v2/vault.js";
 import { deriveVaultPDA, getWalletPublicKey } from "../solana.js";
+import { serverLogger } from "../util/logger.js";
+
+const log = serverLogger.child({ action: "vault_transfer" });
 
 // Emit the v2 warning at most once per process, even if the action fires
-// multiple times. Keeping it simple (module-local flag) — avoid pulling a
-// logger into this file just for one line.
+// multiple times.
 let _v2WarningEmitted = false;
 function warnV2Enabled(): void {
   if (_v2WarningEmitted) return;
   _v2WarningEmitted = true;
-  // eslint-disable-next-line no-console
-  console.warn(
-    "[AEP] AEP_USE_V2_VAULT_TRANSFER=1 — routing vault_transfer through " +
-      "the Kit v2 pipeline (ADR-012 / PR7). Devnet parity test required.",
+  log.warn(
+    { adr: "ADR-012", pr: "PR7", flag: "AEP_USE_V2_VAULT_TRANSFER" },
+    "vault_transfer routing through Kit v2 pipeline — devnet parity test required",
   );
 }
 

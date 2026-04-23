@@ -25,6 +25,11 @@ import {
   verifyPeerUid,
   type TransportPosture,
 } from "./transport/auth-gate.js";
+import {
+  serverLogger as log,
+  newCorrelationId,
+  withRequestContext,
+} from "./util/logger.js";
 
 /**
  * Agenomics MCP Server — all 23 actions dispatched through the ADR-058
@@ -88,10 +93,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const toolName = request.params.name;
   const args = (request.params.arguments ?? {}) as Record<string, unknown>;
 
+  // ADR-090: every dispatch boundary mints a correlation id. The id is
+  // attached to every log line emitted while this dispatch runs and is
+  // available downstream (via context) so indexer rows + x402 JWTs can
+  // pin back to the originating MCP call.
+  const reqId = newCorrelationId();
+  const reqLog = withRequestContext(log, reqId);
+  reqLog.debug({ tool: toolName }, "mcp dispatch begin");
+
   const ctx = buildLocalDevContext();
   const result = await actionRouter.dispatch(toolName, args, ctx);
 
   if (!result.ok) {
+    reqLog.warn(
+      { tool: toolName, error_code: result.error.code },
+      "mcp dispatch error",
+    );
     return {
       content: [
         {
@@ -103,6 +120,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     };
   }
 
+  reqLog.debug({ tool: toolName }, "mcp dispatch ok");
   return {
     content: [
       {
@@ -135,17 +153,22 @@ async function main() {
   // tx-pipeline.
   createRpc();
 
-  console.error(`Agent wallet: ${getWalletPublicKey().toBase58()}`);
-  console.error(`RPC (v1/Anchor): ${getConnection().rpcEndpoint}`);
-  console.error(
-    `RPC (v2/kit):    ${process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com"}`,
-  );
-  console.error(`Actions: ${allActions.length} (all gated via ADR-058 router)`);
   const idemBackend = activeIdempotencyBackend();
-  console.error(
-    `Idempotency store: ${idemBackend}${
-      idemBackend === "redis" ? ` (AEP_REDIS_URL=${process.env.AEP_REDIS_URL})` : " (set AEP_REDIS_URL to enable Redis-backed replay protection)"
-    }`,
+  log.info(
+    {
+      transport: posture.mode,
+      agent_wallet: getWalletPublicKey().toBase58(),
+      rpc_v1_endpoint: getConnection().rpcEndpoint,
+      rpc_v2_endpoint:
+        process.env.SOLANA_RPC_URL ?? "https://api.devnet.solana.com",
+      actions_count: allActions.length,
+      idempotency_backend: idemBackend,
+      // Note: AEP_REDIS_URL is on the redaction list so it surfaces as
+      // [REDACTED] in JSON output even though we pass it here.
+      idempotency_redis_url:
+        idemBackend === "redis" ? process.env.AEP_REDIS_URL : undefined,
+    },
+    "agenomics mcp server started",
   );
 }
 
@@ -260,7 +283,7 @@ async function startUnixTransport(posture: TransportPosture): Promise<void> {
 
 if (require.main === module) {
   main().catch((error) => {
-    console.error("Fatal error:", error);
+    log.fatal({ err: error }, "fatal error");
     process.exit(1);
   });
 }

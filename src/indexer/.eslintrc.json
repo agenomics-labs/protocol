@@ -14,13 +14,5 @@
   "env": {
     "node": true,
     "es2020": true
-  },
-  "overrides": [
-    {
-      "files": ["test/**/*.ts"],
-      "rules": {
-        "no-console": "off"
-      }
-    }
-  ]
+  }
 }
