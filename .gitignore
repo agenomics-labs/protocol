@@ -66,3 +66,11 @@ logs/
 # is live (ADR-063 "Pending items before Accept" #4), the local staging
 # files are scratch artifacts and must not be committed accidentally.
 governance/attestation-log/
+
+# Local Claude Code session scaffolding (per-machine, not shared)
+.claude/agents/dual-mode/
+.claude/agents/hive-mind/
+.claude/helpers/*.cjs
+.claude/helpers/*.mjs
+.claude/statusline.mjs
+.claude/statusline.sh
