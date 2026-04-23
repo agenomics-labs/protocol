@@ -9,6 +9,7 @@ import {
 import * as http from "http";
 import * as net from "net";
 import * as fs from "fs";
+import { pathToFileURL } from "node:url";
 import { allTools } from "./tools/index.js";
 import { getConnection, getWalletPublicKey } from "./solana.js";
 import { createRpc } from "./solana-v2.js";
@@ -281,7 +282,14 @@ async function startUnixTransport(posture: TransportPosture): Promise<void> {
   );
 }
 
-if (require.main === module) {
+// ADR-091 (ESM): replaces the CJS `require.main === module` entrypoint
+// guard. Compare `import.meta.url` to `argv[1]` resolved to a file:// URL —
+// true only when this module is invoked directly (e.g. `node dist/index.js`),
+// false when imported for tests.
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   main().catch((error) => {
     log.fatal({ err: error }, "fatal error");
     process.exit(1);

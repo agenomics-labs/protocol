@@ -2,6 +2,7 @@
   "name": "@agenomics/mcp-server",
   "version": "1.0.0",
   "description": "MCP Server for Agenomics Protocol on Solana",
+  "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
