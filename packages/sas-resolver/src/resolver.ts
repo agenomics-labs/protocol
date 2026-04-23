@@ -20,11 +20,24 @@
 // surfaced to the caller as a `Result<_>` failure, distinct from
 // `absent: true`.
 //
-// INVALID_INPUT / INVALID_CONFIG / RPC_ERROR are the only other
-// hard-error shapes; everything else is absorbed into `ResolvedReputation`.
+// INVALID_INPUT / INVALID_CONFIG / RPC_ERROR / RESOLVER_INIT are the
+// only other hard-error shapes; everything else is absorbed into
+// `ResolvedReputation`.
+//
+// --------------------------------------------------------------------
+// ADR-076 (DEEP-AUDIT-2026-04-22 SEC-3 + SEC-15) trust-boundary hardening
+// --------------------------------------------------------------------
+//   - Per-credential signer / schema scoping at the allowlist layer.
+//     A leaked credential-authority key cannot mint attestations for
+//     a foreign schema, and cannot be bypassed by an unintended signer.
+//   - Strict resolver-init mode: asserts `schemaPda` is owned by the
+//     SAS program before any resolve. A misconfigured schema is a
+//     protocol-level trust failure — refusing to resolve is safer than
+//     silently trusting attacker-owned accounts.
 
 import { z } from "zod";
 import type {
+  AllowedCredential,
   ManifestLike,
   ResolvedReputation,
   ResolverConfig,
@@ -40,12 +53,46 @@ import {
   parseReputationData,
   toAttestationReputation,
 } from "./schema.js";
-import { isAllowed } from "./allowlist.js";
+import { normalizeAllowlist } from "./allowlist.js";
 import {
   InMemoryCache,
   type CacheBackend,
   type CacheMetrics,
 } from "./cache.js";
+
+// --------------------------------------------------------------------
+// SAS program ID — canonical devnet deployment per STATUS.md. Used as
+// the default for `ResolverConfig.sasProgramId` at resolver init so
+// `strict` mode (DEEP-AUDIT-2026-04-22 SEC-15 / ADR-076 §2) has a
+// working default. Override in `ResolverConfig.sasProgramId` for test
+// clusters or a future on-chain upgrade.
+// --------------------------------------------------------------------
+export const DEFAULT_SAS_PROGRAM_ID =
+  "22zoJMtdu4tQc2PzL74ZUT7FrwgB1Udec8DdW4yw4BdG";
+
+/**
+ * Error thrown (or surfaced via `Result`) when the resolver cannot
+ * complete its strict-init schema-PDA owner check (ADR-076 §2). This is
+ * distinct from `RPC_ERROR` (transport failure) and `INVALID_CONFIG`
+ * (malformed config) — it specifically flags a schema PDA that does
+ * not belong to the configured SAS program, which would let any
+ * attacker-controlled account masquerade as an AEP reputation schema
+ * if not caught. See DEEP-AUDIT-2026-04-22 SEC-15.
+ */
+export class ResolverInitError extends Error {
+  public readonly code = "RESOLVER_INIT" as const;
+  constructor(
+    message: string,
+    public readonly details?: {
+      schemaPda: string;
+      expectedOwner: string;
+      observedOwner?: string | null;
+    },
+  ) {
+    super(message);
+    this.name = "ResolverInitError";
+  }
+}
 
 // --------------------------------------------------------------------
 // Input validation — zod schemas at the boundary (AEP project rule:
@@ -100,8 +147,10 @@ interface CachedAttestationBytes {
 
 export class SasResolver {
   readonly #rpc: ResolverRpc;
-  readonly #allowed: Set<string>;
+  readonly #allowed: Map<string, AllowedCredential>;
   readonly #schemaPda: string;
+  readonly #sasProgramId: string;
+  readonly #strict: boolean;
   readonly #now: () => number;
   readonly #warn: (message: string, details?: unknown) => void;
   readonly #cache: CacheBackend;
@@ -114,19 +163,23 @@ export class SasResolver {
    * them separate: production defaults to `Date.now()`, tests that
    * want to freeze cache time should inject their own `CacheBackend`
    * constructed with a custom `now` (see `InMemoryCacheOptions`).
-   * Mixing the two clocks in one `now` callback would force every
-   * caller to choose between controlling cache freshness and the
-   * resolver's stale-by-age threshold.
    */
   readonly #cacheNow: () => number;
-  /**
-   * Aggregated cache counters. We tally in the resolver rather than
-   * poking the backend's internals because (a) the `CacheBackend`
-   * interface is deliberately layer-agnostic and (b) tests need
-   * resolver-observable hit/miss counts even when a Redis backend
-   * that doesn't expose metrics is in use.
-   */
   readonly #cacheMetrics: CacheMetrics = { hits: 0, misses: 0, evictions: 0 };
+
+  /**
+   * Lazy resolver-init guard (ADR-076 §2, DEEP-AUDIT SEC-15). In strict
+   * mode (default), the first `resolve()` call awaits an RPC fetch of
+   * `schemaPda` and asserts `owner == sasProgramId`. The promise is
+   * memoized so parallel `resolve()` calls share one RPC hit. If the
+   * check definitively fails (owner mismatch / account missing),
+   * `#initError` latches and every subsequent `resolve()` returns a
+   * `RESOLVER_INIT` error. Transport failures do NOT latch — they
+   * bubble to the caller so a flaky RPC can be retried.
+   */
+  #initPromise: Promise<void> | null = null;
+  #initError: ResolverInitError | null = null;
+  #initOk = false;
 
   constructor(config: ResolverConfig) {
     if (!config || typeof config !== "object") {
@@ -135,9 +188,12 @@ export class SasResolver {
     if (!config.rpc) {
       throw new Error("SasResolver: config.rpc is required");
     }
-    if (!(config.allowedCredentials instanceof Set)) {
+    if (
+      !(config.allowedCredentials instanceof Set) &&
+      !(config.allowedCredentials instanceof Map)
+    ) {
       throw new Error(
-        "SasResolver: config.allowedCredentials must be a Set<string>",
+        "SasResolver: config.allowedCredentials must be a Set<string> or Map<string, AllowedCredential>",
       );
     }
     if (typeof config.schemaPda !== "string" || !BASE58.test(config.schemaPda)) {
@@ -145,9 +201,20 @@ export class SasResolver {
         "SasResolver: config.schemaPda must be a base58 pubkey string",
       );
     }
+    const sasProgramId = config.sasProgramId ?? DEFAULT_SAS_PROGRAM_ID;
+    if (typeof sasProgramId !== "string" || !BASE58.test(sasProgramId)) {
+      throw new Error(
+        "SasResolver: config.sasProgramId must be a base58 pubkey string",
+      );
+    }
     this.#rpc = config.rpc;
-    this.#allowed = config.allowedCredentials;
+    this.#allowed = normalizeAllowlist(config.allowedCredentials);
     this.#schemaPda = config.schemaPda;
+    this.#sasProgramId = sasProgramId;
+    // DEEP-AUDIT-2026-04-22 SEC-15: strict mode defaults ON. Tests that
+    // cannot reach an RPC (MockRpc with no getAccountInfo responses for
+    // the schema PDA) should set `strict: false` explicitly.
+    this.#strict = config.strict ?? true;
     this.#now = config.now ?? (() => Math.floor(Date.now() / 1000));
     this.#warn = config.warn ?? ((m, d) => (d !== undefined ? console.warn(m, d) : console.warn(m)));
     this.#cache = config.cache ?? new InMemoryCache();
@@ -158,27 +225,28 @@ export class SasResolver {
       schema: config.ttl?.schema ?? DEFAULT_TTL.schema,
       credential: config.ttl?.credential ?? DEFAULT_TTL.credential,
     };
-    // Cache freshness math uses ms; resolver math uses seconds. Use
-    // `config.cacheNow` if supplied (tests that want to freeze cache
-    // time), otherwise `Date.now()`. See the JSDoc on `#cacheNow`
-    // above for why we don't overload the seconds-clock `config.now`.
     this.#cacheNow = config.cacheNow ?? (() => Date.now());
   }
 
   /**
+   * Eager-init factory. Constructs a resolver and immediately runs the
+   * strict schema-PDA owner check (ADR-076 §2). Rejects with a
+   * `ResolverInitError` if the schema PDA is not owned by
+   * `sasProgramId`. Prefer this over `new SasResolver(...)` in
+   * production — callers that want to detect a misconfigured schema at
+   * boot rather than at the first resolve.
+   */
+  static async create(config: ResolverConfig): Promise<SasResolver> {
+    const r = new SasResolver(config);
+    if (r.#strict) {
+      await r.#ensureInitialized();
+      if (r.#initError) throw r.#initError;
+    }
+    return r;
+  }
+
+  /**
    * Resolve a single agent's SAS-referenced reputation.
-   *
-   * @param manifest - The caller's already-validated CapabilityManifest
-   *   (or any object with an `agent.owner_attestation?` field).
-   * @param subjectAuthority - The agent's on-chain authority pubkey,
-   *   as fetched from `AgentProfile.authority`. The resolver verifies
-   *   the attestation's `subject` matches this value (§4 row 4f).
-   * @param opts - Optional per-call cache policy override. See
-   *   {@link ResolveOptions} and ADR-065 §5 for the `maxAge` semantics.
-   * @returns A `Result<ResolvedReputation>`. `ok: true` is the normal
-   *   path — check `value.absent`, `value.stale`, `value.attestation`
-   *   to interpret. `ok: false` only triggers for hard errors
-   *   (SUBJECT_MISMATCH, INVALID_INPUT, INVALID_CONFIG, RPC_ERROR).
    */
   async resolve(
     manifest: ManifestLike,
@@ -191,12 +259,6 @@ export class SasResolver {
   /**
    * Resolve multiple agents in parallel. Preserves input order in the
    * output array — callers can zip against their original list.
-   *
-   * Each entry is resolved independently; one entry's failure does not
-   * affect the others (each gets its own `Result`). The per-call cache
-   * policy applies uniformly to every entry in the batch — entries that
-   * need different staleness thresholds should split into separate
-   * `resolve` calls.
    */
   async resolveBatch(
     entries: Array<{ manifest: ManifestLike; subjectAuthority: string }>,
@@ -210,19 +272,7 @@ export class SasResolver {
     );
   }
 
-  /**
-   * Evict the cache entry for a specific attestation PDA. The caller
-   * already did the manifest validation that produced this PDA, so
-   * passing it explicitly avoids an index-by-subject lookup we would
-   * otherwise need to maintain.
-   *
-   * A broader `invalidate(subjectAuthority)` that evicts every SAS
-   * entry tied to an agent authority requires the cache to maintain a
-   * secondary index (subject → attestation PDA) — deferred to a
-   * follow-up PR per ADR-065 §2 "Explicit consumer API" with a v1
-   * shape. Wiring an on-chain event subscription to call this method
-   * is the canonical "push-based invalidation" pattern.
-   */
+  /** Evict the cache entry for a specific attestation PDA. */
   async invalidate(attestationPda: string): Promise<void> {
     if (typeof attestationPda !== "string" || attestationPda.length === 0) {
       throw new Error("invalidate: attestationPda must be a non-empty string");
@@ -230,20 +280,68 @@ export class SasResolver {
     await this.#cache.delete(attestationCacheKey(attestationPda));
   }
 
-  /**
-   * Snapshot of cache hit / miss / eviction counters. The counter
-   * record is shaped per ADR-065 §7 and is deliberately flat — per-layer
-   * breakdown is a follow-up PR that lands alongside Registry and
-   * manifest-body caching (§3).
-   *
-   * The eviction counter reflects the resolver's view of TTL-based
-   * evictions observed on `get`. In-memory LRU evictions happen on the
-   * backend's internal path and are visible to the operator via the
-   * backend's own metrics (`InMemoryCache.metrics()`), not via this
-   * method — the two counters are additive but distinct.
-   */
+  /** Snapshot of cache hit / miss / eviction counters. */
   cacheMetrics(): CacheMetrics {
     return { ...this.#cacheMetrics };
+  }
+
+  // ------------------------------------------------------------------
+  // Strict-init — assert schemaPda is owned by sasProgramId.
+  // ADR-076 §2, DEEP-AUDIT-2026-04-22 SEC-15.
+  // ------------------------------------------------------------------
+  /**
+   * Run the one-time strict init check. Memoized so parallel
+   * `resolve()` calls share a single RPC hit. On success, `#initOk`
+   * flips true and subsequent calls short-circuit. On definitive
+   * failure (owner mismatch / account missing), `#initError` is stored
+   * and every subsequent `resolve()` returns the cached error rather
+   * than re-querying — an attacker who flips the schema back to
+   * SAS-owned later is still running against a resolver we can't
+   * trust. Transport failures do not latch; they bubble so retries
+   * are possible.
+   */
+  async #ensureInitialized(): Promise<void> {
+    if (this.#initOk || this.#initError) return;
+    if (!this.#initPromise) {
+      this.#initPromise = this.#runInit();
+    }
+    return this.#initPromise;
+  }
+
+  async #runInit(): Promise<void> {
+    try {
+      const info = await this.#fetchAccountInfo(this.#schemaPda);
+      if (info === null) {
+        this.#initError = new ResolverInitError(
+          `SAS schema PDA ${this.#schemaPda} does not exist on-chain`,
+          {
+            schemaPda: this.#schemaPda,
+            expectedOwner: this.#sasProgramId,
+            observedOwner: null,
+          },
+        );
+        return;
+      }
+      if (info.owner !== this.#sasProgramId) {
+        this.#initError = new ResolverInitError(
+          `SAS schema PDA ${this.#schemaPda} is owned by ${info.owner ?? "<unknown>"}, expected ${this.#sasProgramId} — refusing to trust schema-derived attestations`,
+          {
+            schemaPda: this.#schemaPda,
+            expectedOwner: this.#sasProgramId,
+            observedOwner: info.owner ?? null,
+          },
+        );
+        return;
+      }
+      this.#initOk = true;
+    } catch (e) {
+      // Transport failures do not poison the init state — reset the
+      // promise so the next `resolve()` re-attempts. Only a definitive
+      // owner-mismatch (or "account does not exist") latches into
+      // `#initError`.
+      this.#initPromise = null;
+      throw e;
+    }
   }
 
   // ------------------------------------------------------------------
@@ -254,6 +352,26 @@ export class SasResolver {
     subjectAuthority: string,
     opts?: ResolveOptions,
   ): Promise<Result<ResolvedReputation>> {
+    // Strict-init gate (ADR-076 §2) — runs once per resolver instance.
+    if (this.#strict) {
+      try {
+        await this.#ensureInitialized();
+      } catch (e) {
+        return err(
+          "RESOLVER_INIT",
+          e instanceof Error ? e.message : String(e),
+          e instanceof ResolverInitError ? e.details : undefined,
+        );
+      }
+      if (this.#initError) {
+        return err(
+          "RESOLVER_INIT",
+          this.#initError.message,
+          this.#initError.details,
+        );
+      }
+    }
+
     // Boundary validation.
     const manifestParsed = ManifestInputSchema.safeParse(manifest);
     if (!manifestParsed.success) {
@@ -283,8 +401,6 @@ export class SasResolver {
     try {
       accountBytes = await this.#fetchAttestationBytes(attestationPubkey, opts);
     } catch (e) {
-      // RPC-layer failure — hard error. Distinct from "account not
-      // found" (which resolves to null below).
       return err(
         "RPC_ERROR",
         `failed to fetch attestation account ${attestationPubkey}: ${e instanceof Error ? e.message : String(e)}`,
@@ -323,10 +439,42 @@ export class SasResolver {
     }
 
     // Row 4d — credential not allowlisted -> skip + warn.
-    if (!isAllowed(this.#allowed, credential)) {
+    const entry = this.#allowed.get(credential);
+    if (!entry) {
       this.#warn(
         `[sas-resolver] attestation ${attestationPubkey} uses non-allowlisted credential — skipping`,
         { credential, allowlist_size: this.#allowed.size },
+      );
+      return ok({ subject, absent: true });
+    }
+
+    // ADR-076 §3 / DEEP-AUDIT SEC-3: per-credential signer scoping.
+    // If the allowlist entry binds this credential to a specific signer
+    // set, the attestation's signer MUST be in it — otherwise
+    // skip-with-warn per ADR-061 §4 row 4g. Missing `signers` means
+    // "any signer under this credential", which is v0 behaviour.
+    if (entry.signers && !entry.signers.includes(signer)) {
+      this.#warn(
+        `[sas-resolver] attestation ${attestationPubkey} signed by signer outside the credential's scoped signer list — skipping`,
+        { credential, signer, allowed_signers: entry.signers.length },
+      );
+      return ok({ subject, absent: true });
+    }
+
+    // ADR-076 §3 / DEEP-AUDIT SEC-3: per-credential schema binding. If
+    // the allowlist entry binds this credential to a specific schema
+    // set, the attestation's schema MUST be in it for THAT credential
+    // (defense-in-depth against a legitimate credential being reused
+    // under a foreign schema). Missing `authorizedSchemas` means
+    // "any schema this resolver accepts under this credential".
+    if (entry.authorizedSchemas && !entry.authorizedSchemas.includes(schema)) {
+      this.#warn(
+        `[sas-resolver] attestation ${attestationPubkey} uses a schema not authorized for this credential — skipping`,
+        {
+          credential,
+          schema,
+          authorized_schema_count: entry.authorizedSchemas.length,
+        },
       );
       return ok({ subject, absent: true });
     }
@@ -346,9 +494,7 @@ export class SasResolver {
       );
     }
 
-    // Row 4e — expired -> absent + stale. ADR-061 §6: treat expired as
-    // absent (silent skip, not hard error) but tag `stale: true` for
-    // UX differentiation.
+    // Row 4e — expired -> absent + stale.
     const now = this.#now();
     if (raw.expiry > 0 && raw.expiry <= now) {
       return ok({ subject, absent: true, stale: true });
@@ -372,8 +518,6 @@ export class SasResolver {
       expiry: raw.expiry,
     });
 
-    // Stale-by-age per §6 — `last_updated` older than 90 days. Still
-    // returned; just flagged so the caller can weight it.
     const resolved: ResolvedReputation = {
       subject,
       attestation,
@@ -386,19 +530,7 @@ export class SasResolver {
 
   /**
    * Fetch an attestation account's raw bytes, consulting the cache
-   * first (ADR-065 §3). Policy:
-   *
-   *   - `opts.maxAge` undefined → respect configured TTL (cache hit
-   *     returns immediately).
-   *   - `opts.maxAge === 0`     → bypass cache on read, still
-   *     write-through on the fresh fetch.
-   *   - `opts.maxAge > 0`       → use cache only if the entry is
-   *     fresher than `maxAge`; otherwise refetch.
-   *
-   * A successful fetch (account found OR explicitly absent) is cached
-   * with the configured `attestation` TTL. Transport errors are NOT
-   * cached — they propagate to the caller and stay the caller's
-   * decision to retry.
+   * first (ADR-065 §3).
    */
   async #fetchAttestationBytes(
     pubkey: string,
@@ -417,26 +549,18 @@ export class SasResolver {
                                : age <= maxAge;
         if (fresh) {
           this.#cacheMetrics.hits++;
-          // `null` entry means "we fetched and confirmed absent" — the
-          // resolver's row-4b path. Treat as `null` bytes.
           if (cached.value === null) return null;
           return base64Decode(cached.value.bytesB64);
         }
-        // Entry exists but is older than the caller's maxAge. Count as
-        // a miss so the metrics reflect the RPC hit the caller got.
         this.#cacheMetrics.misses++;
       } else {
         this.#cacheMetrics.misses++;
       }
     }
-    // maxAge === 0 path also counts as a miss so metrics reflect the
-    // RPC call the resolver is about to issue.
     if (maxAge === 0) this.#cacheMetrics.misses++;
 
     const bytes = await this.#fetchAccountData(pubkey);
 
-    // Write-through — populate the cache (including the "absent"
-    // negative entry so row-4b lookups also cache).
     const payload: CachedAttestationBytes | null =
       bytes === null ? null : { bytesB64: base64Encode(bytes) };
     await this.#cache.set(key, payload, this.#ttl.attestation);
@@ -445,34 +569,33 @@ export class SasResolver {
   }
 
   /**
-   * Fetch an account's raw bytes. Returns `null` if the account does
-   * not exist (row 4b). Throws on RPC-layer failure so the caller can
-   * distinguish transport errors from "no such account".
+   * Fetch an account's full info (for owner check in strict init).
+   * Returns `null` if the account does not exist. Throws on
+   * RPC-transport failure.
    */
-  async #fetchAccountData(pubkey: string): Promise<Uint8Array | null> {
-    // Duck-typed call into `@solana/kit`'s Rpc. We type `this.#rpc` as
-    // `ResolverRpc` (a narrow subset) so the resolver works with
-    // either the full Rpc<SolanaRpcApi> from createSolanaRpc() or a
-    // test shim. The runtime shape is the same either way: call
-    // `.getAccountInfo(addr, opts).send()` and inspect `.value`.
+  async #fetchAccountInfo(
+    pubkey: string,
+  ): Promise<AccountInfoResponse | null> {
     const rpc = this.#rpc as {
       getAccountInfo: (addr: unknown, opts?: unknown) => { send(): Promise<unknown> };
     };
-
-    // `@solana/kit` expects an Address branded type, but at runtime it
-    // is just a base58 string. We accept the string form for mock
-    // RPCs in tests; production consumers can wrap with `address()` if
-    // they want the stronger type signature, but the resolver itself
-    // never inspects the brand.
     const result = (await rpc.getAccountInfo(pubkey, { encoding: "base64" }).send()) as {
       value: AccountInfoResponse | null;
     } | null;
-
     if (!result || result.value === null || result.value === undefined) {
       return null;
     }
+    return result.value;
+  }
 
-    return decodeAccountData(result.value.data);
+  /**
+   * Fetch an account's raw data bytes. Returns `null` if the account
+   * does not exist. Throws on RPC-transport failure.
+   */
+  async #fetchAccountData(pubkey: string): Promise<Uint8Array | null> {
+    const info = await this.#fetchAccountInfo(pubkey);
+    if (info === null) return null;
+    return decodeAccountData(info.data);
   }
 }
 
@@ -497,7 +620,6 @@ function decodeAccountData(
 ): Uint8Array {
   if (data instanceof Uint8Array) return data;
   if (Array.isArray(data)) {
-    // `[b64string, 'base64']` or `[b58string, 'base58']` or number[]
     if (data.length === 2 && typeof data[0] === "string") {
       const [payload, encoding] = data as unknown as [string, string];
       if (encoding === "base64") {
@@ -514,15 +636,16 @@ function decodeAccountData(
     throw new Error("malformed account data tuple");
   }
   if (typeof data === "string") {
-    // Older RPC shape: a bare base58 string. Decode.
     return base58Decode(data);
   }
   throw new Error("unrecognized account data shape");
 }
 
 // --------------------------------------------------------------------
-// Base58 / base64 codec helpers. Kept local (no extra dep) because
-// these are the only two encodings the resolver touches.
+// Base58 / base64 codec helpers. Internal to the resolver — previously
+// exported via `src/index.ts`, demoted in v0.1.0 (DEEP-AUDIT-2026-04-22
+// Audit 2 blocker #1). Test fixtures that need these should use the
+// helpers in `test/fixtures.ts`, which wrap these same functions.
 // --------------------------------------------------------------------
 
 const B58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -533,12 +656,9 @@ const B58_MAP = (() => {
 })();
 
 export function encodeBase58(bytes: Uint8Array): string {
-  // Count leading zero-bytes — base58 preserves them as '1' chars.
   let zeros = 0;
   while (zeros < bytes.length && bytes[zeros] === 0) zeros++;
 
-  // Convert to big-int, then base58-encode by successive division.
-  // For 32-byte pubkeys this is plenty fast; no native dep required.
   let num = 0n;
   for (const b of bytes) num = (num << 8n) | BigInt(b);
 
@@ -565,7 +685,6 @@ export function base58Decode(s: string): Uint8Array {
     num = num * 58n + BigInt(v);
   }
 
-  // Convert back to big-endian bytes.
   const bytes: number[] = [];
   while (num > 0n) {
     bytes.unshift(Number(num & 0xffn));
@@ -577,13 +696,9 @@ export function base58Decode(s: string): Uint8Array {
 }
 
 export function base64Decode(s: string): Uint8Array {
-  // Node's Buffer.from(s, 'base64') is available in every supported
-  // runtime target for this package (Node 20+). Using it avoids
-  // atob() inconsistencies across environments.
   if (typeof Buffer !== "undefined") {
     return new Uint8Array(Buffer.from(s, "base64"));
   }
-  // Fallback for non-Node runtimes.
   const bin = atob(s);
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
@@ -591,8 +706,6 @@ export function base64Decode(s: string): Uint8Array {
 }
 
 export function base64Encode(bytes: Uint8Array): string {
-  // Paired with `base64Decode` — same env preference (Node `Buffer`
-  // first, falls back to `btoa` via binary-string intermediate).
   if (typeof Buffer !== "undefined") {
     return Buffer.from(bytes).toString("base64");
   }

@@ -10,33 +10,9 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./resolver": {
-      "types": "./dist/resolver.d.ts",
-      "import": "./dist/resolver.js"
-    },
-    "./schema": {
-      "types": "./dist/schema.d.ts",
-      "import": "./dist/schema.js"
-    },
-    "./allowlist": {
-      "types": "./dist/allowlist.d.ts",
-      "import": "./dist/allowlist.js"
-    },
-    "./merge": {
-      "types": "./dist/merge.d.ts",
-      "import": "./dist/merge.js"
-    },
-    "./cache": {
-      "types": "./dist/cache.d.ts",
-      "import": "./dist/cache.js"
-    },
     "./cache-redis": {
       "types": "./dist/cache-redis.d.ts",
       "import": "./dist/cache-redis.js"
-    },
-    "./types": {
-      "types": "./dist/types.d.ts",
-      "import": "./dist/types.js"
     }
   },
   "files": [
@@ -58,11 +34,19 @@
   ],
   "license": "UNLICENSED",
   "dependencies": {
-    "@noble/curves": "^1.4.0",
-    "@solana/kit": "^6.8.0",
     "zod": "^3.23.8"
   },
+  "peerDependencies": {
+    "@solana/kit": "^6.8.0",
+    "ioredis": "^5.4.1"
+  },
+  "peerDependenciesMeta": {
+    "ioredis": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@solana/kit": "^6.8.0",
     "@types/node": "^20.9.0",
     "ioredis-mock": "^8.9.0",
     "tsx": "^4.21.0",

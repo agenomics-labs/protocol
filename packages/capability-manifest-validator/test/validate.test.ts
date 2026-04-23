@@ -10,7 +10,7 @@ import { ed25519 } from "@noble/curves/ed25519";
 import {
   validateManifest,
   manifestHash,
-  canonicalJson,
+  unstable_canonicalJson,
   MANIFEST_SCHEMA_V1_URL,
   type CapabilityManifest,
 } from "../src/index.js";
@@ -95,7 +95,7 @@ describe("ADR-060 CapabilityManifest validator", () => {
       // with different key orders must hash identically.
       const a = { b: 1, a: 2, c: { y: 9, x: 8 } };
       const b = { a: 2, c: { x: 8, y: 9 }, b: 1 };
-      assert.equal(canonicalJson(a), canonicalJson(b));
+      assert.equal(unstable_canonicalJson(a), unstable_canonicalJson(b));
       assert.deepEqual(manifestHash(a), manifestHash(b));
     });
   });

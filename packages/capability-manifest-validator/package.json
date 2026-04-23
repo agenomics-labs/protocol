@@ -9,18 +9,6 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./schema": {
-      "types": "./dist/schema.d.ts",
-      "import": "./dist/schema.js"
-    },
-    "./canonical": {
-      "types": "./dist/canonical.d.ts",
-      "import": "./dist/canonical.js"
-    },
-    "./validate": {
-      "types": "./dist/validate.d.ts",
-      "import": "./dist/validate.js"
     }
   },
   "files": [
@@ -30,7 +18,7 @@
   ],
   "scripts": {
     "build": "tsc",
-    "test": "node --import tsx --test test/validate.test.ts"
+    "test": "node --import tsx --test test/validate.test.ts test/golden-canonical.test.ts"
   },
   "keywords": [
     "aep",
@@ -44,7 +32,7 @@
   "dependencies": {
     "@noble/curves": "^1.4.0",
     "@noble/hashes": "^1.4.0",
-    "canonicalize": "^2.0.0",
+    "canonicalize": "2.0.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {

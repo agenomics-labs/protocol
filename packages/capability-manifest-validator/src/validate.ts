@@ -13,11 +13,26 @@ import {
 } from "./schema.js";
 import { manifestHash } from "./canonical.js";
 
-export type ValidationErrorCode =
+/**
+ * Known validation error codes.
+ *
+ * Extensible: new values may be added in minor releases.
+ */
+export type KnownValidationErrorCode =
   | "SCHEMA_INVALID"
   | "HASH_MISMATCH"
   | "SIGNATURE_MISMATCH"
   | "INVALID_INPUT";
+
+/**
+ * Extensible: new values may be added in minor releases.
+ *
+ * Consumers performing exhaustive `switch` over this type should keep a
+ * `default` branch. The `(string & {})` tail preserves the known
+ * literal completions in editors while letting TS accept unknown codes
+ * without a breaking type error.
+ */
+export type ValidationErrorCode = KnownValidationErrorCode | (string & {});
 
 export interface ValidationError {
   code: ValidationErrorCode;
@@ -141,7 +156,19 @@ function toHex(bytes: Uint8Array): string {
 }
 
 // Re-export types and helpers for consumer convenience.
-export { manifestHash, canonicalJson, canonicalBytes } from "./canonical.js";
+export { manifestHash } from "./canonical.js";
+
+// DEEP-AUDIT-2026-04-22 Audit 2: canonicalJson / canonicalBytes were
+// previously public. Demoted to `unstable_` prefixed aliases because
+// exposing them locks the package into RFC-8785-via-`canonicalize`
+// forever. Callers that need them should be aware that swapping to
+// a faster canonicalization implementation is a SemVer-minor change;
+// this prefix documents that.
+export {
+  canonicalJson as unstable_canonicalJson,
+  canonicalBytes as unstable_canonicalBytes,
+} from "./canonical.js";
+
 export {
   CapabilityManifestSchema,
   MANIFEST_SCHEMA_V1_URL,
@@ -150,6 +177,9 @@ export {
   type CostEstimate,
   type RequiredCapability,
   type PreflightGate,
+  type KnownPreflightGate,
   type SideEffect,
+  type KnownSideEffect,
   type Stability,
+  type KnownStability,
 } from "./schema.js";
