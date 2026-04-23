@@ -52,7 +52,19 @@ function randomName(i: number): string {
 /** Derive the AgentProfile PDA for a given authority */
 function deriveProfilePDA(authority: PublicKey): [PublicKey, number] {
   return PublicKey.findProgramAddressSync(
-    [authority.toBuffer(), Buffer.from("agent-profile")],
+    [
+      authority.toBuffer(),
+      Buffer.from("agent-profile"),
+      (() => { const b = Buffer.alloc(8); b.writeBigUInt64LE(0n); return b; })(),
+    ],
+    REGISTRY_PROGRAM_ID
+  );
+}
+
+/** ADR-097: owner-nonce PDA used to seed agent_profile. */
+function deriveOwnerNoncePDA(authority: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [authority.toBuffer(), Buffer.from("owner-nonce")],
     REGISTRY_PROGRAM_ID
   );
 }
@@ -158,6 +170,7 @@ async function main() {
           )
           .accounts({
             authority: authority.publicKey,
+            ownerNonce: deriveOwnerNoncePDA(authority.publicKey)[0],
             agentProfile: profilePDA,
             systemProgram: anchor.web3.SystemProgram.programId,
           })

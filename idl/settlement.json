@@ -89,73 +89,19 @@
         {
           "name": "provider_profile",
           "docs": [
-            "Must match seeds [escrow.provider, \"agent-profile\"] under the Registry program."
+            "Must match seeds [escrow.provider, \"agent-profile\"] under the Registry program.",
+            "ADR-097: The nonce component is not validated here (UncheckedAccount); the",
+            "Registry's `UpdateReputation` context validates the PDA using `owner_nonce`."
           ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "account",
-                "path": "escrow.provider",
-                "account": "TaskEscrow"
-              },
-              {
-                "kind": "const",
-                "value": [
-                  97,
-                  103,
-                  101,
-                  110,
-                  116,
-                  45,
-                  112,
-                  114,
-                  111,
-                  102,
-                  105,
-                  108,
-                  101
-                ]
-              }
-            ],
-            "program": {
-              "kind": "const",
-              "value": [
-                111,
-                73,
-                24,
-                49,
-                52,
-                190,
-                122,
-                126,
-                199,
-                7,
-                50,
-                181,
-                32,
-                117,
-                156,
-                113,
-                255,
-                182,
-                22,
-                1,
-                161,
-                163,
-                9,
-                83,
-                218,
-                73,
-                82,
-                170,
-                121,
-                206,
-                92,
-                240
-              ]
-            }
-          }
+          "writable": true
+        },
+        {
+          "name": "provider_owner_nonce",
+          "docs": [
+            "ADR-097: The provider's `OwnerNonce` account — required by the Registry's",
+            "`UpdateReputation` context to re-derive the `agent_profile` PDA.",
+            "Seeded by `[escrow.provider, b\"owner-nonce\"]` under the Registry program."
+          ]
         },
         {
           "name": "provider_authority",
@@ -543,8 +489,6 @@
           "docs": [
             "Escrow state account — dynamically sized based on milestone count.",
             "",
-            "Escrow state account — dynamically sized based on milestone count.",
-            "",
             "Space formula: 298 + (milestones_data.len() * 49)",
             "Fixed: 8 (disc) + 160 (5 pubkeys) + 16 (amounts) + 4 (vec prefix)",
             "+ 1 (status) + 8 (task_id) + 32 (desc_hash) + 16 (timestamps)",
@@ -812,71 +756,16 @@
         },
         {
           "name": "provider_profile",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "account",
-                "path": "escrow.provider",
-                "account": "TaskEscrow"
-              },
-              {
-                "kind": "const",
-                "value": [
-                  97,
-                  103,
-                  101,
-                  110,
-                  116,
-                  45,
-                  112,
-                  114,
-                  111,
-                  102,
-                  105,
-                  108,
-                  101
-                ]
-              }
-            ],
-            "program": {
-              "kind": "const",
-              "value": [
-                111,
-                73,
-                24,
-                49,
-                52,
-                190,
-                122,
-                126,
-                199,
-                7,
-                50,
-                181,
-                32,
-                117,
-                156,
-                113,
-                255,
-                182,
-                22,
-                1,
-                161,
-                163,
-                9,
-                83,
-                218,
-                73,
-                82,
-                170,
-                121,
-                206,
-                92,
-                240
-              ]
-            }
-          }
+          "docs": [
+            "ADR-097: Registry validates the PDA using owner_nonce."
+          ],
+          "writable": true
+        },
+        {
+          "name": "provider_owner_nonce",
+          "docs": [
+            "ADR-097: Provider's OwnerNonce account. Passed to Registry CPI."
+          ]
         },
         {
           "name": "provider_authority",
@@ -1181,73 +1070,15 @@
         {
           "name": "provider_profile",
           "docs": [
-            "Must match seeds [escrow.provider, \"agent-profile\"] under the Registry program."
+            "ADR-097: Registry validates the PDA using owner_nonce."
           ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "account",
-                "path": "escrow.provider",
-                "account": "TaskEscrow"
-              },
-              {
-                "kind": "const",
-                "value": [
-                  97,
-                  103,
-                  101,
-                  110,
-                  116,
-                  45,
-                  112,
-                  114,
-                  111,
-                  102,
-                  105,
-                  108,
-                  101
-                ]
-              }
-            ],
-            "program": {
-              "kind": "const",
-              "value": [
-                111,
-                73,
-                24,
-                49,
-                52,
-                190,
-                122,
-                126,
-                199,
-                7,
-                50,
-                181,
-                32,
-                117,
-                156,
-                113,
-                255,
-                182,
-                22,
-                1,
-                161,
-                163,
-                9,
-                83,
-                218,
-                73,
-                82,
-                170,
-                121,
-                206,
-                92,
-                240
-              ]
-            }
-          }
+          "writable": true
+        },
+        {
+          "name": "provider_owner_nonce",
+          "docs": [
+            "ADR-097: Provider's OwnerNonce account. Passed to Registry CPI."
+          ]
         },
         {
           "name": "provider_authority",
@@ -1415,71 +1246,16 @@
         },
         {
           "name": "provider_profile",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "account",
-                "path": "escrow.provider",
-                "account": "TaskEscrow"
-              },
-              {
-                "kind": "const",
-                "value": [
-                  97,
-                  103,
-                  101,
-                  110,
-                  116,
-                  45,
-                  112,
-                  114,
-                  111,
-                  102,
-                  105,
-                  108,
-                  101
-                ]
-              }
-            ],
-            "program": {
-              "kind": "const",
-              "value": [
-                111,
-                73,
-                24,
-                49,
-                52,
-                190,
-                122,
-                126,
-                199,
-                7,
-                50,
-                181,
-                32,
-                117,
-                156,
-                113,
-                255,
-                182,
-                22,
-                1,
-                161,
-                163,
-                9,
-                83,
-                218,
-                73,
-                82,
-                170,
-                121,
-                206,
-                92,
-                240
-              ]
-            }
-          }
+          "docs": [
+            "ADR-097: Registry validates the PDA using owner_nonce."
+          ],
+          "writable": true
+        },
+        {
+          "name": "provider_owner_nonce",
+          "docs": [
+            "ADR-097: Provider's OwnerNonce account. Passed to Registry CPI."
+          ]
         },
         {
           "name": "provider_authority",
@@ -1601,7 +1377,13 @@
     {
       "name": "submit_milestone",
       "docs": [
-        "Provider marks a milestone as submitted (proof of work)."
+        "Provider marks a milestone as submitted (proof of work).",
+        "",
+        "ADR-102: `grace_period_slots` sets an anti-front-running window. Any",
+        "slash instruction (expire_escrow) that fires while",
+        "`Clock::get()?.slot < milestone.grace_ends_at` returns",
+        "`MilestoneInGracePeriod` instead of applying the penalty.",
+        "Pass 0 (default) to opt out of grace protection."
       ],
       "discriminator": [
         35,
@@ -2274,6 +2056,11 @@
           },
           {
             "name": "grace_ends_at",
+            "docs": [
+              "ADR-102: slot after which a slash may be applied for this milestone.",
+              "Set to `submission_slot + grace_period_slots` by `submit_milestone`.",
+              "Zero (default / no grace requested) means slashing is always permitted."
+            ],
             "type": "u64"
           }
         ]

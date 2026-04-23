@@ -178,15 +178,33 @@ export async function deriveVaultPda(
 }
 
 /**
- * Derive agent profile PDA. Seeds: [authority, "agent-profile"]
- * Equivalent to `deriveAgentProfilePDA` in `src/solana.ts`.
+ * ADR-097: Derive agent profile PDA. Seeds:
+ *   [authority, "agent-profile", nonce-le-u64]
+ * Equivalent to `deriveAgentProfilePDA` in `src/solana.ts`. Fresh users use
+ * `nonce = 0n`; re-registered users supply their current owner_nonce value.
  */
 export async function deriveAgentProfilePda(
+  authority: Address,
+  nonce: bigint = 0n,
+): Promise<ProgramDerivedAddress> {
+  const nonceBuf = new Uint8Array(8);
+  new DataView(nonceBuf.buffer).setBigUint64(0, nonce, true);
+  return getProgramDerivedAddress({
+    programAddress: REGISTRY_PROGRAM_ADDRESS,
+    seeds: [addressEncoder.encode(authority), "agent-profile", nonceBuf],
+  });
+}
+
+/**
+ * ADR-097: Derive owner-nonce PDA. Seeds: [authority, "owner-nonce"].
+ * Equivalent to `deriveOwnerNoncePDA` in `src/solana.ts`.
+ */
+export async function deriveOwnerNoncePda(
   authority: Address,
 ): Promise<ProgramDerivedAddress> {
   return getProgramDerivedAddress({
     programAddress: REGISTRY_PROGRAM_ADDRESS,
-    seeds: [addressEncoder.encode(authority), "agent-profile"],
+    seeds: [addressEncoder.encode(authority), "owner-nonce"],
   });
 }
 

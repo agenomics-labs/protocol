@@ -35,9 +35,23 @@ describe("Settlement Protocol Tests", () => {
   // canonical Agent Vault PDA seeded by `[b"vault", authority]`.
   const VAULT_PROGRAM_ID = new PublicKey("4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN");
 
-  function deriveAgentProfilePDA(authority: PublicKey): [PublicKey, number] {
+  // ADR-097: agent_profile PDA seeds = [authority, b"agent-profile", nonce-le].
+  function deriveAgentProfilePDA(
+    authority: PublicKey,
+    nonce: bigint = 0n
+  ): [PublicKey, number] {
+    const nonceBuf = Buffer.alloc(8);
+    nonceBuf.writeBigUInt64LE(nonce);
     return PublicKey.findProgramAddressSync(
-      [authority.toBuffer(), Buffer.from("agent-profile")],
+      [authority.toBuffer(), Buffer.from("agent-profile"), nonceBuf],
+      REGISTRY_PROGRAM_ID
+    );
+  }
+
+  // ADR-097: owner-nonce PDA [authority, b"owner-nonce"] in the registry.
+  function deriveOwnerNoncePDA(authority: PublicKey): [PublicKey, number] {
+    return PublicKey.findProgramAddressSync(
+      [authority.toBuffer(), Buffer.from("owner-nonce")],
       REGISTRY_PROGRAM_ID
     );
   }
@@ -246,6 +260,7 @@ describe("Settlement Protocol Tests", () => {
         )
         .accounts({
           authority: provider_account.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(provider_account.publicKey)[0],
           agentProfile: profilePDA,
           vault: deriveVaultPDA(provider_account.publicKey)[0],
           systemProgram: SystemProgram.programId,
@@ -325,6 +340,7 @@ describe("Settlement Protocol Tests", () => {
         )
         .accounts({
           authority: provider_account.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(provider_account.publicKey)[0],
           agentProfile: profilePDA,
           vault: deriveVaultPDA(provider_account.publicKey)[0],
           systemProgram: SystemProgram.programId,
@@ -406,7 +422,7 @@ describe("Settlement Protocol Tests", () => {
 
     it("should submit milestone 0 (provider)", async () => {
       const tx = await program.methods
-        .submitMilestone(new BN(0))
+        .submitMilestone(new BN(0), new BN(0))
         .accounts({
           provider: provider_account.publicKey,
           escrow: escrowPDA,
@@ -438,6 +454,7 @@ describe("Settlement Protocol Tests", () => {
           providerTokenAccount: providerTokenAccount,
           registryProgram: REGISTRY_PROGRAM_ID,
           providerProfile: providerProfilePDA,
+          providerOwnerNonce: deriveOwnerNoncePDA(provider_account.publicKey)[0],
           // SEC-1: external authority anchor for Registry UpdateReputation CPI.
           providerAuthority: provider_account.publicKey,
           settlementAuthority: SETTLEMENT_AUTHORITY_PDA,
@@ -460,7 +477,7 @@ describe("Settlement Protocol Tests", () => {
 
     it("should submit milestone 1 (provider)", async () => {
       const tx = await program.methods
-        .submitMilestone(new BN(1))
+        .submitMilestone(new BN(1), new BN(0))
         .accounts({
           provider: provider_account.publicKey,
           escrow: escrowPDA,
@@ -485,6 +502,7 @@ describe("Settlement Protocol Tests", () => {
           providerTokenAccount: providerTokenAccount,
           registryProgram: REGISTRY_PROGRAM_ID,
           providerProfile: providerProfilePDA,
+          providerOwnerNonce: deriveOwnerNoncePDA(provider_account.publicKey)[0],
           // SEC-1: external authority anchor for Registry UpdateReputation CPI.
           providerAuthority: provider_account.publicKey,
           settlementAuthority: SETTLEMENT_AUTHORITY_PDA,
@@ -705,6 +723,7 @@ describe("Settlement Protocol Tests", () => {
         )
         .accounts({
           authority: provider_account.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(provider_account.publicKey)[0],
           agentProfile: profilePDA,
           vault: deriveVaultPDA(provider_account.publicKey)[0],
           systemProgram: SystemProgram.programId,
@@ -752,6 +771,7 @@ describe("Settlement Protocol Tests", () => {
           providerTokenAccount: providerTokenAccount,
           registryProgram: REGISTRY_PROGRAM_ID,
           providerProfile: providerProfilePDA,
+          providerOwnerNonce: deriveOwnerNoncePDA(provider_account.publicKey)[0],
           // SEC-1: external authority anchor for Registry UpdateReputation CPI.
           providerAuthority: provider_account.publicKey,
           settlementAuthority: SETTLEMENT_AUTHORITY_PDA,
@@ -872,6 +892,7 @@ describe("Settlement Protocol Tests", () => {
         )
         .accounts({
           authority: provider_account.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(provider_account.publicKey)[0],
           agentProfile: profilePDA,
           vault: deriveVaultPDA(provider_account.publicKey)[0],
           systemProgram: SystemProgram.programId,
@@ -892,7 +913,7 @@ describe("Settlement Protocol Tests", () => {
 
     it("should submit milestone", async () => {
       await program.methods
-        .submitMilestone(new BN(0))
+        .submitMilestone(new BN(0), new BN(0))
         .accounts({
           provider: provider_account.publicKey,
           escrow: escrowPDA,
@@ -920,7 +941,7 @@ describe("Settlement Protocol Tests", () => {
 
     it("should re-submit milestone", async () => {
       await program.methods
-        .submitMilestone(new BN(0))
+        .submitMilestone(new BN(0), new BN(0))
         .accounts({
           provider: provider_account.publicKey,
           escrow: escrowPDA,
@@ -943,6 +964,7 @@ describe("Settlement Protocol Tests", () => {
           providerTokenAccount: providerTokenAccount,
           registryProgram: REGISTRY_PROGRAM_ID,
           providerProfile: providerProfilePDA,
+          providerOwnerNonce: deriveOwnerNoncePDA(provider_account.publicKey)[0],
           // SEC-1: external authority anchor for Registry UpdateReputation CPI.
           providerAuthority: provider_account.publicKey,
           settlementAuthority: SETTLEMENT_AUTHORITY_PDA,
@@ -1215,7 +1237,7 @@ describe("Settlement Protocol Tests", () => {
 
       // Submit milestone
       await program.methods
-        .submitMilestone(new BN(0))
+        .submitMilestone(new BN(0), new BN(0))
         .accounts({
           provider: provider_account.publicKey,
           escrow: escrowPDA,
@@ -1235,6 +1257,7 @@ describe("Settlement Protocol Tests", () => {
             providerTokenAccount: providerTokenAccount,
             registryProgram: REGISTRY_PROGRAM_ID,
             providerProfile: providerProfilePDA,
+            providerOwnerNonce: deriveOwnerNoncePDA(provider_account.publicKey)[0],
             // SEC-1: external authority anchor for Registry UpdateReputation CPI.
             providerAuthority: provider_account.publicKey,
             settlementAuthority: SETTLEMENT_AUTHORITY_PDA,
@@ -1397,7 +1420,7 @@ describe("Settlement Protocol Tests", () => {
       // Escrow is Created, not Active
       try {
         await program.methods
-          .submitMilestone(new BN(0))
+          .submitMilestone(new BN(0), new BN(0))
           .accounts({
             provider: provider_account.publicKey,
             escrow: escrowPDA,
@@ -1562,6 +1585,7 @@ describe("Settlement Protocol Tests", () => {
         )
         .accounts({
           authority: expProvider.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(expProvider.publicKey)[0],
           agentProfile: profilePDA,
           vault: deriveVaultPDA(expProvider.publicKey)[0],
           systemProgram: SystemProgram.programId,
@@ -1615,7 +1639,7 @@ describe("Settlement Protocol Tests", () => {
         .signers([expProvider]).rpc();
 
       // Submit milestone 0
-      await program.methods.submitMilestone(new BN(0))
+      await program.methods.submitMilestone(new BN(0), new BN(0))
         .accounts({ provider: expProvider.publicKey, escrow: expEscrowPDA })
         .signers([expProvider]).rpc();
 
@@ -1629,6 +1653,7 @@ describe("Settlement Protocol Tests", () => {
           providerTokenAccount: expProviderTA,
           registryProgram: REGISTRY_PROGRAM_ID,
           providerProfile: provProfilePDA,
+          providerOwnerNonce: deriveOwnerNoncePDA(provider_account.publicKey)[0],
           // SEC-1: external authority anchor for Registry UpdateReputation CPI.
           providerAuthority: expProvider.publicKey,
           settlementAuthority: SETTLEMENT_AUTHORITY_PDA,
@@ -1638,7 +1663,7 @@ describe("Settlement Protocol Tests", () => {
         .signers([expClient]).rpc();
 
       // Submit milestone 1 (leave as Submitted — not approved)
-      await program.methods.submitMilestone(new BN(1))
+      await program.methods.submitMilestone(new BN(1), new BN(0))
         .accounts({ provider: expProvider.publicKey, escrow: expEscrowPDA })
         .signers([expProvider]).rpc();
     });
@@ -1658,6 +1683,7 @@ describe("Settlement Protocol Tests", () => {
           providerTokenAccount: expProviderTA,
           registryProgram: REGISTRY_PROGRAM_ID,
           providerProfile: provProfilePDA,
+          providerOwnerNonce: deriveOwnerNoncePDA(provider_account.publicKey)[0],
           // SEC-1: external authority anchor for Registry UpdateReputation CPI.
           providerAuthority: expProvider.publicKey,
           settlementAuthority: SETTLEMENT_AUTHORITY_PDA,
@@ -1727,6 +1753,7 @@ describe("Settlement Protocol Tests", () => {
         )
         .accounts({
           authority: toProvider.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(toProvider.publicKey)[0],
           agentProfile: profilePDA,
           vault: deriveVaultPDA(toProvider.publicKey)[0],
           systemProgram: SystemProgram.programId,
@@ -1789,6 +1816,7 @@ describe("Settlement Protocol Tests", () => {
             clientTokenAccount: toClientTA,
             registryProgram: REGISTRY_PROGRAM_ID,
             providerProfile: provProfilePDA,
+            providerOwnerNonce: deriveOwnerNoncePDA(provider_account.publicKey)[0],
             // SEC-1: external authority anchor for Registry UpdateReputation CPI.
             providerAuthority: toProvider.publicKey,
             settlementAuthority: SETTLEMENT_AUTHORITY_PDA,
@@ -1860,6 +1888,7 @@ describe("Settlement Protocol Tests", () => {
             clientTokenAccount: toClientTA,
             registryProgram: REGISTRY_PROGRAM_ID,
             providerProfile: provProfilePDA,
+            providerOwnerNonce: deriveOwnerNoncePDA(provider_account.publicKey)[0],
             // SEC-1: external authority anchor for Registry UpdateReputation CPI.
             providerAuthority: toProvider.publicKey,
             settlementAuthority: SETTLEMENT_AUTHORITY_PDA,
