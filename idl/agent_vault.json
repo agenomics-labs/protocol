@@ -143,6 +143,11 @@
       "accounts": [
         {
           "name": "vault",
+          "docs": [
+            "ADR-093: Seeds use the externally-known `authority` account key rather",
+            "than `vault.authority` read from stored account data. The `has_one`",
+            "constraint verifies that `authority` matches `vault.authority`."
+          ],
           "writable": true,
           "pda": {
             "seeds": [
@@ -161,12 +166,7 @@
                 "path": "authority"
               }
             ]
-          },
-          "docs": [
-            "ADR-093: Seeds use the externally-known `authority` account key rather",
-            "than `vault.authority` read from stored account data. The `has_one`",
-            "constraint verifies that `authority` matches `vault.authority`."
-          ]
+          }
         },
         {
           "name": "agent",
@@ -177,13 +177,13 @@
         },
         {
           "name": "authority",
-          "relations": [
-            "vault"
-          ],
           "docs": [
             "The vault authority — used as a canonical PDA seed (ADR-093).",
             "Not required to be a signer; the `agent` field carries the signature.",
             "CHECK: Verified via `has_one = authority` on the vault account."
+          ],
+          "relations": [
+            "vault"
           ]
         },
         {
@@ -286,13 +286,13 @@
         },
         {
           "name": "authority",
-          "relations": [
-            "vault"
-          ],
           "docs": [
             "The vault authority — used as a canonical PDA seed (ADR-093).",
             "Not required to be a signer; the `agent` field carries the signature.",
             "CHECK: Verified via `has_one = authority` on the vault account."
+          ],
+          "relations": [
+            "vault"
           ]
         },
         {
