@@ -103,7 +103,7 @@ export async function handleCreateEscrow(args: Record<string, unknown>) {
       milestonesData,
       disputeResolverAddress
     )
-    .accounts({
+    .accountsPartial({
       client: wallet.publicKey,
       clientVault: clientVaultPDA,
       providerVault: providerVaultPDA,
@@ -146,7 +146,7 @@ export async function handleAcceptTask(args: Record<string, unknown>) {
 
   const sig = await program.methods
     .acceptTask()
-    .accounts({
+    .accountsPartial({
       provider: wallet.publicKey,
       escrow: escrowAddress,
     })
@@ -174,7 +174,7 @@ export async function handleSubmitMilestone(args: Record<string, unknown>) {
 
   const sig = await program.methods
     .submitMilestone(milestoneIndex)
-    .accounts({
+    .accountsPartial({
       provider: wallet.publicKey,
       escrow: escrowAddress,
     })
@@ -211,10 +211,10 @@ export async function handleApproveMilestone(args: Record<string, unknown>) {
   const wallet = loadWallet();
   const program = getSettlementProgram();
 
-  // Fetch escrow to get the token account info and provider
-  const escrow = await (program.account as any).taskEscrow.fetch(escrowAddress);
-  const tokenMint = escrow.tokenMint as PublicKey;
-  const provider = escrow.provider as PublicKey;
+  // ADR-088: typed via `Program<Settlement>.account.taskEscrow`.
+  const escrow = await program.account.taskEscrow.fetch(escrowAddress);
+  const tokenMint = escrow.tokenMint;
+  const provider = escrow.provider;
   const escrowTokenAccount = deriveEscrowTokenAccount(
     escrowAddress,
     tokenMint
@@ -234,7 +234,7 @@ export async function handleApproveMilestone(args: Record<string, unknown>) {
 
   const sig = await program.methods
     .approveMilestone(milestoneIndex, rating)
-    .accounts({
+    .accountsPartial({
       client: wallet.publicKey,
       escrow: escrowAddress,
       escrowTokenAccount: escrowTokenAccount,
@@ -276,7 +276,7 @@ export async function handleRejectMilestone(args: Record<string, unknown>) {
 
   const sig = await program.methods
     .rejectMilestone(milestoneIndex)
-    .accounts({
+    .accountsPartial({
       client: wallet.publicKey,
       escrow: escrowAddress,
     })
@@ -299,10 +299,13 @@ export async function handleGetEscrowStatus(args: Record<string, unknown>) {
   const escrowAddress = parsePublicKey(requireString(args, "escrowAddress"));
   const program = getSettlementProgram();
 
-  const escrow = await (program.account as any).taskEscrow.fetch(escrowAddress);
+  // ADR-088: typed via `Program<Settlement>.account.taskEscrow`. Per the
+  // settlement IDL: scalars u64 → BN, pubkey → PublicKey, status enum is
+  // the Anchor-generated discriminated union.
+  const escrow = await program.account.taskEscrow.fetch(escrowAddress);
 
   // Map milestone statuses
-  const milestones = (escrow.milestones as any[]).map((m: any, i: number) => ({
+  const milestones = escrow.milestones.map((m, i) => ({
     index: i,
     descriptionHash: Array.from(m.descriptionHash),
     amount: m.amount.toNumber(),
@@ -311,22 +314,20 @@ export async function handleGetEscrowStatus(args: Record<string, unknown>) {
 
   return {
     escrowAddress: escrowAddress.toBase58(),
-    client: (escrow.client as PublicKey).toBase58(),
-    provider: (escrow.provider as PublicKey).toBase58(),
-    clientVault: (escrow.clientVault as PublicKey).toBase58(),
-    providerVault: (escrow.providerVault as PublicKey).toBase58(),
-    tokenMint: (escrow.tokenMint as PublicKey).toBase58(),
-    totalAmount: (escrow.totalAmount as any).toNumber(),
-    releasedAmount: (escrow.releasedAmount as any).toNumber(),
+    client: escrow.client.toBase58(),
+    provider: escrow.provider.toBase58(),
+    clientVault: escrow.clientVault.toBase58(),
+    providerVault: escrow.providerVault.toBase58(),
+    tokenMint: escrow.tokenMint.toBase58(),
+    totalAmount: escrow.totalAmount.toNumber(),
+    releasedAmount: escrow.releasedAmount.toNumber(),
     status: formatEscrowStatus(escrow.status),
-    taskId: (escrow.taskId as any).toNumber(),
-    createdAt: (escrow.createdAt as any).toNumber(),
-    deadline: (escrow.deadline as any).toNumber(),
-    deadlineFormatted: new Date(
-      (escrow.deadline as any).toNumber() * 1000
-    ).toISOString(),
+    taskId: escrow.taskId.toNumber(),
+    createdAt: escrow.createdAt.toNumber(),
+    deadline: escrow.deadline.toNumber(),
+    deadlineFormatted: new Date(escrow.deadline.toNumber() * 1000).toISOString(),
     disputeResolver: escrow.disputeResolver
-      ? (escrow.disputeResolver as PublicKey).toBase58()
+      ? escrow.disputeResolver.toBase58()
       : null,
     milestones,
   };
@@ -341,9 +342,9 @@ export async function handleCancelEscrow(args: Record<string, unknown>) {
   const wallet = loadWallet();
   const program = getSettlementProgram();
 
-  // Fetch escrow to get token accounts
-  const escrow = await (program.account as any).taskEscrow.fetch(escrowAddress);
-  const tokenMint = escrow.tokenMint as PublicKey;
+  // ADR-088: typed via `Program<Settlement>.account.taskEscrow`.
+  const escrow = await program.account.taskEscrow.fetch(escrowAddress);
+  const tokenMint = escrow.tokenMint;
   const escrowTokenAccount = deriveEscrowTokenAccount(
     escrowAddress,
     tokenMint
@@ -352,7 +353,7 @@ export async function handleCancelEscrow(args: Record<string, unknown>) {
 
   const sig = await program.methods
     .cancelEscrow()
-    .accounts({
+    .accountsPartial({
       client: wallet.publicKey,
       escrow: escrowAddress,
       escrowTokenAccount: escrowTokenAccount,
@@ -381,7 +382,7 @@ export async function handleRaiseDispute(args: Record<string, unknown>) {
 
   const sig = await program.methods
     .raiseDispute()
-    .accounts({
+    .accountsPartial({
       requester: wallet.publicKey,
       escrow: escrowAddress,
     })
@@ -414,10 +415,10 @@ export async function handleResolveDispute(args: Record<string, unknown>) {
   const wallet = loadWallet();
   const program = getSettlementProgram();
 
-  // Get escrow token account and provider for PDA derivation
-  const escrow = await (program.account as any).taskEscrow.fetch(escrowAddress);
-  const tokenMint = escrow.tokenMint as PublicKey;
-  const provider = escrow.provider as PublicKey;
+  // ADR-088: typed via `Program<Settlement>.account.taskEscrow`.
+  const escrow = await program.account.taskEscrow.fetch(escrowAddress);
+  const tokenMint = escrow.tokenMint;
+  const provider = escrow.provider;
   const escrowTokenAccount = deriveEscrowTokenAccount(
     escrowAddress,
     tokenMint
@@ -440,7 +441,7 @@ export async function handleResolveDispute(args: Record<string, unknown>) {
 
   const sig = await program.methods
     .resolveDispute(clientRefund, providerRefund)
-    .accounts({
+    .accountsPartial({
       resolver: wallet.publicKey,
       escrow: escrowAddress,
       escrowTokenAccount: escrowTokenAccount,
@@ -475,11 +476,11 @@ export async function handleResolveDisputeTimeout(args: Record<string, unknown>)
   const wallet = loadWallet();
   const program = getSettlementProgram();
 
-  // Fetch escrow to get token accounts and parties
-  const escrow = await (program.account as any).taskEscrow.fetch(escrowAddress);
-  const tokenMint = escrow.tokenMint as PublicKey;
-  const client = escrow.client as PublicKey;
-  const provider = escrow.provider as PublicKey;
+  // ADR-088: typed via `Program<Settlement>.account.taskEscrow`.
+  const escrow = await program.account.taskEscrow.fetch(escrowAddress);
+  const tokenMint = escrow.tokenMint;
+  const client = escrow.client;
+  const provider = escrow.provider;
   const escrowTokenAccount = deriveEscrowTokenAccount(escrowAddress, tokenMint);
 
   // ResolveDisputeTimeout refunds the client and slashes the provider's
@@ -499,7 +500,7 @@ export async function handleResolveDisputeTimeout(args: Record<string, unknown>)
 
   const sig = await program.methods
     .resolveDisputeTimeout()
-    .accounts({
+    .accountsPartial({
       payer: wallet.publicKey,
       escrow: escrowAddress,
       escrowTokenAccount: escrowTokenAccount,

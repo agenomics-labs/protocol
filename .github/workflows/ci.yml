@@ -74,12 +74,24 @@ jobs:
   typescript-check-mcp:
     name: TypeScript Check (mcp-server)
     runs-on: ubuntu-latest
+    # ADR-088: mcp-server's tsc resolves Anchor IDL types through the
+    # `src/idl/types.d.ts` re-export shim, which points at
+    # `target/types/*.ts` — a build artifact of `anchor-build`. We wait
+    # for that job, download the `anchor-types` artifact, and place it
+    # under `target/types/` before running `tsc --noEmit`.
+    needs: anchor-build
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+
+      - name: Download Anchor-generated TS types
+        uses: actions/download-artifact@v4
+        with:
+          name: anchor-types
+          path: target/types
 
       # mcp-server consumes @agenomics/capability-manifest-validator and
       # @agenomics/sas-resolver via `file:` deps. tsc --noEmit in mcp-server
@@ -217,11 +229,21 @@ jobs:
   mcp-server-tests:
     name: mcp-server unit tests
     runs-on: ubuntu-latest
+    # ADR-088: same Anchor-types dependency as `typescript-check-mcp`.
+    # The new `idl-typed-decode.test.ts` exercises the typed
+    # `IdlAccounts<AgentRegistry>["agentProfile"]` shape, which only
+    # resolves once `target/types/agent_registry.ts` is on disk.
+    needs: anchor-build
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+      - name: Download Anchor-generated TS types
+        uses: actions/download-artifact@v4
+        with:
+          name: anchor-types
+          path: target/types
       # Build the @aep packages so the `file:` deps + tsx ESM loader
       # can resolve their dist/*.js at test runtime.
       - name: Build @agenomics/capability-manifest-validator
@@ -359,6 +381,19 @@ jobs:
         with:
           name: anchor-idl
           path: target/idl/*.json
+          if-no-files-found: warn
+
+      # ADR-088: mcp-server's tsc consumes target/types/*.ts (the camelCase
+      # TypeScript view of the IDL that Anchor 0.31 generates) via the
+      # mcp-server/src/idl/types.d.ts re-export shim. Downstream
+      # TypeScript jobs depend on this artifact so they don't have to
+      # repeat the full anchor-build (~6-10 min) themselves.
+      - name: Upload generated Anchor TS types
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: anchor-types
+          path: target/types/*.ts
           if-no-files-found: warn
 
       - name: Check IDL matches committed baseline

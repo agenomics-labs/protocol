@@ -75,6 +75,12 @@ function toJsonSchema(shape: z.ZodRawShape): Tool["inputSchema"] {
   // Cast the input object to any to avoid `Type instantiation is excessively deep`
   // which ZodObject<ZodRawShape> can trigger under strict TS.
   const obj = z.object(shape) as unknown as z.ZodType<unknown>;
+  // TODO(typed): zodToJsonSchema's first argument is constrained to
+  // `ZodSchema | ZodTypeAny` whose generic depth blows TS2589 ("type
+  // instantiation is excessively deep") when the wrapper synthesises a
+  // `ZodObject<ZodRawShape>` here. Unblocked by either a narrower upstream
+  // signature in zod-to-json-schema, or by precomputing JSON schemas at
+  // build time and dropping the runtime conversion. See ADR-088.
   const schema = zodToJsonSchema(obj as any, {
     target: "jsonSchema7",
     $refStrategy: "none",
