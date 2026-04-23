@@ -8,6 +8,7 @@ import {
   getWalletPublicKey,
   getRegistryProgram,
   deriveAgentProfilePDA,
+  deriveOwnerNoncePDA,
   deriveVaultPDA,
   parsePublicKey,
   solToLamports,
@@ -70,6 +71,10 @@ export async function handleRegisterAgent(args: Record<string, unknown>) {
   // both declare `pda: { seeds: [...] }`). We use `.accountsPartial()` to
   // explicitly pass them — the on-chain Anchor will still re-derive and
   // verify them, so behaviour is identical.
+  // ADR-097: register_agent now requires the owner_nonce PDA. For first-time
+  // users it's init_if_needed'd and `nonce` starts at 0; for re-registrations
+  // after deregister it already exists with an incremented nonce.
+  const [ownerNoncePDA] = deriveOwnerNoncePDA(wallet.publicKey);
   const sig = await program.methods
     .registerAgent(
       name,
@@ -82,6 +87,7 @@ export async function handleRegisterAgent(args: Record<string, unknown>) {
     )
     .accountsPartial({
       authority: wallet.publicKey,
+      ownerNonce: ownerNoncePDA,
       agentProfile: agentProfilePDA,
       vault: vaultPDA,
       systemProgram: SystemProgram.programId,
@@ -131,7 +137,7 @@ export async function handleGetAgentProfile(args: Record<string, unknown>) {
     capabilities: profile.capabilities,
     pricingModel: formatPricingModel(profile.pricingModel),
     pricingAmountSol: lamportsToSol(profile.pricingAmount.toNumber()),
-    acceptedTokens: profile.acceptedTokens.map((pk) => pk.toBase58()),
+    acceptedTokens: profile.acceptedTokens.map((pk: PublicKey) => pk.toBase58()),
     vaultAddress: profile.vaultAddress.toBase58(),
     status: formatAgentStatus(profile.status),
     reputationScore: profile.reputationScore.toNumber(),
@@ -169,6 +175,7 @@ export async function handleUpdateAgentProfile(args: Record<string, unknown>) {
   // Finding #9: vault_address is no longer updatable — it is pinned to the
   // authority's canonical Agent Vault PDA at register time.
 
+  const [ownerNoncePDA] = deriveOwnerNoncePDA(wallet.publicKey);
   const sig = await program.methods
     .updateProfile(
       name,
@@ -181,6 +188,7 @@ export async function handleUpdateAgentProfile(args: Record<string, unknown>) {
     )
     .accountsPartial({
       authority: wallet.publicKey,
+      ownerNonce: ownerNoncePDA,
       agentProfile: agentProfilePDA,
     })
     .signers([wallet])

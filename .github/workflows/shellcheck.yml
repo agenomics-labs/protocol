@@ -20,14 +20,26 @@ concurrency:
 jobs:
   shellcheck:
     name: ShellCheck (scripts/*.sh)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v4
 
       - name: Install shellcheck
+        # Self-hosted runner has no passwordless sudo. Use the upstream
+        # static binary under ~/.local/bin (already on the runner PATH).
+        # No-op if already present at the pinned version.
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends shellcheck
+          set -euo pipefail
+          TARGET_VERSION=v0.10.0
+          if ! command -v shellcheck >/dev/null 2>&1 \
+              || [ "$(shellcheck --version | awk '/^version:/ {print "v"$2}')" != "$TARGET_VERSION" ]; then
+            mkdir -p "$HOME/.local/bin"
+            cd /tmp
+            curl -sSL "https://github.com/koalaman/shellcheck/releases/download/${TARGET_VERSION}/shellcheck-${TARGET_VERSION}.linux.x86_64.tar.xz" \
+              | tar -xJ
+            install -m 0755 "shellcheck-${TARGET_VERSION}/shellcheck" "$HOME/.local/bin/shellcheck"
+            rm -rf "shellcheck-${TARGET_VERSION}"
+          fi
           shellcheck --version
 
       - name: Run shellcheck on scripts/*.sh

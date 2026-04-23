@@ -541,6 +541,7 @@ mod tests {
             manifest_hash: [0u8; 32],
             manifest_signature: [0u8; 64],
             manifest_version: 0,
+            version: 0,
             registration_nonce: 0,
         };
         // Suspended agent must be rejected.
@@ -580,6 +581,7 @@ mod tests {
             manifest_hash: [0u8; 32],
             manifest_signature: [0u8; 64],
             manifest_version: 0,
+            version: 0,
             registration_nonce: 0,
         };
         for status in [AgentStatus::Active, AgentStatus::Paused, AgentStatus::Retired] {

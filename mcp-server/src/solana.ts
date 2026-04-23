@@ -289,13 +289,32 @@ export function deriveVaultPDA(authority: PublicKey): [PublicKey, number] {
 }
 
 /**
- * Derive agent profile PDA. Seeds: [authority, "agent-profile"]
+ * ADR-097: Derive owner-nonce PDA. Seeds: [authority, "owner-nonce"].
+ * Init'd by the first `register_agent`; its `nonce` feeds the agent_profile
+ * PDA seed for Sybil resistance after close-then-reopen.
  */
-export function deriveAgentProfilePDA(
+export function deriveOwnerNoncePDA(
   authority: PublicKey
 ): [PublicKey, number] {
   return PublicKey.findProgramAddressSync(
-    [authority.toBuffer(), Buffer.from("agent-profile")],
+    [authority.toBuffer(), Buffer.from("owner-nonce")],
+    REGISTRY_PROGRAM_ID
+  );
+}
+
+/**
+ * ADR-097: Derive agent profile PDA. Seeds: [authority, "agent-profile", nonce-le].
+ * Fresh authorities (first registration) use `nonce = 0n`. For authorities that
+ * previously deregistered and are re-registering, pass the current owner_nonce.
+ */
+export function deriveAgentProfilePDA(
+  authority: PublicKey,
+  nonce: bigint = 0n
+): [PublicKey, number] {
+  const nonceBuf = Buffer.alloc(8);
+  nonceBuf.writeBigUInt64LE(nonce);
+  return PublicKey.findProgramAddressSync(
+    [authority.toBuffer(), Buffer.from("agent-profile"), nonceBuf],
     REGISTRY_PROGRAM_ID
   );
 }

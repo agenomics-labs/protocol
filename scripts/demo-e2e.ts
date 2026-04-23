@@ -37,9 +37,21 @@ import {
 const REGISTRY_PROGRAM_ID = new PublicKey("8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh");
 const SETTLEMENT_PROGRAM_ID = new PublicKey("GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3");
 
-function deriveAgentProfilePDA(authority: PublicKey): [PublicKey, number] {
+function deriveAgentProfilePDA(
+  authority: PublicKey,
+  nonce: bigint = 0n
+): [PublicKey, number] {
+  const nonceBuf = Buffer.alloc(8);
+  nonceBuf.writeBigUInt64LE(nonce);
   return PublicKey.findProgramAddressSync(
-    [authority.toBuffer(), Buffer.from("agent-profile")],
+    [authority.toBuffer(), Buffer.from("agent-profile"), nonceBuf],
+    REGISTRY_PROGRAM_ID
+  );
+}
+
+function deriveOwnerNoncePDA(authority: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [authority.toBuffer(), Buffer.from("owner-nonce")],
     REGISTRY_PROGRAM_ID
   );
 }
@@ -188,6 +200,7 @@ it("runs the full protocol lifecycle", async () => {
     )
     .accounts({
       authority: clientAgent.publicKey,
+      ownerNonce: deriveOwnerNoncePDA(clientAgent.publicKey)[0],
       agentProfile: clientProfilePDA,
       systemProgram: SystemProgram.programId,
     })
@@ -212,6 +225,7 @@ it("runs the full protocol lifecycle", async () => {
     )
     .accounts({
       authority: providerAgent.publicKey,
+      ownerNonce: deriveOwnerNoncePDA(providerAgent.publicKey)[0],
       agentProfile: providerProfilePDA,
       systemProgram: SystemProgram.programId,
     })

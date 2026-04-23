@@ -9,6 +9,7 @@ import {
   deriveEscrowPDA,
   deriveEscrowTokenAccount,
   deriveAgentProfilePDA,
+  deriveOwnerNoncePDA,
   deriveProtocolConfigPDA,
   deriveVaultPDA,
   getAssociatedTokenAddressSync,
@@ -172,8 +173,11 @@ export async function handleSubmitMilestone(args: Record<string, unknown>) {
   const wallet = loadWallet();
   const program = getSettlementProgram();
 
+  // ADR-102: grace_period_slots is the anti-front-running window for expire_escrow.
+  // Default to 0 (opt out) unless the caller explicitly opts in.
+  const gracePeriodSlots = new BN((args.gracePeriodSlots as number | undefined) ?? 0);
   const sig = await program.methods
-    .submitMilestone(milestoneIndex)
+    .submitMilestone(milestoneIndex, gracePeriodSlots)
     .accountsPartial({
       provider: wallet.publicKey,
       escrow: escrowAddress,
@@ -222,6 +226,9 @@ export async function handleApproveMilestone(args: Record<string, unknown>) {
 
   // Derive provider's AgentProfile PDA for CPI reputation update
   const [providerProfilePDA] = deriveAgentProfilePDA(provider);
+  // ADR-097: provider_owner_nonce is required for the agent_profile PDA seed
+  // check on the CPI side.
+  const [providerOwnerNoncePDA] = deriveOwnerNoncePDA(provider);
 
   // Derive settlement_authority PDA: seeds = ["settlement_authority"] from Settlement program
   const [settlementAuthorityPDA] = PublicKey.findProgramAddressSync(
@@ -241,6 +248,7 @@ export async function handleApproveMilestone(args: Record<string, unknown>) {
       providerTokenAccount: providerTokenAccount,
       registryProgram: REGISTRY_PROGRAM_ID,
       providerProfile: providerProfilePDA,
+      providerOwnerNonce: providerOwnerNoncePDA,
       // SEC-1 (per ADR-068, in-flight): external authority anchor for the
       // Registry UpdateReputation CPI. Supplied as `escrow.provider` (the
       // only value that satisfies the Registry's new `has_one = authority`
@@ -304,10 +312,13 @@ export async function handleGetEscrowStatus(args: Record<string, unknown>) {
   // the Anchor-generated discriminated union.
   const escrow = await program.account.taskEscrow.fetch(escrowAddress);
 
-  // Map milestone statuses
-  const milestones = escrow.milestones.map((m, i) => ({
+  // Map milestone statuses. ADR-088: `m` arrives typed through
+  // `Program<Settlement>.account.taskEscrow.fetch()` but Anchor's IDL type
+  // narrowing doesn't cover nested struct arrays, so annotate explicitly.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const milestones = escrow.milestones.map((m: any, i: number) => ({
     index: i,
-    descriptionHash: Array.from(m.descriptionHash),
+    descriptionHash: Array.from(m.descriptionHash as ArrayLike<number>),
     amount: m.amount.toNumber(),
     status: formatMilestoneStatus(m.status),
   }));
@@ -424,11 +435,9 @@ export async function handleResolveDispute(args: Record<string, unknown>) {
     tokenMint
   );
 
-  // Derive provider's AgentProfile PDA for CPI reputation update
-  const [providerProfilePDA] = PublicKey.findProgramAddressSync(
-    [provider.toBuffer(), Buffer.from("agent-profile")],
-    REGISTRY_PROGRAM_ID
-  );
+  // Derive provider's AgentProfile PDA + owner_nonce PDA for CPI reputation update.
+  const [providerProfilePDA] = deriveAgentProfilePDA(provider);
+  const [providerOwnerNoncePDA] = deriveOwnerNoncePDA(provider);
 
   // Derive settlement_authority PDA
   const [settlementAuthorityPDA] = PublicKey.findProgramAddressSync(
@@ -449,6 +458,8 @@ export async function handleResolveDispute(args: Record<string, unknown>) {
       providerTokenAccount: providerTokenAccount,
       registryProgram: REGISTRY_PROGRAM_ID,
       providerProfile: providerProfilePDA,
+      providerOwnerNonce: providerOwnerNoncePDA,
+      providerAuthority: provider,
       settlementAuthority: settlementAuthorityPDA,
       protocolConfig: protocolConfigPDA,
       tokenProgram: TOKEN_PROGRAM_ID,
@@ -490,6 +501,7 @@ export async function handleResolveDisputeTimeout(args: Record<string, unknown>)
   // Provider's AgentProfile PDA and settlement_authority PDA are required
   // by the on-chain context (ADR-050 slashing CPI).
   const [providerProfilePDA] = deriveAgentProfilePDA(provider);
+  const [providerOwnerNoncePDA] = deriveOwnerNoncePDA(provider);
   const [settlementAuthorityPDA] = PublicKey.findProgramAddressSync(
     [Buffer.from("settlement_authority")],
     SETTLEMENT_PROGRAM_ID
@@ -507,6 +519,8 @@ export async function handleResolveDisputeTimeout(args: Record<string, unknown>)
       clientTokenAccount: clientTokenAccount,
       registryProgram: REGISTRY_PROGRAM_ID,
       providerProfile: providerProfilePDA,
+      providerOwnerNonce: providerOwnerNoncePDA,
+      providerAuthority: provider,
       settlementAuthority: settlementAuthorityPDA,
       protocolConfig: protocolConfigPDA,
       tokenProgram: TOKEN_PROGRAM_ID,

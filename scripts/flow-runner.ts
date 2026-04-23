@@ -49,9 +49,21 @@ function deriveEscrowPDA(client: PublicKey, provider: PublicKey, taskId: number)
   );
 }
 
-function deriveAgentProfilePDA(authority: PublicKey): [PublicKey, number] {
+function deriveAgentProfilePDA(
+  authority: PublicKey,
+  nonce: bigint = 0n
+): [PublicKey, number] {
+  const nonceBuf = Buffer.alloc(8);
+  nonceBuf.writeBigUInt64LE(nonce);
   return PublicKey.findProgramAddressSync(
-    [authority.toBuffer(), Buffer.from("agent-profile")],
+    [authority.toBuffer(), Buffer.from("agent-profile"), nonceBuf],
+    REGISTRY_PROGRAM_ID
+  );
+}
+
+function deriveOwnerNoncePDA(authority: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [authority.toBuffer(), Buffer.from("owner-nonce")],
     REGISTRY_PROGRAM_ID
   );
 }
@@ -108,6 +120,7 @@ describe(`AEP Flow Runner — ${LABEL}`, () => {
       )
       .accounts({
         authority: providerAgent.publicKey,
+        ownerNonce: deriveOwnerNoncePDA(providerAgent.publicKey)[0],
         agentProfile: providerProfilePDA,
         systemProgram: SystemProgram.programId,
       })

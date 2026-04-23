@@ -8,6 +8,7 @@ import {
   getConnection,
   getVaultProgram,
   deriveVaultPDA,
+  deriveAgentProfilePDA,
   getAssociatedTokenAddressSync,
   parsePublicKey,
   solToLamports,
@@ -39,12 +40,18 @@ export async function handleCreateVault(args: Record<string, unknown>) {
 
   // ADR-088: see registry handler — `.accountsPartial()` accepts
   // PDA-resolvable accounts (e.g. `vault` here is `pda: ["vault", authority]`).
+  // ADR-097: `profile_nonce` binds this vault to a specific agent_profile PDA
+  // (seeds `[authority, "agent-profile", nonce-le]`). For first-time users the
+  // nonce is 0; the caller is responsible for re-initializing the vault with
+  // a fresh nonce after deregister+re-register.
+  const profileNonce = new BN((args.profileNonce as number | undefined) ?? 0);
   const sig = await program.methods
     .initializeVault(
       agentIdentity,
       new BN(solToLamports(dailyLimitSol)),
       new BN(solToLamports(perTxLimitSol)),
-      maxTxsPerHour
+      maxTxsPerHour,
+      profileNonce
     )
     .accountsPartial({
       vault: vaultPDA,
@@ -96,8 +103,8 @@ export async function handleGetVaultInfo(args: Record<string, unknown>) {
       dailyLimitSol: lamportsToSol(vault.policy.dailyLimitLamports.toNumber()),
       perTxLimitSol: lamportsToSol(vault.policy.perTxLimitLamports.toNumber()),
       maxTxsPerHour: vault.policy.maxTxsPerHour,
-      tokenAllowlist: vault.policy.tokenAllowlist.map((pk) => pk.toBase58()),
-      programAllowlist: vault.policy.programAllowlist.map((pk) =>
+      tokenAllowlist: vault.policy.tokenAllowlist.map((pk: PublicKey) => pk.toBase58()),
+      programAllowlist: vault.policy.programAllowlist.map((pk: PublicKey) =>
         pk.toBase58()
       ),
     },
@@ -117,11 +124,20 @@ export async function handleVaultTransfer(args: Record<string, unknown>) {
   const program = getVaultProgram();
   const [vaultPDA] = deriveVaultPDA(wallet.publicKey);
 
+  // ADR-095: the suspension gate requires the agent_profile whose nonce the
+  // vault was initialized with. Read vault.profile_nonce so the PDA matches
+  // regardless of whether the user ever deregistered + re-registered.
+  const vaultAccount = await program.account.vault.fetch(vaultPDA);
+  const profileNonce = BigInt(vaultAccount.profileNonce.toString());
+  const [agentProfilePDA] = deriveAgentProfilePDA(wallet.publicKey, profileNonce);
+
   const sig = await program.methods
     .executeTransfer(new BN(solToLamports(amountSol)))
     .accountsPartial({
       vault: vaultPDA,
       agent: wallet.publicKey,
+      authority: wallet.publicKey,
+      agentProfile: agentProfilePDA,
       recipient: recipientAddress,
       systemProgram: SystemProgram.programId,
     })
@@ -153,11 +169,18 @@ export async function handleVaultTokenTransfer(args: Record<string, unknown>) {
   // Derive the vault's ATA for this token mint
   const vaultTokenAccount = getAssociatedTokenAddressSync(tokenMintAddress, vaultPDA, true);
 
+  // ADR-095: derive agent_profile from vault.profile_nonce for suspension gate.
+  const vaultAccount = await program.account.vault.fetch(vaultPDA);
+  const profileNonce = BigInt(vaultAccount.profileNonce.toString());
+  const [agentProfilePDA] = deriveAgentProfilePDA(wallet.publicKey, profileNonce);
+
   const sig = await program.methods
     .executeTokenTransfer(new BN(amount))
     .accountsPartial({
       vault: vaultPDA,
       agent: wallet.publicKey,
+      authority: wallet.publicKey,
+      agentProfile: agentProfilePDA,
       vaultTokenAccount: vaultTokenAccount,
       recipientTokenAccount: recipientTokenAccount,
       tokenProgram: TOKEN_PROGRAM_ID,
