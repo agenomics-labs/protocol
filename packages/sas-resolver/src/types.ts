@@ -21,6 +21,35 @@ import type { CacheBackend } from "./cache.js";
 export type ResolverRpc = Rpc<Pick<SolanaRpcApi, "getAccountInfo">> | Rpc<SolanaRpcApi>;
 
 /**
+ * Expanded credential-allowlist entry (ADR-076, drafted alongside this
+ * PR per DEEP-AUDIT-2026-04-22 SEC-3 & SEC-15).
+ *
+ * A bare base58 credential-authority pubkey (the v0 flat shape) still
+ * works via `buildAllowlist`/`normalizeAllowlist` — it is mapped to
+ * `{ authority, signers: undefined, authorizedSchemas: undefined }` —
+ * meaning: any signer, any schema. The richer shape lets a consumer
+ * bind an allowlisted credential to a specific signer key and/or a
+ * specific schema, closing the per-credential scope gap Audit 1 called
+ * out (a leaked/misconfigured credential-authority key could otherwise
+ * mint attestations for any schema, DEEP-AUDIT SEC-3).
+ *
+ * Matching semantics (enforced in `SasResolver.resolve`):
+ *   - `authority` — base58 credential-authority pubkey. Required.
+ *   - `signers`   — if set, `attestation.signer` MUST be in this list;
+ *                   otherwise skip-with-warn (ADR-061 §4 row 4g).
+ *   - `authorizedSchemas` — if set, `attestation.schema` MUST be in
+ *                           this list; otherwise skip-with-warn.
+ *
+ * Both lists use base58 pubkey strings; validation happens in
+ * `buildAllowlist`/`normalizeAllowlist`.
+ */
+export interface AllowedCredential {
+  readonly authority: string;
+  readonly signers?: readonly string[];
+  readonly authorizedSchemas?: readonly string[];
+}
+
+/**
  * Configuration for a `SasResolver` instance.
  *
  * Per ADR-061 §3, the allowlist is consumer-owned. The v1 AEP-published
@@ -32,10 +61,46 @@ export type ResolverRpc = Rpc<Pick<SolanaRpcApi, "getAccountInfo">> | Rpc<Solana
 export interface ResolverConfig {
   /** @solana/kit RPC client (from `createSolanaRpc(url)`). */
   rpc: ResolverRpc;
-  /** Base58 pubkeys of credential authorities a caller trusts. */
-  allowedCredentials: Set<string>;
+  /**
+   * Credential allowlist — the trust root for attestation acceptance.
+   *
+   * Canonical shape: `Map<authorityPubkey, AllowedCredential>` built
+   * via `buildAllowlist([...])`. A bare `Set<string>` of
+   * credential-authority pubkeys (the v0 flat shape) is still accepted
+   * for backward compatibility; see `normalizeAllowlist` for the
+   * mapping. Pass one of:
+   *   - `new Set(["Cred1...", "Cred2..."])` — flat v0 shape (any
+   *     signer, any schema).
+   *   - `buildAllowlist([{ authority: "Cred1...", signers: [...],
+   *     authorizedSchemas: [...] }, ...])` — scoped v1 shape.
+   */
+  allowedCredentials: Set<string> | Map<string, AllowedCredential>;
   /** Base58 pubkey of the AEP_AGENT_REPUTATION_v1 schema PDA. */
   schemaPda: string;
+  /**
+   * SAS program ID (base58) used to assert `schemaPda` is a SAS-owned
+   * account at resolver init. Defaults to the canonical devnet SAS
+   * program ID published in STATUS.md; override for test clusters or
+   * an on-chain upgrade.
+   *
+   * See `strict` for the opt-out.
+   */
+  sasProgramId?: string;
+  /**
+   * Strict resolver-init mode (DEEP-AUDIT-2026-04-22 SEC-15, ADR-076).
+   *
+   * When `true` (default), the resolver asserts on the first `resolve()`
+   * call that `schemaPda` is owned by `sasProgramId`. If the check
+   * fails, every subsequent `resolve()` returns a `RESOLVER_INIT` error
+   * until the misconfiguration is corrected. Callers that want to
+   * fail-fast at boot should call `SasResolver.create(config)` instead
+   * of `new SasResolver(config)`.
+   *
+   * Set `false` only for test harnesses that cannot reach an RPC (e.g.
+   * the in-memory `MockRpc` used in unit tests). Production callers
+   * should leave this unset.
+   */
+  strict?: boolean;
   /** Test hook — defaults to `() => Math.floor(Date.now() / 1000)` (unix seconds). */
   now?: () => number;
   /**
@@ -124,6 +189,14 @@ export interface ResolveOptions {
  * header.
  */
 export interface AttestationReputation {
+  /**
+   * Discriminator for schema version; v2 will introduce a discriminated
+   * union. Always `1` for AEP_AGENT_REPUTATION_v1 payloads decoded by
+   * this package. Consumers MAY treat `undefined` as equivalent to `1`
+   * for forward compatibility with objects decoded before this field
+   * was added.
+   */
+  readonly version?: 1;
   /** 0..10000 basis points — normalized reputation score. */
   score: number;
   /** Count of successfully completed tasks observed by the signer. */
@@ -194,15 +267,29 @@ export interface ResolvedReputation {
 }
 
 /**
- * Resolver error codes. Only `SUBJECT_MISMATCH` is propagated as a
- * hard error from the §4 flow; the rest cover invalid input, config,
- * or RPC-layer failures the caller should know about.
+ * Known resolver error codes. `SUBJECT_MISMATCH` is the only hard error
+ * from the §4 flow; the rest cover invalid input, config, RPC-layer
+ * failures, or resolver-init failures (schema PDA owner mismatch per
+ * ADR-076 §2).
+ *
+ * Extensible: new values may be added in minor releases.
  */
-export type ResolverErrorCode =
+export type KnownResolverErrorCode =
   | "SUBJECT_MISMATCH"
   | "INVALID_INPUT"
   | "INVALID_CONFIG"
-  | "RPC_ERROR";
+  | "RPC_ERROR"
+  | "RESOLVER_INIT";
+
+/**
+ * Extensible: new values may be added in minor releases.
+ *
+ * Consumers performing exhaustive `switch` over this type should keep a
+ * `default` branch. The `(string & {})` tail preserves the known literal
+ * completions in editors while letting TS accept unknown codes without
+ * a breaking type error.
+ */
+export type ResolverErrorCode = KnownResolverErrorCode | (string & {});
 
 export interface ResolverError {
   code: ResolverErrorCode;

@@ -45,8 +45,12 @@ export const AEP_AGENT_REPUTATION_V1_SIZE = 16;
  * SAS uses little-endian typed encoding (ADR-061 §2 "SAS typed
  * encoding, not Borsh"). This matches the solana-attestation-service
  * reference encoder; cross-checked manually.
+ *
+ * INTERNAL — not exported from `./index.js`. The public contract is
+ * `AttestationReputation` (see `./types.js`); this shape is an
+ * implementation detail of the schema-data decoder.
  */
-export interface ReputationDataFields {
+interface ReputationDataFields {
   score: number;
   completed_tasks: number;
   dispute_ratio_bps: number;
@@ -115,7 +119,12 @@ export function toAttestationReputation(
   fields: ReputationDataFields,
   attestation: Pick<SolanaAttestation, "signer" | "credential" | "expiry">,
 ): AttestationReputation {
+  // `version: 1` is the AEP_AGENT_REPUTATION_v1 discriminator; v2 will
+  // introduce a discriminated union. Setting it here (rather than in
+  // types.ts as a default) makes every decoder path produce the same
+  // shape — consumers never see a v1 object without the discriminator.
   const out: AttestationReputation = {
+    version: 1,
     score: fields.score,
     completed_tasks: fields.completed_tasks,
     dispute_ratio_bps: fields.dispute_ratio_bps,
@@ -160,7 +169,14 @@ export function toAttestationReputation(
 const ATTESTATION_ACCOUNT_TAG = 2;
 const ATTESTATION_HEADER_SIZE = 173;
 
-export interface RawAttestationAccount {
+/**
+ * INTERNAL — not exported from `./index.js`. Returned by
+ * `parseAttestationAccount`; the resolver consumes it inline and never
+ * surfaces it to callers. The public contract is
+ * `AttestationReputation` + the on-chain header fields carried inside
+ * it (`signer`, `credential`, `expiry`).
+ */
+interface RawAttestationAccount {
   /** Per-credential nonce (as 32 base58 bytes, stored verbatim). */
   nonce: Uint8Array;
   /** Referenced credential authority (32 bytes). */
@@ -222,65 +238,19 @@ export function parseAttestationAccount(bytes: Uint8Array): RawAttestationAccoun
   return { nonce, credential, schema, subject, signer, expiry, data };
 }
 
-/**
- * Helper for producers (tests, SDKs that want to round-trip). Encodes
- * the schema data back into its 16-byte little-endian form. Mirrors
- * `parseReputationData`.
- */
-export function encodeReputationData(fields: ReputationDataFields): Uint8Array {
-  if (fields.score > 10_000 || fields.score < 0) {
-    throw new Error(`score out of range: ${fields.score}`);
-  }
-  if (fields.dispute_ratio_bps > 10_000 || fields.dispute_ratio_bps < 0) {
-    throw new Error(`dispute_ratio_bps out of range: ${fields.dispute_ratio_bps}`);
-  }
-  const buf = new Uint8Array(AEP_AGENT_REPUTATION_V1_SIZE);
-  const view = new DataView(buf.buffer);
-  view.setUint16(0, fields.score, true);
-  view.setUint32(2, fields.completed_tasks, true);
-  view.setUint16(6, fields.dispute_ratio_bps, true);
-  view.setBigInt64(8, BigInt(fields.last_updated), true);
-  return buf;
-}
-
-/**
- * Mirror of `parseAttestationAccount` — encodes a raw attestation
- * account for tests. Consumers producing real attestations go through
- * SAS itself; this is only used in the test harness.
- */
-export function encodeAttestationAccount(params: {
-  nonce: Uint8Array;
-  credential: Uint8Array;
-  schema: Uint8Array;
-  subject: Uint8Array;
-  signer: Uint8Array;
-  expiry: number;
-  data: Uint8Array;
-}): Uint8Array {
-  assertLen(params.nonce, 32, "nonce");
-  assertLen(params.credential, 32, "credential");
-  assertLen(params.schema, 32, "schema");
-  assertLen(params.subject, 32, "subject");
-  assertLen(params.signer, 32, "signer");
-
-  const total = ATTESTATION_HEADER_SIZE + params.data.length;
-  const buf = new Uint8Array(total);
-  buf[0] = ATTESTATION_ACCOUNT_TAG;
-  buf.set(params.nonce, 1);
-  buf.set(params.credential, 33);
-  buf.set(params.schema, 65);
-  buf.set(params.subject, 97);
-  buf.set(params.signer, 129);
-
-  const view = new DataView(buf.buffer);
-  view.setBigInt64(161, BigInt(params.expiry), true);
-  view.setUint32(169, params.data.length, true);
-  buf.set(params.data, ATTESTATION_HEADER_SIZE);
-  return buf;
-}
-
-function assertLen(bytes: Uint8Array, expected: number, name: string): void {
-  if (bytes.length !== expected) {
-    throw new Error(`${name} must be ${expected} bytes, got ${bytes.length}`);
-  }
-}
+// encodeReputationData / encodeAttestationAccount previously lived here
+// as test-only producer helpers. They moved to `test/fixtures.ts` in the
+// v0.1.0 API tightening PR — their only callers were test harnesses, and
+// exposing them as part of the shipped surface locked us into the exact
+// byte layout forever (DEEP-AUDIT-2026-04-22 Audit 2). Real attestation
+// producers go through SAS itself, not this package.
+//
+// The layout constants (`ATTESTATION_HEADER_SIZE`, `ATTESTATION_ACCOUNT_TAG`,
+// `AEP_AGENT_REPUTATION_V1_SIZE`) are re-exported from
+// `test/fixtures.ts` so tests continue to round-trip against the same
+// definitions the decoder uses — drift between the two would fail the
+// round-trip assertions immediately.
+export const __INTERNAL_LAYOUT = {
+  ATTESTATION_ACCOUNT_TAG,
+  ATTESTATION_HEADER_SIZE,
+} as const;

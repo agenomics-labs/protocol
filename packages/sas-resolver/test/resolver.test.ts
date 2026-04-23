@@ -10,14 +10,18 @@ import { describe, it } from "node:test";
 import * as assert from "node:assert/strict";
 import {
   SasResolver,
+  ResolverInitError,
+  buildAllowlist,
+  type AllowedCredential,
+  type ResolvedReputation,
+  type Result,
+} from "../src/index.js";
+import {
   encodeAttestationAccount,
   encodeReputationData,
   encodeBase58,
   base58Decode,
-  buildAllowlist,
-  type ResolvedReputation,
-  type Result,
-} from "../src/index.js";
+} from "./fixtures.js";
 
 // ------------------------------------------------------------------
 // Test fixtures
@@ -77,6 +81,8 @@ class MockRpc {
 
 interface AccountResponse {
   data: readonly [string, "base64"] | Uint8Array | number[];
+  /** Optional account owner pubkey (base58). Used by strict-init tests. */
+  owner?: string;
 }
 
 /** Build a syntactically-correct attestation account blob. */
@@ -116,14 +122,37 @@ function accountResponse(bytes: Uint8Array): AccountResponse {
   return { data: [base64OfBytes(bytes), "base64"] as const };
 }
 
-function makeResolver(rpc: MockRpc, opts: { warnSink?: string[] } = {}): SasResolver {
+interface MakeResolverOpts {
+  warnSink?: string[];
+  /**
+   * Allowlist override — accepts either a bare pubkey array (flat v0
+   * shape) or full `AllowedCredential` entries (ADR-076 scoped shape).
+   * Defaults to a one-entry allowlist containing `ALLOWED_CREDENTIAL`
+   * with no scoping.
+   */
+  allowlist?: Array<string | AllowedCredential>;
+  /**
+   * Enable strict mode. Off by default because `MockRpc` does not
+   * canned-respond for the schema PDA; ADR-076 §2 init tests wire
+   * their own schema response explicitly.
+   */
+  strict?: boolean;
+  /** Override the SAS program ID (for init-mismatch tests). */
+  sasProgramId?: string;
+  /** Override the schema PDA (rarely used, lets tests mint alternate schemas). */
+  schemaPda?: string;
+}
+
+function makeResolver(rpc: MockRpc, opts: MakeResolverOpts = {}): SasResolver {
   // `MockRpc` quacks like the slice of `@solana/kit`'s Rpc the resolver
   // uses (`getAccountInfo`). The resolver uses duck-typing internally,
   // so the `as unknown as` cast is structural-only — no runtime lying.
   return new SasResolver({
     rpc: rpc as unknown as import("../src/types.js").ResolverRpc,
-    allowedCredentials: buildAllowlist([ALLOWED_CREDENTIAL]),
-    schemaPda: SCHEMA_PDA,
+    allowedCredentials: buildAllowlist(opts.allowlist ?? [ALLOWED_CREDENTIAL]),
+    schemaPda: opts.schemaPda ?? SCHEMA_PDA,
+    sasProgramId: opts.sasProgramId,
+    strict: opts.strict ?? false,
     now: () => NOW,
     warn: opts.warnSink
       ? (m: string, _d?: unknown) => {
@@ -131,6 +160,20 @@ function makeResolver(rpc: MockRpc, opts: { warnSink?: string[] } = {}): SasReso
         }
       : () => {},
   });
+}
+
+/**
+ * Helper for strict-init tests — plant a canned `getAccountInfo`
+ * response for a schema PDA so `#runInit` sees the owner field it
+ * expects. Returns an `{ data, owner }` shape that matches
+ * `AccountInfoResponse` in the resolver (kit v6-ish).
+ */
+function schemaAccountResponse(owner: string): AccountResponse {
+  // Any non-zero-length byte blob is fine; the init check looks at
+  // `owner`, not at the schema data. base64 "" decodes to an empty
+  // Uint8Array but `decodeAccountData` accepts that and `#runInit`
+  // doesn't inspect the data payload.
+  return { data: ["", "base64"] as const, owner } as AccountResponse;
 }
 
 function unwrapOk<T>(r: Result<T>): T {
@@ -417,6 +460,248 @@ describe("ADR-064 SasResolver — ADR-061 §4 resolution flow", () => {
       assert.ok(rpc.calls.includes(addr0));
       assert.ok(rpc.calls.includes(addr2));
       assert.equal(rpc.calls.length, 2);
+    });
+  });
+
+  // ----------------------------------------------------------------
+  // ADR-076 / DEEP-AUDIT-2026-04-22 SEC-3 + SEC-15 hardening.
+  // ----------------------------------------------------------------
+
+  describe("ADR-076 §3 — per-credential signer scoping (SEC-3)", () => {
+    it("accepts an attestation signed by a credential-scoped signer", async () => {
+      const rpc = new MockRpc();
+      rpc.set(ATTESTATION_ADDR, accountResponse(makeAttestation()));
+
+      const resolver = makeResolver(rpc, {
+        allowlist: [
+          {
+            authority: ALLOWED_CREDENTIAL,
+            signers: [SIGNER],
+          },
+        ],
+      });
+
+      const result = await resolver.resolve(
+        manifest({ owner_attestation: ATTESTATION_ADDR }),
+        SUBJECT_AUTHORITY,
+      );
+
+      const value = unwrapOk(result);
+      assert.ok(value.attestation, "scoped allowlist with matching signer accepts");
+      assert.equal(value.attestation!.signer, SIGNER);
+    });
+
+    it("skips with warn when attestation's signer is outside the credential's scoped signer list", async () => {
+      const rpc = new MockRpc();
+      const OTHER_SIGNER = pubkey(0x78);
+      rpc.set(
+        ATTESTATION_ADDR,
+        accountResponse(makeAttestation({ signer: OTHER_SIGNER })),
+      );
+      const warnings: string[] = [];
+      const resolver = makeResolver(rpc, {
+        warnSink: warnings,
+        allowlist: [
+          {
+            authority: ALLOWED_CREDENTIAL,
+            signers: [SIGNER],
+          },
+        ],
+      });
+
+      const result = await resolver.resolve(
+        manifest({ owner_attestation: ATTESTATION_ADDR }),
+        SUBJECT_AUTHORITY,
+      );
+
+      const value = unwrapOk(result);
+      assert.equal(value.absent, true, "mismatched signer routes to skip-with-warn");
+      assert.equal(value.attestation, undefined);
+      assert.equal(warnings.length, 1);
+      assert.match(warnings[0]!, /signer outside the credential's scoped signer list/);
+    });
+  });
+
+  describe("ADR-076 §3 — per-credential schema binding (SEC-3)", () => {
+    it("skips with warn when attestation's schema is not authorized for that credential", async () => {
+      const rpc = new MockRpc();
+      // Attestation points at the resolver's configured schema (so
+      // row 4c passes) but the credential's allowlist entry binds it
+      // to a *different* schema; the per-credential schema binding
+      // must reject the attestation.
+      const EXPECTED_FOR_CRED = pubkey(0x3a);
+      rpc.set(ATTESTATION_ADDR, accountResponse(makeAttestation()));
+      const warnings: string[] = [];
+      const resolver = makeResolver(rpc, {
+        warnSink: warnings,
+        allowlist: [
+          {
+            authority: ALLOWED_CREDENTIAL,
+            authorizedSchemas: [EXPECTED_FOR_CRED],
+          },
+        ],
+      });
+
+      const result = await resolver.resolve(
+        manifest({ owner_attestation: ATTESTATION_ADDR }),
+        SUBJECT_AUTHORITY,
+      );
+
+      const value = unwrapOk(result);
+      assert.equal(value.absent, true);
+      assert.equal(value.attestation, undefined);
+      assert.equal(warnings.length, 1);
+      assert.match(warnings[0]!, /schema not authorized for this credential/);
+    });
+
+    it("accepts when attestation's schema matches the credential's authorized list", async () => {
+      const rpc = new MockRpc();
+      rpc.set(ATTESTATION_ADDR, accountResponse(makeAttestation()));
+      const resolver = makeResolver(rpc, {
+        allowlist: [
+          {
+            authority: ALLOWED_CREDENTIAL,
+            authorizedSchemas: [SCHEMA_PDA],
+          },
+        ],
+      });
+
+      const result = await resolver.resolve(
+        manifest({ owner_attestation: ATTESTATION_ADDR }),
+        SUBJECT_AUTHORITY,
+      );
+
+      const value = unwrapOk(result);
+      assert.ok(value.attestation, "schema-in-list accepts");
+      assert.equal(value.attestation!.credential, ALLOWED_CREDENTIAL);
+    });
+  });
+
+  describe("ADR-076 §2 — strict init schema-PDA owner check (SEC-15)", () => {
+    const SAS_PROGRAM = pubkey(0xfa);
+    const NOT_SAS = pubkey(0xfb);
+
+    it("accepts when schemaPda is owned by the configured SAS program", async () => {
+      const rpc = new MockRpc();
+      rpc.set(SCHEMA_PDA, schemaAccountResponse(SAS_PROGRAM));
+      rpc.set(ATTESTATION_ADDR, accountResponse(makeAttestation()));
+
+      const resolver = makeResolver(rpc, {
+        strict: true,
+        sasProgramId: SAS_PROGRAM,
+      });
+
+      const result = await resolver.resolve(
+        manifest({ owner_attestation: ATTESTATION_ADDR }),
+        SUBJECT_AUTHORITY,
+      );
+
+      const value = unwrapOk(result);
+      assert.ok(value.attestation, "strict init passes when owner matches");
+      // Ensure the schema PDA was fetched exactly once (memoized init).
+      const schemaFetches = rpc.calls.filter((a) => a === SCHEMA_PDA).length;
+      assert.equal(schemaFetches, 1);
+    });
+
+    it("returns RESOLVER_INIT when schemaPda is owned by a non-SAS program", async () => {
+      const rpc = new MockRpc();
+      // Plant a schema-PDA account owned by the WRONG program.
+      rpc.set(SCHEMA_PDA, schemaAccountResponse(NOT_SAS));
+      rpc.set(ATTESTATION_ADDR, accountResponse(makeAttestation()));
+
+      const resolver = makeResolver(rpc, {
+        strict: true,
+        sasProgramId: SAS_PROGRAM,
+      });
+
+      const result = await resolver.resolve(
+        manifest({ owner_attestation: ATTESTATION_ADDR }),
+        SUBJECT_AUTHORITY,
+      );
+
+      assert.equal(result.ok, false, "resolve must fail with init error");
+      if (!result.ok) {
+        assert.equal(result.error.code, "RESOLVER_INIT");
+        const details = result.error.details as {
+          expectedOwner: string;
+          observedOwner: string | null;
+          schemaPda: string;
+        };
+        assert.equal(details.expectedOwner, SAS_PROGRAM);
+        assert.equal(details.observedOwner, NOT_SAS);
+        assert.equal(details.schemaPda, SCHEMA_PDA);
+      }
+    });
+
+    it("returns RESOLVER_INIT when schemaPda account does not exist on-chain", async () => {
+      const rpc = new MockRpc();
+      // No canned response for SCHEMA_PDA — MockRpc.getAccountInfo
+      // returns `{ value: null }`, meaning the account does not exist.
+      rpc.set(ATTESTATION_ADDR, accountResponse(makeAttestation()));
+
+      const resolver = makeResolver(rpc, {
+        strict: true,
+        sasProgramId: SAS_PROGRAM,
+      });
+
+      const result = await resolver.resolve(
+        manifest({ owner_attestation: ATTESTATION_ADDR }),
+        SUBJECT_AUTHORITY,
+      );
+
+      assert.equal(result.ok, false);
+      if (!result.ok) {
+        assert.equal(result.error.code, "RESOLVER_INIT");
+        assert.match(result.error.message, /does not exist/);
+      }
+    });
+
+    it("SasResolver.create() fails fast on owner mismatch", async () => {
+      const rpc = new MockRpc();
+      rpc.set(SCHEMA_PDA, schemaAccountResponse(NOT_SAS));
+
+      await assert.rejects(
+        async () => {
+          await SasResolver.create({
+            rpc: rpc as unknown as import("../src/types.js").ResolverRpc,
+            allowedCredentials: buildAllowlist([ALLOWED_CREDENTIAL]),
+            schemaPda: SCHEMA_PDA,
+            sasProgramId: SAS_PROGRAM,
+            now: () => NOW,
+            warn: () => {},
+          });
+        },
+        (e) => e instanceof ResolverInitError,
+      );
+    });
+
+    it("init failure latches — subsequent resolves return the same error without re-querying", async () => {
+      const rpc = new MockRpc();
+      rpc.set(SCHEMA_PDA, schemaAccountResponse(NOT_SAS));
+      rpc.set(ATTESTATION_ADDR, accountResponse(makeAttestation()));
+
+      const resolver = makeResolver(rpc, {
+        strict: true,
+        sasProgramId: SAS_PROGRAM,
+      });
+
+      const r1 = await resolver.resolve(
+        manifest({ owner_attestation: ATTESTATION_ADDR }),
+        SUBJECT_AUTHORITY,
+      );
+      const r2 = await resolver.resolve(
+        manifest({ owner_attestation: ATTESTATION_ADDR }),
+        SUBJECT_AUTHORITY,
+      );
+
+      assert.equal(r1.ok, false);
+      assert.equal(r2.ok, false);
+      // Schema PDA fetched exactly once; attestation never fetched
+      // because init latched.
+      const schemaFetches = rpc.calls.filter((a) => a === SCHEMA_PDA).length;
+      const attFetches = rpc.calls.filter((a) => a === ATTESTATION_ADDR).length;
+      assert.equal(schemaFetches, 1, "schema PDA fetched once, memoized");
+      assert.equal(attFetches, 0, "attestation never fetched after init failure");
     });
   });
 });

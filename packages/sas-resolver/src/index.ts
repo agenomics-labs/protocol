@@ -5,17 +5,23 @@
 //
 // ADR-061 §4 resolution flow + §2 schema + §3 credential allowlist
 // semantics + §4 merge convention helpers are all surfaced from this
-// one file. Submodule entry points (./resolver, ./schema, ./allowlist,
-// ./merge, ./types) are also available if the consumer wants to
-// import a narrower subset (reduces TS program size in large trees).
+// one file. v0.1.0 collapses the surface to a single `.` export plus
+// `./cache-redis` for callers that want to wire Redis without pulling
+// in the lazy env factory (see `package.json` "exports").
+//
+// Notes on removed symbols (DEEP-AUDIT-2026-04-22.md Audit 2):
+//   - Base58/base64 codecs (`encodeBase58`, `base58Decode`,
+//     `base64Decode`, `base64Encode`) were exported as implementation
+//     details of the RPC decoder. They are now private to the resolver;
+//     test fixtures that need them live in `test/fixtures.ts`.
+//   - `encodeReputationData` and `encodeAttestationAccount` were only
+//     ever used by the test harness; they have moved to
+//     `test/fixtures.ts` for producer-side round-trip tests.
+//   - `ReputationDataFields` and `RawAttestationAccount` exposed on-chain
+//     byte layout as public type shapes; they are now internal to
+//     `./schema.ts`. The public contract is `AttestationReputation`.
 
-export {
-  SasResolver,
-  encodeBase58,
-  base58Decode,
-  base64Decode,
-  base64Encode,
-} from "./resolver.js";
+export { SasResolver, ResolverInitError } from "./resolver.js";
 
 export {
   InMemoryCache,
@@ -38,13 +44,14 @@ export {
   parseReputationData,
   toAttestationReputation,
   parseAttestationAccount,
-  encodeReputationData,
-  encodeAttestationAccount,
-  type ReputationDataFields,
-  type RawAttestationAccount,
 } from "./schema.js";
 
-export { buildAllowlist, isAllowed, type AllowlistEntry } from "./allowlist.js";
+export {
+  buildAllowlist,
+  isAllowed,
+  normalizeAllowlist,
+  type AllowlistEntry,
+} from "./allowlist.js";
 
 export {
   detectDisagreement,
@@ -62,8 +69,10 @@ export type {
   ResolvedReputation,
   SolanaAttestation,
   AttestationReputation,
+  AllowedCredential,
   ResolverError,
   ResolverErrorCode,
+  KnownResolverErrorCode,
   ManifestLike,
   Result,
 } from "./types.js";

@@ -8,13 +8,15 @@ import { describe, it } from "node:test";
 import * as assert from "node:assert/strict";
 import {
   AEP_AGENT_REPUTATION_V1_SIZE,
-  encodeAttestationAccount,
-  encodeReputationData,
   parseAttestationAccount,
   parseReputationData,
   toAttestationReputation,
-  encodeBase58,
 } from "../src/index.js";
+import {
+  encodeAttestationAccount,
+  encodeReputationData,
+  encodeBase58,
+} from "./fixtures.js";
 
 describe("AEP_AGENT_REPUTATION_v1 codec", () => {
   it("round-trips all fields at their max values", () => {
