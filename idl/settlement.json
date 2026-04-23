@@ -543,12 +543,15 @@
           "docs": [
             "Escrow state account — dynamically sized based on milestone count.",
             "",
-            "Space formula: 298 + (milestones_data.len() * 41)",
+            "Escrow state account — dynamically sized based on milestone count.",
+            "",
+            "Space formula: 298 + (milestones_data.len() * 49)",
             "Fixed: 8 (disc) + 160 (5 pubkeys) + 16 (amounts) + 4 (vec prefix)",
             "+ 1 (status) + 8 (task_id) + 32 (desc_hash) + 16 (timestamps)",
             "+ 33 (dispute_resolver Option) + 9 (disputed_at Option) + 1 (bump)",
             "+ 10 (margin) = 298",
-            "Per milestone: 32 (desc_hash) + 8 (amount) + 1 (status) = 41"
+            "Per milestone: 32 (desc_hash) + 8 (amount) + 1 (status)",
+            "+ 8 (grace_ends_at u64, ADR-102) = 49"
           ],
           "writable": true,
           "pda": {
@@ -1628,6 +1631,10 @@
         {
           "name": "milestone_index",
           "type": "u32"
+        },
+        {
+          "name": "grace_period_slots",
+          "type": "u64"
         }
       ]
     },
@@ -2053,6 +2060,11 @@
       "code": 6026,
       "name": "NoResolverRequiresTimeout",
       "msg": "Cannot resolve_dispute when dispute_resolver is None; use resolve_dispute_timeout (SEC-7)"
+    },
+    {
+      "code": 6027,
+      "name": "MilestoneInGracePeriod",
+      "msg": "Milestone is within grace period; slash not permitted yet (ADR-102)"
     }
   ],
   "types": [
@@ -2259,6 +2271,10 @@
                 "name": "MilestoneStatus"
               }
             }
+          },
+          {
+            "name": "grace_ends_at",
+            "type": "u64"
           }
         ]
       }
