@@ -116,9 +116,15 @@ function makeResolver(
     cacheNow?: () => number;
   } = {},
 ): SasResolver {
+  // ADR-101: use the scoped `AllowedCredential` shape with an explicit
+  // `signers` list. The flat v0 shape (`[ALLOWED_CREDENTIAL]`) would
+  // produce `entry.signers === undefined`, which now throws
+  // `SignerHistoryMissingError` instead of silently passing.
   return new SasResolver({
     rpc: rpc as unknown as import("../src/types.js").ResolverRpc,
-    allowedCredentials: buildAllowlist([ALLOWED_CREDENTIAL]),
+    allowedCredentials: buildAllowlist([
+      { authority: ALLOWED_CREDENTIAL, signers: [SIGNER] },
+    ]),
     schemaPda: SCHEMA_PDA,
     // Cache tests do not plant a schema-PDA response, so strict init
     // cannot succeed. Opt out — the SEC-15 strict-init path has its

@@ -132,7 +132,7 @@ function makeResolver(
   const { rpc, state } = mockRpc(map);
   const resolver = new R.SasResolver({
     rpc,
-    allowedCredentials: R.buildAllowlist([env.CRED_OK]),
+    allowedCredentials: R.buildAllowlist([{ authority: env.CRED_OK, signers: [env.SIGNER] }]),
     schemaPda: env.SCHEMA,
     // Smoke mocks never canned-respond for the schema PDA owner check
     // (ADR-076 §2). The resolver unit tests cover strict init directly;
