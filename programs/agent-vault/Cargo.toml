@@ -6,6 +6,11 @@ edition = "2021"
 [dependencies]
 anchor-lang = "0.31.1"
 anchor-spl = "0.31.1"
+# ADR-095: Depend on the registry crate for typed CPI. `features = ["cpi"]`
+# enables Anchor-generated CPI helpers; the transitive `no-entrypoint` feature
+# prevents the registry's cdylib entrypoint from colliding with this program's.
+# Used to import `AgentProfile` and `AgentStatus` for the suspension check.
+agent-registry = { path = "../agent-registry", features = ["cpi"], default-features = false }
 
 [lib]
 crate-type = ["cdylib", "lib"]

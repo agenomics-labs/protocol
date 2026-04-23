@@ -21,12 +21,20 @@ pub mod agent_vault {
     /// Initializes a new vault for an AI agent.
     /// The vault authority is set to the signer, who has control over policy updates and pause/resume.
     /// The agent identity is linked to this vault for on-chain reputation tracking.
+    ///
+    /// ADR-095 / ADR-097: `profile_nonce` is the registration nonce of the
+    /// authority's current `AgentProfile` PDA (read from the `OwnerNonce`
+    /// account before calling this instruction). It is stored on-chain so
+    /// `execute_transfer` / `execute_token_transfer` can re-derive the
+    /// correct profile address for the suspension check without requiring
+    /// the client to supply it on every transfer.
     pub fn initialize_vault(
         ctx: Context<InitializeVault>,
         agent_identity: Pubkey,
         daily_limit_lamports: u64,
         per_tx_limit_lamports: u64,
         max_txs_per_hour: u32,
+        profile_nonce: u64,
     ) -> Result<()> {
         instructions::initialize_vault(
             ctx,
@@ -34,6 +42,7 @@ pub mod agent_vault {
             daily_limit_lamports,
             per_tx_limit_lamports,
             max_txs_per_hour,
+            profile_nonce,
         )
     }
 
@@ -103,12 +112,14 @@ pub mod agent_vault {
     }
 
     /// Executes a SOL transfer from the vault to a recipient.
-    /// Enforces spending limits, rate limiting, and daily caps.
-    /// Records the action in the on-chain audit log.
+    /// Enforces spending limits, rate limiting, daily caps, and the Registry
+    /// suspension gate (ADR-095).
     pub fn execute_transfer(
         ctx: Context<ExecuteTransfer>,
         amount_lamports: u64,
     ) -> Result<()> {
+        // ADR-095: gate on Registry suspension before any transfer logic.
+        require_not_suspended(&ctx.accounts.agent_profile)?;
         instructions::execute_transfer(ctx, amount_lamports)
     }
 
@@ -118,12 +129,15 @@ pub mod agent_vault {
     // directly by the agent without going through the vault.
 
     /// Executes an SPL token transfer from the vault's token account to a recipient.
-    /// Enforces token allowlist, rate limiting, and the vault's pause state.
+    /// Enforces token allowlist, rate limiting, the vault's pause state, and the
+    /// Registry suspension gate (ADR-095).
     /// The vault PDA signs the transfer via CPI.
     pub fn execute_token_transfer(
         ctx: Context<ExecuteTokenTransfer>,
         amount: u64,
     ) -> Result<()> {
+        // ADR-095: gate on Registry suspension before any transfer logic.
+        require_not_suspended(&ctx.accounts.agent_profile)?;
         instructions::execute_token_transfer(ctx, amount)
     }
 
@@ -493,6 +507,88 @@ mod tests {
                 // The limit check itself must not panic
                 let _within_limit = new_total <= daily_limit;
             }
+        }
+    }
+
+    // ================================================================
+    // ADR-095: Vault ↔ Registry suspension coupling tests
+    // ================================================================
+
+    /// ADR-095: The `require_not_suspended` helper rejects Suspended status.
+    #[test]
+    fn adr_095_suspended_agent_is_rejected() {
+        use agent_registry::state::{AgentProfile, AgentStatus, PricingModel, ReputationStake};
+        let mut profile = AgentProfile {
+            authority: Pubkey::default(),
+            name: String::new(),
+            description: String::new(),
+            category: String::new(),
+            capabilities: vec![],
+            pricing_model: PricingModel::PerTask,
+            pricing_amount: 0,
+            accepted_tokens: vec![],
+            vault_address: Pubkey::default(),
+            status: AgentStatus::Suspended,
+            reputation_score: 0,
+            total_tasks_completed: 0,
+            total_earnings: 0,
+            avg_rating: 0,
+            created_at: 0,
+            updated_at: 0,
+            reputation_stake: ReputationStake { staked_amount: 0, slash_count: 3 },
+            bump: 0,
+            manifest_cid: [0u8; 64],
+            manifest_hash: [0u8; 32],
+            manifest_signature: [0u8; 64],
+            manifest_version: 0,
+            registration_nonce: 0,
+        };
+        // Suspended agent must be rejected.
+        let result = require_not_suspended(&profile);
+        assert!(result.is_err());
+
+        // Non-suspended agent must be allowed.
+        profile.status = AgentStatus::Active;
+        let result = require_not_suspended(&profile);
+        assert!(result.is_ok());
+    }
+
+    /// ADR-095: All non-Suspended statuses pass the suspension gate.
+    #[test]
+    fn adr_095_non_suspended_statuses_are_allowed() {
+        use agent_registry::state::{AgentProfile, AgentStatus, PricingModel, ReputationStake};
+        let mut profile = AgentProfile {
+            authority: Pubkey::default(),
+            name: String::new(),
+            description: String::new(),
+            category: String::new(),
+            capabilities: vec![],
+            pricing_model: PricingModel::PerTask,
+            pricing_amount: 0,
+            accepted_tokens: vec![],
+            vault_address: Pubkey::default(),
+            status: AgentStatus::Active,
+            reputation_score: 100,
+            total_tasks_completed: 5,
+            total_earnings: 0,
+            avg_rating: 4,
+            created_at: 0,
+            updated_at: 0,
+            reputation_stake: ReputationStake { staked_amount: 0, slash_count: 0 },
+            bump: 0,
+            manifest_cid: [0u8; 64],
+            manifest_hash: [0u8; 32],
+            manifest_signature: [0u8; 64],
+            manifest_version: 0,
+            registration_nonce: 0,
+        };
+        for status in [AgentStatus::Active, AgentStatus::Paused, AgentStatus::Retired] {
+            profile.status = status;
+            assert!(
+                require_not_suspended(&profile).is_ok(),
+                "Expected {:?} to pass suspension gate",
+                status
+            );
         }
     }
 }

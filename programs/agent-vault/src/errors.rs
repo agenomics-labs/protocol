@@ -75,4 +75,10 @@ pub enum VaultError {
     /// rate-limit slots and exhaust the window during incident response.
     #[msg("Recipient token account must not be owned by the vault (self-transfer)")]
     SelfTransferNotAllowed,
+
+    /// ADR-095: The agent's Registry profile has status == Suspended.
+    /// A suspended agent may not move assets through the vault; suspension
+    /// must be resolved via `clear_suspension` before transfers resume.
+    #[msg("Agent is suspended in the Registry; transfers are blocked until suspension is cleared")]
+    AgentSuspended,
 }
