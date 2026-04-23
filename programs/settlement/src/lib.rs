@@ -523,8 +523,8 @@ mod tests {
         assert!(!blocked, "grace==0: slash must be permitted immediately");
     }
 
-    /// ADR-102: With a non-zero grace window, a slash attempted in the
-    /// same slot as the submission is blocked.
+    /// ADR-102: With a non-zero grace window, a slash attempted within the
+    /// window is blocked.
     #[test]
     fn adr102_grace_nonzero_slash_blocked_within_window() {
         let submission_slot: u64 = 100;
@@ -546,7 +546,7 @@ mod tests {
         assert!(!blocked, "slash must be permitted once grace window elapses");
     }
 
-    /// ADR-102: saturating_add on u64::MAX does not panic.
+    /// ADR-102: saturating_add on u64::MAX does not panic or overflow.
     #[test]
     fn adr102_grace_ends_at_saturates_on_overflow() {
         let submission_slot: u64 = u64::MAX;

@@ -36,6 +36,10 @@ use crate::events::*;
 /// `escrow.provider` (via a new `provider_authority: UncheckedAccount`
 /// constrained with `address = escrow.provider`). This closes the
 /// self-referential-seed hole in the pre-fix Registry context.
+/// ADR-097: `owner_nonce` is now a required account in the Registry's
+/// `UpdateReputation` context (used to re-derive the profile PDA with the
+/// nonce component). Settlement CPI callers must pass the provider's
+/// `OwnerNonce` account alongside the authority and profile accounts.
 // TODO(ADR-094): Replace `update_provider_reputation` with a call to
 // `Registry::propose_reputation_delta` via CPI. The new instruction owns the
 // reputation policy ([0, 100], |delta| <= MAX_DELTA_PER_CALL = 10), so
@@ -51,6 +55,7 @@ pub fn update_provider_reputation<'info>(
     registry_program: AccountInfo<'info>,
     provider_profile: AccountInfo<'info>,
     provider_authority: AccountInfo<'info>,
+    provider_owner_nonce: AccountInfo<'info>,
     settlement_authority: AccountInfo<'info>,
     settlement_authority_bump: u8,
 ) -> Result<()> {
@@ -59,6 +64,7 @@ pub fn update_provider_reputation<'info>(
 
     let cpi_accounts = agent_registry::cpi::accounts::UpdateReputation {
         authority: provider_authority,
+        owner_nonce: provider_owner_nonce,
         agent_profile: provider_profile,
         settlement_authority,
     };

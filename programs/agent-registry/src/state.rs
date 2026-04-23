@@ -22,10 +22,10 @@ pub const MIGRATION_HEADROOM: usize = 64;
 
 /// AgentProfile: The core account representing a registered agent.
 ///
-/// ADR-040: Account space is explicitly calculated as 1406 bytes
+/// ADR-040: Account space is explicitly calculated as 1414 bytes
 /// (1243 baseline + 162 bytes for the ADR-060 manifest fields:
 ///  manifest_cid 64 + manifest_hash 32 + manifest_signature 64 + manifest_version 2 = 162,
-///  + 1 byte for ADR-096 version: u8 = 1406).
+///  + 1 byte for ADR-096 version: u8 + 8 bytes for ADR-097 registration_nonce: u64 = 1414).
 ///
 /// ADR-060 adds four manifest fields that point to an off-chain capability
 /// manifest (IPFS CIDv1 or Arweave tx ID). The on-chain fields are the
@@ -38,6 +38,11 @@ pub const MIGRATION_HEADROOM: usize = 64;
 /// search index (ADR-060 §1 "Relationship"); the manifest is the source of
 /// truth. `update_manifest` re-validates the invariant
 /// `capabilities ⊆ manifest.capabilities[].name`.
+///
+/// ADR-097: `registration_nonce` is included in the PDA seed to prevent
+/// Sybil reuse via close-then-reopen. The nonce is taken from the owner's
+/// `OwnerNonce` account at registration time and incremented on deregister.
+/// Zero-value default is valid (first registration uses nonce 0).
 ///
 /// ADR-096: `version` is the schema version for in-place migration. Set to
 /// `0` on creation; incremented by `migrate_agent_profile`. New fields added
@@ -73,20 +78,37 @@ pub struct AgentProfile {
     // ADR-096: schema version for in-place migration (see migrate_agent_profile).
     // 0 = initial layout; bumped to N after the Nth field-adding upgrade migration.
     pub version: u8,                     // 1 byte
+    // ADR-097: monotonic registration nonce included in PDA seed.
+    // Prevents address reuse after close (Sybil resistance).
+    pub registration_nonce: u64,         // 8 bytes
 }
 
 impl AgentProfile {
-    /// ADR-040 / ADR-096 explicit space calc. Do NOT drift from the
+    /// ADR-040 / ADR-096 / ADR-097 explicit space calc. Do NOT drift from the
     /// `space = ...` literal in `contexts.rs::RegisterAgent`.
     ///
     /// Baseline (pre-ADR-060): 1243 bytes (see earlier history).
     /// ADR-060 additions: 64 + 32 + 64 + 2 = 162 bytes.
     /// ADR-096 addition: version u8 = 1 byte.
-    /// Total SPACE: 1406 bytes.
+    /// ADR-097 addition: registration_nonce u64 = 8 bytes.
+    /// Total SPACE: 1414 bytes.
     ///
     /// RegisterAgent allocates 8 (discriminator) + SPACE + MIGRATION_HEADROOM
-    /// (64) = 1478 bytes total on-chain.
-    pub const SPACE: usize = 1406;
+    /// (64) = 1486 bytes total on-chain.
+    pub const SPACE: usize = 1414;
+}
+
+/// ADR-097: Per-owner monotonic nonce counter.
+///
+/// Seeded by `[authority.key().as_ref(), b"owner-nonce"]`.
+/// Initialized to 0 on first `register_agent` (via `init_if_needed`).
+/// Incremented by `deregister_agent` so subsequent registrations derive a
+/// different `agent_profile` PDA, preventing Sybil address reuse.
+#[account]
+pub struct OwnerNonce {
+    /// The current nonce value. Used as part of the `agent_profile` PDA seed
+    /// on `register_agent`. Incremented on `deregister_agent`.
+    pub nonce: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, AnchorSerialize, AnchorDeserialize)]
