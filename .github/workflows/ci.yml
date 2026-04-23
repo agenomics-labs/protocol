@@ -104,6 +104,11 @@ jobs:
         working-directory: mcp-server
         run: npx tsc --noEmit
 
+      # ADR-083 — fail the build if anyone wires app.listen / server.listen
+      # under mcp-server/src/** outside the auth-gated wrapper.
+      - name: MCP transport auth gate (ADR-083)
+        run: ./scripts/check-mcp-transport-auth.sh
+
       # Finding #22: npm audit at `high` severity. Runs advisory-only for
       # the same reason cargo-audit does — a newly disclosed issue should
       # be visible without torpedoing unrelated PRs.
