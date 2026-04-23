@@ -17,7 +17,7 @@ jobs:
     name: Event coverage (programs <-> indexer)
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: actions/setup-node@v4
         with:

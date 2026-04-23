@@ -11,7 +11,7 @@ jobs:
     name: Rust Check & Test
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Verify preinstalled Rust toolchain
         # ADR-105: self-hosted runner ships with stable + nightly toolchains
@@ -52,7 +52,7 @@ jobs:
     name: Security Audit
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Verify preinstalled Rust toolchain
         # ADR-105: self-hosted runner ships with stable + nightly toolchains
@@ -100,7 +100,7 @@ jobs:
     # under `target/types/` before running `tsc --noEmit`.
     needs: anchor-build
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: actions/setup-node@v4
         with:
@@ -151,7 +151,7 @@ jobs:
     name: TypeScript Check (indexer)
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -167,7 +167,7 @@ jobs:
     name: TypeScript Check (x402-relay)
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -186,7 +186,7 @@ jobs:
     name: TypeScript Check (capability-manifest-validator)
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -203,7 +203,7 @@ jobs:
     name: TypeScript Check (sas-resolver)
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -234,7 +234,7 @@ jobs:
     # resolves once `target/types/agent_registry.ts` is on disk.
     needs: anchor-build
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -263,7 +263,7 @@ jobs:
     name: Lockfile determinism check
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -290,7 +290,7 @@ jobs:
     name: Secret Scan
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # TruffleHog needs the commit history to diff against `base`.
           fetch-depth: 0
@@ -334,7 +334,7 @@ jobs:
       SOLANA_VERSION: v3.1.13
       ANCHOR_VERSION: 0.31.1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Verify preinstalled Rust toolchain
         # ADR-105: self-hosted runner ships with stable + nightly toolchains
@@ -447,7 +447,7 @@ jobs:
       SOLANA_VERSION: v3.1.13
       ANCHOR_VERSION: 0.31.1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Verify preinstalled Rust toolchain
         # ADR-105: self-hosted runner ships with stable + nightly toolchains
