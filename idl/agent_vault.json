@@ -179,8 +179,7 @@
           "name": "authority",
           "docs": [
             "The vault authority — used as a canonical PDA seed (ADR-093).",
-            "Not required to be a signer; the `agent` field carries the signature.",
-            "CHECK: Verified via `has_one = authority` on the vault account."
+            "Not required to be a signer; the `agent` field carries the signature."
           ],
           "relations": [
             "vault"
@@ -288,8 +287,7 @@
           "name": "authority",
           "docs": [
             "The vault authority — used as a canonical PDA seed (ADR-093).",
-            "Not required to be a signer; the `agent` field carries the signature.",
-            "CHECK: Verified via `has_one = authority` on the vault account."
+            "Not required to be a signer; the `agent` field carries the signature."
           ],
           "relations": [
             "vault"
