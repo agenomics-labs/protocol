@@ -40,6 +40,12 @@ use crate::events::*;
 /// `UpdateReputation` context (used to re-derive the profile PDA with the
 /// nonce component). Settlement CPI callers must pass the provider's
 /// `OwnerNonce` account alongside the authority and profile accounts.
+// TODO(ADR-094): Replace `update_provider_reputation` with a call to
+// `Registry::propose_reputation_delta` via CPI. The new instruction owns the
+// reputation policy ([0, 100], |delta| <= MAX_DELTA_PER_CALL = 10), so
+// Settlement no longer needs to reason about valid ranges — it only proposes
+// deltas and supplies a reason code. Full CPI re-wiring (new account struct
+// + updated caller sites in escrow.rs) is tracked as a follow-up to ADR-094.
 pub fn update_provider_reputation<'info>(
     provider: Pubkey,
     earnings: u64,

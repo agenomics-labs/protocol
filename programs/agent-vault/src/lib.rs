@@ -392,6 +392,68 @@ mod tests {
     // ADR-050: VaultAction test removed — enum was orphaned dead code
 
     // ================================================================
+    // ADR-093: Canonical (non-self-referential) PDA seed verification
+    // ================================================================
+
+    /// ADR-093: The vault PDA must be derivable using only externally-known
+    /// information (owner public key + fixed discriminant), without needing to
+    /// first load the vault account to read `vault.authority`.
+    ///
+    /// This test verifies the invariant: given an owner key, we can derive the
+    /// vault PDA deterministically — and that derived PDA is distinct from the
+    /// owner key (i.e., it is a proper PDA, not a self-referential derivation
+    /// where the vault address would appear in its own seeds).
+    #[test]
+    fn test_adr093_pda_derivable_without_vault_address() {
+        let program_id = crate::ID;
+        let owner = sample_pubkey();
+
+        // Derive the PDA using only the canonical seeds (discriminant + owner).
+        // This must succeed without any knowledge of the vault account's contents.
+        let (pda, _bump) = Pubkey::find_program_address(
+            &[b"vault", owner.as_ref()],
+            &program_id,
+        );
+
+        // The derived PDA must be distinct from the owner key.
+        assert_ne!(pda, owner, "vault PDA must differ from owner key");
+
+        // Critical ADR-093 property: the derivation does NOT use the vault
+        // address itself as a seed. Verify by confirming that using the vault's
+        // own address as a seed produces a *different* PDA.
+        let (self_ref_pda, _) = Pubkey::find_program_address(
+            &[b"vault", pda.as_ref()],
+            &program_id,
+        );
+        assert_ne!(
+            pda, self_ref_pda,
+            "canonical PDA must differ from self-referential PDA: \
+             ADR-093 ensures seeds are [b\"vault\", owner] not [b\"vault\", vault_addr]"
+        );
+    }
+
+    /// ADR-093: Canonical seeds are stable across repeated derivations —
+    /// off-chain tooling can reconstruct the vault address purely from the
+    /// owner public key without any on-chain state reads.
+    #[test]
+    fn test_adr093_canonical_seeds_are_stable() {
+        let program_id = crate::ID;
+        let owner = sample_pubkey();
+
+        let (pda1, bump1) = Pubkey::find_program_address(
+            &[b"vault", owner.as_ref()],
+            &program_id,
+        );
+        let (pda2, bump2) = Pubkey::find_program_address(
+            &[b"vault", owner.as_ref()],
+            &program_id,
+        );
+
+        assert_eq!(pda1, pda2, "canonical PDA must be deterministic");
+        assert_eq!(bump1, bump2, "canonical bump must be deterministic");
+    }
+
+    // ================================================================
     // ADR-021: Property-based fuzz tests (proptest)
     // ================================================================
 

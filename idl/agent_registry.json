@@ -1160,6 +1160,164 @@
       ]
     },
     {
+      "name": "propose_reputation_delta",
+      "docs": [
+        "ADR-094: Invert the reputation trust hierarchy.",
+        "",
+        "Previously Settlement called `update_reputation` as a privileged setter",
+        "and imposed no score upper bound (scores grow to u64::MAX). This",
+        "instruction is the new entry point: Registry owns and enforces the",
+        "policy (`[0, MAX_REPUTATION_SCORE]`, `|delta| <= MAX_DELTA_PER_CALL`).",
+        "",
+        "Authorization: caller must present the Settlement program's",
+        "`settlement_authority` PDA as a signer (SEC-1 pattern from ADR-068).",
+        "",
+        "`reason` is a caller-supplied reason code:",
+        "  0 = task_completed (positive delta)",
+        "  1 = dispute_loss   (negative delta)",
+        "  2 = expiry_undelivered (negative delta)",
+        "  3-255 = reserved for future governance/slashing sources"
+      ],
+      "discriminator": [
+        11,
+        88,
+        137,
+        167,
+        186,
+        86,
+        245,
+        175
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "docs": [
+            "The agent whose reputation is being updated. Used as the external",
+            "seed anchor for `agent_profile` and constrained equal to",
+            "`agent_profile.authority` via `has_one = authority`."
+          ],
+          "relations": [
+            "agent_profile"
+          ]
+        },
+        {
+          "name": "agent_profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "settlement_authority",
+          "docs": [
+            "Settlement authority PDA — must sign via invoke_signed.",
+            "seeds::program ensures this PDA was derived by the Settlement program,",
+            "proving the call originated there (SEC-1 pattern from ADR-068)."
+          ],
+          "signer": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  116,
+                  116,
+                  108,
+                  101,
+                  109,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                227,
+                132,
+                12,
+                30,
+                9,
+                78,
+                44,
+                188,
+                135,
+                187,
+                145,
+                68,
+                5,
+                84,
+                82,
+                239,
+                90,
+                255,
+                29,
+                178,
+                208,
+                214,
+                104,
+                25,
+                104,
+                107,
+                82,
+                183,
+                124,
+                88,
+                179,
+                116
+              ]
+            }
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "delta",
+          "type": "i16"
+        },
+        {
+          "name": "reason",
+          "type": "u8"
+        }
+      ]
+    },
+    {
       "name": "update_status",
       "discriminator": [
         147,
@@ -1300,6 +1458,19 @@
       ]
     },
     {
+      "name": "AgentMigrated",
+      "discriminator": [
+        58,
+        251,
+        115,
+        70,
+        18,
+        230,
+        95,
+        164
+      ]
+    },
+    {
       "name": "AgentProfileUpdated",
       "discriminator": [
         37,
@@ -1388,6 +1559,19 @@
         111,
         42,
         162
+      ]
+    },
+    {
+      "name": "ReputationDeltaProposed",
+      "discriminator": [
+        72,
+        60,
+        200,
+        150,
+        238,
+        216,
+        194,
+        252
       ]
     },
     {
@@ -1522,6 +1706,11 @@
       "code": 6020,
       "name": "ReputationDeltaOverflow",
       "msg": "Reputation delta magnitude overflows i64 negation (delta == i64::MIN); governance must choose a valid slash magnitude (SEC-11)"
+    },
+    {
+      "code": 6021,
+      "name": "ReputationDeltaExceedsMax",
+      "msg": "Reputation delta magnitude exceeds MAX_DELTA_PER_CALL (10); split into smaller increments"
     }
   ],
   "types": [
@@ -1546,14 +1735,43 @@
       }
     },
     {
+      "name": "AgentMigrated",
+      "docs": [
+        "ADR-096: emitted when `migrate_agent_profile` successfully bumps the",
+        "schema version. Indexers can use this to track which accounts have",
+        "been migrated and alert when stragglers remain."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "old_version",
+            "type": "u8"
+          },
+          {
+            "name": "new_version",
+            "type": "u8"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
       "name": "AgentProfile",
       "docs": [
         "AgentProfile: The core account representing a registered agent.",
         "",
-        "ADR-040: Account space is explicitly calculated as 1413 bytes",
+        "ADR-040: Account space is explicitly calculated as 1414 bytes",
         "(1243 baseline + 162 bytes for the ADR-060 manifest fields:",
         "manifest_cid 64 + manifest_hash 32 + manifest_signature 64 + manifest_version 2 = 162,",
-        "+ 8 bytes for ADR-097 registration_nonce: u64 = 1413).",
+        "+ 1 byte for ADR-096 version: u8 + 8 bytes for ADR-097 registration_nonce: u64 = 1414).",
         "",
         "ADR-060 adds four manifest fields that point to an off-chain capability",
         "manifest (IPFS CIDv1 or Arweave tx ID). The on-chain fields are the",
@@ -1570,7 +1788,10 @@
         "ADR-097: `registration_nonce` is included in the PDA seed to prevent",
         "Sybil reuse via close-then-reopen. The nonce is taken from the owner's",
         "`OwnerNonce` account at registration time and incremented on deregister.",
-        "Zero-value default is valid (first registration uses nonce 0)."
+        "Zero-value default is valid (first registration uses nonce 0).",
+        "",
+        "ADR-096: `version` is the schema version for in-place migration. Set to",
+        "`0` on creation; incremented by `migrate_agent_profile`."
       ],
       "type": {
         "kind": "struct",
@@ -1693,6 +1914,10 @@
           {
             "name": "manifest_version",
             "type": "u16"
+          },
+          {
+            "name": "version",
+            "type": "u8"
           },
           {
             "name": "registration_nonce",
@@ -1936,6 +2161,44 @@
           {
             "name": "total_staked",
             "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ReputationDeltaProposed",
+      "docs": [
+        "ADR-094: emitted when `propose_reputation_delta` successfully applies a",
+        "validated delta. Subscribers (indexers, governance dashboards) can track",
+        "every reputation change through this single event, regardless of the",
+        "originating source (Settlement, future slashing circuits, etc.)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "delta",
+            "type": "i16"
+          },
+          {
+            "name": "reason",
+            "type": "u8"
+          },
+          {
+            "name": "old_score",
+            "type": "u8"
+          },
+          {
+            "name": "new_score",
+            "type": "u8"
           },
           {
             "name": "timestamp",

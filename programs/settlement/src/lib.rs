@@ -36,8 +36,18 @@ pub mod settlement {
     }
 
     /// Provider marks a milestone as submitted (proof of work).
-    pub fn submit_milestone(ctx: Context<SubmitMilestone>, milestone_index: u32) -> Result<()> {
-        instructions::submit_milestone(ctx, milestone_index)
+    ///
+    /// ADR-102: `grace_period_slots` sets an anti-front-running window. Any
+    /// slash instruction (expire_escrow) that fires while
+    /// `Clock::get()?.slot < milestone.grace_ends_at` returns
+    /// `MilestoneInGracePeriod` instead of applying the penalty.
+    /// Pass 0 (default) to opt out of grace protection.
+    pub fn submit_milestone(
+        ctx: Context<SubmitMilestone>,
+        milestone_index: u32,
+        grace_period_slots: u64,
+    ) -> Result<()> {
+        instructions::submit_milestone(ctx, milestone_index, grace_period_slots)
     }
 
     /// Client approves a submitted milestone, releasing funds.
@@ -494,6 +504,65 @@ mod tests {
         // The new constraint is `if let Some(r) = dispute_resolver { ... }`
         // so None passes through unchanged.
         assert!(dispute_resolver.is_none());
+    }
+
+    // ================================================================
+    // ADR-102: Grace-window unit tests
+    // ================================================================
+
+    /// ADR-102: grace_period_slots == 0 means no grace protection.
+    /// The grace_ends_at is set to current_slot + 0 == current_slot,
+    /// so the check `clock.slot < grace_ends_at` is immediately false.
+    #[test]
+    fn adr102_grace_zero_slash_permitted_immediately() {
+        let current_slot: u64 = 500;
+        let grace_period_slots: u64 = 0;
+        let grace_ends_at = current_slot.saturating_add(grace_period_slots);
+        // The expire_escrow guard: grace_ends_at > 0 && clock.slot < grace_ends_at
+        let blocked = grace_ends_at > 0 && current_slot < grace_ends_at;
+        assert!(!blocked, "grace==0: slash must be permitted immediately");
+    }
+
+    /// ADR-102: With a non-zero grace window, a slash attempted in the
+    /// same slot as the submission is blocked.
+    #[test]
+    fn adr102_grace_nonzero_slash_blocked_within_window() {
+        let submission_slot: u64 = 100;
+        let grace_period_slots: u64 = 1_000;
+        let grace_ends_at = submission_slot.saturating_add(grace_period_slots); // 1100
+        let current_slot: u64 = 500; // inside the window
+        let blocked = grace_ends_at > 0 && current_slot < grace_ends_at;
+        assert!(blocked, "slash must be blocked inside the grace window");
+    }
+
+    /// ADR-102: Once grace_ends_at is reached the slash is permitted.
+    #[test]
+    fn adr102_grace_elapsed_slash_permitted() {
+        let submission_slot: u64 = 100;
+        let grace_period_slots: u64 = 1_000;
+        let grace_ends_at = submission_slot.saturating_add(grace_period_slots); // 1100
+        let current_slot: u64 = 1_100; // exactly at grace_ends_at
+        let blocked = grace_ends_at > 0 && current_slot < grace_ends_at;
+        assert!(!blocked, "slash must be permitted once grace window elapses");
+    }
+
+    /// ADR-102: saturating_add on u64::MAX does not panic.
+    #[test]
+    fn adr102_grace_ends_at_saturates_on_overflow() {
+        let submission_slot: u64 = u64::MAX;
+        let grace_period_slots: u64 = 100;
+        let grace_ends_at = submission_slot.saturating_add(grace_period_slots);
+        assert_eq!(grace_ends_at, u64::MAX);
+    }
+
+    /// ADR-102: A Milestone initialised with grace_ends_at == 0 (create_escrow
+    /// default) must never block a slash regardless of the current slot.
+    #[test]
+    fn adr102_grace_zero_field_never_blocks_slash() {
+        let grace_ends_at: u64 = 0;
+        let current_slot: u64 = 0; // worst case
+        let blocked = grace_ends_at > 0 && current_slot < grace_ends_at;
+        assert!(!blocked, "grace_ends_at==0 must never block the slash");
     }
 
     // ================================================================

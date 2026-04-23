@@ -9,6 +9,7 @@ import {
 import * as http from "http";
 import * as net from "net";
 import * as fs from "fs";
+import { pathToFileURL } from "node:url";
 import { allTools } from "./tools/index.js";
 import { getConnection, getWalletPublicKey } from "./solana.js";
 import { createRpc } from "./solana-v2.js";
@@ -25,6 +26,11 @@ import {
   verifyPeerUid,
   type TransportPosture,
 } from "./transport/auth-gate.js";
+import {
+  serverLogger as log,
+  newCorrelationId,
+  withRequestContext,
+} from "./util/logger.js";
 
 /**
  * Agenomics MCP Server — all 23 actions dispatched through the ADR-058
@@ -88,10 +94,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const toolName = request.params.name;
   const args = (request.params.arguments ?? {}) as Record<string, unknown>;
 
+  // ADR-090: every dispatch boundary mints a correlation id. The id is
+  // attached to every log line emitted while this dispatch runs and is
+  // available downstream (via context) so indexer rows + x402 JWTs can
+  // pin back to the originating MCP call.
+  const reqId = newCorrelationId();
+  const reqLog = withRequestContext(log, reqId);
+  reqLog.debug({ tool: toolName }, "mcp dispatch begin");
+
   const ctx = buildLocalDevContext();
   const result = await actionRouter.dispatch(toolName, args, ctx);
 
   if (!result.ok) {
+    reqLog.warn(
+      { tool: toolName, error_code: result.error.code },
+      "mcp dispatch error",
+    );
     return {
       content: [
         {
@@ -103,6 +121,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     };
   }
 
+  reqLog.debug({ tool: toolName }, "mcp dispatch ok");
   return {
     content: [
       {
@@ -135,17 +154,22 @@ async function main() {
   // tx-pipeline.
   createRpc();
 
-  console.error(`Agent wallet: ${getWalletPublicKey().toBase58()}`);
-  console.error(`RPC (v1/Anchor): ${getConnection().rpcEndpoint}`);
-  console.error(
-    `RPC (v2/kit):    ${process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com"}`,
-  );
-  console.error(`Actions: ${allActions.length} (all gated via ADR-058 router)`);
   const idemBackend = activeIdempotencyBackend();
-  console.error(
-    `Idempotency store: ${idemBackend}${
-      idemBackend === "redis" ? ` (AEP_REDIS_URL=${process.env.AEP_REDIS_URL})` : " (set AEP_REDIS_URL to enable Redis-backed replay protection)"
-    }`,
+  log.info(
+    {
+      transport: posture.mode,
+      agent_wallet: getWalletPublicKey().toBase58(),
+      rpc_v1_endpoint: getConnection().rpcEndpoint,
+      rpc_v2_endpoint:
+        process.env.SOLANA_RPC_URL ?? "https://api.devnet.solana.com",
+      actions_count: allActions.length,
+      idempotency_backend: idemBackend,
+      // Note: AEP_REDIS_URL is on the redaction list so it surfaces as
+      // [REDACTED] in JSON output even though we pass it here.
+      idempotency_redis_url:
+        idemBackend === "redis" ? process.env.AEP_REDIS_URL : undefined,
+    },
+    "agenomics mcp server started",
   );
 }
 
@@ -186,9 +210,15 @@ async function startHttpTransport(posture: TransportPosture): Promise<void> {
     });
   });
 
-  console.error(
-    `MCP server bound to http://${posture.httpHost}:${posture.httpPort} ` +
-      `(bearer-token auth enforced; ADR-083)`,
+  log.info(
+    {
+      transport: "http",
+      host: posture.httpHost,
+      port: posture.httpPort,
+      auth: "bearer-token",
+      adr: "ADR-083",
+    },
+    "MCP server bound (HTTP + bearer-token auth enforced)",
   );
 }
 
@@ -240,27 +270,40 @@ async function startUnixTransport(posture: TransportPosture): Promise<void> {
         // Non-fatal; the socket exists, perms are best-effort. Operators
         // on filesystems that don't support chmod (rare on Unix) need to
         // rely on parent-directory perms.
-        console.error(
-          `mcp-auth: chmod 600 on ${posture.unixPath} failed: ${
-            e instanceof Error ? e.message : String(e)
-          }`,
+        log.warn(
+          {
+            unix_path: posture.unixPath,
+            err: e instanceof Error ? e.message : String(e),
+          },
+          "mcp-auth: chmod 600 on unix socket failed (best-effort)",
         );
       }
       resolve();
     });
   });
 
-  console.error(
-    `MCP server bound to unix:${posture.unixPath} ` +
-      (posture.unixAllowedUid !== undefined
-        ? `(peer-uid=${posture.unixAllowedUid} enforced; ADR-083)`
-        : "(socket mode 0600; no peer-uid check; ADR-083)"),
+  log.info(
+    {
+      transport: "unix",
+      unix_path: posture.unixPath,
+      peer_uid_enforced: posture.unixAllowedUid !== undefined,
+      peer_uid: posture.unixAllowedUid,
+      adr: "ADR-083",
+    },
+    "MCP server bound (Unix-domain socket)",
   );
 }
 
-if (require.main === module) {
+// ADR-091 (ESM): replaces the CJS `require.main === module` entrypoint
+// guard. Compare `import.meta.url` to `argv[1]` resolved to a file:// URL —
+// true only when this module is invoked directly (e.g. `node dist/index.js`),
+// false when imported for tests.
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   main().catch((error) => {
-    console.error("Fatal error:", error);
+    log.fatal({ err: error }, "fatal error");
     process.exit(1);
   });
 }

@@ -94,6 +94,30 @@ export class ResolverInitError extends Error {
   }
 }
 
+/**
+ * Error thrown when a credential's allowlist entry has no signer history
+ * (i.e. `entry.signers` is `undefined` or empty). Per ADR-101, a
+ * credential without an explicit signer list must hard-fail rather than
+ * silently pass signer validation. This closes the security hole where
+ * an unsigned or history-free credential could bypass the per-credential
+ * signer scope check (ADR-076 §3, DEEP-AUDIT-2026-04-22 SEC-3).
+ *
+ * Callers that previously relied on the flat v0 allowlist shape
+ * (`Set<string>`, mapping to `signers: undefined`) must migrate to the
+ * scoped `AllowedCredential` shape with an explicit `signers` list.
+ *
+ * See ADR-101 for the full decision record.
+ */
+export class SignerHistoryMissingError extends Error {
+  constructor(credentialId: string) {
+    super(
+      `Credential '${credentialId}' has no signer history (entry.signers is undefined or empty). ` +
+        `This credential cannot be validated. See ADR-101.`,
+    );
+    this.name = "SignerHistoryMissingError";
+  }
+}
+
 // --------------------------------------------------------------------
 // Input validation — zod schemas at the boundary (AEP project rule:
 // "Ensure input validation at system boundaries").
@@ -448,12 +472,15 @@ export class SasResolver {
       return ok({ subject, absent: true });
     }
 
-    // ADR-076 §3 / DEEP-AUDIT SEC-3: per-credential signer scoping.
-    // If the allowlist entry binds this credential to a specific signer
-    // set, the attestation's signer MUST be in it — otherwise
-    // skip-with-warn per ADR-061 §4 row 4g. Missing `signers` means
-    // "any signer under this credential", which is v0 behaviour.
-    if (entry.signers && !entry.signers.includes(signer)) {
+    // ADR-076 §3 / DEEP-AUDIT SEC-3 / ADR-101: per-credential signer scoping.
+    // A credential MUST have an explicit, non-empty signer list. An undefined
+    // or empty list is a hard-fail (SignerHistoryMissingError) per ADR-101 —
+    // silently bypassing signer validation would allow any signer to mint
+    // attestations under this credential, which is a security hole.
+    if (!entry.signers || entry.signers.length === 0) {
+      throw new SignerHistoryMissingError(entry.authority ?? "unknown");
+    }
+    if (!entry.signers.includes(signer)) {
       this.#warn(
         `[sas-resolver] attestation ${attestationPubkey} signed by signer outside the credential's scoped signer list — skipping`,
         { credential, signer, allowed_signers: entry.signers.length },

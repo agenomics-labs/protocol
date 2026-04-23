@@ -3,6 +3,17 @@
   "version": "0.1.0",
   "description": "Agenomics Protocol - Anchor Workspace",
   "main": "target/types/index.ts",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "mcp-server",
+    "src/indexer",
+    "src/x402-relay",
+    "dashboard",
+    "sdk/idl",
+    "sdk/action-runtime",
+    "sdk/client"
+  ],
   "scripts": {
     "build": "anchor build",
     "test": "anchor test",

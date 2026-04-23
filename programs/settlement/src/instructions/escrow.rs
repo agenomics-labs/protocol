@@ -83,6 +83,7 @@ pub fn create_escrow(
             description_hash: md.description_hash,
             amount: md.amount,
             status: MilestoneStatus::Pending,
+            grace_ends_at: 0, // ADR-102: no grace protection until submit_milestone sets it
         })
         .collect();
 
@@ -126,9 +127,19 @@ pub fn accept_task(ctx: Context<AcceptTask>) -> Result<()> {
     Ok(())
 }
 
-pub fn submit_milestone(ctx: Context<SubmitMilestone>, milestone_index: u32) -> Result<()> {
+/// ADR-102: `grace_period_slots` closes the mempool front-running window.
+/// A non-zero value sets `milestone.grace_ends_at = current_slot + grace_period_slots`.
+/// Any slash (expire_escrow) that executes while `clock.slot < grace_ends_at` returns
+/// `MilestoneInGracePeriod` instead of applying the penalty.
+/// Pass 0 to opt out (no grace protection, default behaviour).
+pub fn submit_milestone(
+    ctx: Context<SubmitMilestone>,
+    milestone_index: u32,
+    grace_period_slots: u64,
+) -> Result<()> {
     let escrow = &mut ctx.accounts.escrow;
-    let now = Clock::get()?.unix_timestamp;
+    let clock = Clock::get()?;
+    let now = clock.unix_timestamp;
 
     require!(escrow.status == EscrowStatus::Active, SettlementError::InvalidStatus);
     require!(now <= escrow.deadline, SettlementError::DeadlinePassed);
@@ -145,6 +156,8 @@ pub fn submit_milestone(ctx: Context<SubmitMilestone>, milestone_index: u32) -> 
     );
 
     escrow.milestones[index].status = MilestoneStatus::Submitted;
+    // ADR-102: record the slot after which slashing is permitted.
+    escrow.milestones[index].grace_ends_at = clock.slot.saturating_add(grace_period_slots);
 
     emit!(MilestoneSubmitted {
         escrow: escrow.key(),
@@ -362,13 +375,28 @@ pub fn cancel_escrow(ctx: Context<CancelEscrow>) -> Result<()> {
 
 pub fn expire_escrow(ctx: Context<ExpireEscrow>) -> Result<()> {
     let escrow = &ctx.accounts.escrow;
-    let now = Clock::get()?.unix_timestamp;
+    let clock = Clock::get()?;
+    let now = clock.unix_timestamp;
 
     require!(now > escrow.deadline, SettlementError::DeadlineNotReached);
     require!(
         escrow.status == EscrowStatus::Active || escrow.status == EscrowStatus::Created,
         SettlementError::InvalidStatus
     );
+
+    // ADR-102: Guard against front-running. If any Submitted milestone is still
+    // within its grace window, the slash is premature — the provider's
+    // `submit_milestone` tx may have only recently landed and needs time to
+    // be recognised before a slash can fire. grace_ends_at == 0 means the
+    // provider opted out of grace protection; skip the check in that case.
+    for milestone in &escrow.milestones {
+        if milestone.status == MilestoneStatus::Submitted
+            && milestone.grace_ends_at > 0
+            && clock.slot < milestone.grace_ends_at
+        {
+            return Err(SettlementError::MilestoneInGracePeriod.into());
+        }
+    }
 
     // C1: On expiry, a Submitted milestone is implicitly approved — "silence
     // equals acceptance." This closes the attack where a client accepts

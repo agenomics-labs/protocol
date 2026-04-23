@@ -13,9 +13,9 @@
  *   - Composed validator + resolver: back-to-back, proves the merged error
  *     surface lines up with what `handleGetAgentReputation` does at runtime.
  *
- * Both @agenomics/* packages are ESM-only; mcp-server transpiles to CJS.
- * We `new Function(..., "return import(s);")`-style dynImport them inside a
- * top-level `before()` — same pattern `src/handlers/reputation.ts` uses.
+ * Both @agenomics/* packages are ESM. Under ADR-091 (mcp-server moved to
+ * NodeNext) plain dynamic `await import(...)` resolves them — the prior
+ * `new Function("s", "return import(s);")` shim has been removed.
  */
 
 import { describe, it, before } from "node:test";
@@ -32,14 +32,13 @@ import {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Dyn = any;
-const dynImport = new Function("s", "return import(s);") as <T = Dyn>(s: string) => Promise<T>;
 let V: Dyn; // capability-manifest-validator
 let R: Dyn; // sas-resolver
 let SCHEMA_URL: string;
 
 before(async () => {
-  V = await dynImport("@agenomics/capability-manifest-validator");
-  R = await dynImport("@agenomics/sas-resolver");
+  V = await import("@agenomics/capability-manifest-validator");
+  R = await import("@agenomics/sas-resolver");
   SCHEMA_URL = V.MANIFEST_SCHEMA_V1_URL;
 });
 
@@ -133,7 +132,7 @@ function makeResolver(
   const { rpc, state } = mockRpc(map);
   const resolver = new R.SasResolver({
     rpc,
-    allowedCredentials: R.buildAllowlist([env.CRED_OK]),
+    allowedCredentials: R.buildAllowlist([{ authority: env.CRED_OK, signers: [env.SIGNER] }]),
     schemaPda: env.SCHEMA,
     // Smoke mocks never canned-respond for the schema PDA owner check
     // (ADR-076 §2). The resolver unit tests cover strict init directly;

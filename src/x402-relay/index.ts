@@ -2,12 +2,18 @@
 import express, { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { Connection, LAMPORTS_PER_SOL } from "@solana/web3.js";
+import { logger } from "./logger.js";
 
 const RPC_URL = process.env.SOLANA_RPC_URL || "http://127.0.0.1:8899";
 const PORT = parseInt(process.env.RELAY_PORT || "3200", 10);
 const JWT_SECRET_RAW = process.env.JWT_SECRET;
 if (!JWT_SECRET_RAW) {
-  console.error("FATAL: JWT_SECRET environment variable must be set");
+  // Direct stderr write (not logger) because the message itself does not
+  // carry a value — only the absence of one — so the redaction policy
+  // around JWT_SECRET would fire incorrectly via JSON.
+  process.stderr.write(
+    "FATAL: JWT_SECRET environment variable must be set\n",
+  );
   process.exit(1);
 }
 // The guard above narrows JWT_SECRET_RAW to `string` at runtime but closures
@@ -366,11 +372,16 @@ app.get("/protected", requirePayment, (req: Request, res: Response) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`AEP x402 Payment Relay listening on http://localhost:${PORT}`);
-  console.log(`Recipient: ${PAYMENT_RECIPIENT || "(not configured)"}`);
-  console.log(`Required: ${REQUIRED_AMOUNT_SOL} SOL`);
-  console.log(`Token expiry: ${TOKEN_EXPIRY_SECONDS}s`);
-  console.log("Endpoints: POST /pay, GET /verify, GET /protected");
+  logger.info(
+    {
+      port: PORT,
+      recipient: PAYMENT_RECIPIENT || "(not configured)",
+      required_amount_sol: REQUIRED_AMOUNT_SOL,
+      token_expiry_seconds: TOKEN_EXPIRY_SECONDS,
+      endpoints: ["POST /pay", "GET /verify", "GET /protected"],
+    },
+    "AEP x402 payment relay listening",
+  );
 });
 
 export { app, requirePayment, verifyPaymentOnChain, verifyAccessToken };

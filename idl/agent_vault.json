@@ -143,6 +143,11 @@
       "accounts": [
         {
           "name": "vault",
+          "docs": [
+            "ADR-093: Seeds use the externally-known `authority` account key rather",
+            "than `vault.authority` read from stored account data. The `has_one`",
+            "constraint verifies that `authority` matches `vault.authority`."
+          ],
           "writable": true,
           "pda": {
             "seeds": [
@@ -174,8 +179,10 @@
           "name": "authority",
           "docs": [
             "The vault authority — used as a canonical PDA seed (ADR-093).",
-            "Not required to be a signer; the `agent` field carries the signature.",
-            "Verified via `has_one = authority` on the vault account."
+            "Not required to be a signer; the `agent` field carries the signature."
+          ],
+          "relations": [
+            "vault"
           ]
         },
         {
@@ -319,8 +326,10 @@
             "holds SOL and is used directly for lamport transfers.",
             "",
             "ADR-093: Seeds use the externally-known `authority` account key rather",
-            "than `vault.authority` read from stored account data. The `has_one`",
-            "constraint verifies that `authority` matches `vault.authority`."
+            "than `vault.authority` read from stored account data. This eliminates",
+            "the self-referential pattern (needing to load the vault to find the",
+            "seeds needed to find the vault). The `has_one` constraint verifies",
+            "that `authority` matches `vault.authority`."
           ],
           "writable": true,
           "pda": {
@@ -353,8 +362,10 @@
           "name": "authority",
           "docs": [
             "The vault authority — used as a canonical PDA seed (ADR-093).",
-            "Not required to be a signer; the `agent` field carries the signature.",
-            "Verified via `has_one = authority` on the vault account."
+            "Not required to be a signer; the `agent` field carries the signature."
+          ],
+          "relations": [
+            "vault"
           ]
         },
         {
