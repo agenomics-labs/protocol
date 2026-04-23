@@ -13,10 +13,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
+      - name: Verify preinstalled Rust toolchain
+        # ADR-105: self-hosted runner ships with stable + nightly toolchains
+        # under ~/.rustup. Anchor's IDL build needs both; do not re-install
+        # via dtolnay/rust-toolchain which would hide nightly behind a fresh
+        # RUSTUP_HOME and break `anchor idl build`.
+        run: |
+          rustup show
+          rustc --version
+          cargo --version
+          rustup toolchain list
 
       - name: Cache cargo registry & build
         uses: actions/cache@v4
@@ -48,8 +54,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Verify preinstalled Rust toolchain
+        # ADR-105: self-hosted runner ships with stable + nightly toolchains
+        # under ~/.rustup. Anchor's IDL build needs both; do not re-install
+        # via dtolnay/rust-toolchain which would hide nightly behind a fresh
+        # RUSTUP_HOME and break `anchor idl build`.
+        run: |
+          rustup show
+          rustc --version
+          cargo --version
+          rustup toolchain list
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -322,8 +336,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Verify preinstalled Rust toolchain
+        # ADR-105: self-hosted runner ships with stable + nightly toolchains
+        # under ~/.rustup. Anchor's IDL build needs both; do not re-install
+        # via dtolnay/rust-toolchain which would hide nightly behind a fresh
+        # RUSTUP_HOME and break `anchor idl build`.
+        run: |
+          rustup show
+          rustc --version
+          cargo --version
+          rustup toolchain list
 
       - name: Cache cargo registry & target
         uses: actions/cache@v4
@@ -427,8 +449,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Verify preinstalled Rust toolchain
+        # ADR-105: self-hosted runner ships with stable + nightly toolchains
+        # under ~/.rustup. Anchor's IDL build needs both; do not re-install
+        # via dtolnay/rust-toolchain which would hide nightly behind a fresh
+        # RUSTUP_HOME and break `anchor idl build`.
+        run: |
+          rustup show
+          rustc --version
+          cargo --version
+          rustup toolchain list
 
       - name: Cache cargo registry & target
         uses: actions/cache@v4
