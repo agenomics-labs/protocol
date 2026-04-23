@@ -216,6 +216,9 @@ const DISCRIMINATOR_MAP: Record<string, string> = {
   // ADR-082 / audit-2026-04-23 item 6: ManifestUpdated (agent-registry,
   // ADR-060). Was silently classified as `event_<hex>` fallback before.
   "6941986a36affdb3": "ManifestUpdated",
+  // ADR-096: AgentMigrated — emitted by migrate_agent_profile when the
+  // schema version is successfully bumped. sha256("event:AgentMigrated")[0..8].
+  "3afb734612e65fa4": "AgentMigrated",
 
   // agent-vault
   b42bcf021247034b: "VaultInitialized",
@@ -397,6 +400,19 @@ const EVENT_DECODERS: Record<string, EventDecoder> = {
   SuspensionCleared: (r) => ({
     authority: r.pubkey(),
     new_reputation_score: u64ToJson(r.u64()),
+    timestamp: i64ToJson(r.i64()),
+  }),
+
+  // ADR-096: AgentMigrated (agent-registry).
+  // Wire layout from programs/agent-registry/src/events.rs:
+  //   pub authority: Pubkey
+  //   pub old_version: u8
+  //   pub new_version: u8
+  //   pub timestamp: i64
+  AgentMigrated: (r) => ({
+    authority: r.pubkey(),
+    old_version: r.u8(),
+    new_version: r.u8(),
     timestamp: i64ToJson(r.i64()),
   }),
 

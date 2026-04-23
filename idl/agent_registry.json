@@ -142,6 +142,80 @@
       "args": []
     },
     {
+      "name": "migrate_agent_profile",
+      "docs": [
+        "ADR-096: In-place account resize / migration.",
+        "",
+        "Grows the `AgentProfile` account to `8 + AgentProfile::SPACE +",
+        "MIGRATION_HEADROOM` bytes using Anchor's `realloc` constraint. New bytes",
+        "are zero-initialized by the constraint (`realloc::zero = true`), so newly",
+        "added fields whose zero value is a valid default require no explicit",
+        "initialization here.",
+        "",
+        "The instruction is idempotent: if `profile.version >= target_version`",
+        "it returns `Ok(())` without any mutation.",
+        "",
+        "Only the `owner` (authority) of the profile may call this instruction."
+      ],
+      "discriminator": [
+        180,
+        28,
+        7,
+        129,
+        35,
+        192,
+        140,
+        105
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "agent_profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "target_version",
+          "type": "u8"
+        }
+      ]
+    },
+    {
       "name": "register_agent",
       "discriminator": [
         135,
@@ -963,6 +1037,19 @@
       ]
     },
     {
+      "name": "AgentMigrated",
+      "discriminator": [
+        58,
+        251,
+        115,
+        70,
+        18,
+        230,
+        95,
+        164
+      ]
+    },
+    {
       "name": "AgentProfileUpdated",
       "discriminator": [
         37,
@@ -1213,9 +1300,10 @@
       "docs": [
         "AgentProfile: The core account representing a registered agent.",
         "",
-        "ADR-040: Account space is explicitly calculated as 1405 bytes",
+        "ADR-040: Account space is explicitly calculated as 1406 bytes",
         "(1243 baseline + 162 bytes for the ADR-060 manifest fields:",
-        "manifest_cid 64 + manifest_hash 32 + manifest_signature 64 + manifest_version 2 = 162).",
+        "manifest_cid 64 + manifest_hash 32 + manifest_signature 64 + manifest_version 2 = 162,",
+        "+ 1 byte for ADR-096 version: u8 = 1406).",
         "",
         "ADR-060 adds four manifest fields that point to an off-chain capability",
         "manifest (IPFS CIDv1 or Arweave tx ID). The on-chain fields are the",
@@ -1227,7 +1315,10 @@
         "The existing `capabilities: Vec<String>` stays as a denormalized on-chain",
         "search index (ADR-060 §1 \"Relationship\"); the manifest is the source of",
         "truth. `update_manifest` re-validates the invariant",
-        "`capabilities ⊆ manifest.capabilities[].name`."
+        "`capabilities ⊆ manifest.capabilities[].name`.",
+        "",
+        "ADR-096: `version` is the schema version for in-place migration. Set to",
+        "`0` on creation; incremented by `migrate_agent_profile`."
       ],
       "type": {
         "kind": "struct",
@@ -1350,6 +1441,39 @@
           {
             "name": "manifest_version",
             "type": "u16"
+          },
+          {
+            "name": "version",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AgentMigrated",
+      "docs": [
+        "ADR-096: emitted when `migrate_agent_profile` successfully bumps the",
+        "schema version. Indexers can use this to track which accounts have",
+        "been migrated and alert when stragglers remain."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "old_version",
+            "type": "u8"
+          },
+          {
+            "name": "new_version",
+            "type": "u8"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
           }
         ]
       }
