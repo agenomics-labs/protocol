@@ -181,7 +181,21 @@
         {
           "name": "recipient_token_account",
           "docs": [
-            "The recipient's token account. Must match the source mint."
+            "The recipient's token account.",
+            "",
+            "Constraints:",
+            "- Mint must match `vault_token_account.mint` (already-mitigated per",
+            "DEEP-AUDIT-2026-04-22 Audit 1 finding SEC-6 — retained as-is).",
+            "- ADR-072 (SEC-6): The recipient account must NOT be the vault's own",
+            "token account (the exact same account) AND its SPL owner must not",
+            "be the vault PDA. This blocks a self-transfer loop that would",
+            "otherwise let a griefer (or a compromised `agent_identity`) burn",
+            "rate-limit slots and exhaust the hourly window during incident",
+            "response — every self-transfer is a no-op at the token-program",
+            "layer but still increments `txs_in_current_window`.",
+            "",
+            "Note: the recipient-mint match was already present pre-ADR-072; the",
+            "recipient-owner / self-account checks are the net-new SEC-6 fix."
           ],
           "writable": true
         },
@@ -540,6 +554,69 @@
       "args": []
     },
     {
+      "name": "update_agent_identity",
+      "docs": [
+        "ADR-069 (SEC-2): Rotate `vault.agent_identity`.",
+        "",
+        "`agent_identity` is a **hot key** — the off-chain agent runtime's",
+        "signing key, distinct from the human-custodied `authority`. It should",
+        "be rotated on any compromise of the agent runtime or on a routine",
+        "cadence. Only the vault `authority` (verified via `has_one` on the",
+        "context) can rotate it.",
+        "",
+        "Emits `AgentIdentityUpdated { vault, old_identity, new_identity }`.",
+        "Does not touch balances, policies, daily-spend counters, or rate-limit",
+        "counters — rotation is a pure key-swap."
+      ],
+      "discriminator": [
+        133,
+        153,
+        86,
+        40,
+        165,
+        20,
+        149,
+        42
+      ],
+      "accounts": [
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "authority"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "vault"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "new_agent_identity",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
       "name": "update_policy",
       "docs": [
         "Updates the vault's spending policy (limits and rate limits).",
@@ -618,6 +695,19 @@
     }
   ],
   "events": [
+    {
+      "name": "AgentIdentityUpdated",
+      "discriminator": [
+        170,
+        105,
+        175,
+        58,
+        163,
+        9,
+        85,
+        119
+      ]
+    },
     {
       "name": "AllowlistUpdated",
       "discriminator": [
@@ -823,9 +913,42 @@
       "code": 6019,
       "name": "BelowRentExemption",
       "msg": "Transfer would leave vault below rent-exempt minimum"
+    },
+    {
+      "code": 6020,
+      "name": "SelfTransferNotAllowed",
+      "msg": "Recipient token account must not be owned by the vault (self-transfer)"
     }
   ],
   "types": [
+    {
+      "name": "AgentIdentityUpdated",
+      "docs": [
+        "Emitted when the vault authority rotates `agent_identity` via",
+        "`update_agent_identity`. Indexers should treat this as the authoritative",
+        "signal that the old identity key is no longer authorized to sign",
+        "`execute_transfer` / `execute_token_transfer` on this vault.",
+        "",
+        "See ADR-069 for the design rationale (SEC-2 from DEEP-AUDIT-2026-04-22)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "old_identity",
+            "type": "pubkey"
+          },
+          {
+            "name": "new_identity",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
     {
       "name": "AllowlistUpdated",
       "type": {

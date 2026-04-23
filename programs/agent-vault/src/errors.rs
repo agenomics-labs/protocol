@@ -68,4 +68,11 @@ pub enum VaultError {
     /// rent-exempt minimum, risking garbage collection by the Solana runtime.
     #[msg("Transfer would leave vault below rent-exempt minimum")]
     BelowRentExemption,
+
+    /// ADR-072 (SEC-6): The recipient token account's owner is the vault
+    /// itself (or the recipient account IS the vault's token account). This
+    /// blocks a self-transfer loop that would otherwise let a griefer burn
+    /// rate-limit slots and exhaust the window during incident response.
+    #[msg("Recipient token account must not be owned by the vault (self-transfer)")]
+    SelfTransferNotAllowed,
 }
