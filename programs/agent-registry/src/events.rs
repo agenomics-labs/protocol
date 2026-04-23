@@ -82,3 +82,14 @@ pub struct ManifestUpdated {
     pub manifest_version: u16,
     pub timestamp: i64,
 }
+
+/// ADR-096: emitted when `migrate_agent_profile` successfully bumps the
+/// schema version. Indexers can use this to track which accounts have
+/// been migrated and alert when stragglers remain.
+#[event]
+pub struct AgentMigrated {
+    pub authority: Pubkey,
+    pub old_version: u8,
+    pub new_version: u8,
+    pub timestamp: i64,
+}
