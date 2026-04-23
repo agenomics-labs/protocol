@@ -54,6 +54,8 @@ Add recipient guards to `programs/agent-vault::execute_token_transfer`:
 
 ## Consequences
 
+**Promoted to Accepted on 2026-04-23 (shipping in PR #28-#33).** Both constraints landed on `main` in PR #29 (`fix(agent-vault): security fixes SEC-2, SEC-5, SEC-6`, commit `925fd66`) at `programs/agent-vault/src/contexts.rs:154-159` (`recipient_token_account.key() != vault_token_account.key()` and `recipient_token_account.owner != vault.key()`), wired to the new `VaultError::SelfTransferNotAllowed` variant. The handler-layer belt-and-braces `require!` is co-located in the `execute_token_transfer` prelude. Code comment tags are updated from `(per ADR-072, in-flight)` to `(per ADR-072, Accepted 2026-04-23)` in this consolidation PR.
+
 **Positive**: closes the self-transfer DoS vector; makes the recipient constraint explicit and auditable in `contexts.rs`; reinforces the rate-limit ordering fix from ADR-071 by ensuring burned slots represent real external-destination transfer attempts.
 
 **Negative**: minor — rejects a small class of (arguably legitimate) self-transfer use cases, e.g., an operator who wanted to use `execute_token_transfer` as a no-op to test the instruction's wiring. Workaround: use devnet for wiring tests; mainnet `execute_token_transfer` is for external transfers only.

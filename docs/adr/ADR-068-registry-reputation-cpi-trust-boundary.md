@@ -46,6 +46,8 @@ The audit flagged this same anti-pattern in SEC-1 (Registry `UpdateReputation`) 
 
 ## Consequences
 
+**Promoted to Accepted on 2026-04-23 (shipping in PR #28-#33).** The Registry-side `UpdateReputation` `provider_authority` anchor and the four Settlement-side CPI call sites were landed on `main` in PR #32 (`fix(registry+settlement): SEC-1/4/7/8/11 reputation trust-boundary hardening`, commit `5ce5e8a`). All four CPI call sites pass `escrow.provider` through the new `provider_authority: UncheckedAccount` constrained with `address = escrow.provider`. Code comment tags are updated from `(per ADR-068, in-flight)` to `(per ADR-068, Accepted 2026-04-23)` in this consolidation PR.
+
 **Positive**: eliminates cross-agent reputation forgery; hardens the single most critical trust edge in the protocol. Aligns Registry with standard Anchor `has_one` idiom, removing a future-maintainer trap.
 
 **Negative**: ABI change on both programs. Anyone who built SDKs against the Settlement↔Registry CPI (there are none published yet) would break; internal `@agenomics/mcp-server` dispatch paths for the four affected instructions must be regenerated from the new Anchor IDL.

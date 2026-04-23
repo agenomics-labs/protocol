@@ -58,6 +58,8 @@ The `SETTLEMENT_AUTHORITY_ADDRESS` constant is computed once at program boot (or
 
 ## Consequences
 
+**Promoted to Accepted on 2026-04-23 (shipping in PR #28-#33).** All four `settlement_authority` accounts in `programs/settlement/src/contexts.rs` (`ApproveMilestone`, `ExpireEscrow`, `ResolveDispute`, `ResolveDisputeTimeout`) now carry explicit `seeds = [b"settlement_authority"], bump, seeds::program = crate::ID` — landed in PR #32 (`fix(registry+settlement): SEC-1/4/7/8/11 reputation trust-boundary hardening`, commit `5ce5e8a`). The implementation realises the same defense-in-depth intent as the proposed `address = SETTLEMENT_AUTHORITY_ADDRESS` constant by pinning the seed-derivation surface explicitly (any future seed-constant rename now fails Anchor's `seeds`-derived address check at compile/test time, not at deploy). A separate `pub const` is not required because Anchor's derived address now matches a single named seed-tuple. Code comment tags are updated from `(per ADR-074, in-flight)` to `(per ADR-074, Accepted 2026-04-23)` in this consolidation PR.
+
 **Positive**: catches any future Settlement-side seed refactor at compile / IDL-publish time, preventing silent CPI desync with Registry. Zero runtime cost — the `address` assertion compiles to a single Pubkey equality check that Anchor already performs in the constraint layer.
 
 **Negative**: one additional `pub const` in `programs/settlement` that must be kept in sync with the seed. If a future developer intentionally changes the seed (valid case — e.g., a new `settlement-authority-v2` PDA during a migration), they must also update the constant. This is the desired friction: the change is visible and requires explicit intent.

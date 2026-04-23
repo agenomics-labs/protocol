@@ -58,6 +58,8 @@ Counter increments are the last mutable step before the CPI. Any validation fail
 
 ## Consequences
 
+**Promoted to Accepted on 2026-04-23 (shipping in PR #28-#33).** The reordered prelude in `programs/agent-vault/src/instructions.rs::execute_token_transfer` was landed on `main` in PR #29 (`fix(agent-vault): security fixes SEC-2, SEC-5, SEC-6`, commit `925fd66`). Validation (signer gate → allowlist → `TokenSpendRecord` lookup → daily-cap → window check) precedes any counter mutation; counter increments are the last mutable step before the SPL CPI. Default-deny allowlist semantics shipped with an explicit wildcard sentinel; existing devnet vaults were enumerated and flagged in the upgrade changelog. Code comment tags are updated from `(per ADR-071, in-flight)` to `(per ADR-071, Accepted 2026-04-23)` in this consolidation PR.
+
 **Positive**: removes the rate-limit DoS fragility; aligns allowlist semantics with secure defaults; makes the handler's validation/mutation boundary auditable at a glance.
 
 **Negative**: existing vaults with an empty `token_allowlist` will **change behavior**: all token transfers start failing after upgrade until the operator adds explicit entries or the wildcard sentinel. This is a policy-behavior change, not a code break, but it is observable.
