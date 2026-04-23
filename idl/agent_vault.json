@@ -158,8 +158,7 @@
               },
               {
                 "kind": "account",
-                "path": "vault.authority",
-                "account": "Vault"
+                "path": "authority"
               }
             ]
           }
@@ -170,6 +169,12 @@
             "The signer must be the agent authority or the vault authority."
           ],
           "signer": true
+        },
+        {
+          "name": "authority",
+          "relations": [
+            "vault"
+          ]
         },
         {
           "name": "vault_token_account",
@@ -251,8 +256,7 @@
               },
               {
                 "kind": "account",
-                "path": "vault.authority",
-                "account": "Vault"
+                "path": "authority"
               }
             ]
           }
@@ -263,6 +267,12 @@
             "The signer must be the agent authority or the vault authority."
           ],
           "signer": true
+        },
+        {
+          "name": "authority",
+          "relations": [
+            "vault"
+          ]
         },
         {
           "name": "recipient",
