@@ -4,7 +4,7 @@ Point-in-time map of where the codebase, devnet deployment, and governance
 stand. Update when shipping meaningful PRs; see the **Resume checklist**
 at the bottom for restarting work after time away.
 
-_Last updated: 2026-04-21, main @ `aa399f3`_
+_Last updated: 2026-04-22 (§4 rebootstrapped after signer key loss)_
 
 ## 1. Codebase / main
 
@@ -38,18 +38,20 @@ _Last updated: 2026-04-21, main @ `aa399f3`_
 
 | | |
 |---|---|
-| Multisig PDA | `6QUUP78t3mKeSroV7fTAP9WPkfWkHXbVEhHzBR3Q9Xi` |
+| Multisig PDA | `EHdxwBkcSEcJe3E2UrRwwYozPjqZNe8HZrrBTeU6NPcz` |
 | Threshold | 2-of-3 |
 | Member 1 | `BUdXA1FiWnV7ksXYodH3uEhDUhfBJ8g4UmmWdshWjTXL` (current upgrade-auth wallet) |
-| Member 2 | devnet-v1 throwaway keypair at `.keys/squads-signer-2.json` (gitignored) |
-| Member 3 | devnet-v1 throwaway keypair at `.keys/squads-signer-3.json` (gitignored) |
-| Create tx | `5uS1vRyqRYxGs9Gf6ite2hrAzhp23nEVY8PZcJK4LTzGh5YbLdjUGub2SioCA2cQZWXCeNVBuUdW6GkVRqWJ9235` |
+| Member 2 | `C1vm83htBDUwbHyBn4GAzwHoKtLeyc13EPW2nc3udvW5` — devnet-v1 throwaway keypair at `.keys/squads-signer-2.json` (gitignored) |
+| Member 3 | `8xMiCZdgCTB9J244JDiPqkm2yVTQbLuGTc12Qu5AynjB` — devnet-v1 throwaway keypair at `.keys/squads-signer-3.json` (gitignored) |
+| Create tx | `2DNgubLNyRG5NSBd7XeZVr5KksXKok2FcCWpN2rBU6oquvSzhRxpdEnCAbgzcba7qXpZdSWBYKtcZYGn27EBfBqJ` |
 | Public config | `scripts/.squads-devnet.json` |
 | Operator docs | `docs/SQUADS_DEVNET.md` |
 
 **Role scope (v1)**: intended future `AEP_PROTOCOL` SAS credential authority. Currently holds **no** authority — the SAS bootstrap ceremony hasn't run yet.
 
 Signers 2+3 are throwaway dev keypairs. For mainnet they must be replaced with real signers per ADR-063 §1.1 (3-of-5 with role slots). Rotation procedure in ADR-063 §4.
+
+**Abandoned prior PDA**: `6QUUP78t3mKeSroV7fTAP9WPkfWkHXbVEhHzBR3Q9Xi` (create tx `5uS1vRyqRYxGs9Gf6ite2hrAzhp23nEVY8PZcJK4LTzGh5YbLdjUGub2SioCA2cQZWXCeNVBuUdW6GkVRqWJ9235`). Original v1 bootstrap from 2026-04-22T00:29Z; signer-2/signer-3 private keys were not persisted between sessions, leaving only 1-of-3 signing capability against a 2-of-3 threshold. No authority had been transferred to it, so it stays on-chain as inert dust (~0.0025 SOL).
 
 ## 5. npm publishing state
 
