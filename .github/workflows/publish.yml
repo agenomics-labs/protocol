@@ -35,7 +35,7 @@ jobs:
     outputs:
       tag_version: ${{ steps.meta.outputs.tag_version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Extract tag version
         id: meta
@@ -88,7 +88,7 @@ jobs:
     permissions:
       contents: write     # for creating the GitHub Release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: actions/setup-node@v4
         with:

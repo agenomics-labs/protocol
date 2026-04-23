@@ -22,7 +22,7 @@ jobs:
     name: ShellCheck (scripts/*.sh)
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install shellcheck
         # Self-hosted runner has no passwordless sudo. Use the upstream
