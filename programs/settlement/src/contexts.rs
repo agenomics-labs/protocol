@@ -158,12 +158,28 @@ pub struct ApproveMilestone<'info> {
     )]
     pub provider_profile: UncheckedAccount<'info>,
 
+    /// SEC-1 (per ADR-068, in-flight): external authority anchor for the
+    /// Registry's `UpdateReputation` CPI. The Registry now pins
+    /// `agent_profile` via `has_one = authority` + seeds derived from
+    /// `authority.key()` instead of the self-referential
+    /// `agent_profile.authority`. Feeding `escrow.provider` here is the
+    /// correct match: `provider_profile`'s seeds above are already pinned
+    /// to `escrow.provider`, so an attacker cannot substitute a different
+    /// profile.
+    /// CHECK: address-constrained to `escrow.provider`.
+    #[account(address = escrow.provider)]
+    pub provider_authority: UncheckedAccount<'info>,
+
     /// Settlement authority PDA — this program's signing authority for CPI calls.
     /// The Registry program verifies this PDA as a signer with seeds::program = SETTLEMENT_PROGRAM_ID.
+    /// SEC-8 (per ADR-074, in-flight): `seeds::program` is already the
+    /// program's own ID by default, but making it explicit blocks any
+    /// future refactor from silently changing the derivation surface.
     /// CHECK: Derived from this program's ID; seeds verified by Anchor.
     #[account(
         seeds = [b"settlement_authority"],
-        bump
+        bump,
+        seeds::program = crate::ID,
     )]
     pub settlement_authority: UncheckedAccount<'info>,
 
@@ -207,16 +223,27 @@ pub struct ResolveDispute<'info> {
     #[account(mut)]
     pub resolver: Signer<'info>,
 
-    /// Finding #20: Authorization hoisted from handler to account-level
-    /// constraint for visibility parity with Registry's `has_one = authority`
-    /// pattern. Anchor's `has_one` cannot express OR-logic against an
-    /// `Option<Pubkey>`, so a `constraint` clause is used. The dispute.rs
-    /// handler still derives `is_resolver` for the slash decision (A-03),
-    /// but the authorization gate itself is enforced here.
+    /// Finding #20 + SEC-7 (per ADR-073, in-flight): Authorization hoisted
+    /// to account-level constraint for visibility parity with Registry's
+    /// `has_one = authority` pattern. Anchor's `has_one` cannot express
+    /// OR-logic against an `Option<Pubkey>`, so explicit constraints are
+    /// used.
+    ///
+    /// SEC-7 fix: the pre-fix second branch allowed `resolver == client`
+    /// when `dispute_resolver == None`, letting the client unilaterally
+    /// call `resolve_dispute(client_refund = remaining, provider_refund =
+    /// 0)` to drain the escrow without a neutral resolver. The A-03 guard
+    /// in the handler only skipped the slashing in that case — it did not
+    /// stop the token transfer. Fix: require `dispute_resolver.is_some()`
+    /// (first constraint) AND `resolver == dispute_resolver.unwrap()`
+    /// (second). No-resolver disputes are now forced onto
+    /// `resolve_dispute_timeout`, which refunds the full remaining balance
+    /// symmetrically to the client and does not slash the provider.
     #[account(
         mut,
+        constraint = escrow.dispute_resolver.is_some()
+            @ SettlementError::NoResolverRequiresTimeout,
         constraint = escrow.dispute_resolver.map(|r| r == resolver.key()).unwrap_or(false)
-            || resolver.key() == escrow.client
             @ SettlementError::UnauthorizedResolver,
     )]
     pub escrow: Account<'info, TaskEscrow>,
@@ -260,8 +287,19 @@ pub struct ResolveDispute<'info> {
     )]
     pub provider_profile: UncheckedAccount<'info>,
 
+    /// SEC-1 (per ADR-068, in-flight): external authority anchor for the
+    /// Registry `UpdateReputation` CPI. See `ApproveMilestone` for rationale.
+    /// CHECK: address-constrained to `escrow.provider`.
+    #[account(address = escrow.provider)]
+    pub provider_authority: UncheckedAccount<'info>,
+
+    /// SEC-8 (per ADR-074, in-flight): explicit `seeds::program = crate::ID`.
     /// CHECK: Settlement authority PDA for CPI signing.
-    #[account(seeds = [b"settlement_authority"], bump)]
+    #[account(
+        seeds = [b"settlement_authority"],
+        bump,
+        seeds::program = crate::ID,
+    )]
     pub settlement_authority: UncheckedAccount<'info>,
 
     /// Finding #19: Reads the governance-owned `reputation_delta_dispute_loss`.
@@ -315,8 +353,19 @@ pub struct ResolveDisputeTimeout<'info> {
     )]
     pub provider_profile: UncheckedAccount<'info>,
 
+    /// SEC-1 (per ADR-068, in-flight): external authority anchor for the
+    /// Registry `UpdateReputation` CPI. See `ApproveMilestone` for rationale.
+    /// CHECK: address-constrained to `escrow.provider`.
+    #[account(address = escrow.provider)]
+    pub provider_authority: UncheckedAccount<'info>,
+
+    /// SEC-8 (per ADR-074, in-flight): explicit `seeds::program = crate::ID`.
     /// CHECK: Settlement authority PDA for CPI signing.
-    #[account(seeds = [b"settlement_authority"], bump)]
+    #[account(
+        seeds = [b"settlement_authority"],
+        bump,
+        seeds::program = crate::ID,
+    )]
     pub settlement_authority: UncheckedAccount<'info>,
 
     /// Finding #19: Reads the governance-owned `dispute_timeout_seconds`
@@ -405,8 +454,19 @@ pub struct ExpireEscrow<'info> {
     )]
     pub provider_profile: UncheckedAccount<'info>,
 
+    /// SEC-1 (per ADR-068, in-flight): external authority anchor for the
+    /// Registry `UpdateReputation` CPI. See `ApproveMilestone` for rationale.
+    /// CHECK: address-constrained to `escrow.provider`.
+    #[account(address = escrow.provider)]
+    pub provider_authority: UncheckedAccount<'info>,
+
+    /// SEC-8 (per ADR-074, in-flight): explicit `seeds::program = crate::ID`.
     /// CHECK: Settlement authority PDA for CPI signing.
-    #[account(seeds = [b"settlement_authority"], bump)]
+    #[account(
+        seeds = [b"settlement_authority"],
+        bump,
+        seeds::program = crate::ID,
+    )]
     pub settlement_authority: UncheckedAccount<'info>,
 
     /// Finding #19: Reads the governance-owned

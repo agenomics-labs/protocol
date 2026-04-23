@@ -158,10 +158,26 @@
           }
         },
         {
+          "name": "provider_authority",
+          "docs": [
+            "SEC-1 (per ADR-068, in-flight): external authority anchor for the",
+            "Registry's `UpdateReputation` CPI. The Registry now pins",
+            "`agent_profile` via `has_one = authority` + seeds derived from",
+            "`authority.key()` instead of the self-referential",
+            "`agent_profile.authority`. Feeding `escrow.provider` here is the",
+            "correct match: `provider_profile`'s seeds above are already pinned",
+            "to `escrow.provider`, so an attacker cannot substitute a different",
+            "profile."
+          ]
+        },
+        {
           "name": "settlement_authority",
           "docs": [
             "Settlement authority PDA — this program's signing authority for CPI calls.",
-            "The Registry program verifies this PDA as a signer with seeds::program = SETTLEMENT_PROGRAM_ID."
+            "The Registry program verifies this PDA as a signer with seeds::program = SETTLEMENT_PROGRAM_ID.",
+            "SEC-8 (per ADR-074, in-flight): `seeds::program` is already the",
+            "program's own ID by default, but making it explicit blocks any",
+            "future refactor from silently changing the derivation surface."
           ],
           "pda": {
             "seeds": [
@@ -190,7 +206,44 @@
                   121
                 ]
               }
-            ]
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                227,
+                132,
+                12,
+                30,
+                9,
+                78,
+                44,
+                188,
+                135,
+                187,
+                145,
+                68,
+                5,
+                84,
+                82,
+                239,
+                90,
+                255,
+                29,
+                178,
+                208,
+                214,
+                104,
+                25,
+                104,
+                107,
+                82,
+                183,
+                124,
+                88,
+                179,
+                116
+              ]
+            }
           }
         },
         {
@@ -823,7 +876,17 @@
           }
         },
         {
+          "name": "provider_authority",
+          "docs": [
+            "SEC-1 (per ADR-068, in-flight): external authority anchor for the",
+            "Registry `UpdateReputation` CPI. See `ApproveMilestone` for rationale."
+          ]
+        },
+        {
           "name": "settlement_authority",
+          "docs": [
+            "SEC-8 (per ADR-074, in-flight): explicit `seeds::program = crate::ID`."
+          ],
           "pda": {
             "seeds": [
               {
@@ -851,7 +914,44 @@
                   121
                 ]
               }
-            ]
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                227,
+                132,
+                12,
+                30,
+                9,
+                78,
+                44,
+                188,
+                135,
+                187,
+                145,
+                68,
+                5,
+                84,
+                82,
+                239,
+                90,
+                255,
+                29,
+                178,
+                208,
+                214,
+                104,
+                25,
+                104,
+                107,
+                82,
+                183,
+                124,
+                88,
+                179,
+                116
+              ]
+            }
           }
         },
         {
@@ -1038,12 +1138,22 @@
         {
           "name": "escrow",
           "docs": [
-            "Finding #20: Authorization hoisted from handler to account-level",
-            "constraint for visibility parity with Registry's `has_one = authority`",
-            "pattern. Anchor's `has_one` cannot express OR-logic against an",
-            "`Option<Pubkey>`, so a `constraint` clause is used. The dispute.rs",
-            "handler still derives `is_resolver` for the slash decision (A-03),",
-            "but the authorization gate itself is enforced here."
+            "Finding #20 + SEC-7 (per ADR-073, in-flight): Authorization hoisted",
+            "to account-level constraint for visibility parity with Registry's",
+            "`has_one = authority` pattern. Anchor's `has_one` cannot express",
+            "OR-logic against an `Option<Pubkey>`, so explicit constraints are",
+            "used.",
+            "",
+            "SEC-7 fix: the pre-fix second branch allowed `resolver == client`",
+            "when `dispute_resolver == None`, letting the client unilaterally",
+            "call `resolve_dispute(client_refund = remaining, provider_refund =",
+            "0)` to drain the escrow without a neutral resolver. The A-03 guard",
+            "in the handler only skipped the slashing in that case — it did not",
+            "stop the token transfer. Fix: require `dispute_resolver.is_some()`",
+            "(first constraint) AND `resolver == dispute_resolver.unwrap()`",
+            "(second). No-resolver disputes are now forced onto",
+            "`resolve_dispute_timeout`, which refunds the full remaining balance",
+            "symmetrically to the client and does not slash the provider."
           ],
           "writable": true
         },
@@ -1137,7 +1247,17 @@
           }
         },
         {
+          "name": "provider_authority",
+          "docs": [
+            "SEC-1 (per ADR-068, in-flight): external authority anchor for the",
+            "Registry `UpdateReputation` CPI. See `ApproveMilestone` for rationale."
+          ]
+        },
+        {
           "name": "settlement_authority",
+          "docs": [
+            "SEC-8 (per ADR-074, in-flight): explicit `seeds::program = crate::ID`."
+          ],
           "pda": {
             "seeds": [
               {
@@ -1165,7 +1285,44 @@
                   121
                 ]
               }
-            ]
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                227,
+                132,
+                12,
+                30,
+                9,
+                78,
+                44,
+                188,
+                135,
+                187,
+                145,
+                68,
+                5,
+                84,
+                82,
+                239,
+                90,
+                255,
+                29,
+                178,
+                208,
+                214,
+                104,
+                25,
+                104,
+                107,
+                82,
+                183,
+                124,
+                88,
+                179,
+                116
+              ]
+            }
           }
         },
         {
@@ -1322,7 +1479,17 @@
           }
         },
         {
+          "name": "provider_authority",
+          "docs": [
+            "SEC-1 (per ADR-068, in-flight): external authority anchor for the",
+            "Registry `UpdateReputation` CPI. See `ApproveMilestone` for rationale."
+          ]
+        },
+        {
           "name": "settlement_authority",
+          "docs": [
+            "SEC-8 (per ADR-074, in-flight): explicit `seeds::program = crate::ID`."
+          ],
           "pda": {
             "seeds": [
               {
@@ -1350,7 +1517,44 @@
                   121
                 ]
               }
-            ]
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                227,
+                132,
+                12,
+                30,
+                9,
+                78,
+                44,
+                188,
+                135,
+                187,
+                145,
+                68,
+                5,
+                84,
+                82,
+                239,
+                90,
+                255,
+                29,
+                178,
+                208,
+                214,
+                104,
+                25,
+                104,
+                107,
+                82,
+                183,
+                124,
+                88,
+                179,
+                116
+              ]
+            }
           }
         },
         {
@@ -1844,6 +2048,11 @@
       "code": 6025,
       "name": "InvalidProtocolConfigValue",
       "msg": "Invalid ProtocolConfig value: violates sanity bounds"
+    },
+    {
+      "code": 6026,
+      "name": "NoResolverRequiresTimeout",
+      "msg": "Cannot resolve_dispute when dispute_resolver is None; use resolve_dispute_timeout (SEC-7)"
     }
   ],
   "types": [

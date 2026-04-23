@@ -83,4 +83,14 @@ pub enum SettlementError {
     /// (zero min_escrow, non-positive timeout, positive slash delta, etc.).
     #[msg("Invalid ProtocolConfig value: violates sanity bounds")]
     InvalidProtocolConfigValue,
+
+    /// SEC-7 (per ADR-073, in-flight): `resolve_dispute` on an escrow whose
+    /// `dispute_resolver == None`. The only legitimate path for a
+    /// no-resolver dispute is `resolve_dispute_timeout`, which refunds the
+    /// full remaining balance symmetrically to the client (no slashing). A
+    /// `resolve_dispute` call here would have let the client set
+    /// `client_refund = remaining, provider_refund = 0` and unilaterally
+    /// drain the escrow without the neutral-resolver slashing signal.
+    #[msg("Cannot resolve_dispute when dispute_resolver is None; use resolve_dispute_timeout (SEC-7)")]
+    NoResolverRequiresTimeout,
 }

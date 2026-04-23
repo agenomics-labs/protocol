@@ -74,6 +74,21 @@
     },
     {
       "name": "deregister_agent",
+      "docs": [
+        "SEC-4 (per ADR-070, in-flight): closing the profile without first",
+        "draining the staking PDA let an attacker re-register under the same",
+        "authority seeds and reset Suspended state + slash_count to zero. The",
+        "`reputation-stake` PDA is seeded by `[authority, \"reputation-stake\"]`",
+        "— those seeds survive deregistration — so simply adding a balance",
+        "guard here suffices: a later `register_agent` requires a",
+        "`staked_amount == 0` profile field, which mirrors the PDA after the",
+        "required unstake.",
+        "",
+        "Chosen fix: refuse deregistration while stake is present. Caller must",
+        "issue `unstake_reputation(full_amount)` first, which drains the PDA",
+        "back to 0 lamports (Solana GCs it at end of tx) and resets",
+        "`reputation_stake.staked_amount` to 0. No new instruction needed."
+      ],
       "discriminator": [
         227,
         208,
@@ -726,14 +741,23 @@
       ],
       "accounts": [
         {
+          "name": "authority",
+          "docs": [
+            "external seed anchor for `agent_profile` and constrained equal to",
+            "`agent_profile.authority` via `has_one = authority`."
+          ],
+          "relations": [
+            "agent_profile"
+          ]
+        },
+        {
           "name": "agent_profile",
           "writable": true,
           "pda": {
             "seeds": [
               {
                 "kind": "account",
-                "path": "agent_profile.authority",
-                "account": "AgentProfile"
+                "path": "authority"
               },
               {
                 "kind": "const",
@@ -1151,6 +1175,16 @@
       "code": 6018,
       "name": "Ed25519InstructionMismatch",
       "msg": "The paired Ed25519 instruction does not match the supplied manifest_hash / manifest_signature / authority"
+    },
+    {
+      "code": 6019,
+      "name": "StakePresentOnDeregister",
+      "msg": "Cannot deregister while reputation stake is present; call unstake_reputation for the full amount first (SEC-4)"
+    },
+    {
+      "code": 6020,
+      "name": "ReputationDeltaOverflow",
+      "msg": "Reputation delta magnitude overflows i64 negation (delta == i64::MIN); governance must choose a valid slash magnitude (SEC-11)"
     }
   ],
   "types": [

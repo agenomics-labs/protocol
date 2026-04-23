@@ -1,5 +1,6 @@
 use anchor_lang::prelude::*;
 use crate::state::{AgentProfile, AGENT_VAULT_PROGRAM_ID, SETTLEMENT_PROGRAM_ID};
+use crate::errors::AgentRegistryError;
 
 #[derive(Accounts)]
 pub struct RegisterAgent<'info> {
@@ -65,11 +66,37 @@ pub struct UpdateStatus<'info> {
     pub agent_profile: Account<'info, AgentProfile>,
 }
 
+/// SEC-1 (per ADR-068, in-flight): the `UpdateReputation` context pins the
+/// target `agent_profile` to an externally-supplied `authority` account. The
+/// pre-fix version derived the PDA from `agent_profile.authority.as_ref()`
+/// — a self-reference that let Anchor "validate" the seed against the very
+/// field stored inside the account it was meant to be checking, which is no
+/// check at all. Any well-formed `AgentProfile` would pass.
+///
+/// The fix has two layers:
+///   1. `authority` is now an `UncheckedAccount` whose `.key()` seeds the
+///      PDA derivation, so the seed anchor is outside the account being
+///      validated.
+///   2. `has_one = authority` enforces `agent_profile.authority ==
+///      authority.key()` at account-deserialization time.
+///
+/// Both checks must pass simultaneously, so a caller can only update the
+/// profile whose stored `authority` matches the PDA derivation — the exact
+/// invariant the old code pretended to enforce. The Settlement CPI layer
+/// supplies `authority = escrow.provider`, which is already enforced equal
+/// to the seed of `provider_profile` on the Settlement side (belt-and-
+/// braces across programs).
 #[derive(Accounts)]
 pub struct UpdateReputation<'info> {
+    /// CHECK: The authority whose profile is being updated. Used as the
+    /// external seed anchor for `agent_profile` and constrained equal to
+    /// `agent_profile.authority` via `has_one = authority`.
+    pub authority: UncheckedAccount<'info>,
+
     #[account(
         mut,
-        seeds = [agent_profile.authority.as_ref(), b"agent-profile"],
+        has_one = authority @ AgentRegistryError::UnauthorizedCaller,
+        seeds = [authority.key().as_ref(), b"agent-profile"],
         bump = agent_profile.bump
     )]
     pub agent_profile: Account<'info, AgentProfile>,

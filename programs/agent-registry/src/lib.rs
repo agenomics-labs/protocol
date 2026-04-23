@@ -126,7 +126,21 @@ pub mod agent_registry {
         if reputation_delta >= 0 {
             agent_profile.reputation_score = agent_profile.reputation_score.saturating_add(reputation_delta as u64);
         } else {
-            agent_profile.reputation_score = agent_profile.reputation_score.saturating_sub((-reputation_delta) as u64);
+            // SEC-11 (per ADR-075, in-flight): `(-reputation_delta) as u64`
+            // panics in debug builds when `reputation_delta == i64::MIN`
+            // because negation overflows. `checked_neg` returns None on that
+            // exact case. Governance bounds (see settlement's
+            // update_protocol_config) already cap slash magnitudes at
+            // -1_000_000, so reaching this branch would require a direct
+            // caller bypassing governance — still, fail cleanly rather than
+            // panic. The positive result of `checked_neg` on a negative
+            // `i64` is always in `1..=i64::MAX`, so the `as u64` cast is
+            // lossless.
+            let magnitude = reputation_delta
+                .checked_neg()
+                .ok_or(AgentRegistryError::ReputationDeltaOverflow)?
+                as u64;
+            agent_profile.reputation_score = agent_profile.reputation_score.saturating_sub(magnitude);
         }
 
         if task_completed {
@@ -270,8 +284,25 @@ pub mod agent_registry {
         Ok(())
     }
 
+    /// SEC-4 (per ADR-070, in-flight): closing the profile without first
+    /// draining the staking PDA let an attacker re-register under the same
+    /// authority seeds and reset Suspended state + slash_count to zero. The
+    /// `reputation-stake` PDA is seeded by `[authority, "reputation-stake"]`
+    /// — those seeds survive deregistration — so simply adding a balance
+    /// guard here suffices: a later `register_agent` requires a
+    /// `staked_amount == 0` profile field, which mirrors the PDA after the
+    /// required unstake.
+    ///
+    /// Chosen fix: refuse deregistration while stake is present. Caller must
+    /// issue `unstake_reputation(full_amount)` first, which drains the PDA
+    /// back to 0 lamports (Solana GCs it at end of tx) and resets
+    /// `reputation_stake.staked_amount` to 0. No new instruction needed.
     pub fn deregister_agent(ctx: Context<DeregisterAgent>) -> Result<()> {
         let agent_profile = &ctx.accounts.agent_profile;
+        require!(
+            agent_profile.reputation_stake.staked_amount == 0,
+            AgentRegistryError::StakePresentOnDeregister
+        );
         emit!(AgentDeregistered { authority: agent_profile.authority, name: agent_profile.name.clone(), timestamp: Clock::get()?.unix_timestamp });
         Ok(())
     }

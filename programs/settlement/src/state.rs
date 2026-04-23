@@ -52,6 +52,15 @@ pub const DEFAULT_REPUTATION_DELTA_TASK_COMPLETED: i64 = 50;
 pub const DEFAULT_REPUTATION_DELTA_DISPUTE_LOSS: i64 = -25;
 pub const DEFAULT_REPUTATION_DELTA_EXPIRY_UNDELIVERED: i64 = -10;
 
+/// SEC-11 (per ADR-075, in-flight): lower bound on slash-style reputation
+/// deltas. The pre-fix `update_protocol_config` check was `v <= 0`, which
+/// admits `i64::MIN`. The registry's slashing math then panics on
+/// `(-reputation_delta) as u64` in debug mode because `-i64::MIN`
+/// overflows. -1_000_000 is four orders of magnitude beyond the default
+/// slash magnitude (-25) — enough headroom for any plausible tuning while
+/// keeping the registry's `checked_neg` comfortably safe.
+pub const MIN_REPUTATION_DELTA: i64 = -1_000_000;
+
 /// Finding #19: Seed for the single-instance `ProtocolConfig` PDA.
 /// Derived as `[b"protocol_config"]` under this program's ID.
 pub const PROTOCOL_CONFIG_SEED: &[u8] = b"protocol_config";
