@@ -10,6 +10,7 @@ anchor.setProvider(provider);
 
 // PDA seed constants
 const AGENT_PROFILE_SEED = "agent-profile";
+const OWNER_NONCE_SEED = "owner-nonce";
 
 // Finding #9: Canonical Agent Vault program ID; `register_agent` now
 // validates `AgentProfile.vault_address` matches the PDA derived from
@@ -19,10 +20,26 @@ const VAULT_PROGRAM_ID = new web3.PublicKey(
   "4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN"
 );
 
-// Helper function to derive agent profile PDA
-function deriveAgentProfilePDA(authority: web3.PublicKey): [web3.PublicKey, number] {
+// ADR-097: owner-nonce PDA `[authority, b"owner-nonce"]`. Init_if_needed'd
+// by `register_agent`; its `.nonce` field feeds the agent_profile PDA seed.
+function deriveOwnerNoncePDA(authority: web3.PublicKey): [web3.PublicKey, number] {
   return web3.PublicKey.findProgramAddressSync(
-    [authority.toBuffer(), Buffer.from(AGENT_PROFILE_SEED)],
+    [authority.toBuffer(), Buffer.from(OWNER_NONCE_SEED)],
+    program.programId
+  );
+}
+
+// ADR-097: agent_profile PDA seeds = [authority, b"agent-profile", nonce-le].
+// For fresh authorities nonce is 0; for tests that deregister + re-register
+// pass the incremented value explicitly.
+function deriveAgentProfilePDA(
+  authority: web3.PublicKey,
+  nonce: bigint = 0n
+): [web3.PublicKey, number] {
+  const nonceBuf = Buffer.alloc(8);
+  nonceBuf.writeBigUInt64LE(nonce);
+  return web3.PublicKey.findProgramAddressSync(
+    [authority.toBuffer(), Buffer.from(AGENT_PROFILE_SEED), nonceBuf],
     program.programId
   );
 }
@@ -87,6 +104,7 @@ describe("Agent Registry Program Tests", () => {
         )
         .accounts({
           authority: agentAuthority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(agentAuthority.publicKey)[0],
           agentProfile: agentProfilePDA,
           vault: testVaultAddress,
           systemProgram: web3.SystemProgram.programId,
@@ -169,6 +187,7 @@ describe("Agent Registry Program Tests", () => {
           )
           .accounts({
             authority: mismatchAuthority.publicKey,
+            ownerNonce: deriveOwnerNoncePDA(mismatchAuthority.publicKey)[0],
             agentProfile: mismatchProfilePDA,
             vault: impostorVault,
             systemProgram: web3.SystemProgram.programId,
@@ -212,6 +231,7 @@ describe("Agent Registry Program Tests", () => {
           )
           .accounts({
             authority: randomAuthority.publicKey,
+            ownerNonce: deriveOwnerNoncePDA(randomAuthority.publicKey)[0],
             agentProfile: randomProfilePDA,
             // System Program is a known, definitely-not-a-vault pubkey.
             vault: web3.SystemProgram.programId,
@@ -245,6 +265,7 @@ describe("Agent Registry Program Tests", () => {
         )
         .accounts({
           authority: agentAuthority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(agentAuthority.publicKey)[0],
           agentProfile: agentProfilePDA,
         })
         .signers([agentAuthority])
@@ -274,6 +295,7 @@ describe("Agent Registry Program Tests", () => {
         )
         .accounts({
           authority: agentAuthority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(agentAuthority.publicKey)[0],
           agentProfile: agentProfilePDA,
         })
         .signers([agentAuthority])
@@ -301,6 +323,7 @@ describe("Agent Registry Program Tests", () => {
         )
         .accounts({
           authority: agentAuthority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(agentAuthority.publicKey)[0],
           agentProfile: agentProfilePDA,
         })
         .signers([agentAuthority])
@@ -332,6 +355,7 @@ describe("Agent Registry Program Tests", () => {
         )
         .accounts({
           authority: agentAuthority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(agentAuthority.publicKey)[0],
           agentProfile: agentProfilePDA,
         })
         .signers([agentAuthority])
@@ -348,6 +372,7 @@ describe("Agent Registry Program Tests", () => {
         .updateStatus({ paused: {} }) // AgentStatus::Paused
         .accounts({
           authority: agentAuthority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(agentAuthority.publicKey)[0],
           agentProfile: agentProfilePDA,
         })
         .signers([agentAuthority])
@@ -362,6 +387,7 @@ describe("Agent Registry Program Tests", () => {
         .updateStatus({ active: {} }) // AgentStatus::Active
         .accounts({
           authority: agentAuthority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(agentAuthority.publicKey)[0],
           agentProfile: agentProfilePDA,
         })
         .signers([agentAuthority])
@@ -376,6 +402,7 @@ describe("Agent Registry Program Tests", () => {
         .updateStatus({ retired: {} }) // AgentStatus::Retired
         .accounts({
           authority: agentAuthority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(agentAuthority.publicKey)[0],
           agentProfile: agentProfilePDA,
         })
         .signers([agentAuthority])
@@ -392,6 +419,7 @@ describe("Agent Registry Program Tests", () => {
           .updateStatus({ active: {} })
           .accounts({
             authority: agentAuthority.publicKey,
+            ownerNonce: deriveOwnerNoncePDA(agentAuthority.publicKey)[0],
             agentProfile: agentProfilePDA,
           })
           .signers([agentAuthority])
@@ -409,6 +437,7 @@ describe("Agent Registry Program Tests", () => {
           .updateStatus({ paused: {} })
           .accounts({
             authority: agentAuthority.publicKey,
+            ownerNonce: deriveOwnerNoncePDA(agentAuthority.publicKey)[0],
             agentProfile: agentProfilePDA,
           })
           .signers([agentAuthority])
@@ -445,6 +474,7 @@ describe("Agent Registry Program Tests", () => {
           )
           .accounts({
             authority: testAuthority.publicKey,
+            ownerNonce: deriveOwnerNoncePDA(testAuthority.publicKey)[0],
             agentProfile: testPDA,
             vault: vaultFor(testAuthority.publicKey),
             systemProgram: web3.SystemProgram.programId,
@@ -479,6 +509,7 @@ describe("Agent Registry Program Tests", () => {
         )
         .accounts({
           authority: testAuthority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(testAuthority.publicKey)[0],
           agentProfile: testPDA,
           vault: vaultFor(testAuthority.publicKey),
           systemProgram: web3.SystemProgram.programId,
@@ -514,6 +545,7 @@ describe("Agent Registry Program Tests", () => {
           )
           .accounts({
             authority: testAuthority.publicKey,
+            ownerNonce: deriveOwnerNoncePDA(testAuthority.publicKey)[0],
             agentProfile: testPDA,
             vault: vaultFor(testAuthority.publicKey),
             systemProgram: web3.SystemProgram.programId,
@@ -548,6 +580,7 @@ describe("Agent Registry Program Tests", () => {
         )
         .accounts({
           authority: testAuthority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(testAuthority.publicKey)[0],
           agentProfile: testPDA,
           vault: vaultFor(testAuthority.publicKey),
           systemProgram: web3.SystemProgram.programId,
@@ -581,6 +614,7 @@ describe("Agent Registry Program Tests", () => {
           )
           .accounts({
             authority: testAuthority.publicKey,
+            ownerNonce: deriveOwnerNoncePDA(testAuthority.publicKey)[0],
             agentProfile: testPDA,
             vault: vaultFor(testAuthority.publicKey),
             systemProgram: web3.SystemProgram.programId,
@@ -616,6 +650,7 @@ describe("Agent Registry Program Tests", () => {
           )
           .accounts({
             authority: testAuthority.publicKey,
+            ownerNonce: deriveOwnerNoncePDA(testAuthority.publicKey)[0],
             agentProfile: testPDA,
             vault: vaultFor(testAuthority.publicKey),
             systemProgram: web3.SystemProgram.programId,
@@ -650,6 +685,7 @@ describe("Agent Registry Program Tests", () => {
         )
         .accounts({
           authority: testAuthority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(testAuthority.publicKey)[0],
           agentProfile: testPDA,
           vault: vaultFor(testAuthority.publicKey),
           systemProgram: web3.SystemProgram.programId,
@@ -682,6 +718,7 @@ describe("Agent Registry Program Tests", () => {
         )
         .accounts({
           authority: testAuthority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(testAuthority.publicKey)[0],
           agentProfile: testPDA,
           vault: vaultFor(testAuthority.publicKey),
           systemProgram: web3.SystemProgram.programId,
@@ -715,6 +752,7 @@ describe("Agent Registry Program Tests", () => {
           )
           .accounts({
             authority: testAuthority.publicKey,
+            ownerNonce: deriveOwnerNoncePDA(testAuthority.publicKey)[0],
             agentProfile: testPDA,
             vault: vaultFor(testAuthority.publicKey),
             systemProgram: web3.SystemProgram.programId,
@@ -751,6 +789,7 @@ describe("Agent Registry Program Tests", () => {
           )
           .accounts({
             authority: testAuthority.publicKey,
+            ownerNonce: deriveOwnerNoncePDA(testAuthority.publicKey)[0],
             agentProfile: testPDA,
             vault: vaultFor(testAuthority.publicKey),
             systemProgram: web3.SystemProgram.programId,
@@ -786,6 +825,7 @@ describe("Agent Registry Program Tests", () => {
         )
         .accounts({
           authority: testAuthority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(testAuthority.publicKey)[0],
           agentProfile: testPDA,
           vault: vaultFor(testAuthority.publicKey),
           systemProgram: web3.SystemProgram.programId,
@@ -817,6 +857,7 @@ describe("Agent Registry Program Tests", () => {
         )
         .accounts({
           authority: testAuthority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(testAuthority.publicKey)[0],
           agentProfile: testPDA,
           vault: vaultFor(testAuthority.publicKey),
           systemProgram: web3.SystemProgram.programId,
@@ -854,6 +895,7 @@ describe("Agent Registry Program Tests", () => {
         )
         .accounts({
           authority: authTestAuthority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(authTestAuthority.publicKey)[0],
           agentProfile: authTestPDA,
           vault: vaultFor(authTestAuthority.publicKey),
           systemProgram: web3.SystemProgram.programId,
@@ -876,6 +918,7 @@ describe("Agent Registry Program Tests", () => {
           )
           .accounts({
             authority: otherUser.publicKey,
+            ownerNonce: deriveOwnerNoncePDA(otherUser.publicKey)[0],
             agentProfile: authTestPDA,
           })
           .signers([otherUser])
@@ -895,6 +938,7 @@ describe("Agent Registry Program Tests", () => {
           .updateStatus({ paused: {} })
           .accounts({
             authority: otherUser.publicKey,
+            ownerNonce: deriveOwnerNoncePDA(otherUser.publicKey)[0],
             agentProfile: agentProfilePDA,
           })
           .signers([otherUser])
@@ -932,6 +976,7 @@ describe("Agent Registry Program Tests", () => {
         )
         .accounts({
           authority: deregisterAuthority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(deregisterAuthority.publicKey)[0],
           agentProfile: deregisterPDA,
           vault: vaultFor(deregisterAuthority.publicKey),
           systemProgram: web3.SystemProgram.programId,
@@ -948,6 +993,7 @@ describe("Agent Registry Program Tests", () => {
         .deregisterAgent()
         .accounts({
           authority: deregisterAuthority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(deregisterAuthority.publicKey)[0],
           agentProfile: deregisterPDA,
         })
         .signers([deregisterAuthority])
@@ -988,6 +1034,7 @@ describe("Agent Registry Program Tests", () => {
         )
         .accounts({
           authority: deregisterAuthority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(deregisterAuthority.publicKey)[0],
           agentProfile: deregisterPDA,
           vault: vaultFor(deregisterAuthority.publicKey),
           systemProgram: web3.SystemProgram.programId,
@@ -1002,6 +1049,7 @@ describe("Agent Registry Program Tests", () => {
         .deregisterAgent()
         .accounts({
           authority: deregisterAuthority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(deregisterAuthority.publicKey)[0],
           agentProfile: deregisterPDA,
         })
         .signers([deregisterAuthority])
@@ -1039,6 +1087,7 @@ describe("Agent Registry Program Tests", () => {
         )
         .accounts({
           authority: deregisterAuthority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(deregisterAuthority.publicKey)[0],
           agentProfile: deregisterPDA,
           vault: vaultFor(deregisterAuthority.publicKey),
           systemProgram: web3.SystemProgram.programId,
@@ -1052,6 +1101,7 @@ describe("Agent Registry Program Tests", () => {
           .deregisterAgent()
           .accounts({
             authority: otherUser.publicKey,
+            ownerNonce: deriveOwnerNoncePDA(otherUser.publicKey)[0],
             agentProfile: deregisterPDA,
           })
           .signers([otherUser])
@@ -1096,6 +1146,7 @@ describe("Agent Registry Program Tests", () => {
           )
           .accounts({
             authority: newAuthority.publicKey,
+            ownerNonce: deriveOwnerNoncePDA(newAuthority.publicKey)[0],
             agentProfile: newPDA,
             vault: vaultFor(newAuthority.publicKey),
             systemProgram: web3.SystemProgram.programId,
@@ -1191,6 +1242,7 @@ describe("Agent Registry Program Tests", () => {
         )
         .accounts({
           authority: testAuthority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(testAuthority.publicKey)[0],
           agentProfile: testPDA,
           vault: vaultFor(testAuthority.publicKey),
           systemProgram: web3.SystemProgram.programId,
@@ -1221,6 +1273,7 @@ describe("Agent Registry Program Tests", () => {
         )
         .accounts({
           authority: testAuthority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(testAuthority.publicKey)[0],
           agentProfile: testPDA,
           vault: vaultFor(testAuthority.publicKey),
           systemProgram: web3.SystemProgram.programId,
@@ -1251,6 +1304,7 @@ describe("Agent Registry Program Tests", () => {
         )
         .accounts({
           authority: testAuthority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(testAuthority.publicKey)[0],
           agentProfile: testPDA,
           vault: vaultFor(testAuthority.publicKey),
           systemProgram: web3.SystemProgram.programId,
@@ -1285,6 +1339,7 @@ describe("Agent Registry Program Tests", () => {
         )
         .accounts({
           authority: testAuthority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(testAuthority.publicKey)[0],
           agentProfile: testPDA,
           vault: vaultFor(testAuthority.publicKey),
           systemProgram: web3.SystemProgram.programId,
@@ -1317,6 +1372,7 @@ describe("Agent Registry Program Tests", () => {
         )
         .accounts({
           authority: testAuthority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(testAuthority.publicKey)[0],
           agentProfile: testPDA,
           vault: vaultFor(testAuthority.publicKey),
           systemProgram: web3.SystemProgram.programId,
@@ -1339,6 +1395,7 @@ describe("Agent Registry Program Tests", () => {
         )
         .accounts({
           authority: testAuthority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(testAuthority.publicKey)[0],
           agentProfile: testPDA,
         })
         .signers([testAuthority])

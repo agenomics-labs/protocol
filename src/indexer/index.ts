@@ -463,19 +463,6 @@ const EVENT_DECODERS: Record<string, EventDecoder> = {
     timestamp: i64ToJson(r.i64()),
   }),
 
-  // ADR-096: AgentMigrated (agent-registry).
-  // Wire layout from programs/agent-registry/src/events.rs:
-  //   pub authority: Pubkey
-  //   pub old_version: u8
-  //   pub new_version: u8
-  //   pub timestamp: i64
-  AgentMigrated: (r) => ({
-    authority: r.pubkey(),
-    old_version: r.u8(),
-    new_version: r.u8(),
-    timestamp: i64ToJson(r.i64()),
-  }),
-
   // ADR-082 / item 6: ProtocolConfigInitialized (settlement).
   // Wire layout from programs/settlement/src/events.rs:
   //   pub authority: Pubkey

@@ -18,6 +18,63 @@ describe("Agent Vault Tests", () => {
   const program = anchor.workspace.AgentVault as Program;
   const programId = program.programId;
 
+  // ADR-095: agent_profile from the registry is required by execute_transfer /
+  // execute_token_transfer for the cross-program suspension check.
+  const registryProgram = anchor.workspace.AgentRegistry as Program;
+
+  // ADR-097: owner-nonce PDA `[authority, b"owner-nonce"]` in the registry
+  // program. Needed for every `register_agent` call in test setup.
+  function deriveOwnerNoncePDA(authority: PublicKey): [PublicKey, number] {
+    return PublicKey.findProgramAddressSync(
+      [authority.toBuffer(), Buffer.from("owner-nonce")],
+      registryProgram.programId
+    );
+  }
+
+  // ADR-097: agent_profile PDA seeds = [authority, b"agent-profile", nonce-le].
+  function deriveAgentProfilePDA(
+    authority: PublicKey,
+    nonce: bigint = 0n
+  ): [PublicKey, number] {
+    const nonceBuf = Buffer.alloc(8);
+    nonceBuf.writeBigUInt64LE(nonce);
+    return PublicKey.findProgramAddressSync(
+      [authority.toBuffer(), Buffer.from("agent-profile"), nonceBuf],
+      registryProgram.programId
+    );
+  }
+
+  // Test-harness helper: register a minimal agent profile under `authority`
+  // so ADR-095's suspension gate on execute_transfer has a valid account to
+  // deserialize. Returns the profile PDA.
+  async function registerMinimalAgent(
+    authority: Keypair,
+    vaultPda: PublicKey
+  ): Promise<PublicKey> {
+    const [profilePda] = deriveAgentProfilePDA(authority.publicKey);
+    const [noncePda] = deriveOwnerNoncePDA(authority.publicKey);
+    await registryProgram.methods
+      .registerAgent(
+        "t",
+        "t",
+        "t",
+        ["t"],
+        { perTask: {} },
+        new BN(0),
+        [new PublicKey("11111111111111111111111111111112")]
+      )
+      .accounts({
+        authority: authority.publicKey,
+        ownerNonce: noncePda,
+        agentProfile: profilePda,
+        vault: vaultPda,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .signers([authority])
+      .rpc();
+    return profilePda;
+  }
+
   // Test keypairs
   let authority: Keypair;
   let agentIdentity: Keypair;
@@ -59,7 +116,7 @@ describe("Agent Vault Tests", () => {
   describe("Happy Path: Vault Initialization", () => {
     it("should initialize a vault with correct parameters", async () => {
       const tx = await program.methods
-        .initializeVault(agentIdentity.publicKey, new BN(DEFAULT_DAILY_LIMIT), new BN(DEFAULT_PER_TX_LIMIT), new BN(DEFAULT_MAX_TXS_PER_HOUR))
+        .initializeVault(agentIdentity.publicKey, new BN(DEFAULT_DAILY_LIMIT), new BN(DEFAULT_PER_TX_LIMIT), new BN(DEFAULT_MAX_TXS_PER_HOUR), new BN(0))
         .accounts({
           vault: vaultPda,
           authority: authority.publicKey,
@@ -67,6 +124,7 @@ describe("Agent Vault Tests", () => {
         })
         .signers([authority])
         .rpc();
+      await registerMinimalAgent(authority, vaultPda);
 
       // Verify vault was created with correct data
       const vaultAccount = await program.account.vault.fetch(vaultPda);
@@ -288,6 +346,7 @@ describe("Agent Vault Tests", () => {
           vault: vaultPda,
           agent: agentIdentity.publicKey,
           authority: authority.publicKey,
+          agentProfile: deriveAgentProfilePDA(authority.publicKey)[0],
           recipient: recipient.publicKey,
           systemProgram: anchor.web3.SystemProgram.programId,
         })
@@ -311,6 +370,7 @@ describe("Agent Vault Tests", () => {
             vault: vaultPda,
             agent: agentIdentity.publicKey,
             authority: authority.publicKey,
+            agentProfile: deriveAgentProfilePDA(authority.publicKey)[0],
             recipient: newRecipient,
             systemProgram: anchor.web3.SystemProgram.programId,
           })
@@ -389,6 +449,7 @@ describe("Agent Vault Tests", () => {
             vault: vaultPda,
             agent: agentIdentity.publicKey,
             authority: authority.publicKey,
+            agentProfile: deriveAgentProfilePDA(authority.publicKey)[0],
             recipient: recipient.publicKey,
             systemProgram: anchor.web3.SystemProgram.programId,
           })
@@ -414,6 +475,7 @@ describe("Agent Vault Tests", () => {
           vault: vaultPda,
           agent: agentIdentity.publicKey,
           authority: authority.publicKey,
+          agentProfile: deriveAgentProfilePDA(authority.publicKey)[0],
           recipient: newRecipient,
           systemProgram: anchor.web3.SystemProgram.programId,
         })
@@ -454,7 +516,7 @@ describe("Agent Vault Tests", () => {
       const smallPerTxLimit = 1.5 * LAMPORTS_PER_SOL;
 
       await program.methods
-        .initializeVault(dailyLimitAgentId.publicKey, new BN(smallDailyLimit), new BN(smallPerTxLimit), new BN(10))
+        .initializeVault(dailyLimitAgentId.publicKey, new BN(smallDailyLimit), new BN(smallPerTxLimit), new BN(10), new BN(0))
         .accounts({
           vault: dailyLimitVaultPda,
           authority: dailyLimitAuthority.publicKey,
@@ -462,6 +524,7 @@ describe("Agent Vault Tests", () => {
         })
         .signers([dailyLimitAuthority])
         .rpc();
+      await registerMinimalAgent(dailyLimitAuthority, dailyLimitVaultPda);
 
       // Fund the vault
       const vaultAirdropSig = await provider.connection.requestAirdrop(
@@ -482,6 +545,7 @@ describe("Agent Vault Tests", () => {
           vault: dailyLimitVaultPda,
           agent: dailyLimitAgentId.publicKey,
           authority: dailyLimitAuthority.publicKey,
+          agentProfile: deriveAgentProfilePDA(dailyLimitAuthority.publicKey)[0],
           recipient: recipient1,
           systemProgram: anchor.web3.SystemProgram.programId,
         })
@@ -497,6 +561,7 @@ describe("Agent Vault Tests", () => {
             vault: dailyLimitVaultPda,
             agent: dailyLimitAgentId.publicKey,
             authority: dailyLimitAuthority.publicKey,
+            agentProfile: deriveAgentProfilePDA(dailyLimitAuthority.publicKey)[0],
             recipient: recipient2,
             systemProgram: anchor.web3.SystemProgram.programId,
           })
@@ -536,7 +601,7 @@ describe("Agent Vault Tests", () => {
 
       // Initialize vault
       await program.methods
-        .initializeVault(pauseAgentId.publicKey, new BN(10 * LAMPORTS_PER_SOL), new BN(1 * LAMPORTS_PER_SOL), new BN(10))
+        .initializeVault(pauseAgentId.publicKey, new BN(10 * LAMPORTS_PER_SOL), new BN(1 * LAMPORTS_PER_SOL), new BN(10), new BN(0))
         .accounts({
           vault: pauseVaultPda,
           authority: pauseAuthority.publicKey,
@@ -544,6 +609,7 @@ describe("Agent Vault Tests", () => {
         })
         .signers([pauseAuthority])
         .rpc();
+      await registerMinimalAgent(pauseAuthority, pauseVaultPda);
 
       // Fund the vault
       const vaultAirdropSig = await provider.connection.requestAirdrop(
@@ -572,6 +638,7 @@ describe("Agent Vault Tests", () => {
             vault: pauseVaultPda,
             agent: pauseAgentId.publicKey,
             authority: pauseAuthority.publicKey,
+            agentProfile: deriveAgentProfilePDA(pauseAuthority.publicKey)[0],
             recipient: recipient.publicKey,
             systemProgram: anchor.web3.SystemProgram.programId,
           })
@@ -604,6 +671,7 @@ describe("Agent Vault Tests", () => {
           vault: pauseVaultPda,
           agent: pauseAgentId.publicKey,
           authority: pauseAuthority.publicKey,
+          agentProfile: deriveAgentProfilePDA(pauseAuthority.publicKey)[0],
           recipient: newRecipient,
           systemProgram: anchor.web3.SystemProgram.programId,
         })
@@ -643,7 +711,7 @@ describe("Agent Vault Tests", () => {
       const lowMaxTxsPerHour = 3;
 
       await program.methods
-        .initializeVault(rateLimitAgentId.publicKey, new BN(10 * LAMPORTS_PER_SOL), new BN(1 * LAMPORTS_PER_SOL), new BN(lowMaxTxsPerHour))
+        .initializeVault(rateLimitAgentId.publicKey, new BN(10 * LAMPORTS_PER_SOL), new BN(1 * LAMPORTS_PER_SOL), new BN(lowMaxTxsPerHour), new BN(0))
         .accounts({
           vault: rateLimitVaultPda,
           authority: rateLimitAuthority.publicKey,
@@ -651,6 +719,7 @@ describe("Agent Vault Tests", () => {
         })
         .signers([rateLimitAuthority])
         .rpc();
+      await registerMinimalAgent(rateLimitAuthority, rateLimitVaultPda);
 
       // Fund the vault
       const vaultAirdropSig = await provider.connection.requestAirdrop(
@@ -672,6 +741,7 @@ describe("Agent Vault Tests", () => {
             vault: rateLimitVaultPda,
             agent: rateLimitAgentId.publicKey,
             authority: rateLimitAuthority.publicKey,
+            agentProfile: deriveAgentProfilePDA(rateLimitAuthority.publicKey)[0],
             recipient: newRecipient,
             systemProgram: anchor.web3.SystemProgram.programId,
           })
@@ -695,6 +765,7 @@ describe("Agent Vault Tests", () => {
             vault: rateLimitVaultPda,
             agent: rateLimitAgentId.publicKey,
             authority: rateLimitAuthority.publicKey,
+            agentProfile: deriveAgentProfilePDA(rateLimitAuthority.publicKey)[0],
             recipient: newRecipient,
             systemProgram: anchor.web3.SystemProgram.programId,
           })
@@ -746,7 +817,7 @@ describe("Agent Vault Tests", () => {
 
       // Initialize vault
       await program.methods
-        .initializeVault(authVaultAgentId.publicKey, new BN(10 * LAMPORTS_PER_SOL), new BN(1 * LAMPORTS_PER_SOL), new BN(10))
+        .initializeVault(authVaultAgentId.publicKey, new BN(10 * LAMPORTS_PER_SOL), new BN(1 * LAMPORTS_PER_SOL), new BN(10), new BN(0))
         .accounts({
           vault: authVaultPda,
           authority: authVaultAuthority.publicKey,
@@ -754,6 +825,7 @@ describe("Agent Vault Tests", () => {
         })
         .signers([authVaultAuthority])
         .rpc();
+      await registerMinimalAgent(authVaultAuthority, authVaultPda);
     });
 
     it("should reject policy update from non-authority", async () => {
@@ -827,7 +899,7 @@ describe("Agent Vault Tests", () => {
 
       // Initialize vault
       await program.methods
-        .initializeVault(pauseAuthVaultAgentId.publicKey, new BN(10 * LAMPORTS_PER_SOL), new BN(1 * LAMPORTS_PER_SOL), new BN(10))
+        .initializeVault(pauseAuthVaultAgentId.publicKey, new BN(10 * LAMPORTS_PER_SOL), new BN(1 * LAMPORTS_PER_SOL), new BN(10), new BN(0))
         .accounts({
           vault: pauseAuthVaultPda,
           authority: pauseAuthVaultAuthority.publicKey,
@@ -835,6 +907,7 @@ describe("Agent Vault Tests", () => {
         })
         .signers([pauseAuthVaultAuthority])
         .rpc();
+      await registerMinimalAgent(pauseAuthVaultAuthority, pauseAuthVaultPda);
     });
 
     it("should reject pause from non-authority", async () => {
@@ -963,7 +1036,7 @@ describe("Agent Vault Tests", () => {
           sec5AgentId.publicKey,
           new BN(10 * LAMPORTS_PER_SOL),
           new BN(1 * LAMPORTS_PER_SOL),
-          new BN(5)
+          new BN(5), new BN(0)
         )
         .accounts({
           vault: sec5VaultPda,
@@ -972,6 +1045,7 @@ describe("Agent Vault Tests", () => {
         })
         .signers([sec5Authority])
         .rpc();
+      await registerMinimalAgent(sec5Authority, sec5VaultPda);
 
       configuredMint = await createMint(
         provider.connection,
@@ -1049,7 +1123,7 @@ describe("Agent Vault Tests", () => {
           emptyAgent.publicKey,
           new BN(10 * LAMPORTS_PER_SOL),
           new BN(1 * LAMPORTS_PER_SOL),
-          new BN(5)
+          new BN(5), new BN(0)
         )
         .accounts({
           vault: emptyVaultPda,
@@ -1058,6 +1132,7 @@ describe("Agent Vault Tests", () => {
         })
         .signers([emptyAuth])
         .rpc();
+      await registerMinimalAgent(emptyAuth, emptyVaultPda);
 
       const badMint = await createMint(
         provider.connection,
@@ -1100,6 +1175,7 @@ describe("Agent Vault Tests", () => {
             vault: emptyVaultPda,
             agent: emptyAgent.publicKey,
             authority: emptyAuth.publicKey,
+            agentProfile: deriveAgentProfilePDA(emptyAuth.publicKey)[0],
             vaultTokenAccount: emptyVaultAta.address,
             recipientTokenAccount: badRecipientAta.address,
             tokenProgram: TOKEN_PROGRAM_ID,
@@ -1129,6 +1205,7 @@ describe("Agent Vault Tests", () => {
           vault: sec5VaultPda,
           agent: sec5AgentId.publicKey,
           authority: sec5Authority.publicKey,
+          agentProfile: deriveAgentProfilePDA(sec5Authority.publicKey)[0],
           vaultTokenAccount: vaultAtaConfigured,
           recipientTokenAccount: recipientAtaConfigured,
           tokenProgram: TOKEN_PROGRAM_ID,
@@ -1179,7 +1256,7 @@ describe("Agent Vault Tests", () => {
           sec6AgentId.publicKey,
           new BN(10 * LAMPORTS_PER_SOL),
           new BN(1 * LAMPORTS_PER_SOL),
-          new BN(10)
+          new BN(10), new BN(0)
         )
         .accounts({
           vault: sec6VaultPda,
@@ -1188,6 +1265,7 @@ describe("Agent Vault Tests", () => {
         })
         .signers([sec6Authority])
         .rpc();
+      await registerMinimalAgent(sec6Authority, sec6VaultPda);
 
       sec6Mint = await createMint(
         provider.connection,
@@ -1258,6 +1336,7 @@ describe("Agent Vault Tests", () => {
             vault: sec6VaultPda,
             agent: sec6AgentId.publicKey,
             authority: sec6Authority.publicKey,
+            agentProfile: deriveAgentProfilePDA(sec6Authority.publicKey)[0],
             vaultTokenAccount: sec6VaultAta,
             recipientTokenAccount: sec6VaultAta, // <-- self-transfer
             tokenProgram: TOKEN_PROGRAM_ID,
@@ -1287,6 +1366,7 @@ describe("Agent Vault Tests", () => {
           vault: sec6VaultPda,
           agent: sec6AgentId.publicKey,
           authority: sec6Authority.publicKey,
+          agentProfile: deriveAgentProfilePDA(sec6Authority.publicKey)[0],
           vaultTokenAccount: sec6VaultAta,
           recipientTokenAccount: sec6ExternalRecipientAta,
           tokenProgram: TOKEN_PROGRAM_ID,
@@ -1335,7 +1415,7 @@ describe("Agent Vault Tests", () => {
           rotOldAgentId.publicKey,
           new BN(10 * LAMPORTS_PER_SOL),
           new BN(1 * LAMPORTS_PER_SOL),
-          new BN(10)
+          new BN(10), new BN(0)
         )
         .accounts({
           vault: rotVaultPda,
@@ -1344,6 +1424,7 @@ describe("Agent Vault Tests", () => {
         })
         .signers([rotAuthority])
         .rpc();
+      await registerMinimalAgent(rotAuthority, rotVaultPda);
 
       // Fund vault so execute_transfer can actually move lamports
       const vaultAirdrop = await provider.connection.requestAirdrop(
@@ -1387,6 +1468,7 @@ describe("Agent Vault Tests", () => {
           vault: rotVaultPda,
           agent: rotOldAgentId.publicKey,
           authority: rotAuthority.publicKey,
+          agentProfile: deriveAgentProfilePDA(rotAuthority.publicKey)[0],
           recipient: r1,
           systemProgram: anchor.web3.SystemProgram.programId,
         })
@@ -1416,6 +1498,7 @@ describe("Agent Vault Tests", () => {
           vault: rotVaultPda,
           agent: rotNewAgentId.publicKey,
           authority: rotAuthority.publicKey,
+          agentProfile: deriveAgentProfilePDA(rotAuthority.publicKey)[0],
           recipient: r2,
           systemProgram: anchor.web3.SystemProgram.programId,
         })
@@ -1431,6 +1514,7 @@ describe("Agent Vault Tests", () => {
             vault: rotVaultPda,
             agent: rotOldAgentId.publicKey,
             authority: rotAuthority.publicKey,
+            agentProfile: deriveAgentProfilePDA(rotAuthority.publicKey)[0],
             recipient: r3,
             systemProgram: anchor.web3.SystemProgram.programId,
           })
@@ -1477,7 +1561,7 @@ describe("Agent Vault Tests", () => {
 
       // Initialize vault
       await program.methods
-        .initializeVault(allowlistAuthVaultAgentId.publicKey, new BN(10 * LAMPORTS_PER_SOL), new BN(1 * LAMPORTS_PER_SOL), new BN(10))
+        .initializeVault(allowlistAuthVaultAgentId.publicKey, new BN(10 * LAMPORTS_PER_SOL), new BN(1 * LAMPORTS_PER_SOL), new BN(10), new BN(0))
         .accounts({
           vault: allowlistAuthVaultPda,
           authority: allowlistAuthVaultAuthority.publicKey,
@@ -1485,6 +1569,7 @@ describe("Agent Vault Tests", () => {
         })
         .signers([allowlistAuthVaultAuthority])
         .rpc();
+      await registerMinimalAgent(allowlistAuthVaultAuthority, allowlistAuthVaultPda);
     });
 
     it("should reject token allowlist add from non-authority", async () => {

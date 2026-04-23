@@ -127,7 +127,8 @@
       "name": "execute_token_transfer",
       "docs": [
         "Executes an SPL token transfer from the vault's token account to a recipient.",
-        "Enforces token allowlist, rate limiting, and the vault's pause state.",
+        "Enforces token allowlist, rate limiting, the vault's pause state, and the",
+        "Registry suspension gate (ADR-095).",
         "The vault PDA signs the transfer via CPI."
       ],
       "discriminator": [
@@ -189,7 +190,10 @@
           "name": "agent_profile",
           "docs": [
             "ADR-095: The agent's Registry profile. Read-only cross-program account.",
-            "Suspension check is done in the instruction handler."
+            "Suspension check is done in the instruction handler.",
+            "",
+            "`authority.key()` and `vault.profile_nonce`. The suspension check",
+            "is done explicitly in the instruction handler using `AgentStatus`."
           ],
           "pda": {
             "seeds": [
@@ -224,38 +228,38 @@
             "program": {
               "kind": "const",
               "value": [
-                58,
-                152,
-                159,
-                38,
-                133,
-                79,
-                251,
-                15,
-                87,
+                111,
+                73,
+                24,
+                49,
+                52,
+                190,
+                122,
+                126,
+                199,
+                7,
                 50,
-                154,
-                60,
-                143,
-                112,
-                72,
-                173,
-                150,
-                146,
-                57,
-                236,
-                63,
-                162,
-                74,
-                120,
-                90,
-                248,
-                41,
-                19,
-                87,
-                106,
+                181,
+                32,
+                117,
+                156,
+                113,
+                255,
+                182,
+                22,
                 1,
-                253
+                161,
+                163,
+                9,
+                83,
+                218,
+                73,
+                82,
+                170,
+                121,
+                206,
+                92,
+                240
               ]
             }
           }
@@ -304,8 +308,8 @@
       "name": "execute_transfer",
       "docs": [
         "Executes a SOL transfer from the vault to a recipient.",
-        "Enforces spending limits, rate limiting, and daily caps.",
-        "Records the action in the on-chain audit log."
+        "Enforces spending limits, rate limiting, daily caps, and the Registry",
+        "suspension gate (ADR-095)."
       ],
       "discriminator": [
         233,
@@ -374,7 +378,10 @@
             "ADR-095: The agent's Registry profile. Read-only cross-program account.",
             "The constraint enforces that the agent is not suspended. The PDA seed",
             "uses `vault.profile_nonce` (recorded at `initialize_vault` time) so",
-            "that the derivation matches the live profile PDA (ADR-097)."
+            "that the derivation matches the live profile PDA (ADR-097).",
+            "",
+            "`authority.key()` and `vault.profile_nonce`. The suspension check",
+            "is done explicitly in the instruction handler using `AgentStatus`."
           ],
           "pda": {
             "seeds": [
@@ -409,38 +416,38 @@
             "program": {
               "kind": "const",
               "value": [
-                58,
-                152,
-                159,
-                38,
-                133,
-                79,
-                251,
-                15,
-                87,
+                111,
+                73,
+                24,
+                49,
+                52,
+                190,
+                122,
+                126,
+                199,
+                7,
                 50,
-                154,
-                60,
-                143,
-                112,
-                72,
-                173,
-                150,
-                146,
-                57,
-                236,
-                63,
-                162,
-                74,
-                120,
-                90,
-                248,
-                41,
-                19,
-                87,
-                106,
+                181,
+                32,
+                117,
+                156,
+                113,
+                255,
+                182,
+                22,
                 1,
-                253
+                161,
+                163,
+                9,
+                83,
+                218,
+                73,
+                82,
+                170,
+                121,
+                206,
+                92,
+                240
               ]
             }
           }
@@ -466,7 +473,14 @@
       "docs": [
         "Initializes a new vault for an AI agent.",
         "The vault authority is set to the signer, who has control over policy updates and pause/resume.",
-        "The agent identity is linked to this vault for on-chain reputation tracking."
+        "The agent identity is linked to this vault for on-chain reputation tracking.",
+        "",
+        "ADR-095 / ADR-097: `profile_nonce` is the registration nonce of the",
+        "authority's current `AgentProfile` PDA (read from the `OwnerNonce`",
+        "account before calling this instruction). It is stored on-chain so",
+        "`execute_transfer` / `execute_token_transfer` can re-derive the",
+        "correct profile address for the suspension check without requiring",
+        "the client to supply it on every transfer."
       ],
       "discriminator": [
         48,
@@ -527,6 +541,10 @@
         {
           "name": "max_txs_per_hour",
           "type": "u32"
+        },
+        {
+          "name": "profile_nonce",
+          "type": "u64"
         }
       ]
     },
@@ -862,6 +880,19 @@
   ],
   "accounts": [
     {
+      "name": "AgentProfile",
+      "discriminator": [
+        60,
+        227,
+        42,
+        24,
+        0,
+        87,
+        86,
+        205
+      ]
+    },
+    {
       "name": "Vault",
       "discriminator": [
         211,
@@ -1136,6 +1167,192 @@
       }
     },
     {
+      "name": "AgentProfile",
+      "docs": [
+        "AgentProfile: The core account representing a registered agent.",
+        "",
+        "ADR-040: Account space is explicitly calculated as 1414 bytes",
+        "(1243 baseline + 162 bytes for the ADR-060 manifest fields:",
+        "manifest_cid 64 + manifest_hash 32 + manifest_signature 64 + manifest_version 2 = 162,",
+        "+ 1 byte for ADR-096 version: u8 + 8 bytes for ADR-097 registration_nonce: u64 = 1414).",
+        "",
+        "ADR-060 adds four manifest fields that point to an off-chain capability",
+        "manifest (IPFS CIDv1 or Arweave tx ID). The on-chain fields are the",
+        "integrity commitment; the manifest body is off-chain. M5 resolution:",
+        "`manifest_cid` is `[u8; 64]` to fit CIDv1 string encodings (≤ ~60 chars)",
+        "or Arweave 43-char base64url tx IDs with headroom. Unused bytes are",
+        "zero-padded; readers trim trailing 0x00.",
+        "",
+        "The existing `capabilities: Vec<String>` stays as a denormalized on-chain",
+        "search index (ADR-060 §1 \"Relationship\"); the manifest is the source of",
+        "truth. `update_manifest` re-validates the invariant",
+        "`capabilities ⊆ manifest.capabilities[].name`.",
+        "",
+        "ADR-097: `registration_nonce` is included in the PDA seed to prevent",
+        "Sybil reuse via close-then-reopen. The nonce is taken from the owner's",
+        "`OwnerNonce` account at registration time and incremented on deregister.",
+        "Zero-value default is valid (first registration uses nonce 0).",
+        "",
+        "ADR-096: `version` is the schema version for in-place migration. Set to",
+        "`0` on creation; incremented by `migrate_agent_profile`. New fields added",
+        "in future upgrades must use zero-value defaults so that the",
+        "`realloc::zero = true` constraint produces a valid initial state without",
+        "explicit writes."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "description",
+            "type": "string"
+          },
+          {
+            "name": "category",
+            "type": "string"
+          },
+          {
+            "name": "capabilities",
+            "type": {
+              "vec": "string"
+            }
+          },
+          {
+            "name": "pricing_model",
+            "type": {
+              "defined": {
+                "name": "PricingModel"
+              }
+            }
+          },
+          {
+            "name": "pricing_amount",
+            "type": "u64"
+          },
+          {
+            "name": "accepted_tokens",
+            "type": {
+              "vec": "pubkey"
+            }
+          },
+          {
+            "name": "vault_address",
+            "type": "pubkey"
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "AgentStatus"
+              }
+            }
+          },
+          {
+            "name": "reputation_score",
+            "type": "u64"
+          },
+          {
+            "name": "total_tasks_completed",
+            "type": "u64"
+          },
+          {
+            "name": "total_earnings",
+            "type": "u64"
+          },
+          {
+            "name": "avg_rating",
+            "type": "u8"
+          },
+          {
+            "name": "created_at",
+            "type": "i64"
+          },
+          {
+            "name": "updated_at",
+            "type": "i64"
+          },
+          {
+            "name": "reputation_stake",
+            "type": {
+              "defined": {
+                "name": "ReputationStake"
+              }
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "manifest_cid",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "manifest_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "manifest_signature",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "manifest_version",
+            "type": "u16"
+          },
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "registration_nonce",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AgentStatus",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Active"
+          },
+          {
+            "name": "Paused"
+          },
+          {
+            "name": "Retired"
+          },
+          {
+            "name": "Suspended"
+          }
+        ]
+      }
+    },
+    {
       "name": "AllowlistUpdated",
       "type": {
         "kind": "struct",
@@ -1180,6 +1397,23 @@
       }
     },
     {
+      "name": "PricingModel",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "PerTask"
+          },
+          {
+            "name": "PerHour"
+          },
+          {
+            "name": "PerToken"
+          }
+        ]
+      }
+    },
+    {
       "name": "ProgramCallExecuted",
       "type": {
         "kind": "struct",
@@ -1208,6 +1442,22 @@
           {
             "name": "success",
             "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ReputationStake",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "staked_amount",
+            "type": "u64"
+          },
+          {
+            "name": "slash_count",
+            "type": "u8"
           }
         ]
       }
@@ -1408,11 +1658,11 @@
           {
             "name": "profile_nonce",
             "docs": [
-              "ADR-097: the registration nonce of the owner's AgentProfile PDA at",
-              "`initialize_vault` time. Used as the third seed component when",
-              "deriving the `agent_profile` PDA in `execute_transfer` and",
-              "`execute_token_transfer` so the vault always points at the live",
-              "profile, not a stale one from a prior registration cycle."
+              "ADR-095 / ADR-097: The registration nonce of the agent's current",
+              "`AgentProfile` PDA at the time this vault was initialized. Used by",
+              "`execute_transfer` and `execute_token_transfer` to re-derive the",
+              "profile PDA address for the suspension check. Must match the nonce",
+              "stamped in `AgentProfile.registration_nonce`."
             ],
             "type": "u64"
           }

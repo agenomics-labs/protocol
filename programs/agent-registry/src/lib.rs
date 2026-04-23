@@ -1022,8 +1022,8 @@ mod tests {
     fn adr_096_total_allocated_space() {
         use crate::state::MIGRATION_HEADROOM;
         let total = 8 + AgentProfile::SPACE + MIGRATION_HEADROOM;
-        // 8 (discriminator) + 1406 (SPACE) + 64 (headroom) = 1478
-        assert_eq!(total, 1478);
+        // 8 (discriminator) + 1414 (SPACE, post-ADR-097 nonce) + 64 (headroom) = 1486
+        assert_eq!(total, 1486);
     }
 
     // ================================================================

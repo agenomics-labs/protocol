@@ -303,8 +303,16 @@ async function main() {
   // account data, skip `registerAgent` (re-run scenario). Step 5 verifies.
   console.log("\n--- Step 4: Registry Program ---");
   const registryProgram = new Program(loadIdl("agent_registry"), provider);
+  // ADR-097: agent_profile PDA seeds = [authority, "agent-profile", nonce-le].
+  // Smoke test always uses a fresh keypair so nonce = 0.
+  const _profileNonceBuf = Buffer.alloc(8);
+  _profileNonceBuf.writeBigUInt64LE(0n);
   const [profilePDA] = PublicKey.findProgramAddressSync(
-    [testKp.publicKey.toBuffer(), Buffer.from("agent-profile")],
+    [testKp.publicKey.toBuffer(), Buffer.from("agent-profile"), _profileNonceBuf],
+    REGISTRY_PROGRAM_ID,
+  );
+  const [ownerNoncePDA] = PublicKey.findProgramAddressSync(
+    [testKp.publicKey.toBuffer(), Buffer.from("owner-nonce")],
     REGISTRY_PROGRAM_ID,
   );
   const existingProfileInfo = await connection.getAccountInfo(profilePDA);
@@ -326,6 +334,7 @@ async function main() {
         )
         .accounts({
           authority: testKp.publicKey,
+          ownerNonce: ownerNoncePDA,
           agentProfile: profilePDA,
           vault: vaultPDA,
         })
