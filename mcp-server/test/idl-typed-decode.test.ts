@@ -34,7 +34,8 @@
 import { describe, it } from "node:test";
 import * as assert from "node:assert/strict";
 import { Keypair, PublicKey } from "@solana/web3.js";
-import { BN } from "@coral-xyz/anchor";
+import anchorPkg from "@coral-xyz/anchor";
+const { BN } = anchorPkg;
 import type { IdlAccounts } from "@coral-xyz/anchor";
 
 import {
