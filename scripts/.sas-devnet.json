@@ -1,0 +1,35 @@
+{
+  "cluster": "devnet",
+  "sasProgramId": "22zoJMtdu4tQc2PzL74ZUT7FrwgB1Udec8DdW4yw4BdG",
+  "multisigPda": "EHdxwBkcSEcJe3E2UrRwwYozPjqZNe8HZrrBTeU6NPcz",
+  "multisigVaultPda": "Exs7cm5dKZNr5c7rBAcq52EHUs7nxDWiZtHXzTEh3LPo",
+  "vaultIndex": 0,
+  "credential": {
+    "pda": "GvDdPwwqV9wfEaRh1LjLYhjDRFkMxCDRdepVeHGMfRhS",
+    "name": "AEP_PROTOCOL",
+    "authority": "Exs7cm5dKZNr5c7rBAcq52EHUs7nxDWiZtHXzTEh3LPo",
+    "signers": [],
+    "createdAt": "2026-04-22T19:06:46.150Z",
+    "createTx": "24nNtXR2FDMAYZXHnD9v7DQo69urELkdzzPVWGMbPJhcmRTbcWn1D5Gt4HNhNLPxTDrrqjU8v5CC2thNpfKTSNQL"
+  },
+  "schema": {
+    "pda": "CTJevNKpYeBAfG6r5CJHb2HuwV4obJeWGeqHQVCKiUVT",
+    "name": "AEP_AGENT_REPUTATION",
+    "version": 1,
+    "credential": "GvDdPwwqV9wfEaRh1LjLYhjDRFkMxCDRdepVeHGMfRhS",
+    "fieldNames": [
+      "score",
+      "completed_tasks",
+      "dispute_ratio_bps",
+      "last_updated"
+    ],
+    "layout": [
+      1,
+      2,
+      1,
+      8
+    ],
+    "createdAt": "2026-04-22T19:06:46.150Z",
+    "createTx": "5yftdh3R55nug7SFspiKhabr5QVDJGLy1aMZ4xFpQ7BXPLZYbJKW4Dx9mkxP22yzgeKB5ka7Tg8obvU2icV9annQ"
+  }
+}
