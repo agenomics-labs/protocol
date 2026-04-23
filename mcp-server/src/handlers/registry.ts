@@ -17,6 +17,13 @@ import {
   REGISTRY_PROGRAM_ID,
 } from "../solana.js";
 import { SystemProgram } from "@solana/web3.js";
+import type { IdlAccounts } from "@coral-xyz/anchor";
+import type { AgentRegistry } from "../idl/types";
+
+// ADR-088: Anchor decodes `AgentProfile` into this exact shape (BN for u64,
+// PublicKey for pubkey, etc.). The alias keeps internal hydration helpers
+// from re-typing the same surface.
+type AgentProfileAccount = IdlAccounts<AgentRegistry>["agentProfile"];
 import {
   requireString,
   requirePositiveNumber,
@@ -55,6 +62,11 @@ export async function handleRegisterAgent(args: Record<string, unknown>) {
   // arbitrary pubkey.
   const [vaultPDA] = deriveVaultPDA(wallet.publicKey);
 
+  // ADR-088: Anchor 0.31's typed `.accounts()` rejects accounts whose PDA
+  // can be resolved from the IDL seeds (e.g. `agentProfile`, `vault` here
+  // both declare `pda: { seeds: [...] }`). We use `.accountsPartial()` to
+  // explicitly pass them — the on-chain Anchor will still re-derive and
+  // verify them, so behaviour is identical.
   const sig = await program.methods
     .registerAgent(
       name,
@@ -65,7 +77,7 @@ export async function handleRegisterAgent(args: Record<string, unknown>) {
       new BN(solToLamports(pricingAmountSol)),
       acceptedTokens
     )
-    .accounts({
+    .accountsPartial({
       authority: wallet.publicKey,
       agentProfile: agentProfilePDA,
       vault: vaultPDA,
@@ -100,32 +112,31 @@ export async function handleGetAgentProfile(args: Record<string, unknown>) {
   }
 
   const [agentProfilePDA] = deriveAgentProfilePDA(authorityKey);
-  const profile = await (program.account as any).agentProfile.fetch(agentProfilePDA);
+  // ADR-088: typed via `Program<AgentRegistry>.account.agentProfile`.
+  // `pricingAmount`, `reputationScore`, `totalTasksCompleted`,
+  // `totalEarnings`, `createdAt`, `updatedAt` arrive as `BN`;
+  // `authority`, `vaultAddress` as `PublicKey`; `acceptedTokens` as
+  // `PublicKey[]`; `avgRating` as `number`.
+  const profile = await program.account.agentProfile.fetch(agentProfilePDA);
 
   return {
     agentProfileAddress: agentProfilePDA.toBase58(),
-    authority: (profile.authority as PublicKey).toBase58(),
-    name: profile.name as string,
-    description: profile.description as string,
-    category: profile.category as string,
-    capabilities: profile.capabilities as string[],
+    authority: profile.authority.toBase58(),
+    name: profile.name,
+    description: profile.description,
+    category: profile.category,
+    capabilities: profile.capabilities,
     pricingModel: formatPricingModel(profile.pricingModel),
-    pricingAmountSol: lamportsToSol(
-      (profile.pricingAmount as any).toNumber()
-    ),
-    acceptedTokens: (profile.acceptedTokens as PublicKey[]).map((pk) =>
-      pk.toBase58()
-    ),
-    vaultAddress: (profile.vaultAddress as PublicKey).toBase58(),
+    pricingAmountSol: lamportsToSol(profile.pricingAmount.toNumber()),
+    acceptedTokens: profile.acceptedTokens.map((pk) => pk.toBase58()),
+    vaultAddress: profile.vaultAddress.toBase58(),
     status: formatAgentStatus(profile.status),
-    reputationScore: (profile.reputationScore as any).toNumber(),
-    totalTasksCompleted: (profile.totalTasksCompleted as any).toNumber(),
-    totalEarningsSol: lamportsToSol(
-      (profile.totalEarnings as any).toNumber()
-    ),
-    avgRating: profile.avgRating as number,
-    createdAt: (profile.createdAt as any).toNumber(),
-    updatedAt: (profile.updatedAt as any).toNumber(),
+    reputationScore: profile.reputationScore.toNumber(),
+    totalTasksCompleted: profile.totalTasksCompleted.toNumber(),
+    totalEarningsSol: lamportsToSol(profile.totalEarnings.toNumber()),
+    avgRating: profile.avgRating,
+    createdAt: profile.createdAt.toNumber(),
+    updatedAt: profile.updatedAt.toNumber(),
   };
 }
 
@@ -165,7 +176,7 @@ export async function handleUpdateAgentProfile(args: Record<string, unknown>) {
       pricingAmount,
       acceptedTokens
     )
-    .accounts({
+    .accountsPartial({
       authority: wallet.publicKey,
       agentProfile: agentProfilePDA,
     })
@@ -280,22 +291,26 @@ async function discoverViaIndexer(
   const profilePDAs = candidates.map(
     (c) => deriveAgentProfilePDA(parsePublicKey(c.authority))[0]
   );
-  const accountsNs = (program.account as any).agentProfile;
-  let fetched: Array<any | null>;
+  const accountsNs = program.account.agentProfile;
+  let fetched: Array<AgentProfileAccount | null>;
   if (typeof accountsNs.fetchMultiple === "function") {
-    fetched = await accountsNs.fetchMultiple(profilePDAs);
+    fetched = (await accountsNs.fetchMultiple(
+      profilePDAs
+    )) as Array<AgentProfileAccount | null>;
   } else {
     fetched = await Promise.all(
       profilePDAs.map((pda) =>
-        accountsNs.fetch(pda).catch(() => null)
+        accountsNs.fetchNullable(pda).catch(() => null)
       )
     );
   }
 
   const agents = fetched
-    .map((p, i) => {
+    .map((p, i): ReturnType<typeof hydrateAgent> | null => {
       if (!p) return null;
-      return hydrateAgent(profilePDAs[i], p);
+      const pda = profilePDAs[i];
+      if (!pda) return null;
+      return hydrateAgent(pda, p);
     })
     .filter((a): a is NonNullable<typeof a> => a !== null);
 
@@ -330,9 +345,9 @@ async function discoverViaOnChainScan(
   minReputation: number,
   includeInactive: boolean
 ): Promise<{ agents: unknown[]; totalFound: number; limit: number }> {
-  const allProfiles: any[] = await (program.account as any).agentProfile.all();
+  const allProfiles = await program.account.agentProfile.all();
 
-  let filtered = allProfiles.map((item: any) =>
+  let filtered = allProfiles.map((item) =>
     hydrateAgent(item.publicKey, item.account)
   );
 
@@ -363,21 +378,24 @@ async function discoverViaOnChainScan(
  * Normalize an on-chain `AgentProfile` account into the MCP wire format.
  * Shared between the indexer-hydrated path and the fallback scan so they
  * return identical shapes.
+ *
+ * ADR-088: typed via `IdlAccounts<AgentRegistry>["agentProfile"]`. No `as`
+ * widening needed — the BN / PublicKey shapes flow from the IDL.
  */
-function hydrateAgent(address: PublicKey, p: any) {
+function hydrateAgent(address: PublicKey, p: AgentProfileAccount) {
   return {
     address: address.toBase58(),
-    authority: (p.authority as PublicKey).toBase58(),
-    name: p.name as string,
-    description: p.description as string,
-    category: p.category as string,
-    capabilities: p.capabilities as string[],
+    authority: p.authority.toBase58(),
+    name: p.name,
+    description: p.description,
+    category: p.category,
+    capabilities: p.capabilities,
     pricingModel: formatPricingModel(p.pricingModel),
-    pricingAmountSol: lamportsToSol((p.pricingAmount as any).toNumber()),
+    pricingAmountSol: lamportsToSol(p.pricingAmount.toNumber()),
     status: formatAgentStatus(p.status),
-    reputationScore: (p.reputationScore as any).toNumber(),
-    totalTasksCompleted: (p.totalTasksCompleted as any).toNumber(),
-    avgRating: p.avgRating as number,
+    reputationScore: p.reputationScore.toNumber(),
+    totalTasksCompleted: p.totalTasksCompleted.toNumber(),
+    avgRating: p.avgRating,
   };
 }
 
@@ -400,7 +418,7 @@ export async function handleStakeReputation(args: Record<string, unknown>) {
 
   const sig = await program.methods
     .stakeReputation(new BN(solToLamports(amount)))
-    .accounts({
+    .accountsPartial({
       authority: wallet.publicKey,
       agentProfile: agentProfilePDA,
       stakingPda: stakingPDA,

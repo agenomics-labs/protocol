@@ -232,6 +232,15 @@ export async function handleVaultTransferV2(
     //
     // This mirrors the canonical Kit pipe pattern in @solana/kit's doc
     // examples.
+    //
+    // TODO(typed): The 5 `as any` casts in this block are unavoidable today
+    // because @solana/kit's transaction-message helpers (`setFeePayer`,
+    // `setLifetime`, `appendInstruction`) widen the message type with each
+    // call — the proper Kit pattern is `pipe(msg, setX, setY, ...)`, not
+    // reassignment to a loop-typed local. Switching to `pipe()` removes the
+    // need for these casts but is out-of-scope for this refactor (handler
+    // call shape would change). Tracked under ADR-088 follow-up; see also
+    // upstream Kit issue on message-builder generics.
     const baseMessage = (() => {
       let m: ReturnType<typeof createTransactionMessage> =
         createTransactionMessage({ version: 0 });
@@ -246,7 +255,11 @@ export async function handleVaultTransferV2(
 
     // ---- Compute-budget: simulate-then-size + priority fee --------------
     const simulate: SimulateForCuThunk = async () => {
-      // Compile (unsigned) + base64-encode for sigVerify-off simulation.
+      // TODO(typed): same Kit message-builder generic limitation as above.
+      // `compileTransaction` and `getBase64EncodedWireTransaction` accept a
+      // message whose `lifetime` slot is the union of supported lifetimes;
+      // the loop-built `baseMessage` is typed too narrowly to satisfy that
+      // union without widening. Unblocked by switching to `pipe()`.
       const compiled = compileTransaction(baseMessage as any);
       const wire = getBase64EncodedWireTransaction(compiled as any);
       const sim = await deps.rpc

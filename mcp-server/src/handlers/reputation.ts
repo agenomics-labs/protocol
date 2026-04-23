@@ -32,10 +32,16 @@ import {
   PublicKey,
 } from "../solana.js";
 import { createRpc } from "../solana-v2.js";
-import {
-  formatAgentStatus,
-  formatPricingModel,
-} from "./formatters.js";
+import { formatAgentStatus } from "./formatters.js";
+import type { IdlAccounts } from "@coral-xyz/anchor";
+import type { AgentRegistry } from "../idl/types";
+
+// ADR-088: typed AgentProfile shape — `manifest_cid: [u8; 64]` etc. land as
+// `number[]` of fixed length, `reputation_score: u64` as `BN`, etc. The
+// duck-typed `numLike` / `stringLike` / `byteArrayLike` adapters this file
+// used to carry are gone — the IDL now tells us each field's exact type.
+// Exported so tests can synthesise fixtures against the same shape.
+export type AgentProfileAccount = IdlAccounts<AgentRegistry>["agentProfile"];
 
 // --------------------------------------------------------------------------
 // ESM dynamic-import shim (see module header note).
@@ -213,7 +219,7 @@ async function fetchManifestFromIpfs(
 // On-chain Registry adapters.
 // --------------------------------------------------------------------------
 
-interface RegistrySnapshot {
+export interface RegistrySnapshot {
   agentProfileAddress: string;
   authority: string;
   name: string;
@@ -225,7 +231,7 @@ interface RegistrySnapshot {
   slashCount: number;
 }
 
-interface ManifestPointer {
+export interface ManifestPointer {
   cid: string | null;
   hash: Uint8Array | null;
   signature: Uint8Array | null;
@@ -235,85 +241,69 @@ interface ManifestPointer {
 /**
  * Extract the `AgentProfile` fields the reputation snapshot needs.
  *
- * Some fields (`reputation_stake`) are nested structs per the Anchor IDL;
- * others are optional forward-compat hooks (manifest_cid / manifest_hash /
- * manifest_signature / manifest_version — ADR-060) that may or may not be
- * present in the deployed Registry program. Missing manifest fields are
- * treated as "no manifest published" rather than a hard error (ADR-061 §4
- * row 4a semantics, lifted to the preceding manifest layer).
+ * ADR-088: typed via `IdlAccounts<AgentRegistry>["agentProfile"]`. The
+ * old `numLike` / `stringLike` / `byteArrayLike` duck-typed coercers are
+ * gone — each manifest field has a known concrete shape from the IDL:
+ *   - `manifestCid` is `number[]` of length 64 (Anchor decodes `[u8; 64]`)
+ *   - `manifestHash` is `number[]` of length 32
+ *   - `manifestSignature` is `number[]` of length 64
+ *   - `manifestVersion` is `number` (u16)
+ *   - `reputationStake.stakedAmount` is `BN` (u64)
+ *   - `reputationStake.slashCount` is `number` (u8)
+ *
+ * "Manifest absent" semantics (ADR-061 §4 row 4a, lifted to the manifest
+ * layer): the Registry zero-pads unset CID / hash / signature; the helpers
+ * below trim trailing zeros and return `null` for the all-zero case.
  */
-function adaptRegistryProfile(
+// Exported for tests — see test/reputation-adapter.test.ts. ADR-088 demands
+// the typed `IdlAccounts<AgentRegistry>["agentProfile"]` shape; the test
+// would have caught the pre-fix `(field as any).toNumber()` regression.
+export function adaptRegistryProfile(
   pda: PublicKey,
-  profile: any,
+  profile: AgentProfileAccount,
 ): { snapshot: RegistrySnapshot; pointer: ManifestPointer } {
-  const stake = profile.reputationStake ?? {};
+  const stake = profile.reputationStake;
   const snapshot: RegistrySnapshot = {
     agentProfileAddress: pda.toBase58(),
-    authority: (profile.authority as PublicKey).toBase58(),
-    name: profile.name as string,
+    authority: profile.authority.toBase58(),
+    name: profile.name,
     status: formatAgentStatus(profile.status),
-    reputationScore: numLike(profile.reputationScore),
-    totalTasksCompleted: numLike(profile.totalTasksCompleted),
-    avgRating: (profile.avgRating as number) ?? 0,
-    stakedAmountSol: lamportsToSol(numLike(stake.stakedAmount)),
-    slashCount: (stake.slashCount as number) ?? 0,
+    reputationScore: profile.reputationScore.toNumber(),
+    totalTasksCompleted: profile.totalTasksCompleted.toNumber(),
+    avgRating: profile.avgRating,
+    stakedAmountSol: lamportsToSol(stake.stakedAmount.toNumber()),
+    slashCount: stake.slashCount,
   };
 
   const pointer: ManifestPointer = {
-    cid: stringLike(profile.manifestCid),
-    hash: byteArrayLike(profile.manifestHash),
-    signature: byteArrayLike(profile.manifestSignature),
-    version:
-      profile.manifestVersion !== undefined &&
-      profile.manifestVersion !== null
-        ? numLike(profile.manifestVersion)
-        : null,
+    cid: decodeManifestCid(profile.manifestCid),
+    hash: nonZeroBytes(profile.manifestHash),
+    signature: nonZeroBytes(profile.manifestSignature),
+    // `manifestVersion === 0` is the on-chain "unset" marker per ADR-060.
+    version: profile.manifestVersion > 0 ? profile.manifestVersion : null,
   };
 
   return { snapshot, pointer };
 }
 
-function numLike(v: unknown): number {
-  if (v === undefined || v === null) return 0;
-  if (typeof v === "number") return v;
-  if (typeof v === "bigint") return Number(v);
-  if (typeof (v as any).toNumber === "function") return (v as any).toNumber();
-  return Number(v);
+/**
+ * Decode the on-chain `manifest_cid` (zero-padded `[u8; 64]`) into a UTF-8
+ * string. Returns `null` for the all-zero "manifest absent" sentinel.
+ */
+function decodeManifestCid(bytes: number[]): string | null {
+  const u = Uint8Array.from(bytes);
+  const trimmed = trimZeros(u);
+  if (trimmed.length === 0) return null;
+  return new TextDecoder("utf-8").decode(trimmed);
 }
 
-function stringLike(v: unknown): string | null {
-  if (v === undefined || v === null) return null;
-  if (typeof v === "string") return v.length > 0 ? v : null;
-  // Some Anchor IDLs may surface byte-array CIDs. Best-effort decode.
-  if (v instanceof Uint8Array) {
-    const trimmed = trimZeros(v);
-    if (trimmed.length === 0) return null;
-    return new TextDecoder("utf-8").decode(trimmed);
-  }
-  if (Array.isArray(v) && v.every((b) => typeof b === "number")) {
-    const u = Uint8Array.from(v as number[]);
-    const trimmed = trimZeros(u);
-    if (trimmed.length === 0) return null;
-    return new TextDecoder("utf-8").decode(trimmed);
-  }
-  return null;
-}
-
-function byteArrayLike(v: unknown): Uint8Array | null {
-  if (v === undefined || v === null) return null;
-  if (v instanceof Uint8Array) {
-    return isAllZero(v) ? null : v;
-  }
-  if (Array.isArray(v) && v.every((b) => typeof b === "number")) {
-    const u = Uint8Array.from(v as number[]);
-    return isAllZero(u) ? null : u;
-  }
-  // Buffer (Node) — duck-typed
-  if (v && typeof v === "object" && typeof (v as any).length === "number") {
-    const u = Uint8Array.from(v as ArrayLike<number>);
-    return isAllZero(u) ? null : u;
-  }
-  return null;
+/**
+ * Convert a fixed-size on-chain byte array to `Uint8Array`, returning
+ * `null` for the all-zero case (the on-chain "unset" sentinel).
+ */
+function nonZeroBytes(bytes: number[]): Uint8Array | null {
+  const u = Uint8Array.from(bytes);
+  return isAllZero(u) ? null : u;
 }
 
 function isAllZero(u: Uint8Array): boolean {
@@ -367,9 +357,8 @@ export async function handleGetAgentReputation(
       : getWalletPublicKey();
 
   const [agentProfilePDA] = deriveAgentProfilePDA(authorityKey);
-  const profile = await (program.account as any).agentProfile.fetch(
-    agentProfilePDA,
-  );
+  // ADR-088: typed via `Program<AgentRegistry>.account.agentProfile`.
+  const profile = await program.account.agentProfile.fetch(agentProfilePDA);
 
   const { snapshot, pointer } = adaptRegistryProfile(agentProfilePDA, profile);
 

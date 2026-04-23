@@ -37,6 +37,8 @@ export async function handleCreateVault(args: Record<string, unknown>) {
   const program = getVaultProgram();
   const [vaultPDA] = deriveVaultPDA(wallet.publicKey);
 
+  // ADR-088: see registry handler — `.accountsPartial()` accepts
+  // PDA-resolvable accounts (e.g. `vault` here is `pda: ["vault", authority]`).
   const sig = await program.methods
     .initializeVault(
       agentIdentity,
@@ -44,7 +46,7 @@ export async function handleCreateVault(args: Record<string, unknown>) {
       new BN(solToLamports(perTxLimitSol)),
       maxTxsPerHour
     )
-    .accounts({
+    .accountsPartial({
       vault: vaultPDA,
       authority: wallet.publicKey,
       systemProgram: SystemProgram.programId,
@@ -76,37 +78,31 @@ export async function handleGetVaultInfo(args: Record<string, unknown>) {
     [vaultAddress] = deriveVaultPDA(wallet.publicKey);
   }
 
-  const vault = await (program.account as any).vault.fetch(vaultAddress);
+  // ADR-088: typed via `Program<AgentVault>.account.vault`. `policy` is the
+  // nested `defined: { name: "spendingPolicy" }` struct with typed fields.
+  const vault = await program.account.vault.fetch(vaultAddress);
   const conn = getConnection();
   const balanceLamports = await conn.getBalance(vaultAddress);
 
   return {
     vaultAddress: vaultAddress.toBase58(),
     balanceSol: lamportsToSol(balanceLamports),
-    agentIdentity: (vault.agentIdentity as PublicKey).toBase58(),
-    authority: (vault.authority as PublicKey).toBase58(),
-    paused: vault.paused as boolean,
-    spentTodaySol: lamportsToSol(
-      (vault.spentTodayLamports as any).toNumber()
-    ),
-    lastSpendDay: (vault.lastSpendDay as any).toNumber(),
+    agentIdentity: vault.agentIdentity.toBase58(),
+    authority: vault.authority.toBase58(),
+    paused: vault.paused,
+    spentTodaySol: lamportsToSol(vault.spentTodayLamports.toNumber()),
+    lastSpendDay: vault.lastSpendDay.toNumber(),
     policies: {
-      dailyLimitSol: lamportsToSol(
-        (vault.policy as any).dailyLimitLamports.toNumber()
-      ),
-      perTxLimitSol: lamportsToSol(
-        (vault.policy as any).perTxLimitLamports.toNumber()
-      ),
-      maxTxsPerHour: (vault.policy as any).maxTxsPerHour,
-      tokenAllowlist: (vault.policy as any).tokenAllowlist.map(
-        (pk: PublicKey) => pk.toBase58()
-      ),
-      programAllowlist: (vault.policy as any).programAllowlist.map(
-        (pk: PublicKey) => pk.toBase58()
+      dailyLimitSol: lamportsToSol(vault.policy.dailyLimitLamports.toNumber()),
+      perTxLimitSol: lamportsToSol(vault.policy.perTxLimitLamports.toNumber()),
+      maxTxsPerHour: vault.policy.maxTxsPerHour,
+      tokenAllowlist: vault.policy.tokenAllowlist.map((pk) => pk.toBase58()),
+      programAllowlist: vault.policy.programAllowlist.map((pk) =>
+        pk.toBase58()
       ),
     },
-    txsInCurrentWindow: (vault.txsInCurrentWindow as any),
-    rateLimitWindowStart: (vault.rateLimitWindowStart as any).toNumber(),
+    txsInCurrentWindow: vault.txsInCurrentWindow,
+    rateLimitWindowStart: vault.rateLimitWindowStart.toNumber(),
   };
 }
 
@@ -123,7 +119,7 @@ export async function handleVaultTransfer(args: Record<string, unknown>) {
 
   const sig = await program.methods
     .executeTransfer(new BN(solToLamports(amountSol)))
-    .accounts({
+    .accountsPartial({
       vault: vaultPDA,
       agent: wallet.publicKey,
       recipient: recipientAddress,
@@ -159,7 +155,7 @@ export async function handleVaultTokenTransfer(args: Record<string, unknown>) {
 
   const sig = await program.methods
     .executeTokenTransfer(new BN(amount))
-    .accounts({
+    .accountsPartial({
       vault: vaultPDA,
       agent: wallet.publicKey,
       vaultTokenAccount: vaultTokenAccount,
@@ -197,7 +193,7 @@ export async function handleUpdateVaultPolicy(args: Record<string, unknown>) {
       new BN(solToLamports(perTxLimitSol)),
       maxTxsPerHour
     )
-    .accounts({
+    .accountsPartial({
       vault: vaultPDA,
       authority: wallet.publicKey,
     })
@@ -222,7 +218,7 @@ export async function handlePauseVault() {
 
   const sig = await program.methods
     .pauseVault()
-    .accounts({
+    .accountsPartial({
       vault: vaultPDA,
       authority: wallet.publicKey,
     })
@@ -247,7 +243,7 @@ export async function handleResumeVault() {
 
   const sig = await program.methods
     .resumeVault()
-    .accounts({
+    .accountsPartial({
       vault: vaultPDA,
       authority: wallet.publicKey,
     })
@@ -290,7 +286,7 @@ export async function handleManageAllowlist(args: Record<string, unknown>) {
       const dailyLimit = requirePositiveNumber(args, "dailyLimit");
       sig = await program.methods
         .addTokenAllowlist(address, new BN(perTxLimit), new BN(dailyLimit))
-        .accounts(accounts)
+        .accountsPartial(accounts)
         .signers([wallet])
         .rpc();
       break;
@@ -298,7 +294,7 @@ export async function handleManageAllowlist(args: Record<string, unknown>) {
     case "remove_token": {
       sig = await program.methods
         .removeTokenAllowlist(address)
-        .accounts(accounts)
+        .accountsPartial(accounts)
         .signers([wallet])
         .rpc();
       break;
@@ -306,14 +302,14 @@ export async function handleManageAllowlist(args: Record<string, unknown>) {
     case "add_program":
       sig = await program.methods
         .addProgramAllowlist(address)
-        .accounts(accounts)
+        .accountsPartial(accounts)
         .signers([wallet])
         .rpc();
       break;
     case "remove_program":
       sig = await program.methods
         .removeProgramAllowlist(address)
-        .accounts(accounts)
+        .accountsPartial(accounts)
         .signers([wallet])
         .rpc();
       break;
