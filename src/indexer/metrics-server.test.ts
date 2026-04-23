@@ -3,11 +3,17 @@
  *
  * Verifies that:
  *   1. GET /metrics returns 200 with the correct Prometheus content-type
- *   2. The response body contains at least the indexer metric family names
+ *   2. The response body contains the indexer metric family names
  *   3. GET <anything else> returns 404
  *   4. The exported counters/gauge can be incremented without throwing
+ *   5. Incremented values are reflected in the scrape output
+ *
+ * Runs under `node --import ts-node/esm --test` or similar tsx-based runner.
+ * Uses `node:test` + `node:assert` so there is no extra test-framework dep.
  */
-import * as assert from "assert";
+
+import { describe, it, before, after } from "node:test";
+import * as assert from "node:assert/strict";
 import * as http from "http";
 import {
   startMetricsServer,
@@ -33,27 +39,27 @@ function httpGet(url: string): Promise<{ status: number; contentType: string; bo
   });
 }
 
-// Use a dedicated port range that is unlikely to clash with the service under test.
 const TEST_PORT = 19100;
 
 describe("indexer metrics-server (ADR-104)", () => {
   let server: http.Server;
 
   before(async () => {
-    // Reset registry counters between test runs so values are deterministic.
     indexerRegistry.resetMetrics();
     server = startMetricsServer(TEST_PORT);
-    // Give the server a tick to bind.
     await new Promise<void>((r) => setTimeout(r, 50));
   });
 
-  after((done) => {
-    server.close(done);
-  });
+  after(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        server.close((err) => (err ? reject(err) : resolve()));
+      })
+  );
 
   it("GET /metrics returns 200", async () => {
     const { status } = await httpGet(`http://127.0.0.1:${TEST_PORT}/metrics`);
-    assert.strictEqual(status, 200);
+    assert.equal(status, 200);
   });
 
   it("GET /metrics returns Prometheus content-type", async () => {
@@ -82,7 +88,7 @@ describe("indexer metrics-server (ADR-104)", () => {
 
   it("GET /other returns 404", async () => {
     const { status } = await httpGet(`http://127.0.0.1:${TEST_PORT}/health`);
-    assert.strictEqual(status, 404);
+    assert.equal(status, 404);
   });
 
   it("eventsProcessed counter increments without error", () => {
