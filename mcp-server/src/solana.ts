@@ -9,6 +9,7 @@ import { AnchorProvider, Program, BN, Idl } from "@coral-xyz/anchor";
 import * as fs from "fs";
 import * as path from "path";
 import * as crypto from "crypto";
+import { assertKeyfilePermissions } from "./transport/auth-gate.js";
 
 /**
  * Solana connection, Anchor programs, and PDA helpers for the AEP MCP server.
@@ -114,6 +115,12 @@ export function getConnection(): Connection {
 /**
  * Load the agent's wallet keypair from disk.
  * Checks SOLANA_KEYPAIR_PATH env var, then falls back to ~/.config/solana/id.json.
+ *
+ * ADR-083 Finding 5.1: refuses to load if the keyfile permission mode has any
+ * group or other bits set (a `0644` keyfile is silently world-readable on
+ * Unix). The check is `(mode & 0o077) === 0`. Same-uid attackers bypass this
+ * trivially, but the silent-permissions-regression class of incidents
+ * (backup-tool restore, misconfigured Ansible play) is caught at startup.
  */
 export function loadWallet(): Keypair {
   if (_wallet) return _wallet;
@@ -130,6 +137,9 @@ export function loadWallet(): Keypair {
         `Set SOLANA_KEYPAIR_PATH or run 'solana-keygen new'.`
     );
   }
+
+  // ADR-083 Finding 5.1: refuse to load a world- or group-readable keyfile.
+  assertKeyfilePermissions(keypath);
 
   const secretKey = JSON.parse(fs.readFileSync(keypath, "utf-8"));
   _wallet = Keypair.fromSecretKey(Buffer.from(secretKey));

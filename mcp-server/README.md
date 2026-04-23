@@ -66,6 +66,68 @@ npm run build
 npm start
 ```
 
+## SECURITY — Trust model and transport posture (ADR-083)
+
+**Read this before deploying.** The MCP server signs Solana transactions with
+the operator's wallet keypair. Several actions (`vault_transfer`,
+`vault_program_call`, `submit_milestone`, `approve_milestone`,
+`resolve_dispute`, …) are privileged: a successful call moves real funds or
+mutates real on-chain state.
+
+### Trust boundary by transport
+
+| Transport | Default? | Trust boundary | Auth |
+|-----------|----------|----------------|------|
+| `stdio`   | yes      | parent process (the MCP host that spawned this server) | OS process isolation |
+| `http`    | no       | anyone with the bearer token | `Authorization: Bearer <token>` (mandatory) |
+| `unix`    | no       | anyone who can `connect(2)` to the socket file | socket mode 0600 + optional UID check |
+
+**stdio (default).** The server binds to stdin/stdout. The trust boundary is
+the parent process — typically Claude Desktop, an MCP SDK process, or a CLI
+that spawned the server as a subprocess. Same-uid local malware is already
+inside this trust boundary (it can read the keyfile directly); no
+transport-level defense changes that. **Do not pipe stdin/stdout across an
+untrusted boundary** (e.g., do not expose the server via `socat TCP-LISTEN
+… EXEC:'aep-mcp'`).
+
+**http.** Opt-in via `AEP_MCP_TRANSPORT=http`. **The server hard-fails at
+startup if `AEP_MCP_AUTH_TOKEN` is unset or shorter than 16 bytes.** Every
+incoming request must carry `Authorization: Bearer <token>`; the token is
+compared in constant time via `crypto.timingSafeEqual`. The default bind is
+`127.0.0.1:7037`. Operators who want LAN/internet exposure must set
+`AEP_MCP_HTTP_HOST=0.0.0.0` explicitly **and should terminate TLS upstream**
+(sidecar / load balancer with mTLS — the server itself does not enforce TLS
+in v0.1.0).
+
+**unix.** Opt-in via `AEP_MCP_TRANSPORT=unix` with `AEP_MCP_UNIX_PATH=/path/to/sock`.
+The socket is created with mode `0600`. Optionally set `AEP_MCP_ALLOWED_UID=$(id -u)`
+to enable a peer-uid sanity check (Linux only; per-connection SO_PEERCRED
+arrives with the mTLS upgrade — see ADR-083 §"Mode 3" for limitations).
+
+### Threat model — what is and isn't covered
+
+| Adversary | stdio | http (token) | unix (uid) |
+|-----------|-------|--------------|------------|
+| Same-uid local malware | not covered (already past trust boundary) | not covered | not covered |
+| Other-uid local user | covered (cannot reach stdin) | covered | covered (token / UID check) |
+| LAN peer / IoT device | covered | covered (needs token) | N/A |
+| Internet attacker | covered | covered (needs token + recommended TLS) | N/A |
+
+The keyfile permission check (`assertKeyfilePermissions` in
+`src/transport/auth-gate.ts`) catches the silent-permissions-regression class
+of incidents (a `chmod 644` from a backup tool, a misconfigured Ansible play)
+but does **not** stop a same-uid attacker from reading the key directly.
+That class of attack requires an OS-level sandbox (seccomp, hardware-backed
+key custody) and is out of scope for this server.
+
+### Token rotation
+
+Bearer tokens are bearer tokens — anyone who can read `AEP_MCP_AUTH_TOKEN` can
+sign vault transactions. Rotate the token by setting a new value and
+restarting the server. There is no built-in token revocation list in v0.1.0;
+the upgrade path to mTLS-with-cert-revocation is documented in ADR-083 §"Upgrade
+path to mTLS".
+
 ## Configuration
 
 The server uses environment variables for configuration:
@@ -75,7 +137,24 @@ The server uses environment variables for configuration:
 export SOLANA_RPC_URL="https://api.devnet.solana.com"
 
 # Path to keypair file (defaults to ~/.config/solana/id.json)
+# ADR-083 Finding 5.1: must be mode 0600 (refuses to load otherwise).
 export SOLANA_KEYPAIR_PATH="/path/to/keypair.json"
+
+# ADR-083 — MCP transport posture. One of: stdio (default), http, unix.
+export AEP_MCP_TRANSPORT="stdio"
+
+# ADR-083 — required when AEP_MCP_TRANSPORT=http. Generate with:
+#   openssl rand -hex 32
+# Compared constant-time via crypto.timingSafeEqual.
+export AEP_MCP_AUTH_TOKEN="$(openssl rand -hex 32)"
+
+# ADR-083 — HTTP transport bind options (only used when AEP_MCP_TRANSPORT=http)
+export AEP_MCP_HTTP_HOST="127.0.0.1"   # default 127.0.0.1; set 0.0.0.0 to expose
+export AEP_MCP_HTTP_PORT="7037"        # default 7037
+
+# ADR-083 — Unix-socket options (only used when AEP_MCP_TRANSPORT=unix)
+export AEP_MCP_UNIX_PATH="/run/aep-mcp/mcp.sock"
+export AEP_MCP_ALLOWED_UID="$(id -u)"   # optional; peer-uid sanity check
 
 # Replay-protection backend (ADR-059 §5). Unset → in-memory store
 # (single-instance). Set to a redis:// URL → multi-instance-safe
