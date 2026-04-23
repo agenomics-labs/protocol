@@ -21,7 +21,7 @@
 //     byte layout as public type shapes; they are now internal to
 //     `./schema.ts`. The public contract is `AttestationReputation`.
 
-export { SasResolver, ResolverInitError } from "./resolver.js";
+export { SasResolver, ResolverInitError, SignerHistoryMissingError } from "./resolver.js";
 
 export {
   InMemoryCache,

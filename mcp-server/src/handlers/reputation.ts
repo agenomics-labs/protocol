@@ -16,11 +16,13 @@
  *   5. Merge — Registry native values are the authoritative signal; manifest
  *      metadata + SAS reputation are additive advisory overlays.
  *
- * Module loading note: the two `@agenomics/*` packages ship as ESM-only, but the
- * mcp-server transpiles to CommonJS. A static `import` would be
- * down-compiled to `require()` and fail at runtime. We therefore load both
- * packages through a `new Function(...)` dynamic-import shim that TypeScript
- * does not rewrite (the shim is the compiled form of `s => import(s)`).
+ * Module loading note (ADR-091): mcp-server is now ESM (NodeNext); the two
+ * `@agenomics/*` packages are ESM too. Plain `await import("...")` works
+ * end-to-end — the prior `new Function("s", "return import(s);")` shim
+ * (workaround for `module: commonjs` rewriting `import()` to `require()`)
+ * has been removed. Static `import` would also work, but lazy import keeps
+ * the get-agent-reputation handler the only entry point that pays the
+ * package-load cost.
  */
 
 import {
@@ -32,9 +34,13 @@ import {
   PublicKey,
 } from "../solana.js";
 import { createRpc } from "../solana-v2.js";
-import { formatAgentStatus } from "./formatters.js";
+import {
+  formatAgentStatus,
+  formatPricingModel,
+} from "./formatters.js";
 import type { IdlAccounts } from "@coral-xyz/anchor";
-import type { AgentRegistry } from "../idl/types";
+import type { AgentRegistry } from "../idl/types.js";
+import { serverLogger } from "../util/logger.js";
 
 // ADR-088: typed AgentProfile shape — `manifest_cid: [u8; 64]` etc. land as
 // `number[]` of fixed length, `reputation_score: u64` as `BN`, etc. The
@@ -43,20 +49,10 @@ import type { AgentRegistry } from "../idl/types";
 // Exported so tests can synthesise fixtures against the same shape.
 export type AgentProfileAccount = IdlAccounts<AgentRegistry>["agentProfile"];
 
-// --------------------------------------------------------------------------
-// ESM dynamic-import shim (see module header note).
-// --------------------------------------------------------------------------
-
-type DynImport = <T = unknown>(specifier: string) => Promise<T>;
-// Use `new Function` so tsc (module=commonjs) does not rewrite
-// `import()` → `Promise.resolve().then(() => require(...))` at build time.
-const dynImport = new Function(
-  "s",
-  "return import(s);",
-) as unknown as DynImport;
+const log = serverLogger.child({ handler: "reputation" });
 
 // ESM type surface surfaced through `import type` — safe because type-only
-// imports emit no JS, so they cost nothing at runtime even from a CJS file.
+// imports emit no JS, so they cost nothing at runtime.
 import type {
   SasResolver as SasResolverClass,
   ResolvedReputation,
@@ -104,11 +100,12 @@ async function getSasHandle(): Promise<SasHandle> {
   if (!schemaPda || !allowedRaw) {
     if (!_sasConfigWarned) {
       _sasConfigWarned = true;
-      console.error(
-        "[get_agent_reputation] AEP_SAS_SCHEMA_PDA and/or " +
-          "AEP_SAS_ALLOWED_CREDENTIALS is unset — running with SAS " +
-          "resolution disabled. Every resolve() call returns " +
-          "{ absent: true, reason: 'sas-not-configured' }.",
+      log.warn(
+        {
+          AEP_SAS_SCHEMA_PDA: schemaPda ? "set" : "unset",
+          AEP_SAS_ALLOWED_CREDENTIALS: allowedRaw ? "set" : "unset",
+        },
+        "SAS not configured — get_agent_reputation will return absent:true for every subject",
       );
     }
     _sasHandle = {
@@ -132,10 +129,8 @@ async function getSasHandle(): Promise<SasHandle> {
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
 
-  // Dynamic ESM imports — see module header.
-  const resolverMod = await dynImport<typeof import("@agenomics/sas-resolver")>(
-    "@agenomics/sas-resolver",
-  );
+  // ADR-091: plain dynamic import works under NodeNext.
+  const resolverMod = await import("@agenomics/sas-resolver");
   const allowlist = resolverMod.buildAllowlist(allowed);
 
   const rpc = createRpc();
@@ -396,9 +391,7 @@ export async function handleGetAgentReputation(
   // Step 3 — fetch the manifest body, then validate.
   const { json } = await fetchManifestFromIpfs(pointer.cid);
 
-  const validatorMod = await dynImport<
-    typeof import("@agenomics/capability-manifest-validator")
-  >("@agenomics/capability-manifest-validator");
+  const validatorMod = await import("@agenomics/capability-manifest-validator");
 
   const authorityBytes = new Uint8Array(authorityKey.toBytes());
   const result: ValidationResult = validatorMod.validateManifest({

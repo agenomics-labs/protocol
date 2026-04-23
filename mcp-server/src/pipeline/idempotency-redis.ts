@@ -34,6 +34,8 @@
 // but action authors should prefer primitive shapes for the action
 // result type when `idempotent: true`.
 
+import { createRequire } from "node:module";
+import { randomUUID } from "node:crypto";
 import type { Result } from "../types/action.js";
 import type { IdempotencyStore } from "./idempotency.js";
 
@@ -152,11 +154,13 @@ export class RedisIdempotencyStore implements IdempotencyStore {
       this.client = opts.client;
       this.ownsClient = false;
     } else if (opts.url) {
-      // Lazy require to keep ioredis out of the import graph when the
-      // in-memory backend is in use (and to make this module cheap to
-      // import in tests that inject their own client).
+      // ADR-091: under ESM (NodeNext) we use createRequire(import.meta.url)
+      // for the lazy ioredis load — same intent as the prior CJS require,
+      // keeps the constructor synchronous, and ioredis's CJS export shape
+      // (function vs. .default) is preserved.
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const RedisCtor = require("ioredis") as { default?: unknown } & Record<
+      const requireCJS = createRequire(import.meta.url);
+      const RedisCtor = requireCJS("ioredis") as { default?: unknown } & Record<
         string,
         unknown
       >;
@@ -356,14 +360,8 @@ function deserializeResult<T>(raw: string): Result<T> {
 // --------------------------------------------------------------------------
 
 function defaultOwnerToken(): string {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { randomUUID } = require("crypto") as {
-      randomUUID?: () => string;
-    };
-    if (typeof randomUUID === "function") return randomUUID();
-  } catch {
-    // Fall through to the cheap fallback.
-  }
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  // ADR-091: `randomUUID` is now imported from `node:crypto` at module
+  // top — present on every supported Node version (>=14.17). The prior
+  // try/catch fallback is no longer needed.
+  return randomUUID();
 }

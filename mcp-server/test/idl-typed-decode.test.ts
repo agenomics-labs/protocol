@@ -34,8 +34,9 @@
 import { describe, it } from "node:test";
 import * as assert from "node:assert/strict";
 import { Keypair, PublicKey } from "@solana/web3.js";
-import { BN } from "@coral-xyz/anchor";
-import type { IdlAccounts } from "@coral-xyz/anchor";
+import anchorPkg from "@coral-xyz/anchor";
+const { BN } = anchorPkg;
+import type { BN as BNType, IdlAccounts } from "@coral-xyz/anchor";
 
 import {
   adaptRegistryProfile,
@@ -74,7 +75,7 @@ const _idlAccountAlias: _SameAsIdlAccount = true; // compiles iff equivalent
 // carried `(field as any).toNumber()`. If Anchor's IDL→TS mapping ever
 // stops returning BN for u64 / number for u8 / number[] for [u8; N], this
 // fails to compile.
-type _ScoreIsBN = Equals<AgentProfileAccount["reputationScore"], BN>;
+type _ScoreIsBN = Equals<AgentProfileAccount["reputationScore"], BNType>;
 const _scoreIsBN: _ScoreIsBN = true;
 
 type _CidIsNumberArray = Equals<AgentProfileAccount["manifestCid"], number[]>;

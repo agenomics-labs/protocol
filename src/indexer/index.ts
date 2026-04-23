@@ -9,6 +9,7 @@ import {
   ConfirmedSignatureInfo,
   Finality,
 } from "@solana/web3.js";
+import { logger, programLogger } from "./logger.js";
 
 const RPC_URL = process.env.SOLANA_RPC_URL || "http://127.0.0.1:8899";
 const PORT = parseInt(process.env.INDEXER_PORT || "3100", 10);
@@ -216,6 +217,11 @@ const DISCRIMINATOR_MAP: Record<string, string> = {
   // ADR-082 / audit-2026-04-23 item 6: ManifestUpdated (agent-registry,
   // ADR-060). Was silently classified as `event_<hex>` fallback before.
   "6941986a36affdb3": "ManifestUpdated",
+  // ADR-094: propose_reputation_delta emits this event. Registry is now the
+  // single source of reputation truth; agents table should update from this.
+  "483cc896eed8c2fc": "ReputationDeltaProposed",
+  // ADR-096: in-place migration events (schema version bump).
+  "3afb734612e65fa4": "AgentMigrated",
 
   // agent-vault
   b42bcf021247034b: "VaultInitialized",
@@ -423,6 +429,36 @@ const EVENT_DECODERS: Record<string, EventDecoder> = {
     manifest_cid: r.hexBytes(64),
     manifest_hash: r.hexBytes(32),
     manifest_version: r.u16(),
+    timestamp: i64ToJson(r.i64()),
+  }),
+
+  // ADR-094: ReputationDeltaProposed (agent-registry).
+  // Wire layout from programs/agent-registry/src/events.rs:
+  //   pub authority: Pubkey
+  //   pub delta: i16
+  //   pub reason: u8
+  //   pub old_score: u8
+  //   pub new_score: u8
+  //   pub timestamp: i64
+  ReputationDeltaProposed: (r) => ({
+    authority: r.pubkey(),
+    delta: r.u16(),    // i16 in Rust wire-encodes as u16 (little-endian, two's complement)
+    reason: r.u8(),
+    old_score: r.u8(),
+    new_score: r.u8(),
+    timestamp: i64ToJson(r.i64()),
+  }),
+
+  // ADR-096: AgentMigrated (agent-registry).
+  // Wire layout from programs/agent-registry/src/events.rs:
+  //   pub authority: Pubkey
+  //   pub old_version: u8
+  //   pub new_version: u8
+  //   pub timestamp: i64
+  AgentMigrated: (r) => ({
+    authority: r.pubkey(),
+    old_version: r.u8(),
+    new_version: r.u8(),
     timestamp: i64ToJson(r.i64()),
   }),
 
@@ -657,6 +693,20 @@ function updateAgentFromEvent(
     return;
   }
 
+  // ADR-094: ReputationDeltaProposed — the new authoritative reputation path.
+  // new_score is already clamped to [0, 100] by the registry instruction.
+  if (event.name === "ReputationDeltaProposed") {
+    if (!authority) return;
+    const newScore = coerceScore(data.new_score);
+    db.prepare(`
+      UPDATE agents SET
+        reputation_score = ?,
+        last_updated = datetime('now')
+      WHERE authority = ?
+    `).run(newScore, authority);
+    return;
+  }
+
   if (event.name === "SuspensionCleared") {
     if (!authority) return;
     const score = coerceScore(data.new_reputation_score);
@@ -849,7 +899,7 @@ function persistEventsForTx(
       }
     } catch (err) {
       metrics.parseErrors++;
-      console.error(`[${label}] Failed to store event: ${err}`);
+      programLogger(label).error({ err: String(err), corr_id: signature }, "failed to store event");
     }
     ordinal++;
   }
@@ -893,14 +943,15 @@ async function backfillProgram(
         upsertCursor(db, label, head[0].slot, head[0].signature);
         state.lastProcessedSlot = head[0].slot;
         state.lastSignature = head[0].signature;
-        console.log(
-          `[${label}] No cursor — seeded at slot ${head[0].slot} (sig ${head[0].signature.substring(0, 16)}...)`
+        programLogger(label).info(
+          { slot: head[0].slot, corr_id: head[0].signature },
+          "no cursor — seeded at head signature",
         );
       }
     } catch (err) {
       metrics.backfillErrors++;
       state.lastError = `cursor seed failed: ${(err as Error).message}`;
-      console.error(`[${label}] Cursor seed failed: ${err}`);
+      programLogger(label).error({ err: String(err) }, "cursor seed failed");
     }
     return 0;
   }
@@ -924,7 +975,7 @@ async function backfillProgram(
   } catch (err) {
     metrics.backfillErrors++;
     state.lastError = `backfill page fetch failed: ${(err as Error).message}`;
-    console.error(`[${label}] Backfill page fetch failed: ${err}`);
+    programLogger(label).error({ err: String(err) }, "backfill page fetch failed");
     return 0;
   }
 
@@ -932,7 +983,10 @@ async function backfillProgram(
     return 0;
   }
 
-  console.log(`[${label}] Backfilling ${collected.length} signature(s) since cursor ${until.substring(0, 16)}...`);
+  programLogger(label).info(
+    { signature_count: collected.length, since_cursor: until },
+    "backfilling signatures since cursor",
+  );
 
   let totalInserted = 0;
   // Reverse to oldest-first so the cursor advances monotonically. A crash
@@ -958,12 +1012,18 @@ async function backfillProgram(
     } catch (err) {
       metrics.backfillErrors++;
       state.lastError = `backfill tx ${info.signature.substring(0, 8)}... failed: ${(err as Error).message}`;
-      console.error(`[${label}] Backfill tx ${info.signature.substring(0, 16)} failed: ${err}`);
+      programLogger(label).error(
+        { err: String(err), corr_id: info.signature },
+        "backfill tx failed",
+      );
     }
     await sleep(BACKFILL_TX_DELAY_MS);
   }
 
-  console.log(`[${label}] Backfill complete: ${totalInserted} new event(s) inserted`);
+  programLogger(label).info(
+    { events_inserted: totalInserted },
+    "backfill complete",
+  );
   return totalInserted;
 }
 
@@ -1015,19 +1075,30 @@ function subscribeToPrograms(
     );
     if (inserted > 0) {
       for (const event of parsed) {
-        console.log(
-          `[${label}] ${event.name} @ slot ${ctx.slot} tx=${logs.signature.substring(0, 16)}...`
+        programLogger(label).info(
+          {
+            event_name: event.name,
+            slot: ctx.slot,
+            corr_id: logs.signature,
+          },
+          "event ingested",
         );
       }
     }
     if (skipped > 0) {
-      console.log(`[${label}] Skipped ${skipped} duplicate event(s) in tx ${logs.signature.substring(0, 16)}...`);
+      programLogger(label).debug(
+        { skipped, corr_id: logs.signature },
+        "duplicate events skipped",
+      );
     }
   }
 
   function subscribeWithReconnect(label: string, programId: PublicKey): void {
     const state = getOrCreateState(label, programId);
-    console.log(`Subscribing to ${label}: ${programId.toBase58()}`);
+    programLogger(label).info(
+      { program_id: programId.toBase58() },
+      "subscribing to program",
+    );
 
     try {
       const subId = connection.onLogs(
@@ -1043,7 +1114,7 @@ function subscribeToPrograms(
     } catch (err) {
       state.connected = false;
       state.lastError = `subscribe failed: ${(err as Error).message}`;
-      console.error(`[${label}] Subscription failed: ${err}`);
+      programLogger(label).error({ err: String(err) }, "subscription failed");
       scheduleReconnect(label, programId);
       return;
     }
@@ -1053,14 +1124,17 @@ function subscribeToPrograms(
     backfillProgram(connection, db, label, programId, state, activeMetrics).catch((err) => {
       activeMetrics.backfillErrors++;
       state.lastError = `backfill threw: ${(err as Error).message}`;
-      console.error(`[${label}] Backfill threw: ${err}`);
+      programLogger(label).error({ err: String(err) }, "backfill threw");
     });
 
     // Monitor for WebSocket disconnects via connection error events
     const wsConnection = (connection as unknown as { _rpcWebSocket?: { on?: (event: string, handler: () => void) => void } })._rpcWebSocket;
     if (wsConnection && typeof wsConnection.on === "function") {
       wsConnection.on("close", () => {
-        console.warn(`[${label}] WebSocket closed, scheduling reconnect (last slot: ${state.lastProcessedSlot})`);
+        programLogger(label).warn(
+          { last_slot: state.lastProcessedSlot },
+          "WebSocket closed, scheduling reconnect",
+        );
         state.connected = false;
         subscriptionIds.delete(label);
         scheduleReconnect(label, programId);
@@ -1072,9 +1146,15 @@ function subscribeToPrograms(
     const state = getOrCreateState(label, programId);
     state.reconnectAttempts++;
     activeMetrics.subscriptionReconnects++;
-    console.log(`[${label}] Reconnecting in ${RECONNECT_DELAY_MS}ms...`);
+    programLogger(label).info(
+      { delay_ms: RECONNECT_DELAY_MS },
+      "scheduling reconnect",
+    );
     setTimeout(() => {
-      console.log(`[${label}] Attempting re-subscribe (last processed slot: ${state.lastProcessedSlot})`);
+      programLogger(label).info(
+        { last_slot: state.lastProcessedSlot },
+        "attempting re-subscribe",
+      );
       subscribeWithReconnect(label, programId);
     }, RECONNECT_DELAY_MS);
   }
@@ -1306,9 +1386,10 @@ function createApi(
 }
 
 async function main(): Promise<void> {
-  console.log("AEP Event Indexer starting...");
-  console.log(`RPC: ${RPC_URL}`);
-  console.log(`Commitment: ${COMMITMENT}`);
+  logger.info(
+    { rpc_url: RPC_URL, commitment: COMMITMENT },
+    "AEP event indexer starting",
+  );
 
   const connection = new Connection(RPC_URL, COMMITMENT);
   const db = initDb(process.env.DB_PATH || "./aep-events.db");
@@ -1316,12 +1397,24 @@ async function main(): Promise<void> {
   const { states, metrics } = subscribeToPrograms(connection, db);
   const app = createApi(db, states, metrics);
   app.listen(PORT, () => {
-    console.log(`Indexer API listening on http://localhost:${PORT}`);
-    console.log("Endpoints: GET /health, /events, /events/:program, /agents, /stats, /metrics");
+    logger.info(
+      {
+        port: PORT,
+        endpoints: [
+          "GET /health",
+          "GET /events",
+          "GET /events/:program",
+          "GET /agents",
+          "GET /stats",
+          "GET /metrics",
+        ],
+      },
+      "indexer API listening",
+    );
   });
 
   process.on("SIGINT", () => {
-    console.log("\nShutting down...");
+    logger.info("shutting down (SIGINT)");
     db.close();
     process.exit(0);
   });
@@ -1331,7 +1424,7 @@ async function main(): Promise<void> {
 // direct execution only.
 if (require.main === module) {
   main().catch((err) => {
-    console.error("Fatal error:", err);
+    logger.fatal({ err: String(err) }, "fatal error");
     process.exit(1);
   });
 }
