@@ -35,6 +35,11 @@ yarn.lock
 coverage/
 aep-events.db*
 
+# Local AgentDB + ruvector instances (created by claude-flow tooling)
+agentdb.rvf
+agentdb.rvf.lock
+ruvector.db
+
 # Claude Code runtime artifacts
 .claude-flow/
 .claude/local/
