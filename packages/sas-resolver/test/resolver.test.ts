@@ -11,6 +11,7 @@ import * as assert from "node:assert/strict";
 import {
   SasResolver,
   ResolverInitError,
+  SignerHistoryMissingError,
   buildAllowlist,
   type AllowedCredential,
   type ResolvedReputation,
@@ -147,9 +148,17 @@ function makeResolver(rpc: MockRpc, opts: MakeResolverOpts = {}): SasResolver {
   // `MockRpc` quacks like the slice of `@solana/kit`'s Rpc the resolver
   // uses (`getAccountInfo`). The resolver uses duck-typing internally,
   // so the `as unknown as` cast is structural-only — no runtime lying.
+  //
+  // ADR-101: the default allowlist uses the scoped `AllowedCredential`
+  // shape with an explicit `signers` list. The flat v0 shape (`string[]`)
+  // no longer works at signer-validation time because `entry.signers`
+  // would be `undefined`, triggering a `SignerHistoryMissingError`.
+  const defaultAllowlist: AllowedCredential[] = [
+    { authority: ALLOWED_CREDENTIAL, signers: [SIGNER] },
+  ];
   return new SasResolver({
     rpc: rpc as unknown as import("../src/types.js").ResolverRpc,
-    allowedCredentials: buildAllowlist(opts.allowlist ?? [ALLOWED_CREDENTIAL]),
+    allowedCredentials: buildAllowlist(opts.allowlist ?? defaultAllowlist),
     schemaPda: opts.schemaPda ?? SCHEMA_PDA,
     sasProgramId: opts.sasProgramId,
     strict: opts.strict ?? false,
@@ -537,6 +546,8 @@ describe("ADR-064 SasResolver — ADR-061 §4 resolution flow", () => {
         allowlist: [
           {
             authority: ALLOWED_CREDENTIAL,
+            // ADR-101: signers must be explicit and non-empty.
+            signers: [SIGNER],
             authorizedSchemas: [EXPECTED_FOR_CRED],
           },
         ],
@@ -561,6 +572,8 @@ describe("ADR-064 SasResolver — ADR-061 §4 resolution flow", () => {
         allowlist: [
           {
             authority: ALLOWED_CREDENTIAL,
+            // ADR-101: signers must be explicit and non-empty.
+            signers: [SIGNER],
             authorizedSchemas: [SCHEMA_PDA],
           },
         ],
@@ -702,6 +715,88 @@ describe("ADR-064 SasResolver — ADR-061 §4 resolution flow", () => {
       const attFetches = rpc.calls.filter((a) => a === ATTESTATION_ADDR).length;
       assert.equal(schemaFetches, 1, "schema PDA fetched once, memoized");
       assert.equal(attFetches, 0, "attestation never fetched after init failure");
+    });
+  });
+
+  // ----------------------------------------------------------------
+  // ADR-101 — hard-fail on undefined / empty entry.signers.
+  // ----------------------------------------------------------------
+
+  describe("ADR-101 — SignerHistoryMissingError: hard-fail on undefined/empty entry.signers", () => {
+    it("throws SignerHistoryMissingError when entry.signers is undefined (flat v0 allowlist shape)", async () => {
+      const rpc = new MockRpc();
+      rpc.set(ATTESTATION_ADDR, accountResponse(makeAttestation()));
+
+      // Flat v0 shape — `buildAllowlist([ALLOWED_CREDENTIAL])` produces
+      // `{ authority: ALLOWED_CREDENTIAL }` with no `signers` field.
+      const resolver = makeResolver(rpc, {
+        allowlist: [ALLOWED_CREDENTIAL],
+      });
+
+      await assert.rejects(
+        async () => {
+          await resolver.resolve(
+            manifest({ owner_attestation: ATTESTATION_ADDR }),
+            SUBJECT_AUTHORITY,
+          );
+        },
+        (e: unknown) => {
+          assert.ok(e instanceof SignerHistoryMissingError, "must be SignerHistoryMissingError");
+          assert.match(e.message, /has no signer history/);
+          assert.match(e.message, /ADR-101/);
+          assert.equal(e.name, "SignerHistoryMissingError");
+          return true;
+        },
+      );
+    });
+
+    it("throws SignerHistoryMissingError when entry.signers is an empty array", async () => {
+      const rpc = new MockRpc();
+      rpc.set(ATTESTATION_ADDR, accountResponse(makeAttestation()));
+
+      // Explicit empty signers list — still must hard-fail per ADR-101.
+      const resolver = makeResolver(rpc, {
+        allowlist: [
+          { authority: ALLOWED_CREDENTIAL, signers: [] },
+        ],
+      });
+
+      await assert.rejects(
+        async () => {
+          await resolver.resolve(
+            manifest({ owner_attestation: ATTESTATION_ADDR }),
+            SUBJECT_AUTHORITY,
+          );
+        },
+        (e: unknown) => {
+          assert.ok(e instanceof SignerHistoryMissingError, "must be SignerHistoryMissingError");
+          assert.match(e.message, /has no signer history/);
+          assert.match(e.message, /ADR-101/);
+          return true;
+        },
+      );
+    });
+
+    it("resolves normally when entry.signers is a non-empty array containing the attestation signer", async () => {
+      const rpc = new MockRpc();
+      rpc.set(ATTESTATION_ADDR, accountResponse(makeAttestation()));
+
+      // Explicitly scoped signer list — existing behaviour preserved.
+      const resolver = makeResolver(rpc, {
+        allowlist: [
+          { authority: ALLOWED_CREDENTIAL, signers: [SIGNER] },
+        ],
+      });
+
+      const result = await resolver.resolve(
+        manifest({ owner_attestation: ATTESTATION_ADDR }),
+        SUBJECT_AUTHORITY,
+      );
+
+      const value = unwrapOk(result);
+      assert.ok(value.attestation, "non-empty matching signers list resolves successfully");
+      assert.equal(value.attestation!.signer, SIGNER);
+      assert.equal(value.absent, undefined);
     });
   });
 });
