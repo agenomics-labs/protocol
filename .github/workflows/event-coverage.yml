@@ -1,0 +1,49 @@
+name: Indexer Event Coverage
+
+# ADR-082 / audit-2026-04-23 item 7. Asserts that every `#[event]`
+# declaration under `programs/*/src/events.rs` has a matching entry in
+# the indexer's `DISCRIMINATOR_MAP`. Runs on every PR and on every push
+# to main; fails closed so a future PR that adds a `#[event]` without
+# updating the indexer cannot merge.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  event-coverage:
+    name: Event coverage (programs <-> indexer)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # The check script depends only on the Node stdlib (`crypto`, `fs`,
+      # `child_process`) plus `tsx` to execute TypeScript directly. We
+      # install `tsx` ad-hoc so this job has no dependency on the
+      # workspace-root `package.json` or any per-package install.
+      - name: Install tsx
+        run: npm install --no-audit --no-fund --no-save tsx@4
+
+      - name: Run event-coverage check
+        run: npx tsx scripts/check-event-coverage.ts
+
+      # ADR-082: also run the unit tests for the script + the four new
+      # decoders. These live under tests/ and are not picked up by the
+      # existing `anchor test` invocation in CI (which only runs the
+      # on-chain integration suites). Without this step the gate's own
+      # tests would silently rot.
+      - name: Install indexer deps (for handler tests)
+        working-directory: src/indexer
+        run: npm install --no-audit --no-fund
+
+      - name: Run indexer event-coverage + handler tests (node:test + tsx)
+        run: |
+          npx tsx --test \
+            tests/indexer-event-coverage.test.ts \
+            tests/indexer-handlers.test.ts
