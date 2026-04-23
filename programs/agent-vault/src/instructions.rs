@@ -12,6 +12,7 @@ pub fn initialize_vault(
     daily_limit_lamports: u64,
     per_tx_limit_lamports: u64,
     max_txs_per_hour: u32,
+    profile_nonce: u64,
 ) -> Result<()> {
     let vault = &mut ctx.accounts.vault;
     let clock = Clock::get()?;
@@ -26,6 +27,10 @@ pub fn initialize_vault(
     vault.rate_limit_window_start = clock.unix_timestamp;
     vault.token_spend_records = vec![];
     vault.bump = ctx.bumps.vault;
+    // ADR-095 / ADR-097: record the profile nonce so that execute_transfer
+    // and execute_token_transfer can re-derive the correct agent_profile PDA
+    // for the suspension check without requiring the caller to supply it.
+    vault.profile_nonce = profile_nonce;
 
     emit!(VaultInitialized {
         vault: ctx.accounts.vault.key(),

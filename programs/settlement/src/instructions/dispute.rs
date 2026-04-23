@@ -122,6 +122,7 @@ pub fn resolve_dispute(
         // but the compound check keeps the slash guarded against the
         // `client_refund == 0` case (no slash when provider won).
         let delta = ctx.accounts.protocol_config.reputation_delta_dispute_loss;
+        // ADR-097: pass `provider_owner_nonce` for the Registry's nonce-based PDA seed.
         update_provider_reputation(
             provider_key,
             0,
@@ -131,6 +132,7 @@ pub fn resolve_dispute(
             ctx.accounts.registry_program.to_account_info(),
             ctx.accounts.provider_profile.to_account_info(),
             ctx.accounts.provider_authority.to_account_info(),
+            ctx.accounts.provider_owner_nonce.to_account_info(),
             ctx.accounts.settlement_authority.to_account_info(),
             ctx.bumps.settlement_authority,
         )?;
@@ -217,6 +219,7 @@ pub fn resolve_dispute_timeout(ctx: Context<ResolveDisputeTimeout>) -> Result<()
     // standard dispute-loss slash, which is economically neutral (the
     // client gets their money back; the provider takes a reputation hit
     // for failing to deliver).
+    // ADR-097: pass `provider_owner_nonce` for the Registry's nonce-based PDA seed.
     update_provider_reputation(
         provider_key,
         0,
@@ -226,6 +229,7 @@ pub fn resolve_dispute_timeout(ctx: Context<ResolveDisputeTimeout>) -> Result<()
         ctx.accounts.registry_program.to_account_info(),
         ctx.accounts.provider_profile.to_account_info(),
         ctx.accounts.provider_authority.to_account_info(),
+        ctx.accounts.provider_owner_nonce.to_account_info(),
         ctx.accounts.settlement_authority.to_account_info(),
         ctx.bumps.settlement_authority,
     )?;
