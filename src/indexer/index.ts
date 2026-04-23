@@ -99,6 +99,70 @@ function initDb(dbPath: string): Database.Database {
       deregistered_at_slot INTEGER NOT NULL,
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    -- ADR-082: append-only history of vault.agent_identity rotations.
+    -- Sourced from AgentIdentityUpdated (agent-vault, ADR-069). Any
+    -- consumer that caches vault.agent_identity -> permitted-signer
+    -- mappings must invalidate when a new row lands here; the
+    -- (vault, slot, signature) tuple is the natural key.
+    CREATE TABLE IF NOT EXISTS vault_identity_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      vault TEXT NOT NULL,
+      old_identity TEXT NOT NULL,
+      new_identity TEXT NOT NULL,
+      slot INTEGER NOT NULL,
+      signature TEXT NOT NULL,
+      observed_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_vault_identity_vault ON vault_identity_history(vault);
+    CREATE INDEX IF NOT EXISTS idx_vault_identity_slot ON vault_identity_history(slot);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_vault_identity_unique
+      ON vault_identity_history(vault, signature, slot);
+
+    -- ADR-082: append-only history of capability-manifest rotations
+    -- (ADR-060). Each row preserves the on-chain manifest pointer plus
+    -- the SHA-256 hash and version, so off-chain caches and IPFS pinners
+    -- can refresh deterministically. manifest_cid is stored as the
+    -- hex-encoded 64-byte payload (zero-padded CIDv1 string).
+    CREATE TABLE IF NOT EXISTS manifest_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      authority TEXT NOT NULL,
+      manifest_cid TEXT NOT NULL,
+      manifest_hash TEXT NOT NULL,
+      manifest_version INTEGER NOT NULL,
+      event_timestamp INTEGER NOT NULL,
+      slot INTEGER NOT NULL,
+      signature TEXT NOT NULL,
+      observed_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_manifest_authority ON manifest_history(authority);
+    CREATE INDEX IF NOT EXISTS idx_manifest_slot ON manifest_history(slot);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_manifest_unique
+      ON manifest_history(authority, signature, slot);
+
+    -- ADR-082: append-only history of ProtocolConfig governance changes.
+    -- Stores both ProtocolConfigInitialized (one-shot) and
+    -- ProtocolConfigUpdated (recurring). The 'kind' column distinguishes
+    -- them so dashboards can render the right banner. All five tunable
+    -- fields are recorded on every row so an operator can diff
+    -- successive entries to see what changed.
+    CREATE TABLE IF NOT EXISTS protocol_config_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind TEXT NOT NULL CHECK(kind IN ('Initialized', 'Updated')),
+      authority TEXT NOT NULL,
+      min_escrow_amount TEXT NOT NULL,
+      dispute_timeout_seconds INTEGER NOT NULL,
+      reputation_delta_task_completed INTEGER NOT NULL,
+      reputation_delta_dispute_loss INTEGER NOT NULL,
+      reputation_delta_expiry_undelivered INTEGER NOT NULL,
+      slot INTEGER NOT NULL,
+      signature TEXT NOT NULL,
+      observed_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_protocol_config_slot ON protocol_config_history(slot);
+    CREATE INDEX IF NOT EXISTS idx_protocol_config_kind ON protocol_config_history(kind);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_protocol_config_unique
+      ON protocol_config_history(signature, slot, kind);
   `);
 
   // Migration: older databases were created without `event_ordinal`.
@@ -149,9 +213,17 @@ const DISCRIMINATOR_MAP: Record<string, string> = {
   "92ad47a0816f2aa2": "ReputationUnstaked",
   "8445f61387411c86": "AgentDeregistered",
   "59294014abdd32d7": "SuspensionCleared",
+  // ADR-082 / audit-2026-04-23 item 6: ManifestUpdated (agent-registry,
+  // ADR-060). Was silently classified as `event_<hex>` fallback before.
+  "6941986a36affdb3": "ManifestUpdated",
 
   // agent-vault
   b42bcf021247034b: "VaultInitialized",
+  // ADR-082 / audit-2026-04-23 item 6: AgentIdentityUpdated (ADR-069 /
+  // SEC-2 from 2026-04-22 deep audit). The signal that downstream
+  // permitted-signer caches must invalidate. Was missing pre-fix; the
+  // very event the SEC-2 fix added was not detectable downstream.
+  aa69af3aa3095577: "AgentIdentityUpdated",
   e17070435fecf5a1: "PolicyUpdated",
   d3e3a80e206fbdd2: "TransactionExecuted",
   d2d9456a8479016c: "ProgramCallExecuted",
@@ -172,6 +244,10 @@ const DISCRIMINATOR_MAP: Record<string, string> = {
   "62f1c37ad500a2a1": "EscrowCancelled",
   bd16aafa4bda3a70: "EscrowExpired",
   "611134c2e8133ec3": "ReputationUpdateScheduled",
+  // ADR-082 / audit-2026-04-23 item 6: ProtocolConfig governance
+  // events. Both were silently invisible to dashboards before.
+  f3451bee6fa957e7: "ProtocolConfigInitialized",
+  "146320ed6f56c3c7": "ProtocolConfigUpdated",
 };
 
 /**
@@ -200,6 +276,12 @@ class BorshReader {
   u8(): number {
     const v = this.buf.readUInt8(this.offset);
     this.offset += 1;
+    return v;
+  }
+
+  u16(): number {
+    const v = this.buf.readUInt16LE(this.offset);
+    this.offset += 2;
     return v;
   }
 
@@ -236,6 +318,19 @@ class BorshReader {
     const s = this.buf.subarray(this.offset, this.offset + len).toString("utf8");
     this.offset += len;
     return s;
+  }
+
+  // Borsh fixed-size array of u8 — encoded as exactly `n` raw bytes with
+  // no length prefix. Used by ADR-060 manifest_cid ([u8; 64]) and
+  // manifest_hash ([u8; 32]). Returned as a hex string so JSON
+  // serialization is lossless and stable across consumers.
+  hexBytes(n: number): string {
+    const slice = this.buf.subarray(this.offset, this.offset + n);
+    if (slice.length !== n) {
+      throw new Error(`hexBytes: wanted ${n} bytes, only ${slice.length} remaining`);
+    }
+    this.offset += n;
+    return Buffer.from(slice).toString("hex");
   }
 }
 
@@ -303,6 +398,62 @@ const EVENT_DECODERS: Record<string, EventDecoder> = {
     authority: r.pubkey(),
     new_reputation_score: u64ToJson(r.u64()),
     timestamp: i64ToJson(r.i64()),
+  }),
+
+  // ADR-082 / item 6: AgentIdentityUpdated (agent-vault, ADR-069).
+  // Wire layout from programs/agent-vault/src/events.rs:
+  //   pub vault: Pubkey
+  //   pub old_identity: Pubkey
+  //   pub new_identity: Pubkey
+  AgentIdentityUpdated: (r) => ({
+    vault: r.pubkey(),
+    old_identity: r.pubkey(),
+    new_identity: r.pubkey(),
+  }),
+
+  // ADR-082 / item 6: ManifestUpdated (agent-registry, ADR-060).
+  // Wire layout from programs/agent-registry/src/events.rs:
+  //   pub authority: Pubkey
+  //   pub manifest_cid: [u8; 64]      // zero-padded CIDv1 string bytes
+  //   pub manifest_hash: [u8; 32]     // sha256 of canonical manifest
+  //   pub manifest_version: u16
+  //   pub timestamp: i64
+  ManifestUpdated: (r) => ({
+    authority: r.pubkey(),
+    manifest_cid: r.hexBytes(64),
+    manifest_hash: r.hexBytes(32),
+    manifest_version: r.u16(),
+    timestamp: i64ToJson(r.i64()),
+  }),
+
+  // ADR-082 / item 6: ProtocolConfigInitialized (settlement).
+  // Wire layout from programs/settlement/src/events.rs:
+  //   pub authority: Pubkey
+  //   pub min_escrow_amount: u64
+  //   pub dispute_timeout_seconds: i64
+  //   pub reputation_delta_task_completed: i64
+  //   pub reputation_delta_dispute_loss: i64
+  //   pub reputation_delta_expiry_undelivered: i64
+  ProtocolConfigInitialized: (r) => ({
+    authority: r.pubkey(),
+    min_escrow_amount: u64ToJson(r.u64()),
+    dispute_timeout_seconds: i64ToJson(r.i64()),
+    reputation_delta_task_completed: i64ToJson(r.i64()),
+    reputation_delta_dispute_loss: i64ToJson(r.i64()),
+    reputation_delta_expiry_undelivered: i64ToJson(r.i64()),
+  }),
+
+  // ADR-082 / item 6: ProtocolConfigUpdated (settlement). Identical
+  // wire layout to ProtocolConfigInitialized — both events carry the
+  // full snapshot so an indexer can compute the delta from the prior
+  // protocol_config_history row without round-tripping to chain.
+  ProtocolConfigUpdated: (r) => ({
+    authority: r.pubkey(),
+    min_escrow_amount: u64ToJson(r.u64()),
+    dispute_timeout_seconds: i64ToJson(r.i64()),
+    reputation_delta_task_completed: i64ToJson(r.i64()),
+    reputation_delta_dispute_loss: i64ToJson(r.i64()),
+    reputation_delta_expiry_undelivered: i64ToJson(r.i64()),
   }),
 };
 
@@ -372,10 +523,80 @@ function parseLogsForEvents(logs: string[], _programLabel: string): ParsedEvent[
 function updateAgentFromEvent(
   db: Database.Database,
   event: ParsedEvent,
-  slot = 0
+  slot = 0,
+  signature = ""
 ): void {
   const data = event.data as Record<string, unknown>;
   const authority = typeof data.authority === "string" ? data.authority : undefined;
+
+  // ADR-082: AgentIdentityUpdated does NOT carry an `authority` field —
+  // it carries `vault`, `old_identity`, `new_identity`. Persist directly
+  // into the vault_identity_history projection. Downstream consumers
+  // that cache `vault.agent_identity → permitted-signer` MUST listen on
+  // this table (or on the underlying event row) and invalidate.
+  if (event.name === "AgentIdentityUpdated") {
+    const vault = typeof data.vault === "string" ? data.vault : undefined;
+    const oldIdentity = typeof data.old_identity === "string" ? data.old_identity : undefined;
+    const newIdentity = typeof data.new_identity === "string" ? data.new_identity : undefined;
+    if (!vault || !oldIdentity || !newIdentity) return;
+    db.prepare(`
+      INSERT OR IGNORE INTO vault_identity_history
+        (vault, old_identity, new_identity, slot, signature, observed_at)
+      VALUES (?, ?, ?, ?, ?, datetime('now'))
+    `).run(vault, oldIdentity, newIdentity, slot, signature);
+    return;
+  }
+
+  // ADR-082: ManifestUpdated (ADR-060). Append-only history of
+  // capability-manifest pointer rotations. Caches keyed on
+  // (authority, manifest_hash) should refresh.
+  if (event.name === "ManifestUpdated") {
+    if (!authority) return;
+    const manifestCid = typeof data.manifest_cid === "string" ? data.manifest_cid : "";
+    const manifestHash = typeof data.manifest_hash === "string" ? data.manifest_hash : "";
+    const manifestVersion = typeof data.manifest_version === "number" ? data.manifest_version : 0;
+    const eventTs = coerceI64(data.timestamp);
+    db.prepare(`
+      INSERT OR IGNORE INTO manifest_history
+        (authority, manifest_cid, manifest_hash, manifest_version,
+         event_timestamp, slot, signature, observed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    `).run(authority, manifestCid, manifestHash, manifestVersion, eventTs, slot, signature);
+    return;
+  }
+
+  // ADR-082: ProtocolConfigInitialized / ProtocolConfigUpdated
+  // (settlement). Both share the same wire layout; the `kind` column on
+  // protocol_config_history distinguishes them so dashboards can render
+  // the right banner. The full snapshot is recorded on every row so
+  // operators can diff successive entries to compute the delta.
+  if (event.name === "ProtocolConfigInitialized" || event.name === "ProtocolConfigUpdated") {
+    if (!authority) return;
+    const kind = event.name === "ProtocolConfigInitialized" ? "Initialized" : "Updated";
+    const minEscrow = coerceU64String(data.min_escrow_amount);
+    const disputeTimeout = coerceI64(data.dispute_timeout_seconds);
+    const repTask = coerceI64(data.reputation_delta_task_completed);
+    const repDispute = coerceI64(data.reputation_delta_dispute_loss);
+    const repExpiry = coerceI64(data.reputation_delta_expiry_undelivered);
+    db.prepare(`
+      INSERT OR IGNORE INTO protocol_config_history
+        (kind, authority, min_escrow_amount, dispute_timeout_seconds,
+         reputation_delta_task_completed, reputation_delta_dispute_loss,
+         reputation_delta_expiry_undelivered, slot, signature, observed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    `).run(
+      kind,
+      authority,
+      minEscrow,
+      disputeTimeout,
+      repTask,
+      repDispute,
+      repExpiry,
+      slot,
+      signature
+    );
+    return;
+  }
 
   if (event.name === "AgentRegistered") {
     if (!authority) return;
@@ -479,6 +700,33 @@ function coerceScore(v: unknown): number {
     return v <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(v) : Number.MAX_SAFE_INTEGER;
   }
   return 0;
+}
+
+// ADR-082: i64 fields (timestamps, signed reputation deltas) decode to
+// either `number` (in safe range) or `string` (out of safe range, to
+// preserve precision — see i64ToJson). Both shapes must round-trip into
+// SQLite's INTEGER column without loss.
+function coerceI64(v: unknown): number | bigint {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string") {
+    try {
+      return BigInt(v);
+    } catch {
+      return 0;
+    }
+  }
+  if (typeof v === "bigint") return v;
+  return 0;
+}
+
+// ADR-082: u64 amounts are stored as TEXT so the full unsigned 64-bit
+// range round-trips losslessly. Consumers that need arithmetic cast on
+// read.
+function coerceU64String(v: unknown): string {
+  if (typeof v === "string") return v;
+  if (typeof v === "number" && Number.isFinite(v)) return Math.trunc(v).toString();
+  if (typeof v === "bigint") return v.toString();
+  return "0";
 }
 
 const RECONNECT_DELAY_MS = 3000;
@@ -594,7 +842,7 @@ function persistEventsForTx(
       if (result.changes > 0) {
         inserted++;
         metrics.eventsInserted++;
-        updateAgentFromEvent(db, event, slot);
+        updateAgentFromEvent(db, event, slot, signature);
       } else {
         skipped++;
         metrics.eventsDuplicateSkipped++;
