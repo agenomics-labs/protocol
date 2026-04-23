@@ -210,9 +210,15 @@ async function startHttpTransport(posture: TransportPosture): Promise<void> {
     });
   });
 
-  console.error(
-    `MCP server bound to http://${posture.httpHost}:${posture.httpPort} ` +
-      `(bearer-token auth enforced; ADR-083)`,
+  log.info(
+    {
+      transport: "http",
+      host: posture.httpHost,
+      port: posture.httpPort,
+      auth: "bearer-token",
+      adr: "ADR-083",
+    },
+    "MCP server bound (HTTP + bearer-token auth enforced)",
   );
 }
 
@@ -264,21 +270,27 @@ async function startUnixTransport(posture: TransportPosture): Promise<void> {
         // Non-fatal; the socket exists, perms are best-effort. Operators
         // on filesystems that don't support chmod (rare on Unix) need to
         // rely on parent-directory perms.
-        console.error(
-          `mcp-auth: chmod 600 on ${posture.unixPath} failed: ${
-            e instanceof Error ? e.message : String(e)
-          }`,
+        log.warn(
+          {
+            unix_path: posture.unixPath,
+            err: e instanceof Error ? e.message : String(e),
+          },
+          "mcp-auth: chmod 600 on unix socket failed (best-effort)",
         );
       }
       resolve();
     });
   });
 
-  console.error(
-    `MCP server bound to unix:${posture.unixPath} ` +
-      (posture.unixAllowedUid !== undefined
-        ? `(peer-uid=${posture.unixAllowedUid} enforced; ADR-083)`
-        : "(socket mode 0600; no peer-uid check; ADR-083)"),
+  log.info(
+    {
+      transport: "unix",
+      unix_path: posture.unixPath,
+      peer_uid_enforced: posture.unixAllowedUid !== undefined,
+      peer_uid: posture.unixAllowedUid,
+      adr: "ADR-083",
+    },
+    "MCP server bound (Unix-domain socket)",
   );
 }
 
