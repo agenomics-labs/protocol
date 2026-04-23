@@ -53,3 +53,13 @@ build/
 
 # Local signer keypairs — NEVER commit
 .keys/
+
+# Operational logs — emergency-suspend-credential.ts and friends write
+# JSON audit trails here (tx sigs + auditor pubkeys for in-flight
+# ceremonies). Must not be committed. See ADR-081 §5.
+logs/
+
+# Transparency-log staging area (ADR-063 §7) — until the publisher worker
+# is live (ADR-063 "Pending items before Accept" #4), the local staging
+# files are scratch artifacts and must not be committed accidentally.
+governance/attestation-log/
