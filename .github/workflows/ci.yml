@@ -388,6 +388,7 @@ jobs:
         if: steps.cache-anchor.outputs.cache-hit != 'true'
         run: |
           cargo install --git https://github.com/coral-xyz/anchor \
+            --force \
             --tag "v${ANCHOR_VERSION}" anchor-cli --locked
 
       - name: Verify Anchor
@@ -510,6 +511,7 @@ jobs:
         if: steps.cache-anchor.outputs.cache-hit != 'true'
         run: |
           cargo install --git https://github.com/coral-xyz/anchor \
+            --force \
             --tag "v${ANCHOR_VERSION}" anchor-cli --locked
 
       - name: Verify Anchor
