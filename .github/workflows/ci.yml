@@ -388,6 +388,7 @@ jobs:
         if: steps.cache-anchor.outputs.cache-hit != 'true'
         run: |
           cargo install --git https://github.com/coral-xyz/anchor \
+            --force \
             --tag "v${ANCHOR_VERSION}" anchor-cli --locked
 
       - name: Verify Anchor
@@ -443,6 +444,15 @@ jobs:
     name: Anchor Integration Tests
     runs-on: [self-hosted, linux]
     needs: anchor-build
+    # ADR-105 self-hosted runners share one host — solana-test-validator
+    # binds RPC port 8899 by default, so two anchor-test jobs in parallel
+    # collide with "Error: Your configured rpc port: 8899 is already in
+    # use". A host-wide concurrency group serializes them across PRs.
+    # cancel-in-progress: false — never kill a half-finished test run;
+    # queue the next one instead.
+    concurrency:
+      group: anchor-integration-host
+      cancel-in-progress: false
     env:
       SOLANA_VERSION: v3.1.13
       ANCHOR_VERSION: 0.31.1
@@ -501,6 +511,7 @@ jobs:
         if: steps.cache-anchor.outputs.cache-hit != 'true'
         run: |
           cargo install --git https://github.com/coral-xyz/anchor \
+            --force \
             --tag "v${ANCHOR_VERSION}" anchor-cli --locked
 
       - name: Verify Anchor

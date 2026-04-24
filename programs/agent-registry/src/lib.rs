@@ -1105,8 +1105,11 @@ mod tests {
         proptest! {
             #[test]
             fn reputation_score_never_panics(initial in any::<u64>(), delta in any::<i64>()) {
-                let result = if delta >= 0 { initial.saturating_add(delta as u64) } else { initial.saturating_sub((-delta) as u64) };
-                prop_assert!(result <= u64::MAX);
+                // The saturating arithmetic is the invariant under test — if this
+                // expression panics for any (initial, delta) pair, proptest fails the
+                // test automatically. No explicit assertion needed; `result <= u64::MAX`
+                // is vacuously true for a u64 and trips clippy::absurd_extreme_comparisons.
+                let _result = if delta >= 0 { initial.saturating_add(delta as u64) } else { initial.saturating_sub((-delta) as u64) };
             }
 
             #[test]
