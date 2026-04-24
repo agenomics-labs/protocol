@@ -35,6 +35,11 @@ fi
 ALLOWED_FILES=(
   "$SRC_ROOT/index.ts"
   "$SRC_ROOT/transport/auth-gate.ts"
+  # ADR-104: Prometheus /metrics endpoint. Intentionally public (no auth) —
+  # the whole point of a Prometheus scrape endpoint is that the scraper can
+  # reach it. Posture: bind METRICS_PORT only on a trusted network / localhost;
+  # operators MUST NOT expose it publicly.
+  "$SRC_ROOT/observability.ts"
 )
 
 # Search for any `app.listen(` or `server.listen(` or `httpServer.listen(`
