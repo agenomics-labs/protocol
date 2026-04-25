@@ -1,7 +1,7 @@
 # ADR-073: Dispute `None` resolver — reject at `create_escrow` or route via timeout-only
 
 ## Status
-Proposed
+Accepted
 
 ## Date
 2026-04-22
@@ -67,3 +67,11 @@ Adopt **Alternative B** — route None-resolver disputes through timeout-only wi
 - `docs/adr/ADR-026-resolve-dispute-bookkeeping.md` — dispute resolution accounting
 - `programs/settlement/src/contexts.rs:216-221`
 - `programs/settlement/src/instructions/escrow.rs:39-45`, `instructions/dispute.rs:116`
+
+## Revisions
+
+- 2026-04-25 — Status flipped Proposed → Accepted. The audit caught the Status
+  field lying: the enforcement actually shipped. `programs/settlement/src/contexts.rs:249-251`
+  enforces `escrow.dispute_resolver.is_some()` on `ResolveDispute`, and the
+  symmetric-timeout refund logic is live at `programs/settlement/src/instructions/dispute.rs:121`
+  and `:215`. Audit reference: AUD-2026-04-25, drift matrix §3.

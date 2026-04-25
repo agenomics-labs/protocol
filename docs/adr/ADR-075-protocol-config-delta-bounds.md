@@ -1,7 +1,7 @@
 # ADR-075: Protocol-config reputation-delta bounds and `checked_neg()` safety
 
 ## Status
-Proposed
+Accepted
 
 ## Date
 2026-04-22
@@ -67,3 +67,12 @@ Both parts land together so that (a) new config values can never be bad, and (b)
 - `docs/adr/ADR-020-reputation-staking.md` — reputation score cap (10000) rationale
 - `docs/adr/ADR-028-anti-sybil-defense.md` — economic model backing reputation deltas
 - `programs/agent-registry/src/lib.rs:127-130` (cast site), `update_protocol_config` handler
+
+## Revisions
+
+- 2026-04-25 — Status flipped Proposed → Accepted. The audit caught the Status
+  field lying: the enforcement actually shipped. The bounded delta validation
+  is live at `programs/settlement/src/instructions/protocol_config.rs:84-99`,
+  and the `checked_neg()` cast-site fix is live at
+  `programs/agent-registry/src/lib.rs:170`. Audit reference: AUD-2026-04-25,
+  drift matrix §3.
