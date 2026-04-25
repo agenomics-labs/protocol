@@ -2601,17 +2601,21 @@ describe("Settlement Protocol Tests", () => {
       const escrowTA = deriveEscrowTokenAccount(escrowPDA);
       const milestonesData = [createMilestoneData(1_000_000n)];
 
-      // The on-chain check is `deadline <= now_onchain + cap`. From the
-      // client side we cannot observe `now_onchain` directly, so we use
-      // the local clock as the lower-bound estimate. Because `now_onchain`
-      // is monotonically non-decreasing relative to `Date.now()` at tx
-      // submission time (clusters' clocks track wall-time within seconds),
-      // `Math.floor(Date.now()/1000) + cap` is `<= now_onchain + cap`,
-      // which still satisfies the predicate. This is the "boundary
-      // boundary" case — equality at the moment of submission.
-      const atCap = new BN(
-        Math.floor(Date.now() / 1000) + MAX_ESCROW_DEADLINE_SECS
-      );
+      // The on-chain check is `deadline <= now_onchain + cap`. The
+      // assumption that `now_onchain >= Date.now()` does NOT hold on a
+      // fresh solana-test-validator: the bank's clock starts from slot 0
+      // and can lag the system clock by seconds. To make the boundary
+      // test deterministic, query the on-chain time directly via
+      // getBlockTime, then set deadline = onchain_now + cap. By the time
+      // the tx lands, the on-chain clock has advanced by 1-2 slots
+      // (~400-800ms), so the predicate `deadline <= now_onchain_at_tx + cap`
+      // is satisfied with a small positive slack rather than razor-thin.
+      const slot = await connection.getSlot("confirmed");
+      const onchainNow = await connection.getBlockTime(slot);
+      if (onchainNow === null) {
+        throw new Error("getBlockTime returned null; cannot compute boundary deadline");
+      }
+      const atCap = new BN(onchainNow + MAX_ESCROW_DEADLINE_SECS);
 
       await program.methods
         .createEscrow(
