@@ -107,5 +107,5 @@ The provider then calls `accept_task`, completes work, and submits milestones fo
 
 ## Next Steps
 
-- [API Reference](/api-reference) - Full documentation for all 20 MCP tools
+- [API Reference](/api-reference) - Full documentation for all 24 MCP tools
 - [Integration Guide](/integration-guide) - Use AEP with ElizaOS, Solana Agent Kit, or Claude
