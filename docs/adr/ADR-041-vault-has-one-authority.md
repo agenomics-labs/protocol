@@ -47,3 +47,10 @@ This is a defense-in-depth measure: Anchor validates the authority match before 
 - `programs/aep/src/instructions/pause_vault.rs` -- added `has_one = authority`, removed `require!`
 - `programs/aep/src/instructions/resume_vault.rs` -- added `has_one = authority`, removed `require!`
 - `tests/vault_authority.ts` -- updated error assertions to expect `ConstraintHasOne`
+
+## Revisions
+
+- 2026-04-25 — Files Changed citation refers to a pre-ADR-049 mono-program
+  layout (`programs/aep/...` / `programs/vault/...`); current code lives at
+  `programs/agent-vault/src/contexts.rs:35,48,75,88,119,171,239` after the
+  multi-program split. AUD-2026-04-25 / drift matrix §5.

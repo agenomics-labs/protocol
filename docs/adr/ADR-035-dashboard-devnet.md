@@ -35,3 +35,11 @@ Program IDs:
 - Users can verify deployed program state directly in the UI.
 - Network errors are handled gracefully with fallback to cached/default values.
 - The "Devnet" badge prevents confusion about which network is being displayed.
+
+## Revisions
+
+- 2026-04-25 — Files Changed citation refers to a pre-ADR-049 mono-program
+  layout (`programs/aep/...` / `programs/vault/...`); the dashboard root is
+  `dashboard/src/App.jsx` + `dashboard/src/components/` (the legacy
+  `AEPDashboard.jsx` filename no longer exists at that path). AUD-2026-04-25 /
+  drift matrix §5.

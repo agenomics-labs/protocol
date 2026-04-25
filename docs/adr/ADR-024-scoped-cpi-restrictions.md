@@ -43,3 +43,10 @@ This ensures that even a fully trusted allowlisted program cannot drain vault SO
 - `programs/vault/src/error.rs` -- add `PerTxLimitExceeded` variant if not already present
 - `programs/vault/src/state.rs` -- add `daily_spent` field to `VaultState` (if not present)
 - `tests/vault/cpi-balance-guard.test.ts` -- new integration test for post-CPI balance enforcement
+
+## Revisions
+
+- 2026-04-25 — Files Changed citation refers to a pre-ADR-049 mono-program
+  layout (`programs/vault/...`); the `execute_program_call` instruction was
+  REMOVED entirely by ADR-050/L1, so no successor path exists in the current
+  multi-program tree. AUD-2026-04-25 / drift matrix §5.

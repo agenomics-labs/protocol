@@ -59,3 +59,10 @@ The `+ n / 2` term implements "round half up" behavior for positive values, whic
 - `programs/aep/src/state/agent.rs` -- updated `ACCOUNT_SPACE` to reflect 9-byte `Option<i64>`
 - `tests/dispute.ts` -- updated assertions to check for `null` / timestamp instead of `0` / nonzero
 - `tests/rating.ts` -- added test verifying correct rounding behavior
+
+## Revisions
+
+- 2026-04-25 — Files Changed citation refers to a pre-ADR-049 mono-program
+  layout (`programs/aep/...` / `programs/vault/...`); current code lives at
+  `programs/settlement/src/state.rs:98` after the multi-program split.
+  AUD-2026-04-25 / drift matrix §5.
