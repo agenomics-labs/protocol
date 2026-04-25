@@ -209,16 +209,49 @@ describe("Settlement Protocol Tests", () => {
       // hard precondition for create_escrow / approve_milestone /
       // resolve_dispute / expire_escrow / resolve_dispute_timeout. AUD-005
       // additionally constrains the init payer to the program's upgrade
-      // authority via BPF Upgradeable Loader's ProgramData. The Anchor test
-      // harness deploys with `provider.wallet` as the upgrade authority, so
-      // we use it as the init payer here. After init, `ProtocolConfig.authority
-      // == provider.wallet.publicKey`, fully decoupled from the upgrade
-      // authority — no other instruction in this program references
-      // ProgramData.
+      // authority via BPF Upgradeable Loader's ProgramData.
+      //
+      // The deterministic test path is `Anchor.toml [test] upgradeable = true`
+      // (Option B.1, anchor 0.31.x), which deploys workspace programs with
+      // `--upgradeable-program <addr> <binary> <wallet-pubkey>` so that
+      // `provider.wallet` IS the upgrade authority and ProgramData exists.
+      //
+      // The defensive checks below (Option A) keep the test failure mode
+      // actionable when that deploy path was bypassed (e.g. someone ran with
+      // a stale `target/deploy` cache, or with `--skip-deploy` against a
+      // legacy `--bpf-program`-loaded validator). We surface a precise error
+      // BEFORE attempting the init RPC so the cascade of "Cannot read
+      // properties of undefined (reading 'toBuffer')" failures (tokenMint
+      // never set, 14 downstream tests cascade-fail) is replaced by a single
+      // root-cause message.
+      //
       // Guarded by existing-account detection so reruns on a warm validator
       // are idempotent.
       const existing = await connection.getAccountInfo(PROTOCOL_CONFIG_PDA);
       if (existing === null) {
+        // AUD-005 (PR-H): initialize_protocol_config requires payer to equal
+        // program_data.upgrade_authority_address. Verify before attempting.
+        const programDataAcct = await connection.getAccountInfo(SETTLEMENT_PROGRAM_DATA);
+        if (!programDataAcct) {
+          throw new Error(
+            `Cannot initialize protocol_config: program_data PDA does not exist at ${SETTLEMENT_PROGRAM_DATA.toBase58()}. ` +
+            `The settlement program may have been pre-loaded via 'solana-test-validator --bpf-program' (non-upgradeable loader) ` +
+            `instead of 'solana program deploy' (upgradeable). Set [test] upgradeable = true in Anchor.toml or run scripts/test-deploy.sh ` +
+            `to deploy with the proper upgradeable loader.`
+          );
+        }
+        // ProgramData layout: 4 bytes discriminator + 8 bytes slot + 1 byte option-tag + 32 bytes pubkey
+        const optionTag = programDataAcct.data[12];
+        const upgradeAuth = optionTag === 1
+          ? new PublicKey(programDataAcct.data.slice(13, 45))
+          : null;
+        if (!upgradeAuth || !upgradeAuth.equals(provider.wallet.publicKey)) {
+          throw new Error(
+            `AUD-005 test setup failure: cannot initialize protocol_config. ` +
+            `Validator's program upgrade authority is ${upgradeAuth?.toBase58() ?? 'None (frozen)'} but tests use ${provider.wallet.publicKey.toBase58()}. ` +
+            `Set [test] upgradeable = true in Anchor.toml OR ensure the validator deploys with --upgradeable-program <id> <path> ${provider.wallet.publicKey.toBase58()}.`
+          );
+        }
         await program.methods
           .initializeProtocolConfig()
           .accounts({

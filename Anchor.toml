@@ -19,6 +19,23 @@ url = "https://api.apr.dev"
 cluster = "Localnet"
 wallet = "~/.config/solana/id.json"
 
+# AUD-005 (PR-H) test plumbing: deploy workspace programs to the test
+# validator with the upgradeable loader (BPFLoaderUpgradeab1e…) instead of
+# the legacy non-upgradeable `--bpf-program` path. This causes anchor 0.31.x
+# to invoke `solana-test-validator --upgradeable-program <addr> <binary>
+# <provider.wallet>` so that:
+#   1. A `ProgramData` account exists for each workspace program (seeds =
+#      [program_id] under bpf_loader_upgradeable::ID).
+#   2. `program_data.upgrade_authority_address == provider.wallet.publicKey`,
+#      satisfying initialize_protocol_config's AUD-005 governance gate.
+# Without this flag, tests/settlement.ts's Setup before() would fail (and
+# cascade 14 downstream Settlement / 5 AUD-017 tests) with
+# `SettlementError::Unauthorized` (6028) — see Option A guard for the
+# precise error message that surfaces if this is ever inadvertently
+# disabled.
+[test]
+upgradeable = true
+
 [scripts]
 # S-xcut-04: scope `anchor test` to the on-chain integration suites that
 # actually need solana-test-validator. The `*.test.ts` files under tests/
