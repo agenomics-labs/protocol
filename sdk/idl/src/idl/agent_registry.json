@@ -10,16 +10,26 @@
     {
       "name": "clear_suspension",
       "docs": [
-        "C5: Appeal path out of the permanent-suspension trap. Before this",
-        "instruction existed, a 3-strike slash sequence would `Suspend` the",
-        "agent and `update_status` refused every outbound transition except",
-        "`Retired`, leaving no way back into productive state. This is an",
-        "interim, self-service governance path — a richer on-chain",
-        "governance authority is deferred to a future ADR.",
+        "C5 + AUD-004: Appeal path out of the permanent-suspension trap, with",
+        "monotonically-escalating cost.",
         "",
-        "The cost is non-trivial: the agent's reputation_score is halved,",
-        "slash_count is reset to 0, and status moves to `Paused` (not",
-        "`Active`) so re-entry is a deliberate second action."
+        "Before this instruction existed, a 3-strike slash sequence would",
+        "`Suspend` the agent with no way back into productive state. The",
+        "original C5 fix added a single appeal that halved reputation and reset",
+        "`slash_count` — but resetting `slash_count` was the laundering vector",
+        "audited in AUD-004: a high-rep agent could absorb the halving, get",
+        "slashed back to suspension, clear again, halve from a still-high score,",
+        "and so on indefinitely.",
+        "",
+        "AUD-004 fix:",
+        "1. `slash_count` is **cumulative** — never reset. It records the",
+        "agent's full slash history.",
+        "2. A new `cleared_count: u8` counts how many times this profile has",
+        "cleared a suspension. Each clear pays a strictly higher cost:",
+        "- 1st clear: reputation_score /= 2; status → Paused.",
+        "- 2nd clear: reputation_score = 0;  status → Paused.",
+        "- 3rd clear: terminal Retired (no further mutation possible —",
+        "Retired is a closed state in `update_status`)."
       ],
       "discriminator": [
         156,
@@ -1857,10 +1867,11 @@
       "docs": [
         "AgentProfile: The core account representing a registered agent.",
         "",
-        "ADR-040: Account space is explicitly calculated as 1414 bytes",
+        "ADR-040: Account space is explicitly calculated as 1415 bytes",
         "(1243 baseline + 162 bytes for the ADR-060 manifest fields:",
         "manifest_cid 64 + manifest_hash 32 + manifest_signature 64 + manifest_version 2 = 162,",
-        "+ 1 byte for ADR-096 version: u8 + 8 bytes for ADR-097 registration_nonce: u64 = 1414).",
+        "+ 1 byte for ADR-096 version: u8 + 8 bytes for ADR-097 registration_nonce: u64",
+        "+ 1 byte for AUD-004 cleared_count: u8 = 1415).",
         "",
         "ADR-060 adds four manifest fields that point to an off-chain capability",
         "manifest (IPFS CIDv1 or Arweave tx ID). The on-chain fields are the",
@@ -2014,6 +2025,10 @@
           {
             "name": "registration_nonce",
             "type": "u64"
+          },
+          {
+            "name": "cleared_count",
+            "type": "u8"
           }
         ]
       }
@@ -2360,6 +2375,15 @@
           {
             "name": "new_reputation_score",
             "type": "u64"
+          },
+          {
+            "name": "cleared_count",
+            "docs": [
+              "AUD-004: monotonic counter of how many times `clear_suspension` has run",
+              "against this profile. 1 = first clear (score halved), 2 = second clear",
+              "(score zeroed), 3+ = terminal Retired."
+            ],
+            "type": "u8"
           },
           {
             "name": "timestamp",

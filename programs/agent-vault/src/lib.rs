@@ -544,6 +544,7 @@ mod tests {
             manifest_version: 0,
             version: 0,
             registration_nonce: 0,
+            cleared_count: 0,
         };
         // Suspended agent must be rejected.
         let result = require_not_suspended(&profile);
@@ -584,6 +585,7 @@ mod tests {
             manifest_version: 0,
             version: 0,
             registration_nonce: 0,
+            cleared_count: 0,
         };
         for status in [AgentStatus::Active, AgentStatus::Paused, AgentStatus::Retired] {
             profile.status = status;

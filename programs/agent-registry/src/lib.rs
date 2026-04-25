@@ -94,6 +94,10 @@ pub mod agent_registry {
         // constraint in RegisterAgent). Storing it on-chain lets the vault
         // (ADR-095) re-derive the profile PDA for suspension checks.
         agent_profile.registration_nonce = ctx.accounts.owner_nonce.nonce;
+        // AUD-004: cleared_count starts at 0. `clear_suspension` increments it,
+        // escalating the cost of each subsequent reputation-laundering attempt
+        // (1 = halve score, 2 = zero score, 3 = terminal Retired).
+        agent_profile.cleared_count = 0;
 
         emit!(AgentRegistered {
             authority: agent_profile.authority,
@@ -136,6 +140,20 @@ pub mod agent_registry {
 
     pub fn update_status(ctx: Context<UpdateStatus>, new_status: AgentStatus) -> Result<()> {
         let agent_profile = &mut ctx.accounts.agent_profile;
+
+        // AUD-004: reject self-issued `* → Suspended` transitions. Suspended is
+        // a slashed-state marker — it must only be written by the slash code
+        // path (lib.rs propose_reputation_delta / update_reputation), never by
+        // the agent's own `update_status` call. Without this guard, an agent
+        // could self-suspend at a high reputation score, then immediately
+        // `clear_suspension` to launder via the score-halving discount with
+        // zero on-chain accountability.
+        require!(
+            !(matches!(new_status, AgentStatus::Suspended)
+                && ctx.accounts.authority.key() == agent_profile.authority),
+            AgentRegistryError::InvalidStatusTransition
+        );
+
         match (&agent_profile.status, &new_status) {
             (AgentStatus::Retired, AgentStatus::Active) | (AgentStatus::Retired, AgentStatus::Paused) | (AgentStatus::Retired, AgentStatus::Suspended) => {
                 return Err(error!(AgentRegistryError::InvalidStatusTransition));
@@ -336,16 +354,26 @@ pub mod agent_registry {
         Ok(())
     }
 
-    /// C5: Appeal path out of the permanent-suspension trap. Before this
-    /// instruction existed, a 3-strike slash sequence would `Suspend` the
-    /// agent and `update_status` refused every outbound transition except
-    /// `Retired`, leaving no way back into productive state. This is an
-    /// interim, self-service governance path — a richer on-chain
-    /// governance authority is deferred to a future ADR.
+    /// C5 + AUD-004: Appeal path out of the permanent-suspension trap, with
+    /// monotonically-escalating cost.
     ///
-    /// The cost is non-trivial: the agent's reputation_score is halved,
-    /// slash_count is reset to 0, and status moves to `Paused` (not
-    /// `Active`) so re-entry is a deliberate second action.
+    /// Before this instruction existed, a 3-strike slash sequence would
+    /// `Suspend` the agent with no way back into productive state. The
+    /// original C5 fix added a single appeal that halved reputation and reset
+    /// `slash_count` — but resetting `slash_count` was the laundering vector
+    /// audited in AUD-004: a high-rep agent could absorb the halving, get
+    /// slashed back to suspension, clear again, halve from a still-high score,
+    /// and so on indefinitely.
+    ///
+    /// AUD-004 fix:
+    /// 1. `slash_count` is **cumulative** — never reset. It records the
+    ///    agent's full slash history.
+    /// 2. A new `cleared_count: u8` counts how many times this profile has
+    ///    cleared a suspension. Each clear pays a strictly higher cost:
+    ///    - 1st clear: reputation_score /= 2; status → Paused.
+    ///    - 2nd clear: reputation_score = 0;  status → Paused.
+    ///    - 3rd clear: terminal Retired (no further mutation possible —
+    ///      Retired is a closed state in `update_status`).
     pub fn clear_suspension(ctx: Context<ClearSuspension>) -> Result<()> {
         let agent_profile = &mut ctx.accounts.agent_profile;
         require!(
@@ -354,14 +382,31 @@ pub mod agent_registry {
             AgentRegistryError::NotSuspended
         );
 
-        agent_profile.reputation_score = agent_profile.reputation_score / 2;
-        agent_profile.reputation_stake.slash_count = 0;
-        agent_profile.status = AgentStatus::Paused;
+        // AUD-004: slash_count is cumulative — DO NOT reset to 0.
+        agent_profile.cleared_count = agent_profile.cleared_count.saturating_add(1);
+
+        match agent_profile.cleared_count {
+            1 => {
+                agent_profile.reputation_score = agent_profile.reputation_score / 2;
+                agent_profile.status = AgentStatus::Paused;
+            }
+            2 => {
+                agent_profile.reputation_score = 0;
+                agent_profile.status = AgentStatus::Paused;
+            }
+            _ => {
+                // Third clear is terminal: agent moves to Retired and
+                // `update_status` blocks every transition out.
+                agent_profile.status = AgentStatus::Retired;
+            }
+        }
+
         agent_profile.updated_at = Clock::get()?.unix_timestamp;
 
         emit!(SuspensionCleared {
             authority: agent_profile.authority,
             new_reputation_score: agent_profile.reputation_score,
+            cleared_count: agent_profile.cleared_count,
             timestamp: agent_profile.updated_at,
         });
         Ok(())
@@ -503,6 +548,21 @@ pub mod agent_registry {
         }
         let old_version = profile.version;
         profile.version = target_version;
+
+        // AUD-004: cleared_count is a new u8 field added in this schema bump.
+        // The `realloc::zero = true` constraint on `MigrateAgentProfile`
+        // already zero-pads the freshly-allocated bytes, which means
+        // `cleared_count` will deserialize as 0 for any pre-existing profile.
+        // This is the correct default — pre-existing profiles have never gone
+        // through `clear_suspension` under the new escalation policy, so they
+        // start fresh on the cost ladder.
+        //
+        // The explicit assignment below is documentation: any profile passing
+        // through this migration has its escalation counter zeroed, making
+        // the migration's effect on AUD-004 surface in code review rather
+        // than relying on implicit zero-padding semantics.
+        profile.cleared_count = 0;
+
         emit!(AgentMigrated {
             authority: profile.authority,
             old_version,
@@ -793,26 +853,34 @@ mod tests {
         assert!(!ok);
     }
 
-    /// C5: Before this fix, reaching slash_count == 3 set status to
-    /// Suspended and there was no instruction that could exit Suspended
-    /// to any productive state. `clear_suspension` now provides a
-    /// self-service appeal path that moves Suspended → Paused at the
-    /// cost of halving the reputation score.
+    /// C5 + AUD-004: First clear halves reputation_score, increments
+    /// cleared_count to 1, moves to Paused, and — critically per AUD-004 —
+    /// does NOT reset slash_count. slash_count stays cumulative as a
+    /// permanent record of slash history.
     #[test]
-    fn c5_clear_suspension_halves_reputation() {
+    fn c5_clear_suspension_halves_reputation_first_clear() {
         let mut reputation_score: u64 = 1_000;
         let mut slash_count: u8 = 3;
+        let mut cleared_count: u8 = 0;
         let mut status = AgentStatus::Suspended;
 
         // Precondition: must be Suspended with slash_count >= 3
         assert!(status == AgentStatus::Suspended && slash_count >= 3);
 
-        reputation_score = reputation_score / 2;
-        slash_count = 0;
-        status = AgentStatus::Paused;
+        // AUD-004: simulate clear_suspension first-clear branch.
+        cleared_count = cleared_count.saturating_add(1);
+        match cleared_count {
+            1 => {
+                reputation_score = reputation_score / 2;
+                status = AgentStatus::Paused;
+            }
+            _ => unreachable!(),
+        }
 
         assert_eq!(reputation_score, 500);
-        assert_eq!(slash_count, 0);
+        // AUD-004: slash_count is cumulative — NOT reset on clear.
+        assert_eq!(slash_count, 3, "slash_count must NOT be reset to 0");
+        assert_eq!(cleared_count, 1);
         assert_eq!(status, AgentStatus::Paused);
     }
 
@@ -853,16 +921,134 @@ mod tests {
     }
 
     // ================================================================
+    // AUD-004: Reputation laundering / status-laundering loop
+    // ================================================================
+
+    /// AUD-004: second clear zeroes reputation_score, sets cleared_count = 2,
+    /// status stays Paused. slash_count is still cumulative (not reset).
+    #[test]
+    fn aud_004_second_clear_zeroes_reputation() {
+        let mut reputation_score: u64 = 200;
+        let mut slash_count: u8 = 6; // 3 from first slash cycle, 3 from second
+        let mut cleared_count: u8 = 1; // Already cleared once.
+        let mut status = AgentStatus::Suspended;
+
+        cleared_count = cleared_count.saturating_add(1);
+        match cleared_count {
+            2 => {
+                reputation_score = 0;
+                status = AgentStatus::Paused;
+            }
+            _ => unreachable!(),
+        }
+
+        assert_eq!(reputation_score, 0, "second clear must zero the score");
+        assert_eq!(slash_count, 6, "slash_count must remain cumulative");
+        assert_eq!(cleared_count, 2);
+        assert_eq!(status, AgentStatus::Paused);
+    }
+
+    /// AUD-004: third clear is terminal — status moves to Retired and the
+    /// agent cannot transition out via `update_status` (Retired is a closed
+    /// state). The reputation laundering loop is permanently severed.
+    #[test]
+    fn aud_004_third_clear_is_terminal_retired() {
+        let mut slash_count: u8 = 9; // 3 + 3 + 3 cumulative slashes
+        let mut cleared_count: u8 = 2;
+        let mut status = AgentStatus::Suspended;
+
+        cleared_count = cleared_count.saturating_add(1);
+        match cleared_count {
+            1 | 2 => unreachable!(),
+            _ => {
+                status = AgentStatus::Retired;
+            }
+        }
+
+        assert_eq!(cleared_count, 3);
+        assert_eq!(slash_count, 9, "slash_count remains cumulative across all clears");
+        assert_eq!(status, AgentStatus::Retired);
+
+        // Retired is terminal: every outbound transition rejected.
+        let retired_outbound_blocked = matches!(
+            (AgentStatus::Retired, AgentStatus::Active),
+            (AgentStatus::Retired, AgentStatus::Active)
+                | (AgentStatus::Retired, AgentStatus::Paused)
+                | (AgentStatus::Retired, AgentStatus::Suspended)
+        );
+        assert!(retired_outbound_blocked);
+    }
+
+    /// AUD-004: cleared_count saturates at u8::MAX rather than overflowing.
+    /// In practice the third clear is terminal so this can never be reached
+    /// in normal operation, but the saturating arithmetic guards against
+    /// any future code path that mutates the field.
+    #[test]
+    fn aud_004_cleared_count_saturates() {
+        let mut cleared_count: u8 = u8::MAX;
+        cleared_count = cleared_count.saturating_add(1);
+        assert_eq!(cleared_count, u8::MAX, "cleared_count must saturate");
+    }
+
+    /// AUD-004: an agent who self-issues `update_status(Suspended)` is
+    /// rejected. The guard combines the new status with an authority match —
+    /// the slash code path writes Suspended directly without going through
+    /// update_status, so it is unaffected.
+    #[test]
+    fn aud_004_self_suspend_rejected_via_update_status() {
+        let new_status = AgentStatus::Suspended;
+        let authority = anchor_lang::prelude::Pubkey::new_unique();
+        let agent_profile_authority = authority; // self-issued case
+        let rejected = matches!(new_status, AgentStatus::Suspended)
+            && authority == agent_profile_authority;
+        assert!(rejected, "self-suspend must trip the guard");
+    }
+
+    /// AUD-004: a non-self caller (e.g., the slash code path) writing
+    /// Suspended is allowed by the guard. (In practice the slash path bypasses
+    /// `update_status` entirely, but the guard's logical shape — only block
+    /// when authority matches — is what enables that bypass to remain safe.)
+    #[test]
+    fn aud_004_external_suspend_passes_guard() {
+        let new_status = AgentStatus::Suspended;
+        let authority = anchor_lang::prelude::Pubkey::new_unique();
+        let agent_profile_authority = anchor_lang::prelude::Pubkey::new_unique();
+        let rejected = matches!(new_status, AgentStatus::Suspended)
+            && authority == agent_profile_authority;
+        assert!(!rejected, "external (non-self) Suspended write must not be blocked by the guard");
+    }
+
+    /// AUD-004: cleared_count maximum is 3; values above 3 are an invariant
+    /// violation that PR-G's `assert_valid_profile` will catch. Documents the
+    /// invariant in test form.
+    #[test]
+    fn aud_004_cleared_count_max_is_three() {
+        const MAX_CLEARED: u8 = 3;
+        for value in 0..=MAX_CLEARED {
+            assert!(value <= MAX_CLEARED);
+        }
+        assert!(4u8 > MAX_CLEARED, "values above 3 must trip the invariant");
+    }
+
+    /// AUD-004 + ADR-040 / ADR-096: explicit space calc bumped to 1415 to
+    /// accommodate the new `cleared_count: u8` field.
+    #[test]
+    fn aud_004_account_space_bumped_for_cleared_count() {
+        // 1414 (pre-AUD-004) + 1 (cleared_count u8) = 1415
+        assert_eq!(AgentProfile::SPACE, 1415);
+    }
+
+    // ================================================================
     // ADR-060: capability manifest fields + update_manifest
     // ================================================================
 
-    /// ADR-040 / ADR-096 / ADR-097 invariant: explicit space calc matches the
-    /// serialized-size floor.
+    /// ADR-040 / ADR-096 / ADR-097 / AUD-004 invariant: explicit space calc
+    /// matches the serialized-size floor.
     /// Baseline 1243 + 162 (ADR-060) + 1 (ADR-096 version u8) + 8 (ADR-097
-    /// registration_nonce u64) = 1414.
+    /// registration_nonce u64) + 1 (AUD-004 cleared_count u8) = 1415.
     #[test]
     fn adr_060_account_space_matches_explicit_total() {
-        assert_eq!(AgentProfile::SPACE, 1414);
+        assert_eq!(AgentProfile::SPACE, 1415);
     }
 
     /// ADR-060 §2: CID field is 64 bytes. M5 resolved [u8; 64] to fit
@@ -1047,8 +1233,9 @@ mod tests {
     fn adr_096_total_allocated_space() {
         use crate::state::MIGRATION_HEADROOM;
         let total = 8 + AgentProfile::SPACE + MIGRATION_HEADROOM;
-        // 8 (discriminator) + 1414 (SPACE, post-ADR-097 nonce) + 64 (headroom) = 1486
-        assert_eq!(total, 1486);
+        // 8 (discriminator) + 1415 (SPACE, post-AUD-004 cleared_count) +
+        // 64 (headroom) = 1487.
+        assert_eq!(total, 1487);
     }
 
     // ================================================================

@@ -68,6 +68,10 @@ pub struct AgentDeregistered {
 pub struct SuspensionCleared {
     pub authority: Pubkey,
     pub new_reputation_score: u64,
+    /// AUD-004: monotonic counter of how many times `clear_suspension` has run
+    /// against this profile. 1 = first clear (score halved), 2 = second clear
+    /// (score zeroed), 3+ = terminal Retired.
+    pub cleared_count: u8,
     pub timestamp: i64,
 }
 
