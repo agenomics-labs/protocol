@@ -516,6 +516,15 @@ pub fn expire_escrow(ctx: Context<ExpireEscrow>) -> Result<()> {
     let should_slash = prior_status == EscrowStatus::Active && has_pending;
     let reputation_delta_expiry_undelivered =
         ctx.accounts.protocol_config.reputation_delta_expiry_undelivered;
+    // AUD-010: When the auto-approval loop leaves every milestone in the
+    // `Approved` state (i.e. the escrow effectively completed via the
+    // timeout path), the success-path reputation CPI must fire — otherwise
+    // the provider loses the +task_completed reward simply because the
+    // client was slow to approve before the deadline. We snapshot the
+    // governance-owned delta here, before the `&mut` reborrow below, to
+    // avoid an immutable/mutable borrow overlap on `ctx.accounts`.
+    let reputation_delta_task_completed =
+        ctx.accounts.protocol_config.reputation_delta_task_completed;
 
     let escrow = &mut ctx.accounts.escrow;
     escrow.released_amount = escrow
@@ -523,7 +532,6 @@ pub fn expire_escrow(ctx: Context<ExpireEscrow>) -> Result<()> {
         .checked_add(provider_earned)
         .and_then(|v| v.checked_add(client_refund))
         .ok_or(SettlementError::AmountOverflow)?;
-    escrow.status = EscrowStatus::Expired;
     // Mark auto-paid Submitted milestones as Approved for audit clarity.
     for milestone in escrow.milestones.iter_mut() {
         if milestone.status == MilestoneStatus::Submitted {
@@ -531,7 +539,52 @@ pub fn expire_escrow(ctx: Context<ExpireEscrow>) -> Result<()> {
         }
     }
 
-    if should_slash {
+    // AUD-010: Determine the final escrow status AFTER the auto-approval
+    // sweep above. If every milestone is now `Approved`, the escrow
+    // genuinely completed (just on the timeout rail rather than the manual
+    // approve_milestone rail), so it should land in `Completed` and fire
+    // the success-path reputation CPI — same as `approve_milestone`'s
+    // final-milestone branch. Mixed Pending/Submitted state remains
+    // `Expired` and continues to take the slash path below.
+    let all_approved = escrow
+        .milestones
+        .iter()
+        .all(|m| m.status == MilestoneStatus::Approved);
+
+    if all_approved {
+        escrow.status = EscrowStatus::Completed;
+    } else {
+        escrow.status = EscrowStatus::Expired;
+    }
+
+    if all_approved {
+        // AUD-010: Success-path CPI mirrors `approve_milestone`'s
+        // final-milestone branch. `rating = 0` because the expiry path has
+        // no client-supplied rating; PR-G removed `avg_rating` from the
+        // on-chain profile so this is informational only. `task_completed
+        // = true` selects reason code 0 (= task_completed) inside
+        // `update_provider_reputation`.
+        update_provider_reputation(
+            provider_key,
+            escrow.released_amount,
+            reputation_delta_task_completed,
+            true,
+            0,
+            ctx.accounts.registry_program.to_account_info(),
+            ctx.accounts.provider_profile.to_account_info(),
+            ctx.accounts.provider_authority.to_account_info(),
+            ctx.accounts.provider_owner_nonce.to_account_info(),
+            ctx.accounts.settlement_authority.to_account_info(),
+            ctx.bumps.settlement_authority,
+        )?;
+
+        emit!(EscrowCompleted {
+            escrow: escrow.key(),
+            provider: provider_key,
+            task_id,
+            total_released: escrow.released_amount,
+        });
+    } else if should_slash {
         // Finding #19: governance-owned delta; rating=0 — expiry is an auto-slash.
         // SEC-1: pass `provider_authority` (= escrow.provider) — see cpi.rs.
         // ADR-097: pass `provider_owner_nonce` for the Registry's nonce-based PDA seed.
@@ -550,11 +603,18 @@ pub fn expire_escrow(ctx: Context<ExpireEscrow>) -> Result<()> {
         )?;
     }
 
-    emit!(EscrowExpired {
-        escrow: escrow.key(),
-        task_id,
-        refunded_amount: client_refund,
-    });
+    // AUD-010: Emit the terminal-status event matching the new
+    // `escrow.status`. The all-Approved branch above already emitted
+    // `EscrowCompleted`; the slash/mixed branch emits `EscrowExpired` so
+    // off-chain indexers see exactly one terminal event per escrow and
+    // their event-to-status invariant remains consistent.
+    if !all_approved {
+        emit!(EscrowExpired {
+            escrow: escrow.key(),
+            task_id,
+            refunded_amount: client_refund,
+        });
+    }
 
     Ok(())
 }

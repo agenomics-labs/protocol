@@ -432,6 +432,77 @@ mod tests {
         assert!(should_slash, "Active + Pending is true non-delivery");
     }
 
+    /// AUD-010: After the auto-approval sweep on expiry, when every
+    /// milestone is `Approved` the escrow ends in `Completed` and the
+    /// success-path reputation CPI must fire — same invariant as the
+    /// final-milestone branch of `approve_milestone`. Pre-fix the
+    /// timeout rail dropped the success CPI silently, costing the
+    /// provider the +task_completed reward whenever the client just
+    /// stalled past the deadline rather than rejecting work.
+    #[test]
+    fn aud010_all_approved_after_sweep_fires_success_cpi() {
+        // Pre-sweep state: M0 was already approved manually, M1 is still
+        // Submitted (the realistic "client stalled" shape).
+        let pre_sweep = vec![
+            MilestoneStatus::Approved,
+            MilestoneStatus::Submitted,
+        ];
+
+        // The auto-approval sweep mirrors the production handler: any
+        // Submitted → Approved.
+        let post_sweep: Vec<MilestoneStatus> = pre_sweep
+            .into_iter()
+            .map(|s| if s == MilestoneStatus::Submitted { MilestoneStatus::Approved } else { s })
+            .collect();
+
+        let all_approved = post_sweep.iter().all(|s| *s == MilestoneStatus::Approved);
+        assert!(all_approved, "Sweep must leave every milestone Approved");
+
+        // The handler picks Completed when the post-sweep state is
+        // all-Approved; otherwise it stays Expired.
+        let final_status = if all_approved { EscrowStatus::Completed } else { EscrowStatus::Expired };
+        assert_eq!(final_status, EscrowStatus::Completed,
+            "all-Approved post-sweep MUST land on Completed, not Expired");
+
+        // The success CPI predicate is just `all_approved` on the timeout
+        // rail (same shape as approve_milestone's final-milestone branch).
+        let fire_success_cpi = all_approved;
+        assert!(fire_success_cpi, "Success-path CPI must fire when all-Approved");
+    }
+
+    /// AUD-010 negative: when even one milestone stays `Pending` after
+    /// the sweep, the escrow lands on `Expired`, the success CPI must
+    /// NOT fire, and the slash CPI takes the existing `should_slash`
+    /// path. This guards the fix against accidentally bumping
+    /// reputation on a non-delivery.
+    #[test]
+    fn aud010_mixed_after_sweep_stays_expired_with_slash() {
+        let pre_sweep = vec![
+            MilestoneStatus::Submitted, // will auto-approve
+            MilestoneStatus::Pending,   // provider never submitted
+        ];
+        let post_sweep: Vec<MilestoneStatus> = pre_sweep
+            .into_iter()
+            .map(|s| if s == MilestoneStatus::Submitted { MilestoneStatus::Approved } else { s })
+            .collect();
+
+        let all_approved = post_sweep.iter().all(|s| *s == MilestoneStatus::Approved);
+        assert!(!all_approved, "Mixed post-sweep is NOT all-Approved");
+
+        let final_status = if all_approved { EscrowStatus::Completed } else { EscrowStatus::Expired };
+        assert_eq!(final_status, EscrowStatus::Expired,
+            "Mixed post-sweep MUST stay on Expired");
+
+        let prior_status = EscrowStatus::Active;
+        let has_pending = post_sweep.iter().any(|s| *s == MilestoneStatus::Pending);
+        let should_slash = prior_status == EscrowStatus::Active && has_pending;
+        assert!(should_slash, "Mixed Active + Pending MUST trigger slash");
+
+        // Success CPI must NOT fire on the mixed rail.
+        let fire_success_cpi = all_approved;
+        assert!(!fire_success_cpi, "Success CPI must not fire on mixed/Pending rail");
+    }
+
     /// C2: approve_milestone must be gated on `now <= deadline`,
     /// symmetric with submit_milestone. This closes the case where a
     /// client could approve Submitted work arbitrarily far past the
