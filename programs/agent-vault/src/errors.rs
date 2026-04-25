@@ -81,4 +81,12 @@ pub enum VaultError {
     /// must be resolved via `clear_suspension` before transfers resume.
     #[msg("Agent is suspended in the Registry; transfers are blocked until suspension is cleared")]
     AgentSuspended,
+
+    /// PR-X / AUD-023: `update_agent_identity` was called less than 24h
+    /// after the previous rotation. The per-day rotation cap prevents a
+    /// compromised authority from rotating to a fresh hot key, draining the
+    /// daily cap, and rotating again to bypass the daily limit. Wait until
+    /// `vault.last_rotation_at + 86_400` before retrying.
+    #[msg("Rotation rate-limited: update_agent_identity may be called at most once per 24h")]
+    RotationRateLimited,
 }

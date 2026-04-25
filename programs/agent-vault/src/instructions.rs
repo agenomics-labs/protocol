@@ -34,6 +34,10 @@ pub fn initialize_vault(
     // on `owner_nonce` enforces register-first (the PDA must already exist
     // in Registry) and binds the account to `authority` via PDA derivation.
     vault.profile_nonce = ctx.accounts.owner_nonce.nonce;
+    // PR-X / AUD-023: 0 means "never rotated"; the very first call to
+    // `update_agent_identity` always succeeds. Subsequent rotations are
+    // gated by the 24h sliding window enforced in `update_agent_identity`.
+    vault.last_rotation_at = 0;
 
     emit!(VaultInitialized {
         vault: ctx.accounts.vault.key(),
@@ -91,13 +95,41 @@ pub fn update_policy(
 /// not a vault reset.
 ///
 /// Authority is verified by `has_one = authority` on the context.
+///
+/// PR-X / AUD-023: Per-day rotation cap. The previous handler let the
+/// authority rotate `agent_identity` to any pubkey at any time with no
+/// rate limit, so a compromised authority could rotate → drain at the
+/// daily cap → rotate to another key → drain again, bypassing the daily
+/// limit entirely. We now enforce one rotation per 24h via a sliding
+/// window (`last_rotation_at`).
+///
+/// Migration: vaults deployed before PR-X have `last_rotation_at = 0`
+/// (Anchor zero-fills new fields at the end of the account on first
+/// post-upgrade deserialize), so their first rotation post-upgrade is
+/// unrestricted; subsequent rotations are gated.
 pub fn update_agent_identity(
     ctx: Context<UpdateAgentIdentity>,
     new_agent_identity: Pubkey,
 ) -> Result<()> {
+    /// Minimum interval between two successive `update_agent_identity`
+    /// calls on the same vault (24h, expressed in seconds).
+    const MIN_ROTATION_INTERVAL_SECS: i64 = 24 * 60 * 60;
+
+    let now = Clock::get()?.unix_timestamp;
     let vault = &mut ctx.accounts.vault;
+
+    // Checks-effects-interactions: the rate-limit check runs BEFORE the
+    // `agent_identity` write so a rejected rotation leaves vault state
+    // untouched. `saturating_sub` handles the (pathological) case where
+    // a clock regression would otherwise wrap on a signed subtraction.
+    require!(
+        now.saturating_sub(vault.last_rotation_at) >= MIN_ROTATION_INTERVAL_SECS,
+        VaultError::RotationRateLimited
+    );
+
     let old_identity = vault.agent_identity;
     vault.agent_identity = new_agent_identity;
+    vault.last_rotation_at = now;
 
     emit!(AgentIdentityUpdated {
         vault: ctx.accounts.vault.key(),

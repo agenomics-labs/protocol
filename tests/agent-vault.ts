@@ -1558,6 +1558,65 @@ describe("Agent Vault Tests", () => {
         expect(error).to.exist;
       }
     });
+
+    // PR-X / AUD-023: After the rotation in the previous test consumed
+    // today's 24h slot, an immediate second rotation must revert with
+    // `RotationRateLimited`. The boundary case (rotate, wait 24h+,
+    // rotate again succeeds) is covered by the Rust unit tests
+    // `rotation_exact_24h_boundary_allowed` and
+    // `rotation_two_rotations_one_day_apart_both_succeed` in lib.rs —
+    // bank-clock advancement of 24h+ on a localnet is impractical here.
+    it("should reject immediate re-rotation within 24h with RotationRateLimited (PR-X / AUD-023)", async () => {
+      // The previous test successfully rotated to rotNewAgentId, so the
+      // vault's `last_rotation_at` is now within the last few seconds.
+      const yetAnotherAgentId = Keypair.generate();
+
+      // Sanity: vault really did rotate and `last_rotation_at` is set.
+      const before = await program.account.vault.fetch(rotVaultPda);
+      expect(before.agentIdentity.toString()).to.equal(
+        rotNewAgentId.publicKey.toString()
+      );
+      expect((before.lastRotationAt as BN).toNumber()).to.be.greaterThan(0);
+
+      try {
+        await program.methods
+          .updateAgentIdentity(yetAnotherAgentId.publicKey)
+          .accounts({
+            vault: rotVaultPda,
+            authority: rotAuthority.publicKey,
+          })
+          .signers([rotAuthority])
+          .rpc();
+        expect.fail("Expected immediate re-rotation to be rate-limited");
+      } catch (error: any) {
+        // Anchor surfaces VaultError::RotationRateLimited as either
+        // an AnchorError with the matching name, or a generic error
+        // whose message contains the error name. Accept either shape
+        // so we are not coupled to anchor's exact mapping.
+        const msg = (error?.message || "").toString();
+        const isAnchorErr = error instanceof AnchorError;
+        const errorName: string = isAnchorErr
+          ? error.error?.errorCode?.code ?? ""
+          : "";
+        expect(
+          errorName === "RotationRateLimited" ||
+            msg.includes("RotationRateLimited") ||
+            msg.includes("rate-limited"),
+          `expected RotationRateLimited, got: ${msg}`
+        ).to.equal(true);
+      }
+
+      // State must be unchanged — checks-effects-interactions guarantees
+      // the rejected rotation does not mutate `agent_identity` or
+      // `last_rotation_at`.
+      const after = await program.account.vault.fetch(rotVaultPda);
+      expect(after.agentIdentity.toString()).to.equal(
+        rotNewAgentId.publicKey.toString()
+      );
+      expect((after.lastRotationAt as BN).toString()).to.equal(
+        (before.lastRotationAt as BN).toString()
+      );
+    });
   });
 
   describe("Authorization: Allowlist Management", () => {

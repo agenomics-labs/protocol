@@ -71,6 +71,23 @@ pub struct Vault {
     /// profile PDA address for the suspension check. Must match the nonce
     /// stamped in `AgentProfile.registration_nonce`.
     pub profile_nonce: u64,
+
+    /// AUD-023 / PR-X: Unix timestamp of the most recent
+    /// `update_agent_identity` rotation. Used to enforce a sliding-window
+    /// rotation cap of one rotation per 24h, preventing a compromised
+    /// authority from rotating to a fresh hot key, draining the daily cap,
+    /// and rotating again to bypass the daily limit.
+    ///
+    /// Initialized to 0 by `initialize_vault`, so the very first rotation
+    /// always succeeds. Updated to `Clock::get()?.unix_timestamp` on every
+    /// successful rotation.
+    ///
+    /// Migration note: vaults deployed before PR-X have this field
+    /// implicitly set to 0 (Anchor zero-fills new fields at the end of the
+    /// account on first deserialization after the upgrade). Their first
+    /// rotation post-upgrade is therefore unrestricted; subsequent rotations
+    /// are gated by the 24h window. Bumps the account `space` by 8 bytes.
+    pub last_rotation_at: i64,
 }
 
 // ADR-039: AuditEntry struct removed — auditing is done via emit! events,
