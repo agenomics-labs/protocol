@@ -43,10 +43,18 @@ aeap-events.db*
 **/package-lock.json
 !/package-lock.json
 
-# Local AgentDB + ruvector instances (created by claude-flow tooling)
+# Local AgentDB + ruvector instances (created by claude-flow tooling).
+# Per CLAUDE.md "no working files in root" — these are per-machine session
+# state from the Claude-Flow / Claude-Code tooling, not protocol artefacts.
+# See AUD-041 / PR-AA in docs/audits/REMEDIATION-PLAN.md.
 agentdb.rvf
 agentdb.rvf.lock
 ruvector.db
+# Belt-and-suspenders: any future *.rvf / *.rvf.lock at the repo root.
+# Leading slash scopes the pattern to the root only — subdirectories that
+# legitimately need .rvf files (if any are introduced later) are unaffected.
+/*.rvf
+/*.rvf.lock
 
 # Claude Code runtime artifacts
 .claude-flow/
