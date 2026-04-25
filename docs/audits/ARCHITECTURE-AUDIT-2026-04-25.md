@@ -28,6 +28,30 @@
 
 Findings use `AUD-NNN` (this audit batch). Future audits prefix with date: `AUD-2026-MM-DD-NNN`.
 
+## Closed in this audit cycle (2026-04-25)
+
+| ID | Sev | Title | PR | Commit |
+|---|---|---|---|---|
+| **AUD-003** | C | SDK PDA derivation diverges from on-chain (vault seed order, escrow seed string) | PR-C | `e262db9` |
+| **AUD-011** | H | SDK uses `BigInt64Array` for `u64` nonce | PR-C | `e262db9` |
+| **AUD-012** | H | SDK PDA tests assert shape only, not equivalence | PR-C | `e262db9` (added 8 golden-vector tests) |
+| **AUD-014** | H | Tool-count contradiction (23/20/24) | PR-E | `22dc7a7` |
+| **AUD-016** | H | `ANCHOR_WALLET` env var ignored | PR-D | `9213c1a` |
+| **AUD-027** | M | `JWT_SECRET` length not validated | PR-F | `8255d03` |
+| **AUD-029** | M | `/metrics` binds `0.0.0.0` with no auth | PR-F | `440ecac` |
+| **AUD-031** | M | Redundant `createRpc()` in `main()` | PR-F | `3a77002` |
+| **AUD-032** | L | `ReputationUpdateScheduled` event misnamed | PR-D | `9213c1a` |
+| **AUD-040** | L | Dead capability constant | **Wontfix** | Audit error — constant is used by 4 settlement actions (`submit_milestone`, `approve_milestone`, `dispute_milestone`, `resolve_dispute`) and `test/action-shape.test.ts:128`. Verified by PR-F coder agent. |
+| **AUD-047** | I | ADR-098 + ADR-099 duplicate-numbered files | PR-B | `b117ffa` |
+| **AUD-048** | A | ADR-007 + ADR-014 stale-Accepted (CPI helper migration) | PR-B | `24bc847` |
+| **AUD-049** | A | ADR-012/033/048 web3.js v2 overlap | PR-B (partial — annotated; ADR-087 marked canonical via Revisions log) | `1891f4a` |
+| **AUD-050** | A | ADR-031 → ADR-080 unannotated supersession | PR-B | `1891f4a` |
+| **AUD-072** | A | SUMMARY documents `execute_program_call` (deleted by ADR-050) | PR-E | `6941869` |
+
+**15 findings closed** (1 Critical, 4 High, 3 Medium, 2 Low, 1 Info, 4 Architecture). Critical C1/C2 (AUD-001/AUD-002 reputation), C4 (AUD-004 status laundering), and C5 (AUD-005 governance front-run) remain open — they need design decisions documented in `REMEDIATION-PLAN.md` (PR-G, PR-H, PR-I).
+
+**Follow-up surfaced by PR-E** (not yet closed): stale "20 tools" mentions in `docs/index.md`, `docs/api-reference.md`, `docs/getting-started.md`, `docs/integration-guide.md`. `docs/SECURITY_AUDIT.md` and `docs/AUDIT_SCOPE.md` still describe `execute_program_call` as live security surface — real correctness drift, queue as PR-DD.
+
 ## Cross-cutting themes
 
 1. **Reputation policy is split across two on-chain paths.** The bounded ADR-094 path is wired to no caller; the unbounded legacy path is what Settlement actually invokes. (AUD-001, AUD-002, AUD-068)
