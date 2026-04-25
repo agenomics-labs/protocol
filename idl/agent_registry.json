@@ -933,16 +933,21 @@
       "name": "update_manifest",
       "docs": [
         "ADR-060: publish or rotate the off-chain capability manifest pointer.",
+        "ADR-092: domain-separated manifest hash to prevent cross-protocol sig replay.",
         "",
         "Args:",
         "- `manifest_cid`: 64-byte pointer to off-chain manifest (IPFS CIDv1",
         "string or Arweave tx ID), zero-padded. M5 resolution chose",
         "`[u8; 64]` for CIDv1 + Arweave headroom.",
-        "- `manifest_hash`: SHA-256 of the RFC-8785 canonical-JSON manifest.",
-        "- `manifest_signature`: Ed25519 signature over `manifest_hash` by the",
-        "agent's `authority`. Verified via the paired ed25519-program",
-        "sig-verify instruction (standard Solana pattern — in-program",
-        "ed25519 is prohibitively expensive in compute units).",
+        "- `manifest_raw_hash`: SHA-256 of the RFC-8785 canonical-JSON manifest",
+        "(before domain tagging). The on-chain program applies the domain",
+        "separator: `manifest_hash = sha256(MANIFEST_HASH_DOMAIN || manifest_raw_hash)`.",
+        "The client's ed25519 signature must cover this tagged hash.",
+        "- `manifest_signature`: Ed25519 signature over the domain-tagged hash",
+        "(`tagged_manifest_hash(manifest_raw_hash)`) by the agent's `authority`.",
+        "Verified via the paired ed25519-program sig-verify instruction",
+        "(standard Solana pattern — in-program ed25519 is prohibitively",
+        "expensive in compute units).",
         "- `manifest_version`: packed semver (high byte = major, low byte = minor).",
         "- `manifest_capability_names`: the full list of capability names",
         "declared in the off-chain manifest. On-chain we assert",
@@ -1053,7 +1058,7 @@
           }
         },
         {
-          "name": "manifest_hash",
+          "name": "manifest_raw_hash",
           "type": {
             "array": [
               "u8",
