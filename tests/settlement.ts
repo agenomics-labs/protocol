@@ -2653,4 +2653,160 @@ describe("Settlement Protocol Tests", () => {
       expect(escrow.deadline.toString()).to.equal(atCap.toString());
     });
   });
+
+  // ============================================================================
+  // AUD-019: hoist escrow.status checks into Account constraints
+  // ============================================================================
+  //
+  // Pre-fix, AcceptTask / SubmitMilestone / RejectMilestone only enforced
+  // `escrow.status` via handler `require!`. Defense-in-depth (parity with
+  // CloseEscrow) hoists the check into the `Accounts` struct as
+  // `constraint = escrow.status == ... @ SettlementError::InvalidStatus`.
+  // The handler `require!` is preserved as belt-and-suspenders, but the
+  // constraint layer should fire FIRST. Anchor surfaces both layers under
+  // the same `InvalidStatus` named code; these tests verify that violating
+  // the status precondition (with all other account constraints satisfied)
+  // surfaces `InvalidStatus`.
+
+  describe("AUD-019: status constraints hoisted to Accounts struct", () => {
+    let aud019Client: Keypair;
+    let aud019Provider: Keypair;
+    let aud019ClientTA: PublicKey;
+    let aud019EscrowPDA: PublicKey;
+    let aud019EscrowTA: PublicKey;
+    const aud019TaskId = new BN(1900);
+
+    before(async () => {
+      aud019Client = Keypair.generate();
+      aud019Provider = Keypair.generate();
+
+      for (const kp of [aud019Client, aud019Provider]) {
+        const sig = await connection.requestAirdrop(kp.publicKey, 10 * LAMPORTS_PER_SOL);
+        await connection.confirmTransaction(sig);
+      }
+
+      aud019ClientTA = await getOrCreateTokenAccount(aud019Client.publicKey, aud019Client);
+      await mintTo(
+        connection,
+        mintAuthority,
+        tokenMint,
+        aud019ClientTA,
+        mintAuthority.publicKey,
+        10_000_000n
+      );
+
+      [aud019EscrowPDA] = await deriveEscrowPDA(
+        aud019Client.publicKey,
+        aud019Provider.publicKey,
+        aud019TaskId
+      );
+      aud019EscrowTA = deriveEscrowTokenAccount(aud019EscrowPDA);
+
+      // Create the escrow in `Created` state — single milestone for simplicity.
+      await program.methods
+        .createEscrow(
+          aud019TaskId,
+          new BN(1_000_000),
+          Buffer.alloc(32),
+          FUTURE_DEADLINE,
+          [createMilestoneData(1_000_000n)],
+          null
+        )
+        .accounts({
+          client: aud019Client.publicKey,
+          clientVault: vaultFor(aud019Client.publicKey),
+          providerVault: vaultFor(aud019Provider.publicKey),
+          provider: aud019Provider.publicKey,
+          protocolConfig: PROTOCOL_CONFIG_PDA,
+          tokenMint,
+          clientTokenAccount: aud019ClientTA,
+          escrow: aud019EscrowPDA,
+          escrowTokenAccount: aud019EscrowTA,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        })
+        .signers([aud019Client])
+        .rpc();
+    });
+
+    // SubmitMilestone now carries `constraint = escrow.status == Active` on
+    // the escrow account. Escrow is currently in `Created`, so the
+    // Account-level constraint fires before the handler.
+    it("submit_milestone: Account constraint fires when escrow is not Active", async () => {
+      try {
+        await program.methods
+          .submitMilestone(0, new BN(0))
+          .accounts({
+            provider: aud019Provider.publicKey,
+            escrow: aud019EscrowPDA,
+          })
+          .signers([aud019Provider])
+          .rpc();
+        expect.fail("Should have thrown InvalidStatus error");
+      } catch (error: any) {
+        const code =
+          (error?.error?.errorCode?.code as string | undefined) ??
+          (error?.message as string | undefined) ??
+          "";
+        expect(code).to.match(/InvalidStatus/);
+      }
+    });
+
+    // RejectMilestone also requires `Active`; same Created-state escrow.
+    it("reject_milestone: Account constraint fires when escrow is not Active", async () => {
+      try {
+        await program.methods
+          .rejectMilestone(0)
+          .accounts({
+            client: aud019Client.publicKey,
+            escrow: aud019EscrowPDA,
+          })
+          .signers([aud019Client])
+          .rpc();
+        expect.fail("Should have thrown InvalidStatus error");
+      } catch (error: any) {
+        const code =
+          (error?.error?.errorCode?.code as string | undefined) ??
+          (error?.message as string | undefined) ??
+          "";
+        expect(code).to.match(/InvalidStatus/);
+      }
+    });
+
+    // AcceptTask requires `Created`. Transition to Active first, then a
+    // second accept attempt must surface `InvalidStatus` from the
+    // Account-level constraint.
+    it("accept_task: Account constraint fires when escrow is not Created", async () => {
+      // Move escrow into Active.
+      await program.methods
+        .acceptTask()
+        .accounts({
+          provider: aud019Provider.publicKey,
+          escrow: aud019EscrowPDA,
+        })
+        .signers([aud019Provider])
+        .rpc();
+
+      // Second accept — escrow.status is now Active, constraint must reject.
+      try {
+        await program.methods
+          .acceptTask()
+          .accounts({
+            provider: aud019Provider.publicKey,
+            escrow: aud019EscrowPDA,
+          })
+          .signers([aud019Provider])
+          .rpc();
+        expect.fail("Should have thrown InvalidStatus error");
+      } catch (error: any) {
+        const code =
+          (error?.error?.errorCode?.code as string | undefined) ??
+          (error?.message as string | undefined) ??
+          "";
+        expect(code).to.match(/InvalidStatus/);
+      }
+    });
+  });
 });

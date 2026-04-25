@@ -32,6 +32,13 @@
         },
         {
           "name": "escrow",
+          "docs": [
+            "AUD-019: Defense-in-depth — hoist the `escrow.status == Created`",
+            "check from the handler `require!` into an Anchor account-level",
+            "constraint so the Account-deserialization layer (not the handler)",
+            "is the first line of defense. The handler still re-checks via",
+            "`require!` for belt-and-suspenders parity with `CloseEscrow`."
+          ],
           "writable": true
         }
       ],
@@ -1087,6 +1094,11 @@
         },
         {
           "name": "escrow",
+          "docs": [
+            "AUD-019: Defense-in-depth — hoist the `escrow.status == Active`",
+            "check from the handler `require!` into an Anchor account-level",
+            "constraint. Handler `require!` is preserved as defense-in-depth."
+          ],
           "writable": true
         }
       ],
@@ -1497,6 +1509,11 @@
         },
         {
           "name": "escrow",
+          "docs": [
+            "AUD-019: Defense-in-depth — hoist the `escrow.status == Active`",
+            "check from the handler `require!` into an Anchor account-level",
+            "constraint. Handler `require!` is preserved as defense-in-depth."
+          ],
           "writable": true
         }
       ],
