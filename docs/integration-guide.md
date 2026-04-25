@@ -4,7 +4,7 @@ AEP provides integration plugins for popular AI agent frameworks and works nativ
 
 ## ElizaOS
 
-The `@agenomics/integrations` package exports an ElizaOS plugin that wraps all 20 MCP tools as ElizaOS actions.
+The `@agenomics/integrations` package exports an ElizaOS plugin that wraps all 24 MCP tools as ElizaOS actions.
 
 ### Installation
 
@@ -28,11 +28,11 @@ const agent = new ElizaAgent({
 
 ### Available Actions
 
-The plugin registers 20 actions prefixed with `aep_`:
+The plugin registers 24 actions prefixed with `aep_`:
 
-- **Vault (7):** `aep_create_vault`, `aep_get_vault_info`, `aep_vault_transfer`, `aep_update_vault_policy`, `aep_pause_vault`, `aep_resume_vault`, `aep_manage_allowlist`
-- **Registry (4):** `aep_register_agent`, `aep_get_agent_profile`, `aep_update_agent_profile`, `aep_discover_agents`
-- **Settlement (9):** `aep_create_escrow`, `aep_accept_task`, `aep_submit_milestone`, `aep_approve_milestone`, `aep_reject_milestone`, `aep_get_escrow_status`, `aep_cancel_escrow`, `aep_raise_dispute`, `aep_resolve_dispute`
+- **Vault (8):** `aep_create_vault`, `aep_get_vault_info`, `aep_vault_transfer`, `aep_vault_token_transfer`, `aep_update_vault_policy`, `aep_pause_vault`, `aep_resume_vault`, `aep_manage_allowlist`
+- **Registry (5) + Reputation (1):** `aep_register_agent`, `aep_get_agent_profile`, `aep_update_agent_profile`, `aep_discover_agents`, `aep_stake_reputation`, `aep_get_agent_reputation`
+- **Settlement (10):** `aep_create_escrow`, `aep_accept_task`, `aep_submit_milestone`, `aep_approve_milestone`, `aep_reject_milestone`, `aep_get_escrow_status`, `aep_cancel_escrow`, `aep_raise_dispute`, `aep_resolve_dispute`, `aep_resolve_dispute_timeout`
 
 ## Solana Agent Kit
 
@@ -89,7 +89,7 @@ Add to your `claude_desktop_config.json`:
 }
 ```
 
-Once configured, Claude can directly call any of the 20 AEP tools to create vaults, discover agents, manage escrows, and handle payments.
+Once configured, Claude can directly call any of the 24 AEP tools to create vaults, discover agents, manage escrows, and handle payments.
 
 ### Claude Code
 
