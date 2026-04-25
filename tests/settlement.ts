@@ -6,8 +6,17 @@ import {
   Keypair,
   LAMPORTS_PER_SOL,
   SystemProgram,
-  BPF_LOADER_UPGRADEABLE_PROGRAM_ID,
 } from "@solana/web3.js";
+
+// REG-1 fix (test sweep, 2026-04-25): @solana/web3.js v1 does not export
+// BPF_LOADER_UPGRADEABLE_PROGRAM_ID — only BPF_LOADER_PROGRAM_ID and
+// BPF_LOADER_DEPRECATED_PROGRAM_ID. Hardcode the canonical upgradeable
+// loader pubkey (matches solana_program::bpf_loader_upgradeable::ID on
+// the Rust side). Using the wrong/missing import made every settlement
+// integration test non-runnable; this restores them.
+const BPF_LOADER_UPGRADEABLE_PROGRAM_ID = new PublicKey(
+  "BPFLoaderUpgradeab1e11111111111111111111111"
+);
 import {
   createMint,
   getOrCreateAssociatedTokenAccount,
