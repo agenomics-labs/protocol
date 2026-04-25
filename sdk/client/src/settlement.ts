@@ -19,7 +19,7 @@ import { Program, AnchorProvider, Idl } from "@coral-xyz/anchor";
 import { PublicKey } from "@solana/web3.js";
 
 /** On-chain seed for task escrow PDAs. */
-const ESCROW_SEED = Buffer.from("task_escrow");
+const ESCROW_SEED = Buffer.from("escrow");
 
 /** On-chain seed for the protocol-config PDA. */
 const PROTOCOL_CONFIG_SEED = Buffer.from("protocol_config");
@@ -51,7 +51,15 @@ export class SettlementClient {
   /**
    * Derive the task-escrow PDA for a given client, provider, and task ID.
    *
-   * Seeds: [ "task_escrow", client.toBytes(), provider.toBytes(), taskId as little-endian u64 ]
+   * Seeds: [ "escrow", client.toBytes(), provider.toBytes(), taskId as little-endian u64 ]
+   *
+   * Matches the on-chain `seeds = [b"escrow", client.key().as_ref(),
+   * provider.key().as_ref(), &task_id.to_le_bytes()]` declaration in
+   * `programs/settlement/src/contexts.rs` (and the matching CPI signer
+   * seeds in `instructions/escrow.rs`). Pre-AUD-003 the SDK used the
+   * literal `"task_escrow"`, which derives a different (and unowned)
+   * PDA, so every escrow operation routed through `@agenomics/client`
+   * failed on-chain.
    *
    * The task ID is a monotonically increasing counter chosen at escrow
    * creation time to prevent collisions (ADR-052).

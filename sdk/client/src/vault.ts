@@ -49,11 +49,16 @@ export class AgentVaultClient {
   /**
    * Derive the vault PDA for a given authority.
    *
-   * Seeds: [ authority.toBytes(), "vault" ]
+   * Seeds: [ "vault", authority.toBytes() ]
+   *
+   * Matches the on-chain `seeds = [b"vault", authority.key().as_ref()]`
+   * declaration in `programs/agent-vault/src/contexts.rs`. Pre-AUD-003
+   * the SDK had these reversed, so every vault operation routed through
+   * `@agenomics/client` failed on-chain.
    */
   vaultPda(authority: PublicKey): PublicKey {
     const [pda] = PublicKey.findProgramAddressSync(
-      [authority.toBytes(), VAULT_SEED],
+      [VAULT_SEED, authority.toBytes()],
       this.program.programId,
     );
     return pda;

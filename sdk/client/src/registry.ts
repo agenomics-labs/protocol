@@ -51,18 +51,26 @@ export class AgentRegistryClient {
   /**
    * Derive the agent-profile PDA for a given authority and nonce.
    *
-   * Seeds: [ authority.toBytes(), "agent-profile", nonce as little-endian i64 ]
+   * Seeds: [ authority.toBytes(), "agent-profile", nonce as little-endian u64 ]
    *
    * The nonce encodes the nth profile registered by this authority (ADR-097).
    * Pass the value returned by `fetchOwnerNonce().nonce` to derive the next
    * registration address, or 0n for the first profile.
+   *
+   * AUD-003: `OwnerNonce::nonce` is `u64` on-chain (see
+   * `programs/agent-registry/src/state.rs`). Pre-fix the SDK encoded it
+   * via `BigInt64Array` (signed i64), which is byte-identical for
+   * non-negative values but documents the wrong sign convention; switching
+   * to `BigUint64Array` matches the on-chain type exactly and prevents a
+   * future signed-overflow regression if the encoder is ever asked to
+   * round-trip via `Number`.
    */
   profilePda(authority: PublicKey, nonce: bigint): PublicKey {
     const [pda] = PublicKey.findProgramAddressSync(
       [
         authority.toBytes(),
         AGENT_PROFILE_SEED,
-        Buffer.from(new Uint8Array(new BigInt64Array([nonce]).buffer)),
+        Buffer.from(new Uint8Array(new BigUint64Array([nonce]).buffer)),
       ],
       this.program.programId,
     );
