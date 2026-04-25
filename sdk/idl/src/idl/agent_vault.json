@@ -1267,10 +1267,11 @@
       "docs": [
         "AgentProfile: The core account representing a registered agent.",
         "",
-        "ADR-040: Account space is explicitly calculated as 1414 bytes",
+        "ADR-040: Account space is explicitly calculated as 1415 bytes",
         "(1243 baseline + 162 bytes for the ADR-060 manifest fields:",
         "manifest_cid 64 + manifest_hash 32 + manifest_signature 64 + manifest_version 2 = 162,",
-        "+ 1 byte for ADR-096 version: u8 + 8 bytes for ADR-097 registration_nonce: u64 = 1414).",
+        "+ 1 byte for ADR-096 version: u8 + 8 bytes for ADR-097 registration_nonce: u64",
+        "+ 1 byte for AUD-004 cleared_count: u8 = 1415).",
         "",
         "ADR-060 adds four manifest fields that point to an off-chain capability",
         "manifest (IPFS CIDv1 or Arweave tx ID). The on-chain fields are the",
@@ -1424,6 +1425,10 @@
           {
             "name": "registration_nonce",
             "type": "u64"
+          },
+          {
+            "name": "cleared_count",
+            "type": "u8"
           }
         ]
       }

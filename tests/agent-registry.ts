@@ -1412,4 +1412,137 @@ describe("Agent Registry Program Tests", () => {
       expect(profileAfter.vaultAddress.toString()).to.equal(profileBefore.vaultAddress.toString());
     });
   });
+
+  // ================================================================
+  // AUD-004: Reputation laundering / status-laundering loop
+  // ================================================================
+  //
+  // The full slash → suspend → clear escalation flow is only reachable
+  // through Settlement CPI (the slash code path writes Suspended directly
+  // without going through `update_status`), and is exercised end-to-end in
+  // `tests/settlement.ts` and the Rust unit tests in
+  // `programs/agent-registry/src/lib.rs::tests::aud_004_*`. Here we cover
+  // the registry-only surface: the `update_status` self-suspension guard,
+  // and zero-initialization of `cleared_count` on register.
+  describe("AUD-004 - Self-suspension and cleared_count init", () => {
+    it("should initialize cleared_count = 0 on register_agent", async () => {
+      // Use the happy-path agent registered earlier in this file. After
+      // register, cleared_count must be 0.
+      const profile = await program.account.agentProfile.fetch(agentProfilePDA);
+      // Cast: anchor may surface the field as a number or BN depending on the
+      // size; cleared_count is u8 so it lands as a plain number in IDL.
+      expect((profile as any).clearedCount).to.equal(0);
+    });
+
+    it("should reject self-issued update_status(Suspended)", async () => {
+      // Fresh authority + profile so we have an Active agent to attempt the
+      // self-suspend on (the happy-path agent has been Retired by the
+      // update_status block earlier, and Retired blocks every transition).
+      const selfSuspendAuth = web3.Keypair.generate();
+      const airdropSig = await provider.connection.requestAirdrop(
+        selfSuspendAuth.publicKey,
+        2 * web3.LAMPORTS_PER_SOL
+      );
+      await provider.connection.confirmTransaction(airdropSig);
+
+      const [profilePDA] = deriveAgentProfilePDA(selfSuspendAuth.publicKey);
+      const [noncePDA] = deriveOwnerNoncePDA(selfSuspendAuth.publicKey);
+      const vault = vaultFor(selfSuspendAuth.publicKey);
+
+      // Register the agent.
+      await program.methods
+        .registerAgent(
+          "Self-Suspend Test Agent",
+          "Tries to self-suspend",
+          "test",
+          ["x"],
+          { perTask: {} },
+          new BN(web3.LAMPORTS_PER_SOL),
+          [new web3.PublicKey("11111111111111111111111111111112")]
+        )
+        .accounts({
+          authority: selfSuspendAuth.publicKey,
+          ownerNonce: noncePDA,
+          agentProfile: profilePDA,
+          vault,
+          systemProgram: web3.SystemProgram.programId,
+        })
+        .signers([selfSuspendAuth])
+        .rpc();
+
+      // Sanity: agent is Active and cleared_count is 0.
+      const before = await program.account.agentProfile.fetch(profilePDA);
+      expect(before.status).to.have.property("active");
+      expect((before as any).clearedCount).to.equal(0);
+
+      // Attempt self-suspend → must revert with InvalidStatusTransition.
+      try {
+        await program.methods
+          .updateStatus({ suspended: {} })
+          .accounts({
+            authority: selfSuspendAuth.publicKey,
+            ownerNonce: noncePDA,
+            agentProfile: profilePDA,
+          })
+          .signers([selfSuspendAuth])
+          .rpc();
+        expect.fail("Should have thrown InvalidStatusTransition error");
+      } catch (err: any) {
+        expect(err.error.errorCode.code).to.equal("InvalidStatusTransition");
+      }
+
+      // State must be unchanged.
+      const after = await program.account.agentProfile.fetch(profilePDA);
+      expect(after.status).to.have.property("active");
+      expect((after as any).clearedCount).to.equal(0);
+    });
+
+    it("should still allow legitimate status transitions (Active → Paused)", async () => {
+      // Regression: the new guard must only block self-suspend, not other
+      // transitions. We pause the same agent that just attempted self-suspend.
+      const auth = web3.Keypair.generate();
+      const airdropSig = await provider.connection.requestAirdrop(
+        auth.publicKey,
+        2 * web3.LAMPORTS_PER_SOL
+      );
+      await provider.connection.confirmTransaction(airdropSig);
+
+      const [profilePDA] = deriveAgentProfilePDA(auth.publicKey);
+      const [noncePDA] = deriveOwnerNoncePDA(auth.publicKey);
+      const vault = vaultFor(auth.publicKey);
+
+      await program.methods
+        .registerAgent(
+          "Legit Pause Agent",
+          "Pauses normally",
+          "test",
+          ["x"],
+          { perTask: {} },
+          new BN(web3.LAMPORTS_PER_SOL),
+          [new web3.PublicKey("11111111111111111111111111111112")]
+        )
+        .accounts({
+          authority: auth.publicKey,
+          ownerNonce: noncePDA,
+          agentProfile: profilePDA,
+          vault,
+          systemProgram: web3.SystemProgram.programId,
+        })
+        .signers([auth])
+        .rpc();
+
+      await program.methods
+        .updateStatus({ paused: {} })
+        .accounts({
+          authority: auth.publicKey,
+          ownerNonce: noncePDA,
+          agentProfile: profilePDA,
+        })
+        .signers([auth])
+        .rpc();
+
+      const after = await program.account.agentProfile.fetch(profilePDA);
+      expect(after.status).to.have.property("paused");
+    });
+  });
 });

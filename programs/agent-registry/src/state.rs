@@ -22,10 +22,11 @@ pub const MIGRATION_HEADROOM: usize = 64;
 
 /// AgentProfile: The core account representing a registered agent.
 ///
-/// ADR-040: Account space is explicitly calculated as 1414 bytes
+/// ADR-040: Account space is explicitly calculated as 1415 bytes
 /// (1243 baseline + 162 bytes for the ADR-060 manifest fields:
 ///  manifest_cid 64 + manifest_hash 32 + manifest_signature 64 + manifest_version 2 = 162,
-///  + 1 byte for ADR-096 version: u8 + 8 bytes for ADR-097 registration_nonce: u64 = 1414).
+///  + 1 byte for ADR-096 version: u8 + 8 bytes for ADR-097 registration_nonce: u64
+///  + 1 byte for AUD-004 cleared_count: u8 = 1415).
 ///
 /// ADR-060 adds four manifest fields that point to an off-chain capability
 /// manifest (IPFS CIDv1 or Arweave tx ID). The on-chain fields are the
@@ -81,21 +82,28 @@ pub struct AgentProfile {
     // ADR-097: monotonic registration nonce included in PDA seed.
     // Prevents address reuse after close (Sybil resistance).
     pub registration_nonce: u64,         // 8 bytes
+    // AUD-004: monotonic counter of how many times `clear_suspension` has been
+    // invoked on this profile. Escalates the cost of clearing — see
+    // `clear_suspension` for the cost ladder. Zero-initialized on register;
+    // bumped from 0 → 1 → 2 → 3 (terminal Retired). Existing profiles default
+    // to 0 via the `realloc::zero = true` migration constraint.
+    pub cleared_count: u8,               // 1 byte
 }
 
 impl AgentProfile {
-    /// ADR-040 / ADR-096 / ADR-097 explicit space calc. Do NOT drift from the
-    /// `space = ...` literal in `contexts.rs::RegisterAgent`.
+    /// ADR-040 / ADR-096 / ADR-097 / AUD-004 explicit space calc. Do NOT drift
+    /// from the `space = ...` literal in `contexts.rs::RegisterAgent`.
     ///
     /// Baseline (pre-ADR-060): 1243 bytes (see earlier history).
     /// ADR-060 additions: 64 + 32 + 64 + 2 = 162 bytes.
     /// ADR-096 addition: version u8 = 1 byte.
     /// ADR-097 addition: registration_nonce u64 = 8 bytes.
-    /// Total SPACE: 1414 bytes.
+    /// AUD-004 addition: cleared_count u8 = 1 byte.
+    /// Total SPACE: 1415 bytes.
     ///
     /// RegisterAgent allocates 8 (discriminator) + SPACE + MIGRATION_HEADROOM
-    /// (64) = 1486 bytes total on-chain.
-    pub const SPACE: usize = 1414;
+    /// (64) = 1487 bytes total on-chain.
+    pub const SPACE: usize = 1415;
 }
 
 /// ADR-097: Per-owner monotonic nonce counter.
