@@ -77,9 +77,33 @@ PR-O (web3.js v2 migration completion)
 
 ---
 
-## Queued — needs design (do not auto-execute)
+## Phase 3 — design-locked criticals/highs (all landed)
 
-### PR-G — Reputation policy unification 🔴 (Critical)
+### PR-H — Governance gate ✅
+**Commit**: `5aa2f85`
+**Closes**: AUD-005, AUD-068 (partial — single-key authority rotation hardened via upgrade-authority init)
+**Decision**: Option C (upgrade-authority `ProgramData` constraint). Cultural enforcement: no future ix references `ProgramData`.
+
+### PR-J — Vault register-first ✅
+**Commit**: `a1c40da`
+**Closes**: AUD-008
+**Decision**: Strict register-first; SDK handles UX flow. Spec correction: `OwnerNonce` has no `authority` field — seeds binding alone enforces cross-account-reuse rejection (committed as `e9569ac`).
+
+### PR-I — Status laundering ✅
+**Commit**: `31586e9`
+**Closes**: AUD-004
+**Decision**: Cumulative `slash_count` + new `cleared_count: u8` field. Escalation ladder: 1 → halve, 2 → zero, 3 → terminal Retired. Self-issued `→ Suspended` rejected in `update_status`.
+
+### PR-G — Reputation policy unification ✅
+**Commit**: `0a02850` + activator `dab8ec7`
+**Closes**: AUD-001, AUD-002, AUD-065 (two parallel paths eliminated)
+**Decision**: Option A — remove legacy `update_reputation` entirely; migration normalizes scores via `migrate_agent_profile` (clamp to `[0, 100]` + Suspended-invariant fix). New `assert_valid_profile()` helper enforces closed-state-machine post-mutation and post-migration. New `verify_protocol_invariants` admin ix for post-deploy sweep. Default reputation deltas re-tuned for the `|delta| <= 10` policy.
+
+---
+
+## Originally queued (no longer applicable — kept for history)
+
+### PR-G — Reputation policy unification 🔴 (Critical) → ✅ above
 **Closes**: AUD-001 (C1), AUD-002 (C2), AUD-065 (A1), AUD-069 (A5).
 **Implements**: ADR-094 + ADR-116.
 **Scope**: must land as one PR.
