@@ -9,11 +9,31 @@ use super::update_provider_reputation;
 
 pub fn raise_dispute(ctx: Context<RaiseDispute>) -> Result<()> {
     let escrow = &mut ctx.accounts.escrow;
+    let clock = Clock::get()?;
 
     require!(escrow.status == EscrowStatus::Active, SettlementError::InvalidStatus);
 
+    // AUD-018 / ADR-102: a client must not be able to front-run an approval by
+    // raising a dispute the moment the provider's `submit_milestone` lands.
+    // The resolver-path slash (`reputation_delta_dispute_loss`) would then
+    // sidestep the grace window that `expire_escrow` already honours.
+    //
+    // Mirror the `expire_escrow` guard exactly: any Submitted milestone with a
+    // non-zero grace deadline that has not yet elapsed (`clock.slot <
+    // grace_ends_at`) blocks the dispute. `grace_ends_at == 0` means the
+    // provider opted out of grace protection at submit time, so the check is
+    // a no-op for those milestones.
+    for milestone in &escrow.milestones {
+        if milestone.status == MilestoneStatus::Submitted
+            && milestone.grace_ends_at > 0
+            && clock.slot < milestone.grace_ends_at
+        {
+            return Err(SettlementError::MilestoneInGracePeriod.into());
+        }
+    }
+
     escrow.status = EscrowStatus::Disputed;
-    escrow.disputed_at = Some(Clock::get()?.unix_timestamp);
+    escrow.disputed_at = Some(clock.unix_timestamp);
 
     emit!(DisputeRaised {
         escrow: escrow.key(),

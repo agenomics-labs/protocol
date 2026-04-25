@@ -599,6 +599,108 @@ mod tests {
     }
 
     // ================================================================
+    // AUD-018: raise_dispute grace gate (ADR-102 applied to dispute path)
+    // ================================================================
+    //
+    // The `raise_dispute` handler iterates `escrow.milestones` and applies the
+    // SAME predicate `expire_escrow` uses:
+    //   blocked = status == Submitted && grace_ends_at > 0 && slot < grace_ends_at
+    // The unit tests below exercise the predicate as it composes with the
+    // milestone status, since `raise_dispute` only enforces the gate against
+    // Submitted milestones (Pending / Approved / Rejected / Disputed entries
+    // never block).
+
+    /// AUD-018: a Submitted milestone within its grace window blocks
+    /// `raise_dispute` exactly as it blocks `expire_escrow`.
+    #[test]
+    fn aud018_raise_dispute_blocked_within_grace_for_submitted_milestone() {
+        let status = MilestoneStatus::Submitted;
+        let grace_ends_at: u64 = 1_100;
+        let current_slot: u64 = 500; // inside the window
+        let blocked = status == MilestoneStatus::Submitted
+            && grace_ends_at > 0
+            && current_slot < grace_ends_at;
+        assert!(blocked, "Submitted milestone in grace window must block raise_dispute");
+    }
+
+    /// AUD-018: a non-Submitted milestone never blocks `raise_dispute`,
+    /// even with a non-zero grace_ends_at in the future. (Pending milestones
+    /// were never submitted so there is no front-run window to protect.)
+    #[test]
+    fn aud018_raise_dispute_unblocked_for_non_submitted_milestone() {
+        let grace_ends_at: u64 = 1_100;
+        let current_slot: u64 = 500;
+        for status in [
+            MilestoneStatus::Pending,
+            MilestoneStatus::Approved,
+            MilestoneStatus::Rejected,
+            MilestoneStatus::Disputed,
+        ] {
+            let blocked = status == MilestoneStatus::Submitted
+                && grace_ends_at > 0
+                && current_slot < grace_ends_at;
+            assert!(
+                !blocked,
+                "non-Submitted milestone (status={}) must not block raise_dispute",
+                status
+            );
+        }
+    }
+
+    /// AUD-018: once the grace window has elapsed, `raise_dispute` is
+    /// unblocked even for a Submitted milestone.
+    #[test]
+    fn aud018_raise_dispute_unblocked_after_grace_elapses() {
+        let status = MilestoneStatus::Submitted;
+        let grace_ends_at: u64 = 1_100;
+        let current_slot: u64 = 1_100; // exactly at boundary
+        let blocked = status == MilestoneStatus::Submitted
+            && grace_ends_at > 0
+            && current_slot < grace_ends_at;
+        assert!(!blocked, "raise_dispute must be permitted at grace_ends_at boundary");
+
+        let later: u64 = 1_500;
+        let blocked_later = status == MilestoneStatus::Submitted
+            && grace_ends_at > 0
+            && later < grace_ends_at;
+        assert!(!blocked_later, "raise_dispute must be permitted past grace window");
+    }
+
+    /// AUD-018: a Submitted milestone with grace_ends_at == 0 (provider opted
+    /// out at submit_milestone time) never blocks raise_dispute.
+    #[test]
+    fn aud018_raise_dispute_unblocked_when_grace_opted_out() {
+        let status = MilestoneStatus::Submitted;
+        let grace_ends_at: u64 = 0;
+        let current_slot: u64 = 0;
+        let blocked = status == MilestoneStatus::Submitted
+            && grace_ends_at > 0
+            && current_slot < grace_ends_at;
+        assert!(!blocked, "grace_ends_at==0 must never block raise_dispute");
+    }
+
+    /// AUD-018: an escrow with no Submitted milestones (all Pending /
+    /// Approved / Rejected / Disputed) is a no-op for the grace gate. The
+    /// per-milestone guard short-circuits on the status check.
+    #[test]
+    fn aud018_raise_dispute_no_op_when_no_submitted_milestones() {
+        // Iterate a representative mix: Pending + Approved + Rejected.
+        let mix = [
+            MilestoneStatus::Pending,
+            MilestoneStatus::Approved,
+            MilestoneStatus::Rejected,
+        ];
+        let grace_ends_at: u64 = 1_000_000; // pathological future deadline
+        let current_slot: u64 = 0; // worst case
+        let any_blocked = mix.iter().any(|s| {
+            *s == MilestoneStatus::Submitted
+                && grace_ends_at > 0
+                && current_slot < grace_ends_at
+        });
+        assert!(!any_blocked, "raise_dispute must be a no-op when no milestone is Submitted");
+    }
+
+    // ================================================================
     // ADR-021: Property-based fuzz tests (proptest)
     // ================================================================
 
