@@ -1719,8 +1719,12 @@ describe("Settlement Protocol Tests", () => {
         .signers([expProvider])
         .rpc();
 
-      // Short deadline: 5 seconds from now
-      const shortDeadline = new BN(Math.floor(Date.now() / 1000) + 5);
+      // AUD-055: Use the smallest future deadline accepted by `create_escrow`
+      // (`require!(deadline > now)`). The C1 test below polls the on-chain
+      // clock until `now > deadline` rather than waiting wall-clock seconds,
+      // so this only needs to be far enough ahead that the in-`before`
+      // submit_milestone calls (`require!(now <= deadline)`) still land in time.
+      const shortDeadline = new BN(Math.floor(Date.now() / 1000) + 2);
 
       const milestonesData = [
         createMilestoneData(500000n, Buffer.alloc(32, 1)),
@@ -1795,8 +1799,22 @@ describe("Settlement Protocol Tests", () => {
     });
 
     it("C1: should auto-pay Submitted milestones to provider on expiry (silence = acceptance)", async () => {
-      // Wait for deadline to pass
-      await new Promise((resolve) => setTimeout(resolve, 6000));
+      // AUD-055: Poll the on-chain clock until `now > escrow.deadline` rather
+      // than burning a fixed 6s wall-clock wait. `expire_escrow` checks
+      // `clock.unix_timestamp > escrow.deadline`, so we wait on the same
+      // signal the program checks. Slots advance ~400ms apart on
+      // solana-test-validator, so this typically returns in ~2 polls.
+      const escrowAcct = await program.account.taskEscrow.fetch(expEscrowPDA);
+      const deadline = escrowAcct.deadline.toNumber();
+      // Generous bound vs fixed sleep: still flake-resistant, but tied to a
+      // real on-chain condition rather than a wall-clock guess.
+      const pollDeadline = Date.now() + 30_000;
+      while (Date.now() < pollDeadline) {
+        const slot = await connection.getSlot("confirmed");
+        const chainTime = await connection.getBlockTime(slot);
+        if (chainTime !== null && chainTime > deadline) break;
+        await new Promise((resolve) => setImmediate(resolve));
+      }
 
       const [provProfilePDA] = deriveAgentProfilePDA(expProvider.publicKey);
 
