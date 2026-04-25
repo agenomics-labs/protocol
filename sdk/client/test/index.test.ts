@@ -71,14 +71,38 @@ test("PROGRAM_IDS re-export contains expected clusters", () => {
   assert.ok("localnet" in PROGRAM_IDS);
 });
 
-// --- deriveAgentProfilePda placeholder ---
+// --- deriveAgentProfilePda ---
 
-test("AepClient.deriveAgentProfilePda throws NotImplemented error", () => {
+test("AepClient.deriveAgentProfilePda returns a base58 string for a valid pubkey", () => {
   const client = new AepClient({
     cluster: "devnet",
     rpcUrl: "https://api.devnet.solana.com",
   });
-  assert.throws(() => client.deriveAgentProfilePda("somePubkey"), {
-    message: /deriveAgentProfilePda/,
+  // SystemProgram ID as a known valid base58 pubkey
+  const systemProgram = "11111111111111111111111111111111";
+  const pda = client.deriveAgentProfilePda(systemProgram, 0n);
+  assert.equal(typeof pda, "string");
+  assert.ok(pda.length >= 32 && pda.length <= 44, "PDA should be a valid base58 key");
+});
+
+test("AepClient.deriveAgentProfilePda defaults nonce to 0n", () => {
+  const client = new AepClient({
+    cluster: "devnet",
+    rpcUrl: "https://api.devnet.solana.com",
   });
+  const systemProgram = "11111111111111111111111111111111";
+  const pda0 = client.deriveAgentProfilePda(systemProgram);
+  const pdaExplicit = client.deriveAgentProfilePda(systemProgram, 0n);
+  assert.equal(pda0, pdaExplicit);
+});
+
+test("AepClient.deriveAgentProfilePda produces different PDAs for different nonces", () => {
+  const client = new AepClient({
+    cluster: "devnet",
+    rpcUrl: "https://api.devnet.solana.com",
+  });
+  const systemProgram = "11111111111111111111111111111111";
+  const pda0 = client.deriveAgentProfilePda(systemProgram, 0n);
+  const pda1 = client.deriveAgentProfilePda(systemProgram, 1n);
+  assert.notEqual(pda0, pda1);
 });
