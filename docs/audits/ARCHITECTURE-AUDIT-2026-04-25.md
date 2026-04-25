@@ -48,7 +48,27 @@ Findings use `AUD-NNN` (this audit batch). Future audits prefix with date: `AUD-
 | **AUD-050** | A | ADR-031 → ADR-080 unannotated supersession | PR-B | `1891f4a` |
 | **AUD-072** | A | SUMMARY documents `execute_program_call` (deleted by ADR-050) | PR-E | `6941869` |
 
-**15 findings closed** (1 Critical, 4 High, 3 Medium, 2 Low, 1 Info, 4 Architecture). Critical C1/C2 (AUD-001/AUD-002 reputation), C4 (AUD-004 status laundering), and C5 (AUD-005 governance front-run) remain open — they need design decisions documented in `REMEDIATION-PLAN.md` (PR-G, PR-H, PR-I).
+**15 findings closed initially.** Phase 3 (the design-locked critical/high batch) closes the remaining critical findings.
+
+## Phase 3 closures (2026-04-25, after design review)
+
+| ID | Sev | Title | PR | Commit |
+|---|---|---|---|---|
+| **AUD-001** | C | `ProposeReputationDelta` PDA missing `owner_nonce` seed | PR-G | `0a02850` |
+| **AUD-002** | C | Settlement→Registry CPI uses unbounded legacy `update_reputation` | PR-G | `0a02850` (legacy path removed) |
+| **AUD-004** | C | Reputation laundering via self-Suspended + clear_suspension | PR-I | `31586e9` (cumulative slash_count + cleared_count escalation) |
+| **AUD-005** | C | `initialize_protocol_config` permissionless | PR-H | `5aa2f85` (gated to upgrade authority via `BpfLoaderUpgradeable::ProgramData`) |
+| **AUD-008** | H | Vault user-supplied `profile_nonce` | PR-J | `a1c40da` (OwnerNonce account from Registry) |
+| **AUD-065** | A | Two parallel reputation paths in production | PR-G | `0a02850` (legacy `update_reputation` removed; single canonical path) |
+
+Plus: closed-state-machine invariant `assert_valid_profile()` enforced post-mutation in every reputation/status writer AND post-migration in `migrate_agent_profile`. Activated in `dab8ec7` after PR-I + PR-G both landed.
+
+**21 findings closed total.** 4 of 5 Critical findings now Fixed (the remaining "C" ID, AUD-003, was closed in the initial batch). All 4 design-blocked criticals + the load-bearing High (AUD-008) merged.
+
+**Behavior changes worth noting**:
+- Default reputation deltas adjusted to fit the new `|delta| <= 10` policy: `task_completed` 50 → 10, `dispute_loss` -25 → -5, `expiry_undelivered` -10 → -3 (governance-tunable post-init via `update_protocol_config`).
+- `clear_suspension` is now terminal at the third clear (status → Retired), not just costly — agent no longer loops indefinitely.
+- Vault initialization now requires prior agent registration (no more "vault before profile").
 
 **Follow-up surfaced by PR-E** (not yet closed): stale "20 tools" mentions in `docs/index.md`, `docs/api-reference.md`, `docs/getting-started.md`, `docs/integration-guide.md`. `docs/SECURITY_AUDIT.md` and `docs/AUDIT_SCOPE.md` still describe `execute_program_call` as live security surface — real correctness drift, queue as PR-DD.
 
