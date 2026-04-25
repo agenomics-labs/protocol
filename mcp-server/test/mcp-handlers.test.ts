@@ -94,6 +94,15 @@ function deriveAgentProfilePDA(authority: PublicKey): [PublicKey, number] {
   );
 }
 
+// AUD-008 / PR-J: vault `initialize_vault` requires the Registry's
+// `OwnerNonce` PDA. Seeds `[authority, "owner-nonce"]`.
+function deriveOwnerNoncePDA(authority: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [authority.toBuffer(), Buffer.from("owner-nonce")],
+    REGISTRY_PROGRAM_ID
+  );
+}
+
 function deriveEscrowPDA(
   client: PublicKey,
   provider: PublicKey,
@@ -202,6 +211,31 @@ describe("MCP Vault Handlers", () => {
 
   it("create_vault: initializes vault with policies", async () => {
     [vaultPDA] = deriveVaultPDA(agent.publicKey);
+    const [ownerNoncePDA] = deriveOwnerNoncePDA(agent.publicKey);
+    const [agentProfilePDA] = deriveAgentProfilePDA(agent.publicKey);
+
+    // AUD-008 / PR-J: vault init now requires the Registry's `OwnerNonce`
+    // PDA to exist, so we register the agent here before init. The
+    // "MCP Registry Handlers" describe below was previously running this
+    // step AFTER vault init; PR-J flips the dependency.
+    await registryProgram.methods
+      .registerAgent(
+        "TestAgent",
+        "A test AI agent for integration testing",
+        "testing",
+        ["analysis", "trading"],
+        { perTask: {} },
+        new BN(100_000),
+        [tokenMint]
+      )
+      .accounts({
+        authority: agent.publicKey,
+        agentProfile: agentProfilePDA,
+        vault: vaultPDA,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([agent])
+      .rpc();
 
     const sig = await vaultProgram.methods
       .initializeVault(
@@ -213,6 +247,7 @@ describe("MCP Vault Handlers", () => {
       .accounts({
         vault: vaultPDA,
         authority: agent.publicKey,
+        ownerNonce: ownerNoncePDA,
         systemProgram: SystemProgram.programId,
       })
       .signers([agent])
@@ -344,29 +379,12 @@ describe("MCP Registry Handlers", () => {
   let agentProfilePDA: PublicKey;
 
   it("register_agent: registers agent with full profile", async () => {
+    // AUD-008 / PR-J: the `register_agent` call for `agent` was moved up
+    // into the vault test's `create_vault` step (vault init now depends on
+    // the Registry's OwnerNonce PDA existing). This test verifies the
+    // already-registered profile rather than re-issuing `register_agent`,
+    // which would fail with "account already in use".
     [agentProfilePDA] = deriveAgentProfilePDA(agent.publicKey);
-
-    const [agentVaultPDA] = deriveVaultPDA(agent.publicKey);
-    const sig = await registryProgram.methods
-      .registerAgent(
-        "TestAgent",
-        "A test AI agent for integration testing",
-        "testing",
-        ["analysis", "trading"],
-        { perTask: {} },
-        new BN(100_000),
-        [tokenMint]
-      )
-      .accounts({
-        authority: agent.publicKey,
-        agentProfile: agentProfilePDA,
-        vault: agentVaultPDA,
-        systemProgram: SystemProgram.programId,
-      })
-      .signers([agent])
-      .rpc();
-
-    expect(sig).to.be.a("string");
 
     const profile = await (registryProgram.account as any).agentProfile.fetch(
       agentProfilePDA

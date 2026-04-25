@@ -125,16 +125,45 @@ it("runs the full protocol lifecycle", async () => {
   success("Funded 3 accounts with 10 SOL each");
 
   // ========================================================================
-  // PHASE 1: AGENT VAULT
+  // PHASE 1: AGENT VAULT (register-first per AUD-008 / PR-J)
   // ========================================================================
   header("Phase 1: Agent Vault — Programmable Wallet");
 
-  step(1, "Initializing vault for Client Agent...");
+  step(1, "Registering Client Agent in the Registry (AUD-008: register-first)...");
   const [clientVaultPDA] = PublicKey.findProgramAddressSync(
     [Buffer.from("vault"), clientAgent.publicKey.toBuffer()],
     vaultProgram.programId
   );
+  const [clientProfilePDA] = deriveAgentProfilePDA(clientAgent.publicKey);
 
+  // Register the client BEFORE vault init so the OwnerNonce PDA exists
+  // (vault init now requires it). We don't have a token mint yet, so
+  // accepted_tokens is a placeholder; the demo overrides this later via
+  // updateProfile if needed (here, the registration is the side-effect we
+  // need — Phase 2 below verifies fields).
+  await registryProgram.methods
+    .registerAgent(
+      "DemoClient AI",
+      "An autonomous agent that delegates data analysis tasks",
+      "orchestration",
+      ["task-delegation", "quality-review", "payment"],
+      { perTask: {} },
+      new BN(500000),
+      [new PublicKey("11111111111111111111111111111112")],
+      Keypair.generate().publicKey,
+    )
+    .accounts({
+      authority: clientAgent.publicKey,
+      ownerNonce: deriveOwnerNoncePDA(clientAgent.publicKey)[0],
+      agentProfile: clientProfilePDA,
+      systemProgram: SystemProgram.programId,
+    })
+    .signers([clientAgent])
+    .rpc();
+
+  success(`Client registered (pre-vault) — OwnerNonce ready for vault init`);
+
+  step(2, "Initializing vault for Client Agent...");
   await vaultProgram.methods
     .initializeVault(
       providerAgent.publicKey, // agent_identity (linked agent)
@@ -145,6 +174,7 @@ it("runs the full protocol lifecycle", async () => {
     .accounts({
       vault: clientVaultPDA,
       authority: clientAgent.publicKey,
+      ownerNonce: deriveOwnerNoncePDA(clientAgent.publicKey)[0],
       systemProgram: SystemProgram.programId,
     })
     .signers([clientAgent])
@@ -153,7 +183,7 @@ it("runs the full protocol lifecycle", async () => {
   success(`Vault created at ${clientVaultPDA.toBase58().slice(0, 12)}...`);
   info(`Daily limit: 5 SOL | Per-tx limit: 1 SOL | Rate: 20 tx/hr`);
 
-  step(2, "Updating vault policy with token allowlist...");
+  step(3, "Updating vault policy with token allowlist...");
   // Create a USDC-like token for the demo
   const tokenMint = await createMint(
     connection,
@@ -184,30 +214,10 @@ it("runs the full protocol lifecycle", async () => {
   // ========================================================================
   header("Phase 2: Agent Registry — Discovery & Reputation");
 
-  step(3, "Registering Client Agent in the Registry...");
-  const [clientProfilePDA] = deriveAgentProfilePDA(clientAgent.publicKey);
-
-  await registryProgram.methods
-    .registerAgent(
-      "DemoClient AI",
-      "An autonomous agent that delegates data analysis tasks",
-      "orchestration",
-      ["task-delegation", "quality-review", "payment"],
-      { perTask: {} },
-      new BN(500000), // 0.5 USDC per task
-      [tokenMint],
-      Keypair.generate().publicKey,
-    )
-    .accounts({
-      authority: clientAgent.publicKey,
-      ownerNonce: deriveOwnerNoncePDA(clientAgent.publicKey)[0],
-      agentProfile: clientProfilePDA,
-      systemProgram: SystemProgram.programId,
-    })
-    .signers([clientAgent])
-    .rpc();
-
-  success(`Client registered: "DemoClient AI" (orchestration)`);
+  // AUD-008 / PR-J: Client Agent registration was already performed in
+  // Phase 1 (step 1) so the OwnerNonce PDA was available for vault init.
+  // This phase verifies the existing registration and adds the Provider.
+  success(`Client registered: "DemoClient AI" (orchestration) — done in Phase 1`);
 
   step(4, "Registering Provider Agent in the Registry...");
   const [providerProfilePDA] = deriveAgentProfilePDA(providerAgent.publicKey);

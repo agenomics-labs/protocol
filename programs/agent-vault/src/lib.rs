@@ -22,19 +22,21 @@ pub mod agent_vault {
     /// The vault authority is set to the signer, who has control over policy updates and pause/resume.
     /// The agent identity is linked to this vault for on-chain reputation tracking.
     ///
-    /// ADR-095 / ADR-097: `profile_nonce` is the registration nonce of the
-    /// authority's current `AgentProfile` PDA (read from the `OwnerNonce`
-    /// account before calling this instruction). It is stored on-chain so
-    /// `execute_transfer` / `execute_token_transfer` can re-derive the
-    /// correct profile address for the suspension check without requiring
-    /// the client to supply it on every transfer.
+    /// ADR-095 / ADR-097 / AUD-008 (PR-J): `profile_nonce` is sourced from
+    /// the authority's `OwnerNonce` PDA in the Registry program (passed as
+    /// the `owner_nonce` account on the context). The account MUST already
+    /// exist — vault initialization requires prior `register_agent`. The
+    /// nonce is stored on-chain so `execute_transfer` /
+    /// `execute_token_transfer` can re-derive the correct profile address
+    /// for the suspension check without requiring the client to supply it.
+    /// The pre-PR-J `profile_nonce: u64` argument has been removed; passing
+    /// a stale or wrong scalar previously bricked transfers (AUD-008).
     pub fn initialize_vault(
         ctx: Context<InitializeVault>,
         agent_identity: Pubkey,
         daily_limit_lamports: u64,
         per_tx_limit_lamports: u64,
         max_txs_per_hour: u32,
-        profile_nonce: u64,
     ) -> Result<()> {
         instructions::initialize_vault(
             ctx,
@@ -42,7 +44,6 @@ pub mod agent_vault {
             daily_limit_lamports,
             per_tx_limit_lamports,
             max_txs_per_hour,
-            profile_nonce,
         )
     }
 

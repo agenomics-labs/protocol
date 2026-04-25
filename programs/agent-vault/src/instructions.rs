@@ -12,7 +12,6 @@ pub fn initialize_vault(
     daily_limit_lamports: u64,
     per_tx_limit_lamports: u64,
     max_txs_per_hour: u32,
-    profile_nonce: u64,
 ) -> Result<()> {
     let vault = &mut ctx.accounts.vault;
     let clock = Clock::get()?;
@@ -27,10 +26,14 @@ pub fn initialize_vault(
     vault.rate_limit_window_start = clock.unix_timestamp;
     vault.token_spend_records = vec![];
     vault.bump = ctx.bumps.vault;
-    // ADR-095 / ADR-097: record the profile nonce so that execute_transfer
-    // and execute_token_transfer can re-derive the correct agent_profile PDA
-    // for the suspension check without requiring the caller to supply it.
-    vault.profile_nonce = profile_nonce;
+    // ADR-095 / ADR-097 / AUD-008 (PR-J): record the profile nonce sourced
+    // from the Registry's authoritative `OwnerNonce` PDA. Previously the
+    // caller supplied this as a `u64` argument, allowing a stale or wrong
+    // value to brick downstream `agent_profile` lookups in
+    // `execute_transfer` / `execute_token_transfer`. The seeds constraint
+    // on `owner_nonce` enforces register-first (the PDA must already exist
+    // in Registry) and binds the account to `authority` via PDA derivation.
+    vault.profile_nonce = ctx.accounts.owner_nonce.nonce;
 
     emit!(VaultInitialized {
         vault: ctx.accounts.vault.key(),

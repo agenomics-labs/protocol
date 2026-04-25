@@ -475,12 +475,15 @@
         "The vault authority is set to the signer, who has control over policy updates and pause/resume.",
         "The agent identity is linked to this vault for on-chain reputation tracking.",
         "",
-        "ADR-095 / ADR-097: `profile_nonce` is the registration nonce of the",
-        "authority's current `AgentProfile` PDA (read from the `OwnerNonce`",
-        "account before calling this instruction). It is stored on-chain so",
-        "`execute_transfer` / `execute_token_transfer` can re-derive the",
-        "correct profile address for the suspension check without requiring",
-        "the client to supply it on every transfer."
+        "ADR-095 / ADR-097 / AUD-008 (PR-J): `profile_nonce` is sourced from",
+        "the authority's `OwnerNonce` PDA in the Registry program (passed as",
+        "the `owner_nonce` account on the context). The account MUST already",
+        "exist — vault initialization requires prior `register_agent`. The",
+        "nonce is stored on-chain so `execute_transfer` /",
+        "`execute_token_transfer` can re-derive the correct profile address",
+        "for the suspension check without requiring the client to supply it.",
+        "The pre-PR-J `profile_nonce: u64` argument has been removed; passing",
+        "a stale or wrong scalar previously bricked transfers (AUD-008)."
       ],
       "discriminator": [
         48,
@@ -521,6 +524,90 @@
           "signer": true
         },
         {
+          "name": "owner_nonce",
+          "docs": [
+            "AUD-008 / ADR-097: MUST exist — vault initialization requires prior",
+            "agent registration. Sources `vault.profile_nonce` from the Registry's",
+            "authoritative `OwnerNonce` account, eliminating the user-supplied",
+            "scalar that could brick transfers.",
+            "",
+            "The seeds constraint `[authority.key().as_ref(), b\"owner-nonce\"]`",
+            "under `agent_registry::ID` simultaneously:",
+            "1. Enforces existence (Anchor fails to deserialize if the account is",
+            "not initialized, surfacing `AccountNotInitialized`).",
+            "2. Closes cross-account reuse: an attacker cannot pass another",
+            "user's `OwnerNonce` account because PDA derivation is keyed on",
+            "`authority.key()`. Substituting a foreign account fails",
+            "`ConstraintSeeds`.",
+            "",
+            "`OwnerNonce` has only `nonce: u64`; a field-level",
+            "`owner_nonce.authority == authority.key()` check is unavailable and",
+            "unnecessary because the seeds derivation already binds the account",
+            "to `authority`."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114,
+                  45,
+                  110,
+                  111,
+                  110,
+                  99,
+                  101
+                ]
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                111,
+                73,
+                24,
+                49,
+                52,
+                190,
+                122,
+                126,
+                199,
+                7,
+                50,
+                181,
+                32,
+                117,
+                156,
+                113,
+                255,
+                182,
+                22,
+                1,
+                161,
+                163,
+                9,
+                83,
+                218,
+                73,
+                82,
+                170,
+                121,
+                206,
+                92,
+                240
+              ]
+            }
+          }
+        },
+        {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
         }
@@ -541,10 +628,6 @@
         {
           "name": "max_txs_per_hour",
           "type": "u32"
-        },
-        {
-          "name": "profile_nonce",
-          "type": "u64"
         }
       ]
     },
@@ -890,6 +973,19 @@
         87,
         86,
         205
+      ]
+    },
+    {
+      "name": "OwnerNonce",
+      "discriminator": [
+        44,
+        80,
+        115,
+        195,
+        32,
+        200,
+        29,
+        163
       ]
     },
     {
@@ -1368,6 +1464,30 @@
           {
             "name": "action",
             "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OwnerNonce",
+      "docs": [
+        "ADR-097: Per-owner monotonic nonce counter.",
+        "",
+        "Seeded by `[authority.key().as_ref(), b\"owner-nonce\"]`.",
+        "Initialized to 0 on first `register_agent` (via `init_if_needed`).",
+        "Incremented by `deregister_agent` so subsequent registrations derive a",
+        "different `agent_profile` PDA, preventing Sybil address reuse."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "nonce",
+            "docs": [
+              "The current nonce value. Used as part of the `agent_profile` PDA seed",
+              "on `register_agent`. Incremented on `deregister_agent`."
+            ],
+            "type": "u64"
           }
         ]
       }
