@@ -2231,4 +2231,384 @@ describe("Settlement Protocol Tests", () => {
       expect(escrow.status.active).to.be.ok;
     });
   });
+
+  // ============================================================================
+  // AUD-018: raise_dispute grace gate (ADR-102 applied to dispute path)
+  // ============================================================================
+  //
+  // Pre-fix, a client could `raise_dispute` immediately after the provider's
+  // `submit_milestone` landed, front-running the approval and forcing the
+  // resolver path. The resolver-path slash (`reputation_delta_dispute_loss`)
+  // would then sidestep the grace window that `expire_escrow` already honours.
+  //
+  // The fix mirrors the `expire_escrow` guard inside `raise_dispute`: any
+  // Submitted milestone whose grace window has not yet elapsed blocks the
+  // dispute with `MilestoneInGracePeriod`.
+  describe("AUD-018: raise_dispute grace gate", () => {
+    // Per-test escrow scaffolding so each scenario is isolated.
+    async function setupGraceEscrow(taskIdNum: number) {
+      const c = Keypair.generate();
+      const p = Keypair.generate();
+
+      const airdropAmount = 10 * LAMPORTS_PER_SOL;
+      for (const kp of [c, p]) {
+        const sig = await connection.requestAirdrop(kp.publicKey, airdropAmount);
+        await connection.confirmTransaction(sig);
+      }
+
+      const cTA = await getOrCreateTokenAccount(c.publicKey, c);
+      const pTA = await getOrCreateTokenAccount(p.publicKey, c);
+      await mintTo(connection, mintAuthority, tokenMint, cTA, mintAuthority.publicKey, 10000000n);
+
+      // Register provider in Agent Registry (required for any CPI reputation
+      // update path; not strictly needed for raise_dispute but keeps fixture
+      // consistent with sibling tests in case the test grows downstream).
+      const registryProgram = anchor.workspace.AgentRegistry as Program;
+      const [profilePDA] = deriveAgentProfilePDA(p.publicKey);
+      await registryProgram.methods
+        .registerAgent(
+          "AUD-018 Provider",
+          "Grace gate test provider",
+          "grace-testing",
+          ["task-execution"],
+          { perTask: {} },
+          new BN(100000),
+          [tokenMint]
+        )
+        .accounts({
+          authority: p.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(p.publicKey)[0],
+          agentProfile: profilePDA,
+          vault: deriveVaultPDA(p.publicKey)[0],
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([p])
+        .rpc();
+
+      const taskId = new BN(taskIdNum);
+      const [escrowPDA] = await deriveEscrowPDA(c.publicKey, p.publicKey, taskId);
+      const escrowTA = deriveEscrowTokenAccount(escrowPDA);
+
+      // 7-day deadline so the deadline guard never trips during a fast-grace test.
+      const milestonesData = [createMilestoneData(1000000n, Buffer.alloc(32, 7))];
+      await program.methods
+        .createEscrow(taskId, new BN(1000000), Buffer.alloc(32), FUTURE_DEADLINE, milestonesData, null)
+        .accounts({
+          client: c.publicKey,
+          clientVault: vaultFor(c.publicKey),
+          providerVault: vaultFor(p.publicKey),
+          protocolConfig: PROTOCOL_CONFIG_PDA,
+          provider: p.publicKey,
+          tokenMint: tokenMint,
+          clientTokenAccount: cTA,
+          escrow: escrowPDA,
+          escrowTokenAccount: escrowTA,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        })
+        .signers([c])
+        .rpc();
+
+      await program.methods.acceptTask()
+        .accounts({ provider: p.publicKey, escrow: escrowPDA })
+        .signers([p]).rpc();
+
+      return { client: c, provider: p, escrowPDA };
+    }
+
+    it("Negative — within grace: raise_dispute reverts with MilestoneInGracePeriod", async () => {
+      const { client: c, provider: p, escrowPDA } = await setupGraceEscrow(2018);
+
+      // Submit with a long grace window so the dispute attempt below is
+      // guaranteed to land inside it (validator slots are ~400ms apart;
+      // 5_000 slots ≈ 30+ minutes — safely longer than any test runtime).
+      const gracePeriodSlots = new BN(5000);
+      await program.methods
+        .submitMilestone(new BN(0), gracePeriodSlots)
+        .accounts({ provider: p.publicKey, escrow: escrowPDA })
+        .signers([p])
+        .rpc();
+
+      try {
+        await program.methods.raiseDispute()
+          .accounts({ requester: c.publicKey, escrow: escrowPDA })
+          .signers([c])
+          .rpc();
+        expect.fail("Should have thrown MilestoneInGracePeriod error");
+      } catch (error: any) {
+        expect(error).to.exist;
+        expect(error.toString()).to.include("MilestoneInGracePeriod");
+      }
+
+      // Escrow must remain Active — the dispute did not transition state.
+      const escrow = await program.account.taskEscrow.fetch(escrowPDA);
+      expect(escrow.status.active).to.be.ok;
+      expect(escrow.disputedAt).to.be.null;
+    });
+
+    it("Happy — grace elapsed: raise_dispute succeeds once slot >= grace_ends_at", async () => {
+      const { client: c, provider: p, escrowPDA } = await setupGraceEscrow(2019);
+
+      // Tight grace window so we can poll past it without burning seconds.
+      // 2 slots ≈ 800ms on solana-test-validator.
+      const gracePeriodSlots = new BN(2);
+      await program.methods
+        .submitMilestone(new BN(0), gracePeriodSlots)
+        .accounts({ provider: p.publicKey, escrow: escrowPDA })
+        .signers([p])
+        .rpc();
+
+      // Read the on-chain grace_ends_at the program just stamped, then poll
+      // the validator's slot until we cross it. This mirrors the polling
+      // pattern from PR-L (commit 0c7c794, AUD-055): wait on the same signal
+      // the program checks, not a wall-clock guess.
+      const fetched = await program.account.taskEscrow.fetch(escrowPDA);
+      const graceEndsAt = BigInt(fetched.milestones[0].graceEndsAt.toString());
+      // Generous bound; a 2-slot grace typically clears in <2s.
+      const pollDeadline = Date.now() + 30_000;
+      while (Date.now() < pollDeadline) {
+        const slot = BigInt(await connection.getSlot("confirmed"));
+        if (slot >= graceEndsAt) break;
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+
+      await program.methods.raiseDispute()
+        .accounts({ requester: c.publicKey, escrow: escrowPDA })
+        .signers([c])
+        .rpc();
+
+      const escrow = await program.account.taskEscrow.fetch(escrowPDA);
+      expect(escrow.status.disputed).to.be.ok;
+      expect(escrow.disputedAt).to.not.be.null;
+    });
+
+    it("No-Submitted milestones: raise_dispute is a no-op for the grace gate", async () => {
+      const { client: c, provider: p, escrowPDA } = await setupGraceEscrow(2020);
+
+      // Do NOT submit. The single milestone stays Pending; the grace gate
+      // iterates milestones and only blocks Submitted entries, so the
+      // dispute must succeed exactly as it did before AUD-018.
+      const before = await program.account.taskEscrow.fetch(escrowPDA);
+      expect(before.milestones[0].status.pending).to.be.ok;
+
+      await program.methods.raiseDispute()
+        .accounts({ requester: c.publicKey, escrow: escrowPDA })
+        .signers([c])
+        .rpc();
+
+      const escrow = await program.account.taskEscrow.fetch(escrowPDA);
+      expect(escrow.status.disputed).to.be.ok;
+      expect(escrow.disputedAt).to.not.be.null;
+    });
+  });
+
+  // ============================================================================
+  // AUD-024: escrow deadline upper bound (365-day cap)
+  // ============================================================================
+  //
+  // Closes audit finding AUD-024: `create_escrow` previously had no upper
+  // bound on `deadline`, so a client could pass `i64::MAX` and lock funds
+  // effectively forever (`expire_escrow` only fires once `now > deadline`).
+  // The fix in `instructions/escrow.rs` adds:
+  //   require!(deadline <= now + MAX_ESCROW_DEADLINE_SECS, DeadlineTooFar);
+  // where `MAX_ESCROW_DEADLINE_SECS = 365 * 24 * 60 * 60`.
+  //
+  // We exercise three points on the curve: just past the cap (reject), one
+  // minute under the cap (accept), and exactly at the cap (accept, per `<=`).
+  describe("AUD-024: escrow deadline upper bound", () => {
+    const ONE_DAY_SECS = 24 * 60 * 60;
+    const MAX_ESCROW_DEADLINE_SECS = 365 * ONE_DAY_SECS;
+
+    let aud024Client: Keypair;
+    let aud024Provider: Keypair;
+    let aud024ClientTA: PublicKey;
+
+    before(async () => {
+      aud024Client = Keypair.generate();
+      aud024Provider = Keypair.generate();
+
+      const airdropAmount = 10 * LAMPORTS_PER_SOL;
+      for (const keypair of [aud024Client, aud024Provider]) {
+        const sig = await connection.requestAirdrop(
+          keypair.publicKey,
+          airdropAmount
+        );
+        await connection.confirmTransaction(sig);
+      }
+
+      aud024ClientTA = await getOrCreateTokenAccount(
+        aud024Client.publicKey,
+        aud024Client
+      );
+
+      await mintTo(
+        connection,
+        mintAuthority,
+        tokenMint,
+        aud024ClientTA,
+        mintAuthority.publicKey,
+        10_000_000n
+      );
+    });
+
+    it("rejects deadline = now + 366 days (DeadlineTooFar)", async () => {
+      const taskId = new BN(2400);
+      const escrowPDA = (
+        await deriveEscrowPDA(
+          aud024Client.publicKey,
+          aud024Provider.publicKey,
+          taskId
+        )
+      )[0];
+      const escrowTA = deriveEscrowTokenAccount(escrowPDA);
+      const milestonesData = [createMilestoneData(1_000_000n)];
+
+      const tooFarDeadline = new BN(
+        Math.floor(Date.now() / 1000) + 366 * ONE_DAY_SECS
+      );
+
+      try {
+        await program.methods
+          .createEscrow(
+            taskId,
+            new BN(1_000_000),
+            Buffer.alloc(32),
+            tooFarDeadline,
+            milestonesData,
+            null
+          )
+          .accounts({
+            client: aud024Client.publicKey,
+            clientVault: vaultFor(aud024Client.publicKey),
+            providerVault: vaultFor(aud024Provider.publicKey),
+            provider: aud024Provider.publicKey,
+            protocolConfig: PROTOCOL_CONFIG_PDA,
+            tokenMint,
+            clientTokenAccount: aud024ClientTA,
+            escrow: escrowPDA,
+            escrowTokenAccount: escrowTA,
+            tokenProgram: TOKEN_PROGRAM_ID,
+            associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+            systemProgram: SystemProgram.programId,
+            rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+          })
+          .signers([aud024Client])
+          .rpc();
+        expect.fail("Should have thrown DeadlineTooFar error");
+      } catch (error: any) {
+        // Anchor surfaces the named code in the program logs.
+        const msg =
+          (error?.error?.errorCode?.code as string | undefined) ??
+          (error?.message as string | undefined) ??
+          "";
+        expect(msg).to.match(/DeadlineTooFar/);
+      }
+    });
+
+    it("accepts deadline just under the 365-day cap (boundary happy)", async () => {
+      const taskId = new BN(2401);
+      const escrowPDA = (
+        await deriveEscrowPDA(
+          aud024Client.publicKey,
+          aud024Provider.publicKey,
+          taskId
+        )
+      )[0];
+      const escrowTA = deriveEscrowTokenAccount(escrowPDA);
+      const milestonesData = [createMilestoneData(1_000_000n)];
+
+      // 60 seconds under the cap leaves room for clock-drift between
+      // `Date.now()` here and `Clock::get()?.unix_timestamp` on-chain.
+      const justUnderCap = new BN(
+        Math.floor(Date.now() / 1000) + MAX_ESCROW_DEADLINE_SECS - 60
+      );
+
+      await program.methods
+        .createEscrow(
+          taskId,
+          new BN(1_000_000),
+          Buffer.alloc(32),
+          justUnderCap,
+          milestonesData,
+          null
+        )
+        .accounts({
+          client: aud024Client.publicKey,
+          clientVault: vaultFor(aud024Client.publicKey),
+          providerVault: vaultFor(aud024Provider.publicKey),
+          provider: aud024Provider.publicKey,
+          protocolConfig: PROTOCOL_CONFIG_PDA,
+          tokenMint,
+          clientTokenAccount: aud024ClientTA,
+          escrow: escrowPDA,
+          escrowTokenAccount: escrowTA,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        })
+        .signers([aud024Client])
+        .rpc();
+
+      const escrow = await (program.account as any).taskEscrow.fetch(escrowPDA);
+      expect(escrow.deadline.toString()).to.equal(justUnderCap.toString());
+    });
+
+    it("accepts deadline exactly at the 365-day cap (<= constraint)", async () => {
+      const taskId = new BN(2402);
+      const escrowPDA = (
+        await deriveEscrowPDA(
+          aud024Client.publicKey,
+          aud024Provider.publicKey,
+          taskId
+        )
+      )[0];
+      const escrowTA = deriveEscrowTokenAccount(escrowPDA);
+      const milestonesData = [createMilestoneData(1_000_000n)];
+
+      // The on-chain check is `deadline <= now_onchain + cap`. From the
+      // client side we cannot observe `now_onchain` directly, so we use
+      // the local clock as the lower-bound estimate. Because `now_onchain`
+      // is monotonically non-decreasing relative to `Date.now()` at tx
+      // submission time (clusters' clocks track wall-time within seconds),
+      // `Math.floor(Date.now()/1000) + cap` is `<= now_onchain + cap`,
+      // which still satisfies the predicate. This is the "boundary
+      // boundary" case — equality at the moment of submission.
+      const atCap = new BN(
+        Math.floor(Date.now() / 1000) + MAX_ESCROW_DEADLINE_SECS
+      );
+
+      await program.methods
+        .createEscrow(
+          taskId,
+          new BN(1_000_000),
+          Buffer.alloc(32),
+          atCap,
+          milestonesData,
+          null
+        )
+        .accounts({
+          client: aud024Client.publicKey,
+          clientVault: vaultFor(aud024Client.publicKey),
+          providerVault: vaultFor(aud024Provider.publicKey),
+          provider: aud024Provider.publicKey,
+          protocolConfig: PROTOCOL_CONFIG_PDA,
+          tokenMint,
+          clientTokenAccount: aud024ClientTA,
+          escrow: escrowPDA,
+          escrowTokenAccount: escrowTA,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        })
+        .signers([aud024Client])
+        .rpc();
+
+      const escrow = await (program.account as any).taskEscrow.fetch(escrowPDA);
+      expect(escrow.deadline.toString()).to.equal(atCap.toString());
+    });
+  });
 });
