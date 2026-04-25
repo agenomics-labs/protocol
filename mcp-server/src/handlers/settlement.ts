@@ -203,9 +203,12 @@ export async function handleApproveMilestone(args: Record<string, unknown>) {
   const providerTokenAccount = parsePublicKey(
     requireString(args, "providerTokenAccount")
   );
-  // Finding #8: rating is plumbed into the reputation CPI so the registry's
-  // avg_rating actually updates. Defaults to 0 (no rating) to keep the old
-  // "approve without scoring" flow working.
+  // Finding #8 (legacy): rating used to fold into the registry's avg_rating
+  // via the CPI. AUD-007 (PR-Q) removed avg_rating from on-chain state, so
+  // the value now passes through the CPI and is validated by the registry's
+  // |delta| <= MAX_DELTA_PER_CALL guard but does not mutate any aggregate.
+  // We still accept the arg for forward-compat with a future rating ix.
+  // Defaults to 0 (no rating).
   const ratingNum = optionalNumber(args, "rating") ?? 0;
   if (!Number.isInteger(ratingNum) || ratingNum < 0 || ratingNum > 5) {
     throw new Error("rating must be an integer in 0..=5 (0 = no rating)");

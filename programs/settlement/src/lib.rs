@@ -53,11 +53,13 @@ pub mod settlement {
     /// Client approves a submitted milestone, releasing funds.
     ///
     /// `rating` (0..=5) is the client's per-task rating of the provider's
-    /// work. It is folded into `avg_rating` in the registry via the
-    /// reputation CPI when the final milestone of the escrow is approved.
-    /// Pass 0 when no rating is given; non-zero values below or above the
-    /// 0..=5 band are rejected with `InvalidRating`. See finding #8 in
-    /// ARCHITECTURE_DEEP_CRITIQUE.md for the pre-fix dead-state behavior.
+    /// work. AUD-007 (PR-Q): `avg_rating` was removed from the on-chain
+    /// `AgentProfile` because PR-G had already deleted the only writer
+    /// (`update_reputation`), leaving the field permanently zero and
+    /// misleading. The arg is retained on this instruction for forward
+    /// compatibility with a future dedicated rating instruction; non-zero
+    /// values below or above the 0..=5 band are rejected with `InvalidRating`,
+    /// but the value does NOT mutate any on-chain aggregate today.
     pub fn approve_milestone(
         ctx: Context<ApproveMilestone>,
         milestone_index: u32,

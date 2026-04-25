@@ -196,11 +196,13 @@ pub fn approve_milestone(
     milestone_index: u32,
     rating: u8,
 ) -> Result<()> {
-    // Finding #8: rating is plumbed to the registry CPI so `avg_rating` is
-    // actually populated. 0 means "no rating given" (backward-compatible with
-    // callers that don't want to score) and the registry skips the avg
-    // update when rating == 0. Anything over 5 is a user error, not a
-    // domain-level truth, so we reject it here rather than silently clamping.
+    // Finding #8 (legacy) / AUD-007 (PR-Q): rating used to be plumbed to
+    // the registry CPI so `avg_rating` populated. PR-G removed the only
+    // writer (`update_reputation`), and PR-Q removed `avg_rating` from the
+    // on-chain `AgentProfile`. The arg is kept for forward-compat with a
+    // future rating ix; we still reject out-of-band values (>5) so a
+    // future consumer can rely on the validation, but no aggregate is
+    // mutated today.
     require!(rating <= 5, SettlementError::InvalidRating);
 
     let index = milestone_index as usize;

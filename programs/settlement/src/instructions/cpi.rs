@@ -39,7 +39,7 @@ use anchor_lang::prelude::*;
 /// compiling without churn during this PR. A follow-up will trim them.
 /// They are unused in the new CPI (Registry no longer folds rating into
 /// `avg_rating` here — that side-effect was removed alongside the legacy
-/// instruction).
+/// instruction; AUD-007 / PR-Q subsequently removed the field itself).
 pub fn update_provider_reputation<'info>(
     _provider: Pubkey,
     _earnings: u64,

@@ -126,9 +126,13 @@ describe("Agent Registry Program Tests", () => {
       expect(agentProfile.vaultAddress.toString()).to.equal(testVaultAddress.toString());
       expect(agentProfile.status).to.have.property("active");
       expect(agentProfile.reputationScore.toNumber()).to.equal(0);
-      expect(agentProfile.totalTasksCompleted.toNumber()).to.equal(0);
-      expect(agentProfile.totalEarnings.toNumber()).to.equal(0);
-      expect(agentProfile.avgRating).to.equal(0);
+      // AUD-007 (PR-Q): `totalTasksCompleted`, `totalEarnings`, and `avgRating`
+      // were removed from `AgentProfile`. The IDL no longer carries them, so
+      // referencing them here would fail at decode time (or pull `undefined`
+      // through `.toNumber()` and explode).
+      expect(agentProfile).to.not.have.property("totalTasksCompleted");
+      expect(agentProfile).to.not.have.property("totalEarnings");
+      expect(agentProfile).to.not.have.property("avgRating");
       expect(agentProfile.bump).to.equal(agentProfileBump);
       expect(agentProfile.createdAt.toNumber()).to.be.greaterThan(0);
       expect(agentProfile.updatedAt.toNumber()).to.be.greaterThan(0);

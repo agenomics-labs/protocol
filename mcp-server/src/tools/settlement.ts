@@ -117,7 +117,7 @@ export const submitMilestoneTool: Tool = {
 export const approveMilestoneTool: Tool = {
   name: "approve_milestone",
   description:
-    "Approve a submitted milestone as the client. Releases the milestone payment to the provider's token account. An optional `rating` (0..=5) is folded into the provider's avg_rating in the registry when the final milestone is approved.",
+    "Approve a submitted milestone as the client. Releases the milestone payment to the provider's token account. An optional `rating` (0..=5) is accepted for forward compatibility with a future on-chain rating instruction; AUD-007 (PR-Q) removed `avg_rating` from `AgentProfile`, so the value is currently validated and emitted in events but does not mutate any on-chain aggregate.",
   inputSchema: {
     type: "object",
     properties: {
@@ -137,7 +137,7 @@ export const approveMilestoneTool: Tool = {
       rating: {
         type: "number",
         description:
-          "Optional 0..=5 star rating. 0 means no rating (default). Applied to the provider's avg_rating when the final milestone completes.",
+          "Optional 0..=5 star rating. 0 means no rating (default). AUD-007 (PR-Q): `avg_rating` was removed from on-chain `AgentProfile`; the value is accepted for forward-compat (future rating ix) and currently has no on-chain effect.",
         minimum: 0,
         maximum: 5,
       },

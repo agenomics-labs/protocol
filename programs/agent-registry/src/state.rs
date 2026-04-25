@@ -29,6 +29,20 @@ pub const MIGRATION_HEADROOM: usize = 64;
 ///  + 1 byte for ADR-096 version: u8 + 8 bytes for ADR-097 registration_nonce: u64
 ///  + 1 byte for AUD-004 cleared_count: u8 = 1415).
 ///
+/// AUD-007 (PR-Q): the legacy `total_tasks_completed: u64`, `total_earnings: u64`,
+/// and `avg_rating: u8` fields were removed. PR-G (AUD-001/002) had already
+/// deleted the only writer (`update_reputation`), so these fields had become
+/// permanently zero — misleading consumers that they represented real telemetry.
+/// Because the fields are NOT contiguous at the end of the struct (they sit
+/// between `reputation_score` and `created_at`), a clean removal would shift
+/// every subsequent field's serialization offset and silently corrupt every
+/// existing account on upgrade. We therefore retain a single 17-byte
+/// `_reserved_aud007` array of equivalent total size (8 + 8 + 1) at the same
+/// position to preserve the binary layout, while removing the fields from the
+/// public API. Future schema work (governance-owned rating ix, telemetry
+/// rework) MAY consume these reserved bytes via a dedicated migration; until
+/// then they are zero-padded and unread.
+///
 /// ADR-060 adds four manifest fields that point to an off-chain capability
 /// manifest (IPFS CIDv1 or Arweave tx ID). The on-chain fields are the
 /// integrity commitment; the manifest body is off-chain. M5 resolution:
@@ -50,7 +64,8 @@ pub const MIGRATION_HEADROOM: usize = 64;
 /// `0` on creation; incremented by `migrate_agent_profile`. New fields added
 /// in future upgrades must use zero-value defaults so that the
 /// `realloc::zero = true` constraint produces a valid initial state without
-/// explicit writes.
+/// explicit writes. AUD-007 (PR-Q) bumps the post-migration version to `1`
+/// to mark accounts that have crossed the dangling-aggregate removal.
 #[account]
 pub struct AgentProfile {
     pub authority: Pubkey,
@@ -64,9 +79,17 @@ pub struct AgentProfile {
     pub vault_address: Pubkey,
     pub status: AgentStatus,
     pub reputation_score: u64,
-    pub total_tasks_completed: u64,
-    pub total_earnings: u64,
-    pub avg_rating: u8,
+    /// AUD-007 (PR-Q) layout-preserving padding.
+    ///
+    /// Replaces the removed `total_tasks_completed: u64`,
+    /// `total_earnings: u64`, and `avg_rating: u8` fields (8 + 8 + 1 = 17
+    /// bytes total). Anchor serializes struct fields in declaration order, so
+    /// this array sits at the exact byte offsets the deleted fields occupied.
+    /// Existing accounts keep their on-disk layout; new accounts zero-init.
+    /// The bytes carry no semantics and are not read by any instruction.
+    /// Future PRs MAY repurpose this region via an explicit migration with a
+    /// version bump.
+    pub _reserved_aud007: [u8; 17],
     pub created_at: i64,
     pub updated_at: i64,
     pub reputation_stake: ReputationStake,
@@ -92,15 +115,19 @@ pub struct AgentProfile {
 }
 
 impl AgentProfile {
-    /// ADR-040 / ADR-096 / ADR-097 / AUD-004 explicit space calc. Do NOT drift
-    /// from the `space = ...` literal in `contexts.rs::RegisterAgent`.
+    /// ADR-040 / ADR-096 / ADR-097 / AUD-004 / AUD-007 explicit space calc.
+    /// Do NOT drift from the `space = ...` literal in
+    /// `contexts.rs::RegisterAgent`.
     ///
     /// Baseline (pre-ADR-060): 1243 bytes (see earlier history).
     /// ADR-060 additions: 64 + 32 + 64 + 2 = 162 bytes.
     /// ADR-096 addition: version u8 = 1 byte.
     /// ADR-097 addition: registration_nonce u64 = 8 bytes.
     /// AUD-004 addition: cleared_count u8 = 1 byte.
-    /// Total SPACE: 1415 bytes.
+    /// AUD-007 (PR-Q): replaced 17 bytes (8 + 8 + 1) of dangling fields with a
+    /// 17-byte `_reserved_aud007: [u8; 17]` padding array. Net delta = 0.
+    /// Total SPACE: 1415 bytes (unchanged across PR-Q on purpose — the
+    /// padding preserves the on-disk layout for existing accounts).
     ///
     /// RegisterAgent allocates 8 (discriminator) + SPACE + MIGRATION_HEADROOM
     /// (64) = 1487 bytes total on-chain.

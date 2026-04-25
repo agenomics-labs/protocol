@@ -220,8 +220,10 @@ export interface RegistrySnapshot {
   name: string;
   status: string;
   reputationScore: number;
-  totalTasksCompleted: number;
-  avgRating: number;
+  /** AUD-007 (PR-Q): `totalTasksCompleted` and `avgRating` were removed from
+   * the on-chain `AgentProfile`. PR-G had already deleted the only writer
+   * (`update_reputation`), making them permanently zero and misleading.
+   * Per-task telemetry now belongs exclusively to the indexer. */
   stakedAmountSol: number;
   slashCount: number;
 }
@@ -264,8 +266,7 @@ export function adaptRegistryProfile(
     name: profile.name,
     status: formatAgentStatus(profile.status),
     reputationScore: profile.reputationScore.toNumber(),
-    totalTasksCompleted: profile.totalTasksCompleted.toNumber(),
-    avgRating: profile.avgRating,
+    // AUD-007 (PR-Q): `totalTasksCompleted` and `avgRating` removed.
     stakedAmountSol: lamportsToSol(stake.stakedAmount.toNumber()),
     slashCount: stake.slashCount,
   };

@@ -611,8 +611,11 @@ describe("Settlement Protocol Tests", () => {
       expect(escrowTokenAccountInfo).to.be.ok;
 
       const [providerProfilePDA] = deriveAgentProfilePDA(provider_account.publicKey);
-      // Finding #8: rating arg is required; pass 4 so avg_rating is exercised
-      // end-to-end. The final milestone will then fold this into the registry.
+      // Finding #8 (legacy) / AUD-007 (PR-Q): rating arg is still required by
+      // the instruction signature for forward-compat with a future rating ix.
+      // PR-Q removed `avg_rating` from on-chain `AgentProfile`, so this value
+      // no longer mutates any aggregate; we pass 4 just to exercise the
+      // 0..=5 validation path end-to-end.
       const tx = await program.methods
         .approveMilestone(new BN(0), 4)
         .accounts({
@@ -659,8 +662,10 @@ describe("Settlement Protocol Tests", () => {
 
     it("should approve milestone 1, auto-completing escrow", async () => {
       const [providerProfilePDA] = deriveAgentProfilePDA(provider_account.publicKey);
-      // Final milestone: rating=5 triggers the avg_rating CPI fold in
-      // update_provider_reputation (see finding #8).
+      // Final milestone: rating=5. Pre-PR-Q this folded into the registry's
+      // `avg_rating` via update_provider_reputation. AUD-007 (PR-Q) removed
+      // `avg_rating` from on-chain state; the CPI still runs (it carries the
+      // bounded reputation_delta) but no rating aggregate is mutated.
       const tx = await program.methods
         .approveMilestone(new BN(1), 5)
         .accounts({

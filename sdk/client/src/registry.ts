@@ -101,8 +101,11 @@ export class AgentRegistryClient {
    * Fetch and decode an AgentProfile account.
    *
    * Returns the raw Anchor-decoded account object. Field names follow
-   * Anchor's camelCase convention (e.g. `reputationScore`, `totalTasksCompleted`).
-   * u64 / i64 fields are decoded as BN instances by Anchor.
+   * Anchor's camelCase convention (e.g. `reputationScore`). u64 / i64 fields
+   * are decoded as BN instances by Anchor. AUD-007 (PR-Q): the legacy
+   * `totalTasksCompleted`, `totalEarnings`, and `avgRating` aggregates were
+   * removed from the on-chain account; consumers must not assume they are
+   * present.
    *
    * @throws if the account does not exist or cannot be decoded.
    */

@@ -19,12 +19,23 @@ import type { AttestationReputation } from "./types.js";
  * We do NOT import the full Registry type here — `@agenomics/sas-resolver`
  * is decoupled from program types by design (Registry TS bindings
  * regen on Anchor IDL bumps; this package shouldn't).
+ *
+ * AUD-007 (PR-Q): the on-chain `total_tasks_completed` field was retired
+ * (PR-G had already deleted the only writer; the field had become
+ * permanently zero). We keep the property here as **optional** so the
+ * resolver can still render a task count when the caller has one from a
+ * different source (typically the indexer — ADR-061 §5 explicitly carves
+ * out per-task telemetry as the indexer's domain). The field is omitted
+ * for callers who only have on-chain Registry signals.
  */
 export interface RegistryReputationView {
   /** Registry-native `reputation_score`, 0..10000 bps. */
   reputation_score: number;
-  /** Registry-native task counter. */
-  total_tasks_completed: number;
+  /**
+   * Optional task counter. AUD-007 (PR-Q): no longer sourced from the
+   * on-chain Registry; comes from the indexer if at all.
+   */
+  total_tasks_completed?: number;
   /** Optional stake amount (lamports or basis points — caller chooses). */
   staked_amount?: number;
   /** Slash count (ADR-020). */
@@ -98,7 +109,12 @@ export function renderSideBySide(
   sas: AttestationReputation | undefined,
   now: number = Math.floor(Date.now() / 1000),
 ): { line1: string; line2: string } {
-  const line1 = `Registry: ${registry.reputation_score}/10000 (${registry.total_tasks_completed} tasks)`;
+  // AUD-007 (PR-Q): tasks count is now optional — render only when supplied.
+  const tasksSuffix =
+    typeof registry.total_tasks_completed === "number"
+      ? ` (${registry.total_tasks_completed} tasks)`
+      : "";
+  const line1 = `Registry: ${registry.reputation_score}/10000${tasksSuffix}`;
   if (!sas) {
     return { line1, line2: "SAS:      (no attestation)" };
   }

@@ -531,9 +531,9 @@ mod tests {
             vault_address: Pubkey::default(),
             status: AgentStatus::Suspended,
             reputation_score: 0,
-            total_tasks_completed: 0,
-            total_earnings: 0,
-            avg_rating: 0,
+            // AUD-007 (PR-Q): legacy aggregates removed; the bytes they
+            // occupied are now `_reserved_aud007` padding.
+            _reserved_aud007: [0u8; 17],
             created_at: 0,
             updated_at: 0,
             reputation_stake: ReputationStake { staked_amount: 0, slash_count: 3 },
@@ -642,9 +642,9 @@ mod tests {
             vault_address: Pubkey::default(),
             status: AgentStatus::Active,
             reputation_score: 100,
-            total_tasks_completed: 5,
-            total_earnings: 0,
-            avg_rating: 4,
+            // AUD-007 (PR-Q): legacy aggregates removed; the bytes they
+            // occupied are now `_reserved_aud007` padding.
+            _reserved_aud007: [0u8; 17],
             created_at: 0,
             updated_at: 0,
             reputation_stake: ReputationStake { staked_amount: 0, slash_count: 0 },
