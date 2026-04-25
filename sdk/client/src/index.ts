@@ -1,14 +1,91 @@
+/**
+ * @agenomics/client — TypeScript SDK for AEP on-chain programs.
+ *
+ * Provides ergonomic, typed wrappers around the three AEP Anchor programs:
+ *   - AgentRegistryClient  (agent-registry program)
+ *   - AgentVaultClient     (agent-vault program)
+ *   - SettlementClient     (settlement program)
+ *
+ * Also re-exports cluster-keyed program IDs from @agenomics/idl via AepClient,
+ * which is a lightweight config helper for bootstrapping connections.
+ *
+ * Quick start — program clients:
+ *
+ *   import { AgentRegistryClient, AgentStatus } from "@agenomics/client";
+ *   import { AnchorProvider, Idl } from "@coral-xyz/anchor";
+ *   import { PublicKey } from "@solana/web3.js";
+ *
+ *   // Load your IDL JSON (from target/idl/ or @agenomics/idl once ADR-099 matures)
+ *   import agentRegistryIdl from "./target/idl/agent_registry.json" assert { type: "json" };
+ *
+ *   const provider = AnchorProvider.env();
+ *   const REGISTRY_PROGRAM_ID = new PublicKey("8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh");
+ *   const registry = new AgentRegistryClient(
+ *     provider, agentRegistryIdl as Idl, REGISTRY_PROGRAM_ID
+ *   );
+ *
+ *   const pda = registry.profilePda(authority, 0n);
+ *   const profile = await registry.fetchProfile(authority, 0n);
+ *
+ * Quick start — cluster config helper:
+ *
+ *   import { AepClient } from "@agenomics/client";
+ *   const client = new AepClient({ cluster: "devnet", rpcUrl: "https://api.devnet.solana.com" });
+ *   const { agentRegistry, agentVault, settlement } = client.getProgramIds();
+ *
+ * See ADR-098 for design rationale.
+ */
+
+import { PublicKey } from "@solana/web3.js";
 import type { ProgramIds } from "@agenomics/idl";
 import { getProgramIds } from "@agenomics/idl";
 
+// ---------------------------------------------------------------------------
+// Re-export program clients
+// ---------------------------------------------------------------------------
+
+export { AgentRegistryClient } from "./registry.js";
+export { AgentVaultClient } from "./vault.js";
+export { SettlementClient } from "./settlement.js";
+
+// ---------------------------------------------------------------------------
+// Re-export shared types
+// ---------------------------------------------------------------------------
+
+export {
+  AgentStatus,
+  PricingModel,
+  EscrowStatus,
+  MilestoneStatus,
+  type ReputationStake,
+} from "./types.js";
+
+// ---------------------------------------------------------------------------
+// Re-exports from @agenomics/idl
+// ---------------------------------------------------------------------------
+
 export type { Cluster, ProgramIds } from "@agenomics/idl";
 export { getProgramIds, PROGRAM_IDS } from "@agenomics/idl";
+
+// ---------------------------------------------------------------------------
+// AepClient — lightweight config helper
+// ---------------------------------------------------------------------------
 
 export interface AepClientConfig {
   cluster: import("@agenomics/idl").Cluster;
   rpcUrl: string;
 }
 
+/**
+ * Lightweight cluster-config helper.
+ *
+ * Use this to resolve program IDs for a given cluster and bootstrap
+ * `AgentRegistryClient`, `AgentVaultClient`, and `SettlementClient`.
+ *
+ * For PDA derivation, use the typed client classes directly — they accept
+ * `PublicKey` arguments and use `PublicKey.findProgramAddressSync` under
+ * the hood.
+ */
 export class AepClient {
   private readonly programIds: ProgramIds;
   readonly rpcUrl: string;
@@ -23,28 +100,23 @@ export class AepClient {
   }
 
   /**
-   * Derives the agent profile PDA for the given owner public key.
+   * Derive the agent-profile PDA for a given owner public key (base58) and nonce.
    *
-   * This is a placeholder implementation. The real implementation requires
-   * `@solana/web3.js` (`PublicKey.findProgramAddressSync`) which is an
-   * optional peer dependency. Install `@solana/web3.js` and replace this
-   * body with:
+   * Seeds: [ ownerPubkey.toBytes(), "agent-profile", nonce as little-endian i64 ]
    *
-   * ```ts
-   * import { PublicKey } from "@solana/web3.js";
-   * const [pda] = PublicKey.findProgramAddressSync(
-   *   [Buffer.from("agent_profile"), new PublicKey(ownerPubkey).toBuffer()],
-   *   new PublicKey(this.programIds.agentRegistry),
-   * );
-   * return pda.toBase58();
-   * ```
+   * Returns the PDA as a base58-encoded string.
    */
-  deriveAgentProfilePda(ownerPubkey: string, nonce?: bigint): string {
-    void ownerPubkey;
-    void nonce;
-    throw new Error(
-      "deriveAgentProfilePda: install @solana/web3.js and implement " +
-        "PublicKey.findProgramAddressSync for this SDK scaffold.",
+  deriveAgentProfilePda(ownerPubkey: string, nonce: bigint = 0n): string {
+    const authority = new PublicKey(ownerPubkey);
+    const registryProgramId = new PublicKey(this.programIds.agentRegistry);
+    const [pda] = PublicKey.findProgramAddressSync(
+      [
+        authority.toBytes(),
+        Buffer.from("agent-profile"),
+        Buffer.from(new Uint8Array(new BigInt64Array([nonce]).buffer)),
+      ],
+      registryProgramId,
     );
+    return pda.toBase58();
   }
 }
