@@ -1,0 +1,1776 @@
+{
+  "address": "4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN",
+  "metadata": {
+    "name": "agent_vault",
+    "version": "0.1.0",
+    "spec": "0.1.0"
+  },
+  "instructions": [
+    {
+      "name": "add_program_allowlist",
+      "docs": [
+        "Adds a program to the vault's program allowlist. Only whitelisted programs can be invoked."
+      ],
+      "discriminator": [
+        78,
+        78,
+        120,
+        131,
+        21,
+        122,
+        101,
+        16
+      ],
+      "accounts": [
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "authority"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "vault"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "program_id",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "add_token_allowlist",
+      "docs": [
+        "Adds a token to the vault's allowlist with per-mint `per_tx_limit` and",
+        "`daily_limit` expressed in the token's base units (findings #13/#14).",
+        "Calling with an already-listed mint updates its limits without",
+        "resetting the current day's spent counter."
+      ],
+      "discriminator": [
+        10,
+        147,
+        35,
+        80,
+        97,
+        137,
+        126,
+        231
+      ],
+      "accounts": [
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "authority"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "vault"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "token_mint",
+          "type": "pubkey"
+        },
+        {
+          "name": "per_tx_limit",
+          "type": "u64"
+        },
+        {
+          "name": "daily_limit",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "execute_token_transfer",
+      "docs": [
+        "Executes an SPL token transfer from the vault's token account to a recipient.",
+        "Enforces token allowlist, rate limiting, the vault's pause state, and the",
+        "Registry suspension gate (ADR-095).",
+        "The vault PDA signs the transfer via CPI."
+      ],
+      "discriminator": [
+        56,
+        178,
+        89,
+        210,
+        83,
+        156,
+        33,
+        36
+      ],
+      "accounts": [
+        {
+          "name": "vault",
+          "docs": [
+            "ADR-093: Seeds use the externally-known `authority` account key rather",
+            "than `vault.authority` read from stored account data. The `has_one`",
+            "constraint verifies that `authority` matches `vault.authority`."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "authority"
+              }
+            ]
+          }
+        },
+        {
+          "name": "agent",
+          "docs": [
+            "The signer must be the agent authority or the vault authority."
+          ],
+          "signer": true
+        },
+        {
+          "name": "authority",
+          "docs": [
+            "The vault authority — used as a canonical PDA seed (ADR-093).",
+            "Not required to be a signer; the `agent` field carries the signature."
+          ],
+          "relations": [
+            "vault"
+          ]
+        },
+        {
+          "name": "agent_profile",
+          "docs": [
+            "ADR-095: The agent's Registry profile. Read-only cross-program account.",
+            "Suspension check is done in the instruction handler.",
+            "",
+            "`authority.key()` and `vault.profile_nonce`. The suspension check",
+            "is done explicitly in the instruction handler using `AgentStatus`."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.profile_nonce",
+                "account": "Vault"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                111,
+                73,
+                24,
+                49,
+                52,
+                190,
+                122,
+                126,
+                199,
+                7,
+                50,
+                181,
+                32,
+                117,
+                156,
+                113,
+                255,
+                182,
+                22,
+                1,
+                161,
+                163,
+                9,
+                83,
+                218,
+                73,
+                82,
+                170,
+                121,
+                206,
+                92,
+                240
+              ]
+            }
+          }
+        },
+        {
+          "name": "vault_token_account",
+          "docs": [
+            "The vault's token account (source of SPL tokens). Must be owned by the vault PDA."
+          ],
+          "writable": true
+        },
+        {
+          "name": "recipient_token_account",
+          "docs": [
+            "The recipient's token account.",
+            "",
+            "Constraints:",
+            "- Mint must match `vault_token_account.mint` (already-mitigated per",
+            "DEEP-AUDIT-2026-04-22 Audit 1 finding SEC-6 — retained as-is).",
+            "- ADR-072 (SEC-6): The recipient account must NOT be the vault's own",
+            "token account (the exact same account) AND its SPL owner must not",
+            "be the vault PDA. This blocks a self-transfer loop that would",
+            "otherwise let a griefer (or a compromised `agent_identity`) burn",
+            "rate-limit slots and exhaust the hourly window during incident",
+            "response — every self-transfer is a no-op at the token-program",
+            "layer but still increments `txs_in_current_window`.",
+            "",
+            "Note: the recipient-mint match was already present pre-ADR-072; the",
+            "recipient-owner / self-account checks are the net-new SEC-6 fix."
+          ],
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "execute_transfer",
+      "docs": [
+        "Executes a SOL transfer from the vault to a recipient.",
+        "Enforces spending limits, rate limiting, daily caps, and the Registry",
+        "suspension gate (ADR-095)."
+      ],
+      "discriminator": [
+        233,
+        126,
+        160,
+        184,
+        235,
+        206,
+        31,
+        119
+      ],
+      "accounts": [
+        {
+          "name": "vault",
+          "docs": [
+            "The vault PDA — serves as both state account and SOL source.",
+            "ADR-029: Removed vestigial vault_account field; the vault PDA itself",
+            "holds SOL and is used directly for lamport transfers.",
+            "",
+            "ADR-093: Seeds use the externally-known `authority` account key rather",
+            "than `vault.authority` read from stored account data. This eliminates",
+            "the self-referential pattern (needing to load the vault to find the",
+            "seeds needed to find the vault). The `has_one` constraint verifies",
+            "that `authority` matches `vault.authority`."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "authority"
+              }
+            ]
+          }
+        },
+        {
+          "name": "agent",
+          "docs": [
+            "The signer must be the agent authority or the vault authority."
+          ],
+          "signer": true
+        },
+        {
+          "name": "authority",
+          "docs": [
+            "The vault authority — used as a canonical PDA seed (ADR-093).",
+            "Not required to be a signer; the `agent` field carries the signature."
+          ],
+          "relations": [
+            "vault"
+          ]
+        },
+        {
+          "name": "agent_profile",
+          "docs": [
+            "ADR-095: The agent's Registry profile. Read-only cross-program account.",
+            "The constraint enforces that the agent is not suspended. The PDA seed",
+            "uses `vault.profile_nonce` (recorded at `initialize_vault` time) so",
+            "that the derivation matches the live profile PDA (ADR-097).",
+            "",
+            "`authority.key()` and `vault.profile_nonce`. The suspension check",
+            "is done explicitly in the instruction handler using `AgentStatus`."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.profile_nonce",
+                "account": "Vault"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                111,
+                73,
+                24,
+                49,
+                52,
+                190,
+                122,
+                126,
+                199,
+                7,
+                50,
+                181,
+                32,
+                117,
+                156,
+                113,
+                255,
+                182,
+                22,
+                1,
+                161,
+                163,
+                9,
+                83,
+                218,
+                73,
+                82,
+                170,
+                121,
+                206,
+                92,
+                240
+              ]
+            }
+          }
+        },
+        {
+          "name": "recipient",
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount_lamports",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "initialize_vault",
+      "docs": [
+        "Initializes a new vault for an AI agent.",
+        "The vault authority is set to the signer, who has control over policy updates and pause/resume.",
+        "The agent identity is linked to this vault for on-chain reputation tracking.",
+        "",
+        "ADR-095 / ADR-097: `profile_nonce` is the registration nonce of the",
+        "authority's current `AgentProfile` PDA (read from the `OwnerNonce`",
+        "account before calling this instruction). It is stored on-chain so",
+        "`execute_transfer` / `execute_token_transfer` can re-derive the",
+        "correct profile address for the suspension check without requiring",
+        "the client to supply it on every transfer."
+      ],
+      "discriminator": [
+        48,
+        191,
+        163,
+        44,
+        71,
+        129,
+        63,
+        164
+      ],
+      "accounts": [
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "authority"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "agent_identity",
+          "type": "pubkey"
+        },
+        {
+          "name": "daily_limit_lamports",
+          "type": "u64"
+        },
+        {
+          "name": "per_tx_limit_lamports",
+          "type": "u64"
+        },
+        {
+          "name": "max_txs_per_hour",
+          "type": "u32"
+        },
+        {
+          "name": "profile_nonce",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "pause_vault",
+      "docs": [
+        "Pauses the vault, preventing any transfers or program calls.",
+        "Only the vault authority can pause."
+      ],
+      "discriminator": [
+        250,
+        6,
+        228,
+        57,
+        6,
+        104,
+        19,
+        210
+      ],
+      "accounts": [
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "authority"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "vault"
+          ]
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "remove_program_allowlist",
+      "docs": [
+        "Removes a program from the vault's program allowlist."
+      ],
+      "discriminator": [
+        112,
+        100,
+        37,
+        121,
+        212,
+        133,
+        10,
+        48
+      ],
+      "accounts": [
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "authority"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "vault"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "program_id",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "remove_token_allowlist",
+      "docs": [
+        "Removes a token from the vault's allowlist."
+      ],
+      "discriminator": [
+        10,
+        148,
+        22,
+        104,
+        155,
+        183,
+        10,
+        83
+      ],
+      "accounts": [
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "authority"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "vault"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "token_mint",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "resume_vault",
+      "docs": [
+        "Resumes the vault, allowing transfers and program calls again.",
+        "Only the vault authority can resume."
+      ],
+      "discriminator": [
+        68,
+        98,
+        85,
+        13,
+        31,
+        76,
+        166,
+        50
+      ],
+      "accounts": [
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "authority"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "vault"
+          ]
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "update_agent_identity",
+      "docs": [
+        "ADR-069 (SEC-2): Rotate `vault.agent_identity`.",
+        "",
+        "`agent_identity` is a **hot key** — the off-chain agent runtime's",
+        "signing key, distinct from the human-custodied `authority`. It should",
+        "be rotated on any compromise of the agent runtime or on a routine",
+        "cadence. Only the vault `authority` (verified via `has_one` on the",
+        "context) can rotate it.",
+        "",
+        "Emits `AgentIdentityUpdated { vault, old_identity, new_identity }`.",
+        "Does not touch balances, policies, daily-spend counters, or rate-limit",
+        "counters — rotation is a pure key-swap."
+      ],
+      "discriminator": [
+        133,
+        153,
+        86,
+        40,
+        165,
+        20,
+        149,
+        42
+      ],
+      "accounts": [
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "authority"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "vault"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "new_agent_identity",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "update_policy",
+      "docs": [
+        "Updates the vault's spending policy (limits and rate limits).",
+        "Only the vault authority can call this instruction."
+      ],
+      "discriminator": [
+        212,
+        245,
+        246,
+        7,
+        163,
+        151,
+        18,
+        57
+      ],
+      "accounts": [
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "authority"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "vault"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "daily_limit_lamports",
+          "type": "u64"
+        },
+        {
+          "name": "per_tx_limit_lamports",
+          "type": "u64"
+        },
+        {
+          "name": "max_txs_per_hour",
+          "type": "u32"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "AgentProfile",
+      "discriminator": [
+        60,
+        227,
+        42,
+        24,
+        0,
+        87,
+        86,
+        205
+      ]
+    },
+    {
+      "name": "Vault",
+      "discriminator": [
+        211,
+        8,
+        232,
+        43,
+        2,
+        152,
+        117,
+        119
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "AgentIdentityUpdated",
+      "discriminator": [
+        170,
+        105,
+        175,
+        58,
+        163,
+        9,
+        85,
+        119
+      ]
+    },
+    {
+      "name": "AllowlistUpdated",
+      "discriminator": [
+        88,
+        239,
+        93,
+        65,
+        74,
+        140,
+        83,
+        213
+      ]
+    },
+    {
+      "name": "PolicyUpdated",
+      "discriminator": [
+        225,
+        112,
+        112,
+        67,
+        95,
+        236,
+        245,
+        161
+      ]
+    },
+    {
+      "name": "ProgramCallExecuted",
+      "discriminator": [
+        210,
+        217,
+        69,
+        106,
+        132,
+        121,
+        1,
+        108
+      ]
+    },
+    {
+      "name": "TokenTransferExecuted",
+      "discriminator": [
+        70,
+        251,
+        125,
+        145,
+        91,
+        46,
+        198,
+        82
+      ]
+    },
+    {
+      "name": "TransactionExecuted",
+      "discriminator": [
+        211,
+        227,
+        168,
+        14,
+        32,
+        111,
+        189,
+        210
+      ]
+    },
+    {
+      "name": "VaultInitialized",
+      "discriminator": [
+        180,
+        43,
+        207,
+        2,
+        18,
+        71,
+        3,
+        75
+      ]
+    },
+    {
+      "name": "VaultPaused",
+      "discriminator": [
+        198,
+        157,
+        22,
+        151,
+        68,
+        100,
+        162,
+        35
+      ]
+    },
+    {
+      "name": "VaultResumed",
+      "discriminator": [
+        208,
+        173,
+        238,
+        64,
+        33,
+        63,
+        226,
+        151
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "VaultPaused",
+      "msg": "Vault is paused and cannot execute transactions"
+    },
+    {
+      "code": 6001,
+      "name": "PerTxLimitExceeded",
+      "msg": "Per-transaction limit exceeded"
+    },
+    {
+      "code": 6002,
+      "name": "DailyLimitExceeded",
+      "msg": "Daily spending limit exceeded"
+    },
+    {
+      "code": 6003,
+      "name": "RateLimitExceeded",
+      "msg": "Rate limit (transactions per hour) exceeded"
+    },
+    {
+      "code": 6004,
+      "name": "TokenNotAllowed",
+      "msg": "Token is not in the vault's allowlist"
+    },
+    {
+      "code": 6005,
+      "name": "ProgramNotAllowed",
+      "msg": "Program is not in the vault's program allowlist"
+    },
+    {
+      "code": 6006,
+      "name": "Unauthorized",
+      "msg": "Unauthorized: must be vault authority"
+    },
+    {
+      "code": 6007,
+      "name": "InsufficientFunds",
+      "msg": "Insufficient funds in vault"
+    },
+    {
+      "code": 6008,
+      "name": "InvalidRecipient",
+      "msg": "Invalid recipient address"
+    },
+    {
+      "code": 6009,
+      "name": "InvalidAmount",
+      "msg": "Invalid amount (must be > 0)"
+    },
+    {
+      "code": 6010,
+      "name": "AllowlistFull",
+      "msg": "Allowlist is full"
+    },
+    {
+      "code": 6011,
+      "name": "ItemAlreadyListed",
+      "msg": "Item already in allowlist"
+    },
+    {
+      "code": 6012,
+      "name": "ItemNotFound",
+      "msg": "Item not found in allowlist"
+    },
+    {
+      "code": 6013,
+      "name": "ArithmeticOverflow",
+      "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6014,
+      "name": "TokenDailyLimitExceeded",
+      "msg": "Per-token daily spending limit exceeded"
+    },
+    {
+      "code": 6015,
+      "name": "TokenSpendRecordsFull",
+      "msg": "Token spend records full (max 10)"
+    },
+    {
+      "code": 6016,
+      "name": "PerTxTokenLimitExceeded",
+      "msg": "Per-transaction limit for this token exceeded"
+    },
+    {
+      "code": 6017,
+      "name": "TokenNotConfigured",
+      "msg": "Token not configured: call add_token_allowlist with per-tx/daily limits"
+    },
+    {
+      "code": 6018,
+      "name": "InvalidTokenLimits",
+      "msg": "Invalid token limits: must have 0 < per_tx_limit <= daily_limit"
+    },
+    {
+      "code": 6019,
+      "name": "BelowRentExemption",
+      "msg": "Transfer would leave vault below rent-exempt minimum"
+    },
+    {
+      "code": 6020,
+      "name": "SelfTransferNotAllowed",
+      "msg": "Recipient token account must not be owned by the vault (self-transfer)"
+    },
+    {
+      "code": 6021,
+      "name": "AgentSuspended",
+      "msg": "Agent is suspended in the Registry; transfers are blocked until suspension is cleared"
+    }
+  ],
+  "types": [
+    {
+      "name": "AgentIdentityUpdated",
+      "docs": [
+        "Emitted when the vault authority rotates `agent_identity` via",
+        "`update_agent_identity`. Indexers should treat this as the authoritative",
+        "signal that the old identity key is no longer authorized to sign",
+        "`execute_transfer` / `execute_token_transfer` on this vault.",
+        "",
+        "See ADR-069 for the design rationale (SEC-2 from DEEP-AUDIT-2026-04-22)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "old_identity",
+            "type": "pubkey"
+          },
+          {
+            "name": "new_identity",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AgentProfile",
+      "docs": [
+        "AgentProfile: The core account representing a registered agent.",
+        "",
+        "ADR-040: Account space is explicitly calculated as 1414 bytes",
+        "(1243 baseline + 162 bytes for the ADR-060 manifest fields:",
+        "manifest_cid 64 + manifest_hash 32 + manifest_signature 64 + manifest_version 2 = 162,",
+        "+ 1 byte for ADR-096 version: u8 + 8 bytes for ADR-097 registration_nonce: u64 = 1414).",
+        "",
+        "ADR-060 adds four manifest fields that point to an off-chain capability",
+        "manifest (IPFS CIDv1 or Arweave tx ID). The on-chain fields are the",
+        "integrity commitment; the manifest body is off-chain. M5 resolution:",
+        "`manifest_cid` is `[u8; 64]` to fit CIDv1 string encodings (≤ ~60 chars)",
+        "or Arweave 43-char base64url tx IDs with headroom. Unused bytes are",
+        "zero-padded; readers trim trailing 0x00.",
+        "",
+        "The existing `capabilities: Vec<String>` stays as a denormalized on-chain",
+        "search index (ADR-060 §1 \"Relationship\"); the manifest is the source of",
+        "truth. `update_manifest` re-validates the invariant",
+        "`capabilities ⊆ manifest.capabilities[].name`.",
+        "",
+        "ADR-097: `registration_nonce` is included in the PDA seed to prevent",
+        "Sybil reuse via close-then-reopen. The nonce is taken from the owner's",
+        "`OwnerNonce` account at registration time and incremented on deregister.",
+        "Zero-value default is valid (first registration uses nonce 0).",
+        "",
+        "ADR-096: `version` is the schema version for in-place migration. Set to",
+        "`0` on creation; incremented by `migrate_agent_profile`. New fields added",
+        "in future upgrades must use zero-value defaults so that the",
+        "`realloc::zero = true` constraint produces a valid initial state without",
+        "explicit writes."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "description",
+            "type": "string"
+          },
+          {
+            "name": "category",
+            "type": "string"
+          },
+          {
+            "name": "capabilities",
+            "type": {
+              "vec": "string"
+            }
+          },
+          {
+            "name": "pricing_model",
+            "type": {
+              "defined": {
+                "name": "PricingModel"
+              }
+            }
+          },
+          {
+            "name": "pricing_amount",
+            "type": "u64"
+          },
+          {
+            "name": "accepted_tokens",
+            "type": {
+              "vec": "pubkey"
+            }
+          },
+          {
+            "name": "vault_address",
+            "type": "pubkey"
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "AgentStatus"
+              }
+            }
+          },
+          {
+            "name": "reputation_score",
+            "type": "u64"
+          },
+          {
+            "name": "total_tasks_completed",
+            "type": "u64"
+          },
+          {
+            "name": "total_earnings",
+            "type": "u64"
+          },
+          {
+            "name": "avg_rating",
+            "type": "u8"
+          },
+          {
+            "name": "created_at",
+            "type": "i64"
+          },
+          {
+            "name": "updated_at",
+            "type": "i64"
+          },
+          {
+            "name": "reputation_stake",
+            "type": {
+              "defined": {
+                "name": "ReputationStake"
+              }
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "manifest_cid",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "manifest_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "manifest_signature",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "manifest_version",
+            "type": "u16"
+          },
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "registration_nonce",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AgentStatus",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Active"
+          },
+          {
+            "name": "Paused"
+          },
+          {
+            "name": "Retired"
+          },
+          {
+            "name": "Suspended"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AllowlistUpdated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "item",
+            "type": "pubkey"
+          },
+          {
+            "name": "action",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PolicyUpdated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "daily_limit",
+            "type": "u64"
+          },
+          {
+            "name": "per_tx_limit",
+            "type": "u64"
+          },
+          {
+            "name": "max_txs_per_hour",
+            "type": "u32"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PricingModel",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "PerTask"
+          },
+          {
+            "name": "PerHour"
+          },
+          {
+            "name": "PerToken"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ProgramCallExecuted",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "program_id",
+            "type": "pubkey"
+          },
+          {
+            "name": "instruction_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "success",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ReputationStake",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "staked_amount",
+            "type": "u64"
+          },
+          {
+            "name": "slash_count",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TokenSpendRecord",
+      "docs": [
+        "Tracks per-token daily spending for a specific mint.",
+        "",
+        "Findings #13/#14: Each record now carries its own `per_tx_limit` and",
+        "`daily_limit` expressed in the token's base units. This replaces the",
+        "previous scheme where the vault's SOL-lamport `daily_limit_lamports`",
+        "was reused as the cap for every mint, conflating decimal schemes",
+        "(0.01 SOL = 10M lamports vs. 10M USDC base units = 10 USDC)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "docs": [
+              "The SPL token mint this record tracks."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "per_tx_limit",
+            "docs": [
+              "Maximum amount of this token transferable in a single tx (base units)."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "daily_limit",
+            "docs": [
+              "Maximum amount of this token transferable per day (base units)."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "spent_today",
+            "docs": [
+              "Amount of this token spent today (in base units)."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "last_spend_day",
+            "docs": [
+              "The day for which spent_today is tracked (Unix timestamp / 86400)."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TokenTransferExecuted",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "recipient",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TransactionExecuted",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "recipient",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "success",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Vault",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "agent_identity",
+            "docs": [
+              "The agent identity this vault is linked to (for reputation tracking)."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "authority",
+            "docs": [
+              "The authority that can pause/resume and update policies."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "paused",
+            "docs": [
+              "When true, no transfers or program calls are permitted."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "spent_today_lamports",
+            "docs": [
+              "Cumulative SOL spent today (resets daily)."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "last_spend_day",
+            "docs": [
+              "The day for which spent_today_lamports is tracked (Unix timestamp / 86400)."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "policy",
+            "docs": [
+              "Spending policy for this vault."
+            ],
+            "type": {
+              "defined": {
+                "name": "VaultPolicy"
+              }
+            }
+          },
+          {
+            "name": "txs_in_current_window",
+            "docs": [
+              "Counter for transactions in the current rate-limit window."
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "rate_limit_window_start",
+            "docs": [
+              "Timestamp of when the current rate-limit window started."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "token_spend_records",
+            "docs": [
+              "Per-token daily spending records (max MAX_TOKEN_SPEND_RECORDS entries)."
+            ],
+            "type": {
+              "vec": {
+                "defined": {
+                  "name": "TokenSpendRecord"
+                }
+              }
+            }
+          },
+          {
+            "name": "bump",
+            "docs": [
+              "PDA bump seed for vault signing in CPIs."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "profile_nonce",
+            "docs": [
+              "ADR-095 / ADR-097: The registration nonce of the agent's current",
+              "`AgentProfile` PDA at the time this vault was initialized. Used by",
+              "`execute_transfer` and `execute_token_transfer` to re-derive the",
+              "profile PDA address for the suspension check. Must match the nonce",
+              "stamped in `AgentProfile.registration_nonce`."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "VaultInitialized",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "agent_identity",
+            "type": "pubkey"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "daily_limit",
+            "type": "u64"
+          },
+          {
+            "name": "per_tx_limit",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "VaultPaused",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "VaultPolicy",
+      "docs": [
+        "The spending policy for a vault."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "per_tx_limit_lamports",
+            "docs": [
+              "Maximum SOL that can be transferred in a single transaction (in lamports)."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "daily_limit_lamports",
+            "docs": [
+              "Maximum SOL that can be transferred per day (in lamports)."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "max_txs_per_hour",
+            "docs": [
+              "Maximum number of transactions allowed per hour."
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "token_allowlist",
+            "docs": [
+              "Bitmap for token allowlist (if None, all tokens allowed; if Some, only listed tokens).",
+              "This is a simplified version; production would use a separate account for large lists."
+            ],
+            "type": {
+              "vec": "pubkey"
+            }
+          },
+          {
+            "name": "program_allowlist",
+            "docs": [
+              "Bitmap for program allowlist (if None, all programs allowed; if Some, only listed programs)."
+            ],
+            "type": {
+              "vec": "pubkey"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "VaultResumed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          }
+        ]
+      }
+    }
+  ]
+}

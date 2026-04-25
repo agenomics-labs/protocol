@@ -29,3 +29,8 @@ export function getProgramIds(cluster: Cluster): ProgramIds {
 }
 
 export { PROGRAM_IDS };
+
+// IDL JSON exports — cast to `Idl` from `@coral-xyz/anchor` at call site
+export { AgentRegistryIdl } from "./idl/agent_registry.js";
+export { AgentVaultIdl } from "./idl/agent_vault.js";
+export { SettlementIdl } from "./idl/settlement.js";
