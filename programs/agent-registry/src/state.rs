@@ -172,11 +172,14 @@ pub fn assert_valid_profile(profile: &AgentProfile) -> Result<()> {
             && profile.reputation_stake.slash_count < 3),
         AgentRegistryError::InvalidSuspendedProfile
     );
-    // TODO(PR-I, AUD-004): when `cleared_count: u8` lands on AgentProfile,
-    // re-enable:
-    //   require!(profile.cleared_count <= 3, AgentRegistryError::InvalidClearedCount);
-    // The base tree shipped to PR-G does not yet have this field, so we
-    // skip the check for now. The error variant `InvalidClearedCount`
-    // exists in errors.rs for forward compatibility.
+    // AUD-004 (PR-I) has landed; cleared_count is now part of the schema.
+    // The closed-state-machine cap matches `clear_suspension`'s escalation
+    // ladder (1 → halve, 2 → zero, 3+ → terminal Retired); a cleared_count
+    // beyond 3 means a third clear was attempted on a non-Suspended profile,
+    // which would only be reachable through a state corruption.
+    require!(
+        profile.cleared_count <= 3,
+        AgentRegistryError::InvalidClearedCount
+    );
     Ok(())
 }
