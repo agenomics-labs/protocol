@@ -6,7 +6,8 @@
 
 - **Started**: 2026-04-25 with 4 parallel sub-audits (on-chain, off-chain TS, ADR governance, tests/CI).
 - **Findings inventoried**: 75 with stable `AUD-NNN` IDs.
-- **Closed in this cycle**: **25** (5 Critical / 6 High / 3 Medium / 5 Low / 1 Info / 5 Architecture).
+- **Closed in this cycle**: **29** (5 Critical / 6 High / 5 Medium / 6 Low / 2 Info / 5 Architecture).
+- **PR-Q (AUD-007)**: needs re-spec — base diverged after PR-G removed `update_reputation`. The agent built the fix on top of the now-deleted instruction, so it can't be cherry-picked as-is. Either (a) write a new `submit_rating` instruction, or (b) remove `avg_rating` field entirely. Deferred.
 - **All 5 Critical findings are Fixed**.
 - **Branch**: `chore/architecture-audit-2026-04-25` (22 commits, never pushed).
 - **Tests at HEAD**: 137 Rust unit, 110 TS Anchor integration, 180 MCP server, 19 SDK client.
