@@ -104,9 +104,15 @@ pub struct AcceptTask<'info> {
     #[account(mut)]
     pub provider: Signer<'info>,
 
+    /// AUD-019: Defense-in-depth — hoist the `escrow.status == Created`
+    /// check from the handler `require!` into an Anchor account-level
+    /// constraint so the Account-deserialization layer (not the handler)
+    /// is the first line of defense. The handler still re-checks via
+    /// `require!` for belt-and-suspenders parity with `CloseEscrow`.
     #[account(
         mut,
         has_one = provider @ SettlementError::UnauthorizedProvider,
+        constraint = escrow.status == EscrowStatus::Created @ SettlementError::InvalidStatus,
     )]
     pub escrow: Account<'info, TaskEscrow>,
 }
@@ -116,9 +122,13 @@ pub struct SubmitMilestone<'info> {
     #[account(mut)]
     pub provider: Signer<'info>,
 
+    /// AUD-019: Defense-in-depth — hoist the `escrow.status == Active`
+    /// check from the handler `require!` into an Anchor account-level
+    /// constraint. Handler `require!` is preserved as defense-in-depth.
     #[account(
         mut,
         has_one = provider @ SettlementError::UnauthorizedProvider,
+        constraint = escrow.status == EscrowStatus::Active @ SettlementError::InvalidStatus,
     )]
     pub escrow: Account<'info, TaskEscrow>,
 }
@@ -210,9 +220,13 @@ pub struct RejectMilestone<'info> {
     #[account(mut)]
     pub client: Signer<'info>,
 
+    /// AUD-019: Defense-in-depth — hoist the `escrow.status == Active`
+    /// check from the handler `require!` into an Anchor account-level
+    /// constraint. Handler `require!` is preserved as defense-in-depth.
     #[account(
         mut,
         has_one = client @ SettlementError::UnauthorizedClient,
+        constraint = escrow.status == EscrowStatus::Active @ SettlementError::InvalidStatus,
     )]
     pub escrow: Account<'info, TaskEscrow>,
 }
