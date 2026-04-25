@@ -1,7 +1,7 @@
 # ADR-014: Verify CPI Discriminator with Automated Test
 
 ## Status
-Accepted
+Superseded by code-evolution (test removed when manual-discriminator pattern was abandoned)
 
 ## Date
 2026-04-15
@@ -39,3 +39,12 @@ Computing the hash at runtime adds CPU cost to every CPI call. The compile-time 
 
 ## Files Changed
 - `programs/settlement/src/lib.rs` — Added `test_cpi_discriminator_matches_anchor_convention` test
+
+## Revisions
+
+- 2026-04-25 — Status flipped to Superseded by code-evolution. The
+  `test_cpi_discriminator_matches_anchor_convention` test no longer exists in
+  the tree; it was removed when ADR-007's manual-discriminator pattern was
+  abandoned in favour of Anchor's CPI helper (see ADR-007 Revisions). The
+  test's purpose was to guard a hardcoded discriminator that no longer drives
+  the runtime. AUD-2026-04-25 / AUD-048 / drift matrix §2.
