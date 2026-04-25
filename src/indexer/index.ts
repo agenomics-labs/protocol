@@ -250,7 +250,13 @@ const DISCRIMINATOR_MAP: Record<string, string> = {
   "7940f9998b80ecbb": "DisputeResolved",
   "62f1c37ad500a2a1": "EscrowCancelled",
   bd16aafa4bda3a70: "EscrowExpired",
-  "611134c2e8133ec3": "ReputationUpdateScheduled",
+  // AUD-032 (2026-04-25 audit): ReputationUpdateScheduled
+  // (discriminator 611134c2e8133ec3) was removed from the Settlement
+  // program. The Registry's `ReputationUpdated` (1a24bb96eb5a6a59) is
+  // the canonical reputation event; Settlement no longer mirrors it.
+  // The discriminator entry is removed in lockstep so any historical
+  // log carrying the old payload falls through to the `event_<hex>`
+  // forensics fallback rather than being misclassified.
   // ADR-082 / audit-2026-04-23 item 6: ProtocolConfig governance
   // events. Both were silently invisible to dashboards before.
   f3451bee6fa957e7: "ProtocolConfigInitialized",

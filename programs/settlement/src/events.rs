@@ -82,11 +82,13 @@ pub struct EscrowExpired {
     pub refunded_amount: u64,
 }
 
-#[event]
-pub struct ReputationUpdateScheduled {
-    pub provider: Pubkey,
-    pub delta: i64,
-}
+// AUD-032 (2026-04-25 audit): `ReputationUpdateScheduled` was emitted by
+// `cpi::update_provider_reputation` *after* a synchronous CPI into Registry's
+// `update_reputation`. The name implied async/queued semantics that don't
+// exist; the Registry's own `ReputationUpdated` event is the canonical
+// signal and downstream indexers (src/indexer/index.ts) already key off
+// it. Removing the struct + emit eliminates the double-event surface and
+// keeps Settlement out of the reputation-event business entirely.
 
 /// Finding #19: emitted when `ProtocolConfig` is first created. The initial
 /// values are a snapshot of the compile-time defaults.
