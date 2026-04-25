@@ -48,9 +48,20 @@ pub const MAX_DISPUTE_TIMEOUT_SECONDS: i64 = 365 * 24 * 3600;
 /// Reputation deltas for CPI updates to the Agent Registry.
 /// Finding #19: Defaults for the governance-owned `ProtocolConfig` fields
 /// `reputation_delta_task_completed`, `_dispute_loss`, `_expiry_undelivered`.
-pub const DEFAULT_REPUTATION_DELTA_TASK_COMPLETED: i64 = 50;
-pub const DEFAULT_REPUTATION_DELTA_DISPUTE_LOSS: i64 = -25;
-pub const DEFAULT_REPUTATION_DELTA_EXPIRY_UNDELIVERED: i64 = -10;
+///
+/// AUD-001 / AUD-002 (PR-G): the Registry now caps `|delta| <= 10` per call
+/// (`MAX_DELTA_PER_CALL`) and clamps scores to `[0, 100]`. The legacy
+/// defaults (50, -25, -10) lived in the old unbounded-u64 reputation model
+/// and are no longer compatible with the unified policy. Bring them inside
+/// the new range. Governance can tune via `update_protocol_config`.
+///   - task_completed:     +10 (the cap; rewards saturate quickly so
+///                              repeated tasks accrue reputation linearly
+///                              up to the [0, 100] ceiling)
+///   - dispute_loss:        -5  (moderate penalty for an adjudicated loss)
+///   - expiry_undelivered:  -3  (lighter penalty for a stalled task)
+pub const DEFAULT_REPUTATION_DELTA_TASK_COMPLETED: i64 = 10;
+pub const DEFAULT_REPUTATION_DELTA_DISPUTE_LOSS: i64 = -5;
+pub const DEFAULT_REPUTATION_DELTA_EXPIRY_UNDELIVERED: i64 = -3;
 
 /// SEC-11 (per ADR-075, in-flight): lower bound on slash-style reputation
 /// deltas. The pre-fix `update_protocol_config` check was `v <= 0`, which

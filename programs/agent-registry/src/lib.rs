@@ -168,73 +168,43 @@ pub mod agent_registry {
         Ok(())
     }
 
-    pub fn update_reputation(ctx: Context<UpdateReputation>, reputation_delta: i64, task_completed: bool, earnings: u64, rating: u8) -> Result<()> {
-        require!(rating <= 5, AgentRegistryError::InvalidRating);
-        let agent_profile = &mut ctx.accounts.agent_profile;
+    // AUD-001 / AUD-002 (PR-G): the legacy `update_reputation` instruction
+    // has been removed. It was the unbounded-score, i64-delta entry point
+    // that Settlement called via CPI; that role is now played exclusively
+    // by `propose_reputation_delta` below. The unified policy lives there:
+    // i16 delta, [0, MAX_REPUTATION_SCORE] clamp, |delta| <= MAX_DELTA_PER_CALL.
+    // See docs/audits/DESIGN-DECISIONS-2026-04-25.md — the "Option A —
+    // remove, no escape hatch" path was chosen.
+    //
+    // Migration of pre-existing on-chain state is handled in
+    // `migrate_agent_profile` (ADR-096) which clamps legacy unbounded
+    // scores into [0, 100] and normalizes the
+    // `Suspended ⇒ slash_count >= 3` invariant. `assert_valid_profile`
+    // (state.rs) is the closed-state-machine guard called post-mutation
+    // and post-migration.
 
-        if reputation_delta >= 0 {
-            agent_profile.reputation_score = agent_profile.reputation_score.saturating_add(reputation_delta as u64);
-        } else {
-            // SEC-11 (per ADR-075, in-flight): `(-reputation_delta) as u64`
-            // panics in debug builds when `reputation_delta == i64::MIN`
-            // because negation overflows. `checked_neg` returns None on that
-            // exact case. Governance bounds (see settlement's
-            // update_protocol_config) already cap slash magnitudes at
-            // -1_000_000, so reaching this branch would require a direct
-            // caller bypassing governance — still, fail cleanly rather than
-            // panic. The positive result of `checked_neg` on a negative
-            // `i64` is always in `1..=i64::MAX`, so the `as u64` cast is
-            // lossless.
-            let magnitude = reputation_delta
-                .checked_neg()
-                .ok_or(AgentRegistryError::ReputationDeltaOverflow)?
-                as u64;
-            agent_profile.reputation_score = agent_profile.reputation_score.saturating_sub(magnitude);
-        }
-
-        if task_completed {
-            agent_profile.total_tasks_completed = agent_profile.total_tasks_completed.saturating_add(1);
-            agent_profile.total_earnings = agent_profile.total_earnings.saturating_add(earnings);
-            if rating > 0 {
-                let n = agent_profile.total_tasks_completed as u128;
-                if n == 1 { agent_profile.avg_rating = rating; }
-                else {
-                    let new_avg = ((agent_profile.avg_rating as u128) * (n - 1) + rating as u128 + n / 2) / n;
-                    agent_profile.avg_rating = new_avg.min(5) as u8;
-                }
-            }
-        }
-
-        if reputation_delta < 0 && !task_completed {
-            agent_profile.reputation_stake.slash_count = agent_profile.reputation_stake.slash_count.saturating_add(1);
-            if agent_profile.reputation_stake.slash_count >= 3 {
-                agent_profile.status = AgentStatus::Suspended;
-                emit!(AgentSlashed { authority: agent_profile.authority, slash_count: agent_profile.reputation_stake.slash_count, suspended: true, timestamp: Clock::get()?.unix_timestamp });
-            } else {
-                emit!(AgentSlashed { authority: agent_profile.authority, slash_count: agent_profile.reputation_stake.slash_count, suspended: false, timestamp: Clock::get()?.unix_timestamp });
-            }
-        }
-
-        agent_profile.updated_at = Clock::get()?.unix_timestamp;
-        emit!(ReputationUpdated { authority: agent_profile.authority, new_reputation_score: agent_profile.reputation_score, reputation_delta, task_completed, timestamp: agent_profile.updated_at });
-        Ok(())
-    }
-
-    /// ADR-094: Invert the reputation trust hierarchy.
+    /// ADR-094 / AUD-001 / AUD-002: Reputation policy entry point.
     ///
-    /// Previously Settlement called `update_reputation` as a privileged setter
-    /// and imposed no score upper bound (scores grow to u64::MAX). This
-    /// instruction is the new entry point: Registry owns and enforces the
-    /// policy (`[0, MAX_REPUTATION_SCORE]`, `|delta| <= MAX_DELTA_PER_CALL`).
+    /// Previously Settlement called `update_reputation` as a privileged
+    /// setter that imposed no score upper bound (scores grew to u64::MAX).
+    /// This instruction is now the SOLE reputation-mutation surface: Registry
+    /// owns and enforces the policy (`[0, MAX_REPUTATION_SCORE]`,
+    /// `|delta| <= MAX_DELTA_PER_CALL`).
     ///
-    /// Authorization: caller must present the Settlement program's
-    /// `settlement_authority` PDA as a signer (SEC-1 pattern from ADR-068).
+    /// Authorization (defense in depth): the `ProposeReputationDelta`
+    /// context (contexts.rs) bundles the SEC-1 signer check, the ADR-097
+    /// nonce-seeded profile derivation, and the `has_one = authority`
+    /// guard so a CPI cannot land on a profile whose authority does not
+    /// match the seeds.
     ///
     /// `reason` is a caller-supplied reason code:
     ///   0 = task_completed (positive delta)
     ///   1 = dispute_loss   (negative delta)
     ///   2 = expiry_undelivered (negative delta)
     ///   3-255 = reserved for future governance/slashing sources
+    ///
+    /// Post-mutation, the closed-state-machine `assert_valid_profile`
+    /// invariant is enforced. Any violation panic-reverts the transaction.
     pub fn propose_reputation_delta(
         ctx: Context<ProposeReputationDelta>,
         delta: i16,
@@ -252,6 +222,12 @@ pub mod agent_registry {
 
         // Clamp the resulting score to [0, MAX_REPUTATION_SCORE].
         // This cannot overflow: i16 + i16 fits in i32; clamp is lossless.
+        // Note: `reputation_score` is stored as u64 historically (legacy
+        // unbounded). Pre-migration profiles may carry values > 100; clamp
+        // those into the new range before applying the delta. The
+        // `migrate_agent_profile` path performs the same normalization
+        // permanently; this in-handler clamp keeps the math sound for any
+        // unmigrated profile that lands here in the meantime.
         let old_score = agent_profile.reputation_score.min(MAX_REPUTATION_SCORE as u64) as i16;
         let new_score = (old_score + delta)
             .clamp(0, MAX_REPUTATION_SCORE as i16) as u8;
@@ -259,6 +235,10 @@ pub mod agent_registry {
         let old_score_u8 = old_score as u8;
         agent_profile.reputation_score = new_score as u64;
         agent_profile.updated_at = Clock::get()?.unix_timestamp;
+
+        // AUD-001 / AUD-002: closed-state-machine invariant. Must hold
+        // post-mutation; a violation reverts the entire transaction.
+        assert_valid_profile(agent_profile)?;
 
         emit!(ReputationDeltaProposed {
             authority: agent_profile.authority,
@@ -549,19 +529,36 @@ pub mod agent_registry {
         let old_version = profile.version;
         profile.version = target_version;
 
-        // AUD-004: cleared_count is a new u8 field added in this schema bump.
-        // The `realloc::zero = true` constraint on `MigrateAgentProfile`
-        // already zero-pads the freshly-allocated bytes, which means
-        // `cleared_count` will deserialize as 0 for any pre-existing profile.
-        // This is the correct default — pre-existing profiles have never gone
-        // through `clear_suspension` under the new escalation policy, so they
-        // start fresh on the cost ladder.
-        //
-        // The explicit assignment below is documentation: any profile passing
-        // through this migration has its escalation counter zeroed, making
-        // the migration's effect on AUD-004 surface in code review rather
-        // than relying on implicit zero-padding semantics.
+        // AUD-004 (PR-I): `cleared_count` is a new u8 field added in this
+        // schema bump. The `realloc::zero = true` constraint on
+        // `MigrateAgentProfile` already zero-pads the freshly-allocated
+        // bytes, but we make the assignment explicit so the migration's
+        // effect on AUD-004 surfaces in code review.
         profile.cleared_count = 0;
+
+        // AUD-001 / AUD-002 (PR-G): the legacy `update_reputation` had no
+        // upper bound on `reputation_score` — pre-migration profiles can
+        // carry values up to u64::MAX. Clamp into the new policy range
+        // `[0, MAX_REPUTATION_SCORE]`. Idempotent: in-range scores are
+        // unchanged.
+        profile.reputation_score = profile.reputation_score.min(MAX_REPUTATION_SCORE as u64);
+
+        // AUD-001 / AUD-002: enforce the `Suspended ⇒ slash_count >= 3`
+        // invariant. Pre-fix paths could land a profile in `Suspended`
+        // without going through the slash counter (e.g. via `update_status`
+        // accepting self-issued `Suspended` transitions — fixed in PR-I).
+        // Bringing slash_count up to 3 preserves the suspension (clients
+        // who relied on it stay protected) and aligns field values with
+        // what the slash path itself would have produced.
+        if profile.status == AgentStatus::Suspended
+            && profile.reputation_stake.slash_count < 3
+        {
+            profile.reputation_stake.slash_count = 3;
+        }
+
+        // Closed-state-machine guard. Must hold post-normalization;
+        // a violation reverts the migration.
+        assert_valid_profile(profile)?;
 
         emit!(AgentMigrated {
             authority: profile.authority,
@@ -569,6 +566,56 @@ pub mod agent_registry {
             new_version: profile.version,
             timestamp: Clock::get()?.unix_timestamp,
         });
+        Ok(())
+    }
+
+    /// AUD-001 / AUD-002: Post-migration sweep. Iterates the
+    /// `remaining_accounts` list, deserializes each as `AgentProfile`, and
+    /// runs `assert_valid_profile`. Any violation reverts the transaction
+    /// — making the failure loud and the offending account index visible
+    /// in the program log. Designed to be called once per migration window
+    /// over a bounded batch (Solana's tx-level account cap is 64).
+    ///
+    /// Authorization: signer must equal `ProtocolConfig.authority` (Settlement
+    /// program). The context binds `protocol_config` via seeds; this handler
+    /// reads the `authority: Pubkey` field at offset 8 (after the 8-byte
+    /// discriminator) and asserts it matches the signer. We deliberately do
+    /// NOT couple to the program's BPF upgrade authority (per
+    /// design-decisions AUD-001/002 §6 — "Choose the latter for less
+    /// coupling"). This keeps governance evolution on a single rail
+    /// (`ProtocolConfig.authority` rotation).
+    pub fn verify_protocol_invariants<'info>(
+        ctx: Context<'_, '_, 'info, 'info, VerifyProtocolInvariants<'info>>,
+    ) -> Result<()> {
+        // Read `ProtocolConfig.authority` from the raw account bytes. The
+        // field layout in `programs/settlement/src/state.rs` puts `authority`
+        // first after the 8-byte Anchor discriminator, so the pubkey lives
+        // at bytes [8, 40). Borrowing the data avoids a cross-program
+        // account-type dependency.
+        let data = ctx.accounts.protocol_config.try_borrow_data()?;
+        require!(data.len() >= 8 + 32, AgentRegistryError::Unauthorized);
+        let mut authority_bytes = [0u8; 32];
+        authority_bytes.copy_from_slice(&data[8..8 + 32]);
+        let config_authority = Pubkey::new_from_array(authority_bytes);
+        // Drop the borrow before iterating remaining_accounts so we don't
+        // hold a borrow across calls that may also borrow account data.
+        drop(data);
+
+        require!(
+            config_authority == ctx.accounts.authority.key(),
+            AgentRegistryError::Unauthorized
+        );
+
+        // Each remaining account must deserialize as a valid `AgentProfile`
+        // and pass `assert_valid_profile`. Anchor's
+        // `Account::try_from` validates the discriminator + ownership, so
+        // a non-profile or wrong-program account is rejected before the
+        // invariant check fires.
+        for account_info in ctx.remaining_accounts.iter() {
+            let profile: Account<AgentProfile> = Account::try_from(account_info)?;
+            assert_valid_profile(&profile)?;
+        }
+
         Ok(())
     }
 }
@@ -1493,5 +1540,154 @@ mod tests {
         let owner_nonce_initial: u64 = 0;
         let profile_stamped_nonce: u64 = owner_nonce_initial;
         assert_eq!(profile_stamped_nonce, 0);
+    }
+
+    // ================================================================
+    // AUD-001 / AUD-002 (PR-G): unified reputation policy + invariants
+    // ================================================================
+
+    /// Helper that mirrors the layout-relevant fields of AgentProfile
+    /// without forcing the test to construct the full account (which would
+    /// drag in dozens of String/Vec fields). The invariant helper only
+    /// reads `reputation_score`, `status`, and `reputation_stake`, so the
+    /// builder writes those three plus required defaults.
+    fn fixture_profile(
+        score: u64,
+        status: AgentStatus,
+        slash_count: u8,
+    ) -> AgentProfile {
+        AgentProfile {
+            authority: Pubkey::new_unique(),
+            name: String::new(),
+            description: String::new(),
+            category: String::new(),
+            capabilities: vec![],
+            pricing_model: PricingModel::PerTask,
+            pricing_amount: 0,
+            accepted_tokens: vec![],
+            vault_address: Pubkey::default(),
+            status,
+            reputation_score: score,
+            total_tasks_completed: 0,
+            total_earnings: 0,
+            avg_rating: 0,
+            created_at: 0,
+            updated_at: 0,
+            reputation_stake: ReputationStake { staked_amount: 0, slash_count },
+            bump: 0,
+            manifest_cid: [0u8; 64],
+            manifest_hash: [0u8; 32],
+            manifest_signature: [0u8; 64],
+            manifest_version: 0,
+            version: 0,
+            registration_nonce: 0,
+            cleared_count: 0,
+        }
+    }
+
+    /// AUD-001/002: a well-formed profile (score in range, Active) passes.
+    #[test]
+    fn aud_001_002_assert_valid_profile_accepts_well_formed() {
+        let p = fixture_profile(50, AgentStatus::Active, 0);
+        let result = state::assert_valid_profile(&p);
+        assert!(result.is_ok(), "well-formed profile must pass invariant");
+    }
+
+    /// AUD-001/002: score > MAX_REPUTATION_SCORE is rejected.
+    #[test]
+    fn aud_001_002_assert_valid_profile_rejects_oversized_score() {
+        let p = fixture_profile(101, AgentStatus::Active, 0);
+        let result = state::assert_valid_profile(&p);
+        assert!(result.is_err(), "score > 100 must violate invariant");
+    }
+
+    /// AUD-001/002: legacy unbounded score (e.g. 999) is rejected.
+    #[test]
+    fn aud_001_002_assert_valid_profile_rejects_legacy_unbounded_score() {
+        let p = fixture_profile(999, AgentStatus::Active, 0);
+        let result = state::assert_valid_profile(&p);
+        assert!(result.is_err(), "legacy unbounded score must violate invariant");
+    }
+
+    /// AUD-001/002: Suspended with slash_count < 3 is rejected.
+    #[test]
+    fn aud_001_002_assert_valid_profile_rejects_suspended_low_slash() {
+        let p = fixture_profile(50, AgentStatus::Suspended, 0);
+        let result = state::assert_valid_profile(&p);
+        assert!(result.is_err(), "Suspended with slash_count=0 must violate invariant");
+    }
+
+    /// AUD-001/002: Suspended with slash_count == 3 passes.
+    #[test]
+    fn aud_001_002_assert_valid_profile_accepts_suspended_at_threshold() {
+        let p = fixture_profile(50, AgentStatus::Suspended, 3);
+        let result = state::assert_valid_profile(&p);
+        assert!(result.is_ok(), "Suspended with slash_count=3 must satisfy invariant");
+    }
+
+    /// AUD-001/002: score == MAX_REPUTATION_SCORE (boundary) passes.
+    #[test]
+    fn aud_001_002_assert_valid_profile_accepts_max_boundary_score() {
+        let p = fixture_profile(100, AgentStatus::Active, 0);
+        let result = state::assert_valid_profile(&p);
+        assert!(result.is_ok(), "score == 100 (boundary) must pass");
+    }
+
+    /// AUD-001/002 migration: legacy unbounded score clamps to 100.
+    /// Mirrors the migrate_agent_profile normalization step.
+    #[test]
+    fn aud_001_002_migrate_clamps_unbounded_score() {
+        let mut p = fixture_profile(255, AgentStatus::Active, 0);
+        // Mirror the handler's clamp.
+        p.reputation_score = p.reputation_score.min(MAX_REPUTATION_SCORE as u64);
+        if p.status == AgentStatus::Suspended && p.reputation_stake.slash_count < 3 {
+            p.reputation_stake.slash_count = 3;
+        }
+        assert_eq!(p.reputation_score, 100);
+        let result = state::assert_valid_profile(&p);
+        assert!(result.is_ok(), "post-clamp profile must satisfy invariant");
+    }
+
+    /// AUD-001/002 migration: Suspended with slash_count=0 normalizes to 3.
+    #[test]
+    fn aud_001_002_migrate_normalizes_suspended_invariant() {
+        let mut p = fixture_profile(50, AgentStatus::Suspended, 0);
+        p.reputation_score = p.reputation_score.min(MAX_REPUTATION_SCORE as u64);
+        if p.status == AgentStatus::Suspended && p.reputation_stake.slash_count < 3 {
+            p.reputation_stake.slash_count = 3;
+        }
+        assert_eq!(p.reputation_stake.slash_count, 3);
+        assert_eq!(p.status, AgentStatus::Suspended);
+        let result = state::assert_valid_profile(&p);
+        assert!(result.is_ok(), "post-normalization profile must satisfy invariant");
+    }
+
+    /// AUD-001/002 migration: combined fixture from the design doc —
+    /// score=255, status=Suspended, slash_count=0 → score=100, slash_count=3.
+    #[test]
+    fn aud_001_002_migrate_combined_fixture_matches_acceptance_test() {
+        let mut p = fixture_profile(255, AgentStatus::Suspended, 0);
+        p.reputation_score = p.reputation_score.min(MAX_REPUTATION_SCORE as u64);
+        if p.status == AgentStatus::Suspended && p.reputation_stake.slash_count < 3 {
+            p.reputation_stake.slash_count = 3;
+        }
+        assert_eq!(p.reputation_score, 100);
+        assert_eq!(p.reputation_stake.slash_count, 3);
+        let result = state::assert_valid_profile(&p);
+        assert!(result.is_ok());
+    }
+
+    /// AUD-001/002 migration is idempotent: a profile already in the new
+    /// shape is unchanged after running the same normalization steps.
+    #[test]
+    fn aud_001_002_migrate_is_idempotent_on_valid_profile() {
+        let mut p = fixture_profile(50, AgentStatus::Active, 0);
+        let before = (p.reputation_score, p.reputation_stake.slash_count, p.status);
+        p.reputation_score = p.reputation_score.min(MAX_REPUTATION_SCORE as u64);
+        if p.status == AgentStatus::Suspended && p.reputation_stake.slash_count < 3 {
+            p.reputation_stake.slash_count = 3;
+        }
+        let after = (p.reputation_score, p.reputation_stake.slash_count, p.status);
+        assert_eq!(before, after, "migration must be idempotent on valid profiles");
     }
 }

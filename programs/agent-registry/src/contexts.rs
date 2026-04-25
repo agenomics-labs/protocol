@@ -108,61 +108,13 @@ pub struct UpdateStatus<'info> {
     pub agent_profile: Account<'info, AgentProfile>,
 }
 
-/// SEC-1 (per ADR-068, Accepted 2026-04-23): the `UpdateReputation` context pins the
-/// target `agent_profile` to an externally-supplied `authority` account. The
-/// pre-fix version derived the PDA from `agent_profile.authority.as_ref()`
-/// — a self-reference that let Anchor "validate" the seed against the very
-/// field stored inside the account it was meant to be checking, which is no
-/// check at all. Any well-formed `AgentProfile` would pass.
-///
-/// The fix has two layers:
-///   1. `authority` is now an `UncheckedAccount` whose `.key()` seeds the
-///      PDA derivation, so the seed anchor is outside the account being
-///      validated.
-///   2. `has_one = authority` enforces `agent_profile.authority ==
-///      authority.key()` at account-deserialization time.
-///
-/// Both checks must pass simultaneously, so a caller can only update the
-/// profile whose stored `authority` matches the PDA derivation — the exact
-/// invariant the old code pretended to enforce. The Settlement CPI layer
-/// supplies `authority = escrow.provider`, which is already enforced equal
-/// to the seed of `provider_profile` on the Settlement side (belt-and-
-/// braces across programs).
-///
-/// ADR-097: `owner_nonce` is included to re-derive the PDA with the nonce
-/// component. Settlement CPI callers must also pass this account.
-#[derive(Accounts)]
-pub struct UpdateReputation<'info> {
-    /// CHECK: The authority whose profile is being updated. Used as the
-    /// external seed anchor for `agent_profile` and constrained equal to
-    /// `agent_profile.authority` via `has_one = authority`.
-    pub authority: UncheckedAccount<'info>,
-
-    /// ADR-097: Read-only nonce account for `agent_profile` PDA seed.
-    /// Seeded by `[authority.key(), b"owner-nonce"]`.
-    #[account(
-        seeds = [authority.key().as_ref(), b"owner-nonce"],
-        bump
-    )]
-    pub owner_nonce: Account<'info, OwnerNonce>,
-
-    #[account(
-        mut,
-        has_one = authority @ AgentRegistryError::UnauthorizedCaller,
-        seeds = [authority.key().as_ref(), b"agent-profile", &owner_nonce.nonce.to_le_bytes()],
-        bump = agent_profile.bump
-    )]
-    pub agent_profile: Account<'info, AgentProfile>,
-
-    /// CHECK: Settlement authority PDA — must sign via invoke_signed.
-    #[account(
-        signer,
-        seeds = [b"settlement_authority"],
-        bump,
-        seeds::program = SETTLEMENT_PROGRAM_ID
-    )]
-    pub settlement_authority: UncheckedAccount<'info>,
-}
+// AUD-001 / AUD-002 (PR-G): the legacy `UpdateReputation` context has been
+// removed. All reputation mutations now flow through `ProposeReputationDelta`
+// (defined later in this file), which owns the unified policy: i16 delta,
+// [0, 100] clamp, |delta| <= MAX_DELTA_PER_CALL, and the cross-account-reuse
+// guard. See docs/audits/DESIGN-DECISIONS-2026-04-25.md (AUD-001 + AUD-002)
+// — the "Option A — remove, no escape hatch" path was chosen explicitly over
+// a deprecation alias.
 
 /// ADR-097: `StakeReputation` includes `owner_nonce` for PDA derivation.
 #[derive(Accounts)]
@@ -288,27 +240,51 @@ pub struct DeregisterAgent<'info> {
     pub agent_profile: Account<'info, AgentProfile>,
 }
 
-/// ADR-094: Context for `propose_reputation_delta` — the new trust-hierarchy
-/// entry point for reputation updates. Settlement (and any future authorized
-/// caller) proposes a signed delta; Registry validates and applies it.
+/// ADR-094 / AUD-001 / AUD-002: Context for `propose_reputation_delta` — the
+/// new trust-hierarchy entry point for reputation updates. Settlement (and
+/// any future authorized caller) proposes a signed delta; Registry validates
+/// and applies it.
 ///
-/// Authorization: `settlement_authority` is the CPI signer PDA derived by the
-/// Settlement program. The `seeds::program = SETTLEMENT_PROGRAM_ID` constraint
-/// proves the PDA was derived by Settlement, not forged by a third party.
-/// Combined with `signer`, this cryptographically proves the call originated
-/// from the Settlement program via `invoke_signed`.
+/// Authorization (three independent layers, all of which must hold):
+///   1. `settlement_authority` is a PDA derived under `SETTLEMENT_PROGRAM_ID`
+///      and `signer`-checked, so the call must originate from Settlement via
+///      `invoke_signed` (SEC-1 pattern, ADR-068).
+///   2. `owner_nonce` is the per-owner nonce PDA (ADR-097) seeded by
+///      `[authority.key().as_ref(), b"owner-nonce"]` under this program. The
+///      seeds constraint binds the account address to `authority.key()`,
+///      providing the cross-account-reuse guard — Bob cannot pass Alice's
+///      `OwnerNonce` because the seeds-derived PDA address would not match.
+///   3. `agent_profile` is seeded by
+///      `[authority.key().as_ref(), b"agent-profile", &owner_nonce.nonce.to_le_bytes()]`
+///      and `has_one = authority`. Combined with the seeds, this enforces
+///      `agent_profile.authority == authority.key()` AND that the PDA was
+///      derived from the *current* nonce — closing the cross-account-reuse
+///      hole AUD-001 reported.
+///
+/// AUD-002: this is now the SOLE reputation-mutation entry point. The legacy
+/// `update_reputation` instruction was removed in PR-G; Settlement CPIs land
+/// here exclusively.
 #[derive(Accounts)]
 pub struct ProposeReputationDelta<'info> {
-    /// CHECK: The agent whose reputation is being updated. Used as the external
-    /// seed anchor for `agent_profile` and constrained equal to
-    /// `agent_profile.authority` via `has_one = authority`.
-    pub authority: UncheckedAccount<'info>,
+    /// ADR-097: Read-only nonce account. Seeded by
+    /// `[authority.key().as_ref(), b"owner-nonce"]`. The seeds constraint
+    /// binds the account address to `authority.key()`, providing the
+    /// cross-account-reuse guard called for in AUD-001.
+    #[account(
+        seeds = [authority.key().as_ref(), b"owner-nonce"],
+        bump,
+    )]
+    pub owner_nonce: Account<'info, OwnerNonce>,
 
     #[account(
         mut,
         has_one = authority @ AgentRegistryError::UnauthorizedCaller,
-        seeds = [authority.key().as_ref(), b"agent-profile"],
-        bump = agent_profile.bump
+        seeds = [
+            authority.key().as_ref(),
+            b"agent-profile",
+            &owner_nonce.nonce.to_le_bytes(),
+        ],
+        bump = agent_profile.bump,
     )]
     pub agent_profile: Account<'info, AgentProfile>,
 
@@ -322,6 +298,39 @@ pub struct ProposeReputationDelta<'info> {
         seeds::program = SETTLEMENT_PROGRAM_ID
     )]
     pub settlement_authority: UncheckedAccount<'info>,
+
+    /// CHECK: The agent whose reputation is being updated. Used as the
+    /// external seed anchor for `owner_nonce` and `agent_profile`, and
+    /// constrained equal to `agent_profile.authority` via
+    /// `has_one = authority`. Not deserialized; only `.key()` is read.
+    pub authority: UncheckedAccount<'info>,
+}
+
+/// AUD-001 / AUD-002: Context for `verify_protocol_invariants` — the
+/// post-migration sweep instruction. Iterates `remaining_accounts`,
+/// deserializes each as `AgentProfile`, and runs `assert_valid_profile`.
+/// Any violation reverts the transaction.
+///
+/// Authorization gates to the existing `ProtocolConfig.authority` (Settlement
+/// program) — keeps cross-program coupling minimal (per design-decisions
+/// AUD-001/002 §6, "Choose the latter for less coupling"). The handler
+/// validates the signer matches the deserialized authority field of the
+/// passed `protocol_config` account.
+#[derive(Accounts)]
+pub struct VerifyProtocolInvariants<'info> {
+    pub authority: Signer<'info>,
+
+    /// CHECK: Read-only `ProtocolConfig` PDA from the Settlement program.
+    /// Address is bound by `seeds::program = SETTLEMENT_PROGRAM_ID`. We accept
+    /// it as `UncheckedAccount` to avoid pulling in a Settlement crate
+    /// dependency; the handler reads the `authority: Pubkey` field at the
+    /// known offset (8 disc bytes) and asserts it equals the signer.
+    #[account(
+        seeds = [b"protocol_config"],
+        bump,
+        seeds::program = SETTLEMENT_PROGRAM_ID,
+    )]
+    pub protocol_config: UncheckedAccount<'info>,
 }
 
 /// ADR-060: Publish or rotate the off-chain capability manifest pointer.
@@ -377,7 +386,8 @@ pub struct UpdateManifest<'info> {
 pub struct MigrateAgentProfile<'info> {
     /// The authority that owns this `AgentProfile`. Named `owner` here to
     /// keep the signer semantics distinct from the `authority` field name
-    /// used in `UpdateReputation` (where authority is an UncheckedAccount).
+    /// used in `ProposeReputationDelta` (where `authority` is an
+    /// UncheckedAccount).
     #[account(mut)]
     pub owner: Signer<'info>,
 

@@ -159,19 +159,19 @@ pub struct ApproveMilestone<'info> {
     /// CHECK: Provider's AgentProfile PDA — validated via cross-program PDA derivation.
     /// Must match seeds [escrow.provider, "agent-profile"] under the Registry program.
     /// ADR-097: The nonce component is not validated here (UncheckedAccount); the
-    /// Registry's `UpdateReputation` context validates the PDA using `owner_nonce`.
+    /// Registry's `ProposeReputationDelta` context validates the PDA using `owner_nonce`.
     /// CHECK: Passed as-is to the Registry CPI; Registry re-derives the address.
     #[account(mut)]
     pub provider_profile: UncheckedAccount<'info>,
 
     /// ADR-097: The provider's `OwnerNonce` account — required by the Registry's
-    /// `UpdateReputation` context to re-derive the `agent_profile` PDA.
+    /// `ProposeReputationDelta` context to re-derive the `agent_profile` PDA.
     /// Seeded by `[escrow.provider, b"owner-nonce"]` under the Registry program.
     /// CHECK: Passed as-is to the Registry CPI; Registry validates via seeds constraint.
     pub provider_owner_nonce: UncheckedAccount<'info>,
 
     /// SEC-1 (per ADR-068, Accepted 2026-04-23): external authority anchor for the
-    /// Registry's `UpdateReputation` CPI. The Registry now pins
+    /// Registry's `ProposeReputationDelta` CPI. The Registry now pins
     /// `agent_profile` via `has_one = authority` + seeds derived from
     /// `authority.key()` instead of the self-referential
     /// `agent_profile.authority`. Feeding `escrow.provider` here is the
@@ -295,11 +295,11 @@ pub struct ResolveDispute<'info> {
     pub provider_profile: UncheckedAccount<'info>,
 
     /// ADR-097: Provider's OwnerNonce account. Passed to Registry CPI.
-    /// CHECK: Validated by Registry's UpdateReputation seeds constraint.
+    /// CHECK: Validated by Registry's ProposeReputationDelta seeds constraint.
     pub provider_owner_nonce: UncheckedAccount<'info>,
 
     /// SEC-1 (per ADR-068, Accepted 2026-04-23): external authority anchor for the
-    /// Registry `UpdateReputation` CPI. See `ApproveMilestone` for rationale.
+    /// Registry `ProposeReputationDelta` CPI. See `ApproveMilestone` for rationale.
     /// CHECK: address-constrained to `escrow.provider`.
     #[account(address = escrow.provider)]
     pub provider_authority: UncheckedAccount<'info>,
@@ -361,11 +361,11 @@ pub struct ResolveDisputeTimeout<'info> {
     pub provider_profile: UncheckedAccount<'info>,
 
     /// ADR-097: Provider's OwnerNonce account. Passed to Registry CPI.
-    /// CHECK: Validated by Registry's UpdateReputation seeds constraint.
+    /// CHECK: Validated by Registry's ProposeReputationDelta seeds constraint.
     pub provider_owner_nonce: UncheckedAccount<'info>,
 
     /// SEC-1 (per ADR-068, Accepted 2026-04-23): external authority anchor for the
-    /// Registry `UpdateReputation` CPI. See `ApproveMilestone` for rationale.
+    /// Registry `ProposeReputationDelta` CPI. See `ApproveMilestone` for rationale.
     /// CHECK: address-constrained to `escrow.provider`.
     #[account(address = escrow.provider)]
     pub provider_authority: UncheckedAccount<'info>,
@@ -462,11 +462,11 @@ pub struct ExpireEscrow<'info> {
     pub provider_profile: UncheckedAccount<'info>,
 
     /// ADR-097: Provider's OwnerNonce account. Passed to Registry CPI.
-    /// CHECK: Validated by Registry's UpdateReputation seeds constraint.
+    /// CHECK: Validated by Registry's ProposeReputationDelta seeds constraint.
     pub provider_owner_nonce: UncheckedAccount<'info>,
 
     /// SEC-1 (per ADR-068, Accepted 2026-04-23): external authority anchor for the
-    /// Registry `UpdateReputation` CPI. See `ApproveMilestone` for rationale.
+    /// Registry `ProposeReputationDelta` CPI. See `ApproveMilestone` for rationale.
     /// CHECK: address-constrained to `escrow.provider`.
     #[account(address = escrow.provider)]
     pub provider_authority: UncheckedAccount<'info>,

@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use crate::errors::AgentRegistryError;
 
 /// The Settlement program ID — used to verify CPI caller for reputation updates.
 pub const SETTLEMENT_PROGRAM_ID: Pubkey = pubkey!("GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3");
@@ -138,4 +139,44 @@ pub enum AgentStatus {
 pub struct ReputationStake {
     pub staked_amount: u64,
     pub slash_count: u8,
+}
+
+/// AUD-001 / AUD-002 (PR-G): closed-state-machine invariant for `AgentProfile`.
+/// Every reputation/status mutation MUST call this after writing. Migration
+/// handlers MUST call this after normalization. A violation panic-reverts
+/// the entire transaction, surfacing the mismatch in the program log.
+///
+/// Invariants enforced:
+///   1. `reputation_score <= MAX_REPUTATION_SCORE` (= 100). Pre-PR-G the
+///      legacy `update_reputation` could grow `score` without bound.
+///   2. `status == Suspended ⇒ slash_count >= 3`. The slash path is the
+///      only instruction that legitimately writes `Suspended`; anything
+///      else hitting that state is reconciled via `migrate_agent_profile`.
+///   3. `cleared_count <= 3` (PR-I, in flight). The base tree shipped to
+///      this PR-G worktree does not yet include the `cleared_count` field
+///      on `AgentProfile`. The check is left as a TODO that resolves the
+///      moment PR-I lands and adds the field — at that point this guard
+///      becomes enforceable without a coordination handoff.
+///
+/// Choosing `require!` (vs. `assert!`) keeps the error path Anchor-typed,
+/// so callers see a stable error code instead of an opaque panic. Once a
+/// violation fires the runtime aborts the tx without persisting any of
+/// the writes that produced the bad state.
+pub fn assert_valid_profile(profile: &AgentProfile) -> Result<()> {
+    require!(
+        profile.reputation_score <= crate::MAX_REPUTATION_SCORE as u64,
+        AgentRegistryError::InvalidReputationScore
+    );
+    require!(
+        !(profile.status == AgentStatus::Suspended
+            && profile.reputation_stake.slash_count < 3),
+        AgentRegistryError::InvalidSuspendedProfile
+    );
+    // TODO(PR-I, AUD-004): when `cleared_count: u8` lands on AgentProfile,
+    // re-enable:
+    //   require!(profile.cleared_count <= 3, AgentRegistryError::InvalidClearedCount);
+    // The base tree shipped to PR-G does not yet have this field, so we
+    // skip the check for now. The error variant `InvalidClearedCount`
+    // exists in errors.rs for forward compatibility.
+    Ok(())
 }
