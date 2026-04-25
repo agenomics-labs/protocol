@@ -25,9 +25,9 @@ The entire protocol is accessible to any AI agent through a Model Context Protoc
 │  Programmable│  Discovery &     │  Milestone-based escrow    │
 │  wallets     │  reputation      │  with dispute resolution   │
 │              │                  │                            │
-│  invoke_signed ──────────────── │  invoke() ─── Registry     │
-│  (CPI to any │                  │  (CPI reputation update)   │
-│   program)   │                  │                            │
+│  SOL + SPL   │                  │  invoke() ─── Registry     │
+│  transfers   │                  │  (CPI reputation update)   │
+│  (ADR-050)   │                  │                            │
 └──────────────┴──────────────────┴────────────────────────────┘
                          Solana (devnet / localnet)
 ```
@@ -44,16 +44,17 @@ Programmable wallets that let agents hold and spend funds under configurable pol
 
 - `initialize_vault` — Create vault PDA with daily limits, per-tx limits, rate limiting
 - `execute_transfer` — Send SOL within policy constraints
-- `execute_program_call` — Real CPI via `invoke_signed` to any allowed program (vault PDA signs)
+- `execute_token_transfer` — Send SPL tokens within policy + token allowlist constraints
 - `update_policy` — Modify spending limits and rate caps
+- `update_agent_identity` — Rotate the agent identity tied to the vault
 - `add_token_allowlist` / `remove_token_allowlist` — Token whitelist management
-- `add_program_allowlist` / `remove_program_allowlist` — Program whitelist management
+- `add_program_allowlist` / `remove_program_allowlist` — Program whitelist management (reserved for future use; ADR-050 removed `execute_program_call`)
 - `pause_vault` / `resume_vault` — Emergency kill switch
 
 **Key implementation details:**
 
-- PDA bump stored on-chain for `invoke_signed` in cross-program calls
-- Explicit lifetime annotations (`Context<'_, '_, 'info, 'info, ...>`) for `remaining_accounts` CPI pattern
+- Vault PDA bump stored on-chain for SPL token transfers (`invoke_signed` on `spl_token::transfer`)
+- Per ADR-050, the vault has no cross-program-call surface — transfers are SOL-only via `execute_transfer` and SPL via `execute_token_transfer`
 - Scoped borrows to satisfy Rust's borrow checker with checks-effects-interactions
 - Rate limiting with 1-hour sliding window
 - Daily spending resets based on Unix day boundaries
@@ -117,15 +118,15 @@ Milestone-based escrow that locks SPL tokens and releases them as milestones are
 
 ## Cross-Program Invocations (CPI)
 
-Both CPI flows use real Solana `invoke()` / `invoke_signed()` — not stubs or event-based patterns.
+The protocol uses real Solana `invoke()` for cross-program calls — not stubs or event-based patterns.
 
 ### Settlement → Registry: `update_reputation`
 
 When all milestones in an escrow are approved, the Settlement program calls Registry's `update_reputation` instruction via `invoke()`. This atomically updates the provider's reputation score (+50), tasks_completed (+1), and total_earnings. The Registry verifies the caller by checking `settlement_program.key() == SETTLEMENT_PROGRAM_ID` with an `#[account(executable)]` constraint.
 
-### Vault → Any Program: `execute_program_call`
+### Vault: no cross-program-call surface
 
-The vault can call any whitelisted program using `invoke_signed()` with the vault PDA as signer. The bump seed is stored in the Vault account at initialization and used to reconstruct the signer seeds: `[b"vault", authority.as_ref(), &[bump]]`. Target program and accounts are passed via `remaining_accounts`.
+Per ADR-050, the vault has no cross-program-call surface. Transfers are SOL-only via `execute_transfer` and SPL via `execute_token_transfer`; both enforce per-tx limits, daily caps, rate limits, and (for tokens) the token allowlist. The earlier `execute_program_call` instruction was removed.
 
 ---
 
@@ -250,10 +251,10 @@ aep/
 | Decision | Rationale |
 |----------|-----------|
 | Anchor 0.30.1 with `--no-idl` build | IDL generation broken with newer Rust toolchains (`anchor-syn` `source_file()` incompatibility). IDLs maintained manually. |
-| Explicit lifetime annotations for CPI | `Context<'_, '_, 'info, 'info, T<'info>>` required when accessing `remaining_accounts` in `invoke_signed` |
+| No vault cross-program-call surface | Per ADR-050, the vault no longer exposes `execute_program_call`. Transfers are SOL-only via `execute_transfer` and SPL via `execute_token_transfer`. |
 | Scoped borrows for CEI | Rust borrow checker requires `{...}` blocks to separate mutable state updates from immutable CPI account access |
 | Manual CPI discriminator | Settlement builds Registry CPI manually with `sha256("global:update_reputation")[0..8]` to avoid circular Anchor dependencies |
-| PDA bump storage | Vault stores bump at init to avoid recomputing in `invoke_signed` — a gas optimization and correctness requirement |
+| PDA bump storage | Vault stores bump at init for `invoke_signed` on SPL `token::transfer` — gas optimization and correctness requirement |
 | `CARGO_TARGET_DIR` override | Moved build artifacts to `/sessions/.../target-aep` to avoid disk space issues on mounted volumes |
 | UncheckedAccount for CPI targets | `provider_profile` and `settlement_self` use `UncheckedAccount` since they're validated by the target program during CPI, not by Anchor constraints |
 
@@ -279,7 +280,7 @@ aep/
 ### Lower Priority (Post-Hackathon)
 
 10. **Multi-token vault support** — Extend vault to hold and manage multiple SPL token accounts, not just SOL
-11. **Vault CPI integration test** — End-to-end test that creates a vault, whitelists a program, and executes a real `execute_program_call` against it
+11. **Vault SPL transfer integration test** — End-to-end test that creates a vault, whitelists a token mint, and executes a real `execute_token_transfer` (the vault has no cross-program-call surface; transfers are SOL-only via `execute_transfer` and SPL via `execute_token_transfer`, per ADR-050)
 12. **Agent discovery API** — Add filtered queries to MCP (by category, minimum reputation, price range)
 13. **Governance / upgradeability** — Add program upgrade authority controls and parameter governance
 14. **Audit preparation** — Security audit checklist: reentrancy, integer overflow, PDA collision, authority escalation
