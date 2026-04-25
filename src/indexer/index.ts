@@ -788,6 +788,33 @@ function coerceU64String(v: unknown): string {
 
 const RECONNECT_DELAY_MS = 3000;
 
+// AUD-039 / ADR-118: WebSocket health is detected via a heartbeat ping
+// rather than peeking at `(connection as any)._rpcWebSocket`. The previous
+// approach reached into a private @solana/web3.js field and would silently
+// stop firing on a minor-version bump that renames or removes it.
+//
+// We periodically issue a cheap RPC call (`getSlot` at "confirmed") with a
+// timeout. After HEARTBEAT_FAILURE_THRESHOLD consecutive failures we treat
+// the connection as dead and trigger the same per-program reconnect path
+// that was previously kicked off by the WebSocket "close" event.
+//
+// Defaults are conservative: 10s interval, 5s timeout, 3 consecutive
+// failures before declaring loss (~30s before reconnect, matching the
+// rough latency of TCP keepalive + browser-style WS close detection on
+// the prior implementation).
+const HEARTBEAT_INTERVAL_MS = parseInt(
+  process.env.INDEXER_HEARTBEAT_INTERVAL_MS || "10000",
+  10,
+);
+const HEARTBEAT_TIMEOUT_MS = parseInt(
+  process.env.INDEXER_HEARTBEAT_TIMEOUT_MS || "5000",
+  10,
+);
+const HEARTBEAT_FAILURE_THRESHOLD = parseInt(
+  process.env.INDEXER_HEARTBEAT_FAILURE_THRESHOLD || "3",
+  10,
+);
+
 /**
  * Per-program live view of subscription health. Exposed through `/health`
  * and `/metrics` so operators can see which feeds are behind, disconnected,
@@ -1039,7 +1066,11 @@ function subscribeToPrograms(
   db: Database.Database,
   states?: Map<string, SubscriptionState>,
   metrics?: IndexerMetrics
-): { states: Map<string, SubscriptionState>; metrics: IndexerMetrics } {
+): {
+  states: Map<string, SubscriptionState>;
+  metrics: IndexerMetrics;
+  heartbeat: HeartbeatHandle;
+} {
   const activeStates = states ?? new Map<string, SubscriptionState>();
   const activeMetrics = metrics ?? createInitialMetrics();
 
@@ -1134,19 +1165,13 @@ function subscribeToPrograms(
       programLogger(label).error({ err: String(err) }, "backfill threw");
     });
 
-    // Monitor for WebSocket disconnects via connection error events
-    const wsConnection = (connection as unknown as { _rpcWebSocket?: { on?: (event: string, handler: () => void) => void } })._rpcWebSocket;
-    if (wsConnection && typeof wsConnection.on === "function") {
-      wsConnection.on("close", () => {
-        programLogger(label).warn(
-          { last_slot: state.lastProcessedSlot },
-          "WebSocket closed, scheduling reconnect",
-        );
-        state.connected = false;
-        subscriptionIds.delete(label);
-        scheduleReconnect(label, programId);
-      });
-    }
+    // AUD-039 / ADR-118: WebSocket disconnects are observed via the
+    // process-wide heartbeat (see startHeartbeat below) rather than a
+    // private `_rpcWebSocket.on("close", ...)` peek that would break on
+    // any @solana/web3.js minor bump. The heartbeat is started once on
+    // first subscribe and remains running for the lifetime of the
+    // process; per-program reconnect logic is unchanged from the
+    // previous implementation.
   }
 
   function scheduleReconnect(label: string, programId: PublicKey): void {
@@ -1179,7 +1204,126 @@ function subscribeToPrograms(
     subscribeWithReconnect(label, programId);
   }
 
-  return { states: activeStates, metrics: activeMetrics };
+  // AUD-039: process-wide heartbeat replaces the previous private-API
+  // peek at `connection._rpcWebSocket`. On HEARTBEAT_FAILURE_THRESHOLD
+  // consecutive failures, every currently-subscribed program is marked
+  // disconnected and re-routed through scheduleReconnect — exact same
+  // outcome as the old "close" event handler, just driven by a public
+  // RPC call instead of a private socket field.
+  const heartbeatHandle = startConnectionHeartbeat(connection, {
+    intervalMs: HEARTBEAT_INTERVAL_MS,
+    timeoutMs: HEARTBEAT_TIMEOUT_MS,
+    failureThreshold: HEARTBEAT_FAILURE_THRESHOLD,
+    onConnectionLost: (reason) => {
+      // Reconnect every program whose subscription is currently live.
+      // We iterate over a snapshot because scheduleReconnect mutates
+      // `subscriptionIds` indirectly through subscribeWithReconnect.
+      const labels = Array.from(subscriptionIds.keys());
+      for (const label of labels) {
+        const state = activeStates.get(label);
+        if (!state) continue;
+        const programId = new PublicKey(state.programId);
+        programLogger(label).warn(
+          { last_slot: state.lastProcessedSlot, reason },
+          "heartbeat failed, scheduling reconnect",
+        );
+        state.connected = false;
+        state.lastError = `heartbeat failed: ${reason}`;
+        subscriptionIds.delete(label);
+        scheduleReconnect(label, programId);
+      }
+    },
+  });
+
+  return { states: activeStates, metrics: activeMetrics, heartbeat: heartbeatHandle };
+}
+
+/**
+ * AUD-039 / ADR-118: connection-health heartbeat.
+ *
+ * Polls `connection.getSlot({ commitment: "confirmed" })` on a fixed
+ * interval. Each call is wrapped in a timeout so a hung WebSocket can't
+ * block detection. After `failureThreshold` consecutive failures, the
+ * `onConnectionLost` callback is invoked once (then the failure counter
+ * resets so the next failure burst can trigger another reconnect).
+ *
+ * The shape is small and synchronous-looking on purpose: the timer fires
+ * `tick` without awaiting, and `tick` swallows its own errors so an
+ * unhandled rejection from getSlot can't kill the indexer.
+ */
+export interface HeartbeatOptions {
+  intervalMs: number;
+  timeoutMs: number;
+  failureThreshold: number;
+  onConnectionLost: (reason: string) => void;
+}
+
+export interface HeartbeatHandle {
+  stop: () => void;
+  /** Test hook: returns the current consecutive-failure count. */
+  consecutiveFailures: () => number;
+}
+
+export function startConnectionHeartbeat(
+  connection: Pick<Connection, "getSlot">,
+  opts: HeartbeatOptions,
+): HeartbeatHandle {
+  let failures = 0;
+  let stopped = false;
+
+  const ping = async (): Promise<void> => {
+    // Race getSlot against a timeout so a wedged WS doesn't stall the
+    // heartbeat. AbortController would be cleaner but @solana/web3.js
+    // <2.0 has no abort signal plumbing through Connection methods.
+    const slotPromise = connection.getSlot({ commitment: "confirmed" });
+    const timeoutPromise = new Promise<never>((_resolve, reject) => {
+      setTimeout(
+        () => reject(new Error(`heartbeat timeout after ${opts.timeoutMs}ms`)),
+        opts.timeoutMs,
+      ).unref?.();
+    });
+    await Promise.race([slotPromise, timeoutPromise]);
+  };
+
+  const tick = async (): Promise<void> => {
+    if (stopped) return;
+    try {
+      await ping();
+      failures = 0;
+    } catch (err) {
+      failures++;
+      if (failures >= opts.failureThreshold) {
+        const reason = (err as Error).message ?? String(err);
+        // Reset BEFORE calling so the callback can trigger a re-subscribe
+        // path that re-arms the heartbeat without us double-counting the
+        // outage on the very next tick.
+        failures = 0;
+        try {
+          opts.onConnectionLost(reason);
+        } catch (cbErr) {
+          logger.error(
+            { err: String(cbErr) },
+            "heartbeat onConnectionLost callback threw",
+          );
+        }
+      }
+    }
+  };
+
+  const handle = setInterval(() => {
+    void tick();
+  }, opts.intervalMs);
+  // Never block process exit on the heartbeat — SIGINT/SIGTERM handlers
+  // (and tests) own shutdown.
+  handle.unref?.();
+
+  return {
+    stop: () => {
+      stopped = true;
+      clearInterval(handle);
+    },
+    consecutiveFailures: () => failures,
+  };
 }
 
 function createApi(
@@ -1401,7 +1545,7 @@ async function main(): Promise<void> {
   const connection = new Connection(RPC_URL, COMMITMENT);
   const db = initDb(process.env.DB_PATH || "./aep-events.db");
 
-  const { states, metrics } = subscribeToPrograms(connection, db);
+  const { states, metrics, heartbeat } = subscribeToPrograms(connection, db);
   const app = createApi(db, states, metrics);
   app.listen(PORT, () => {
     logger.info(
@@ -1422,6 +1566,7 @@ async function main(): Promise<void> {
 
   process.on("SIGINT", () => {
     logger.info("shutting down (SIGINT)");
+    heartbeat.stop();
     db.close();
     process.exit(0);
   });
@@ -1450,4 +1595,7 @@ export {
   PROGRAM_IDS,
   DISCRIMINATOR_MAP,
   COMMITMENT,
+  HEARTBEAT_INTERVAL_MS,
+  HEARTBEAT_TIMEOUT_MS,
+  HEARTBEAT_FAILURE_THRESHOLD,
 };
