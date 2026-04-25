@@ -1,7 +1,12 @@
 # ADR-047: disputed_at Option Type and avg_rating Rounding
 
-- **Status**: Accepted
-- **Date**: 2026-04-16
+## Status
+
+Accepted
+
+## Date
+
+2026-04-16
 
 ## Context
 

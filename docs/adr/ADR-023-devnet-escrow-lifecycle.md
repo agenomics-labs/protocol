@@ -1,7 +1,12 @@
 # ADR-023: Devnet Escrow Lifecycle Testing
 
-- **Status**: Accepted
-- **Date**: 2026-04-15
+## Status
+
+Accepted
+
+## Date
+
+2026-04-15
 
 ## Context
 

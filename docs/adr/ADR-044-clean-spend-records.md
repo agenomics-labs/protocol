@@ -1,7 +1,12 @@
 # ADR-044: Clean Spend Records on Allowlist Removal
 
-- **Status**: Accepted
-- **Date**: 2026-04-16
+## Status
+
+Accepted
+
+## Date
+
+2026-04-16
 
 ## Context
 

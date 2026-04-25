@@ -1,7 +1,13 @@
 # ADR-088: Typed Anchor program clients in `mcp-server`
 
-**Status:** Accepted
-**Date:** 2026-04-23
+## Status
+
+Accepted
+
+## Date
+
+2026-04-23
+
 **Audit-item:** ARCHITECTURE-AUDIT-2026-04-23 → 🟠 High → item 12
 **Source-finding:** Code-quality audit §3.1
 

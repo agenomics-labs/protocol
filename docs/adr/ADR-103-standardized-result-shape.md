@@ -1,9 +1,12 @@
 # ADR-103 — Standardized TypeScript Result Shape
 
-| Field | Value |
-|-------|-------|
-| Status | Accepted |
-| Date | 2026-04-23 |
+## Status
+
+Accepted
+
+## Date
+
+2026-04-23
 
 ## Context
 mcp-server and sas-resolver each define near-identical Result types and wrap()

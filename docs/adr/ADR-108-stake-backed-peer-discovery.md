@@ -1,10 +1,14 @@
 # ADR-108: Stake-backed peer discovery for the agent registry
 
-- **Status**: Proposed
-- **Date**: 2026-04-23
-- **Related**: ADR-020 (reputation staking), ADR-022 (load-test
-  discovery), ADR-028 (anti-Sybil), ADR-094 (reputation trust
-  inversion), ADR-106 (TraceRank), ADR-107 (reputation decay)
+## Status
+
+Proposed
+
+## Date
+
+2026-04-23
+
+**Related:** ADR-020 (reputation staking), ADR-022 (load-test discovery), ADR-028 (anti-Sybil), ADR-094 (reputation trust inversion), ADR-106 (TraceRank), ADR-107 (reputation decay)
 
 ## Context
 

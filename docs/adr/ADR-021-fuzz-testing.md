@@ -1,7 +1,12 @@
 # ADR-021: Fuzz Testing with Property-Based Tests
 
-- **Status**: Accepted
-- **Date**: 2026-04-15
+## Status
+
+Accepted
+
+## Date
+
+2026-04-15
 
 ## Context
 

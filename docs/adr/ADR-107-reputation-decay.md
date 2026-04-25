@@ -1,9 +1,14 @@
 # ADR-107: Reputation decay — MeritRank-style temporal + connectivity decay
 
-- **Status**: Proposed
-- **Date**: 2026-04-23
-- **Related**: ADR-094 (reputation trust inversion), ADR-106
-  (TraceRank), ADR-020 (reputation staking)
+## Status
+
+Proposed
+
+## Date
+
+2026-04-23
+
+**Related:** ADR-094 (reputation trust inversion), ADR-106 (TraceRank), ADR-020 (reputation staking)
 
 ## Context
 

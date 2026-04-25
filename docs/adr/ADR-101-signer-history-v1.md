@@ -1,9 +1,12 @@
 # ADR-101 — Per-credential SignerHistoryV1: hard-fail on undefined signers
 
-| Field | Value |
-|-------|-------|
-| Status | Accepted |
-| Date | 2026-04-23 |
+## Status
+
+Accepted
+
+## Date
+
+2026-04-23
 
 ## Context
 The SAS resolver processes credential entries that include a `signers` field

@@ -1,7 +1,12 @@
 # ADR-020: Reputation Staking and Slashing
 
-**Status:** Accepted
-**Date:** 2026-04-15
+## Status
+
+Accepted
+
+## Date
+
+2026-04-15
 
 ## Context
 

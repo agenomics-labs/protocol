@@ -1,7 +1,12 @@
 # ADR-034: Documentation Site
 
-**Status:** Accepted
-**Date:** 2026-04-15
+## Status
+
+Accepted
+
+## Date
+
+2026-04-15
 
 ## Context
 

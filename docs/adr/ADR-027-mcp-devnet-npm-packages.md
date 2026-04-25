@@ -1,7 +1,12 @@
 # ADR-027: MCP Devnet Wiring and npm Package Configuration
 
-- **Status**: Accepted
-- **Date**: 2026-04-15
+## Status
+
+Accepted
+
+## Date
+
+2026-04-15
 
 ## Context
 

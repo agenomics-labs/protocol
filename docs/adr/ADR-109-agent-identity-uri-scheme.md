@@ -1,11 +1,14 @@
 # ADR-109: Agent Identity URI scheme for topology-independent naming
 
-- **Status**: Proposed
-- **Date**: 2026-04-23
-- **Related**: ADR-060 (capability manifest), ADR-061 (SAS
-  attestation resolver), ADR-069 (agent identity rotation), ADR-088
-  (typed Anchor IDL), ADR-092 (manifest hash domain separation),
-  ADR-098 (client SDK), ADR-104 (observability)
+## Status
+
+Proposed
+
+## Date
+
+2026-04-23
+
+**Related:** ADR-060 (capability manifest), ADR-061 (SAS attestation resolver), ADR-069 (agent identity rotation), ADR-088 (typed Anchor IDL), ADR-092 (manifest hash domain separation), ADR-098 (client SDK), ADR-104 (observability)
 
 ## Context
 

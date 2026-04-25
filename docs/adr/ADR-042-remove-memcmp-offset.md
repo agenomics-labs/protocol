@@ -1,7 +1,12 @@
 # ADR-042: Remove Fragile memcmp Offset from discover_agents
 
-**Status:** Accepted
-**Date:** 2026-04-16
+## Status
+
+Accepted
+
+## Date
+
+2026-04-16
 
 ## Context
 

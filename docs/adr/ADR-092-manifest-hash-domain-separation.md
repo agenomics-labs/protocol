@@ -1,9 +1,12 @@
 # ADR-092 — Capability Manifest Hash Domain Separation
 
-| Field | Value |
-|-------|-------|
-| Status | Accepted |
-| Date | 2026-04-23 |
+## Status
+
+Accepted
+
+## Date
+
+2026-04-23
 
 ## Context
 

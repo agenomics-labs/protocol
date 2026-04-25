@@ -1,7 +1,12 @@
 # ADR-015: Per-Token Daily Spending Limits for Vault
 
-**Status:** Accepted
-**Date:** 2026-04-15
+## Status
+
+Accepted
+
+## Date
+
+2026-04-15
 
 ## Context
 

@@ -1,9 +1,12 @@
 # ADR-098 — @agenomics/client SDK Package
 
-| Field | Value |
-|-------|-------|
-| Status | Accepted |
-| Date | 2026-04-23 |
+## Status
+
+Accepted
+
+## Date
+
+2026-04-23
 
 ## Context
 No public TypeScript client exists for the AEP protocol. External builders
