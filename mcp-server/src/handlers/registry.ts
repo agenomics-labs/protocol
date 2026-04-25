@@ -122,10 +122,11 @@ export async function handleGetAgentProfile(args: Record<string, unknown>) {
 
   const [agentProfilePDA] = deriveAgentProfilePDA(authorityKey);
   // ADR-088: typed via `Program<AgentRegistry>.account.agentProfile`.
-  // `pricingAmount`, `reputationScore`, `totalTasksCompleted`,
-  // `totalEarnings`, `createdAt`, `updatedAt` arrive as `BN`;
-  // `authority`, `vaultAddress` as `PublicKey`; `acceptedTokens` as
-  // `PublicKey[]`; `avgRating` as `number`.
+  // `pricingAmount`, `reputationScore`, `createdAt`, `updatedAt` arrive as
+  // `BN`; `authority`, `vaultAddress` as `PublicKey`; `acceptedTokens` as
+  // `PublicKey[]`. AUD-007 (PR-Q): the legacy `totalTasksCompleted`,
+  // `totalEarnings`, and `avgRating` aggregates were removed from the
+  // on-chain `AgentProfile`; they no longer appear here.
   const profile = await program.account.agentProfile.fetch(agentProfilePDA);
 
   return {
@@ -141,9 +142,6 @@ export async function handleGetAgentProfile(args: Record<string, unknown>) {
     vaultAddress: profile.vaultAddress.toBase58(),
     status: formatAgentStatus(profile.status),
     reputationScore: profile.reputationScore.toNumber(),
-    totalTasksCompleted: profile.totalTasksCompleted.toNumber(),
-    totalEarningsSol: lamportsToSol(profile.totalEarnings.toNumber()),
-    avgRating: profile.avgRating,
     createdAt: profile.createdAt.toNumber(),
     updatedAt: profile.updatedAt.toNumber(),
   };
@@ -405,8 +403,10 @@ function hydrateAgent(address: PublicKey, p: AgentProfileAccount) {
     pricingAmountSol: lamportsToSol(p.pricingAmount.toNumber()),
     status: formatAgentStatus(p.status),
     reputationScore: p.reputationScore.toNumber(),
-    totalTasksCompleted: p.totalTasksCompleted.toNumber(),
-    avgRating: p.avgRating,
+    // AUD-007 (PR-Q): `totalTasksCompleted` and `avgRating` removed from the
+    // on-chain `AgentProfile`. Discovery now exposes only Registry-native
+    // signals (reputationScore, status); per-task telemetry is the indexer's
+    // domain.
   };
 }
 

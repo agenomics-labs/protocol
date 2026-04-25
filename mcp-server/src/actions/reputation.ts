@@ -35,7 +35,7 @@ export const getAgentReputationAction: Action<
   name: "get_agent_reputation",
   title: "Get agent reputation snapshot",
   description:
-    "Fetches the merged reputation snapshot for an agent: on-chain Registry native state (reputation_score, stake, slash_count, status, avg_rating, total_tasks_completed) + capability manifest summary (fetched from IPFS and validated via @agenomics/capability-manifest-validator) + optional SAS attestation signal (resolved via @agenomics/sas-resolver). Read-only — no on-chain writes.",
+    "Fetches the merged reputation snapshot for an agent: on-chain Registry native state (reputation_score, stake, slash_count, status) + capability manifest summary (fetched from IPFS and validated via @agenomics/capability-manifest-validator) + optional SAS attestation signal (resolved via @agenomics/sas-resolver). Read-only — no on-chain writes. AUD-007 (PR-Q): the legacy `avg_rating` / `total_tasks_completed` aggregates were removed from the on-chain account.",
   inputSchema: getAgentReputationInput,
   outputSchema: z.unknown(),
   similes: ["reputation", "check agent score", "agent reputation", "agent snapshot"],

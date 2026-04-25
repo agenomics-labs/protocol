@@ -7,7 +7,7 @@
 - **Started**: 2026-04-25 with 4 parallel sub-audits (on-chain, off-chain TS, ADR governance, tests/CI).
 - **Findings inventoried**: 75 with stable `AUD-NNN` IDs.
 - **Closed in this cycle**: **30** (5 Critical / 7 High / 5 Medium / 6 Low / 2 Info / 5 Architecture).
-- **PR-Q (AUD-007)**: needs re-spec — base diverged after PR-G removed `update_reputation`. The agent built the fix on top of the now-deleted instruction, so it can't be cherry-picked as-is. Either (a) write a new `submit_rating` instruction, or (b) remove `avg_rating` field entirely. Deferred.
+- **PR-Q (AUD-007)**: re-specified for the post-PR-G surface — Option A chosen (remove the dangling fields, no new `submit_rating` ix). `total_tasks_completed`, `total_earnings`, and `avg_rating` are removed from `AgentProfile` and replaced by a 17-byte `_reserved_aud007` padding array preserving the on-disk layout. ADR-121 documents the rationale; consumer cascade (mcp-server, sdk/client, sas-resolver, tests, IDL) lands in the same PR.
 
 **AUD-017 — CPI failure integration tests landed**: `tests/cpi-failures.test.ts` (818 lines) covers 5 active cases — closed AgentProfile, wrong OwnerNonce, suspended-provider behavior, spoofed `settlement_authority` address, cross-account provider/profile mismatch. 2 cases documented-skip (forged `invoke_signed` from non-Settlement program — needs helper program; discriminator drift — Anchor IDL prevents). All pass against the deployed binary; written to be forward-compatible with PR-G's CPI rewire. Closes the long-promised gap from ADR-001/007/014/095.
 - **All 5 Critical findings are Fixed**.
@@ -26,10 +26,11 @@
 | AUD-004 | Reputation laundering via self-Suspended + clear_suspension | `31586e9` |
 | AUD-005 | `initialize_protocol_config` permissionless front-run | `5aa2f85` |
 
-### High (6 closed)
+### High (7 closed)
 
 | ID | Title | Commit |
 |---|---|---|
+| AUD-007 | `avg_rating` denominator unbounded; gameable | PR-Q (this PR) — fields removed via `_reserved_aud007` padding; ADR-121 |
 | AUD-008 | Vault user-supplied `profile_nonce` | `a1c40da` |
 | AUD-009 | `accept_task` no deadline check (grief vector) | `4fa7443` |
 | AUD-011 | SDK uses `BigInt64Array` for `u64` nonce | `e262db9` |
@@ -91,7 +92,6 @@ Plus closed-state-machine invariant (`assert_valid_profile()`) wired across muta
 | ID | Title | Effort | Plan-row |
 |---|---|---|---|
 | AUD-006 | Vault rate-limit signed/unsigned arithmetic | 1h | PR-P |
-| AUD-007 | `avg_rating` denominator unbounded; gameable | 2h | PR-Q |
 | AUD-009 | `accept_task` no deadline check (grief vector) | 30m | PR-R |
 | AUD-010 | `expire_escrow` skips success-path CPI | 3h | PR-S |
 | AUD-013 | Three competing `Result<T>` shapes | 1d | PR-T |

@@ -128,7 +128,7 @@ export const approveMilestoneAction: Action<
   name: "approve_milestone",
   title: "Approve milestone",
   description:
-    "Approve a submitted milestone as the client. Releases the milestone payment to the provider's token account. An optional `rating` (0..=5) is folded into the provider's avg_rating in the registry when the final milestone is approved.",
+    "Approve a submitted milestone as the client. Releases the milestone payment to the provider's token account. An optional `rating` (0..=5) is accepted for forward compatibility with a future on-chain rating instruction; AUD-007 (PR-Q) removed `avg_rating` from `AgentProfile`, so the value is currently validated and emitted in events but does not mutate any on-chain aggregate.",
   inputSchema: approveMilestoneInput,
   outputSchema: z.unknown(),
   similes: ["release payment", "approve milestone"],

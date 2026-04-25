@@ -81,8 +81,19 @@ const _scoreIsBN: _ScoreIsBN = true;
 type _CidIsNumberArray = Equals<AgentProfileAccount["manifestCid"], number[]>;
 const _cidIsNumberArray: _CidIsNumberArray = true;
 
-type _AvgRatingIsNumber = Equals<AgentProfileAccount["avgRating"], number>;
-const _avgRatingIsNumber: _AvgRatingIsNumber = true;
+// AUD-007 (PR-Q): `avgRating` was removed from `AgentProfile` (PR-G had
+// already deleted the only writer; the field had become permanently zero).
+// The IDL no longer surfaces it, so we instead pin the absence — referencing
+// the property name yields `never`/missing-key under the typed shape, which
+// is what we want here.
+type _AvgRatingNotPresent = "avgRating" extends keyof AgentProfileAccount
+  ? false
+  : true;
+const _avgRatingNotPresent: _AvgRatingNotPresent = true;
+type _TotalTasksNotPresent = "totalTasksCompleted" extends keyof AgentProfileAccount
+  ? false
+  : true;
+const _totalTasksNotPresent: _TotalTasksNotPresent = true;
 
 type _AuthorityIsPublicKey = Equals<
   AgentProfileAccount["authority"],
@@ -115,6 +126,12 @@ function makeProfileFixture(
   const hash32: number[] = Array.from({ length: 32 }, (_, i) => (i + 1) & 0xff);
   const sig64: number[] = Array.from({ length: 64 }, (_, i) => (i + 7) & 0xff);
 
+  // AUD-007 (PR-Q): `totalTasksCompleted`, `totalEarnings`, and `avgRating`
+  // were removed from `AgentProfile`. The IDL replaces them with a
+  // `_reservedAud007` byte array preserving on-disk layout. Since the
+  // dropped fields were never read from this fixture (only `reputationScore`
+  // / manifest fields drive `adaptRegistryProfile`), we just stop populating
+  // them.
   const base: AgentProfileAccount = {
     authority,
     name: "test-agent",
@@ -127,9 +144,6 @@ function makeProfileFixture(
     vaultAddress: Keypair.generate().publicKey,
     status: { active: {} },
     reputationScore: new BN(7_500),
-    totalTasksCompleted: new BN(42),
-    totalEarnings: new BN(123_456_789),
-    avgRating: 4,
     createdAt: new BN(1_700_000_000),
     updatedAt: new BN(1_700_001_234),
     reputationStake: {
@@ -144,7 +158,7 @@ function makeProfileFixture(
     // The IDL also carries `manifestCapabilityNames` (Vec<String>) — keep
     // it empty since `adaptRegistryProfile` doesn't read it.
     manifestCapabilityNames: [],
-  };
+  } as AgentProfileAccount;
   return { ...base, ...overrides };
 }
 
@@ -164,8 +178,10 @@ describe("ADR-088: typed adaptRegistryProfile", () => {
     // BN's prototype hint, this assertion still passes — the regression
     // is caught at compile time (see `_ScoreIsBN` above).
     assert.equal(snapshot.reputationScore, 7_500);
-    assert.equal(snapshot.totalTasksCompleted, 42);
-    assert.equal(snapshot.avgRating, 4);
+    // AUD-007 (PR-Q): `totalTasksCompleted` and `avgRating` removed from
+    // both the on-chain account and the snapshot.
+    assert.equal((snapshot as Record<string, unknown>).totalTasksCompleted, undefined);
+    assert.equal((snapshot as Record<string, unknown>).avgRating, undefined);
     assert.equal(snapshot.stakedAmountSol, 0.5);
     assert.equal(snapshot.slashCount, 0);
     assert.equal(snapshot.authority, fixture.authority.toBase58());
@@ -236,15 +252,11 @@ describe("ADR-088: typed adaptRegistryProfile", () => {
     assert.equal(snapshot.reputationScore, 9_999_999_999);
   });
 
-  it("preserves zero-rating when avg_rating is the on-chain u8 zero", () => {
-    const pda = Keypair.generate().publicKey;
-    const fixture = makeProfileFixture({ avgRating: 0 });
-    const { snapshot } = adaptRegistryProfile(pda, fixture);
-    // Pre-ADR-088 reputation handler used `(profile.avgRating as number) ?? 0`
-    // which collapses 0 to 0 by accident. Post-fix the type is `number`
-    // outright — `?? 0` is unnecessary and we read the value verbatim.
-    assert.equal(snapshot.avgRating, 0);
-  });
+  // AUD-007 (PR-Q): the legacy `avgRating: 0` round-trip test is gone with
+  // the field. Pre-PR-Q this guarded against a `?? 0` collapse in the
+  // reputation handler; post-PR-Q the property is absent from the typed
+  // shape, so any reintroduction would surface as a TypeScript error in
+  // `adaptRegistryProfile` rather than as a silent value drift.
 
   // ==========================================================================
   // Type-discipline check: the fixture builder MUST be assignable to the
@@ -256,14 +268,19 @@ describe("ADR-088: typed adaptRegistryProfile", () => {
     const fixture: AgentProfileAccount = makeProfileFixture();
     // Sanity: every field touched by adaptRegistryProfile is present.
     assert.ok(fixture.reputationScore instanceof BN);
-    assert.ok(fixture.totalTasksCompleted instanceof BN);
     assert.ok(fixture.reputationStake.stakedAmount instanceof BN);
     assert.equal(typeof fixture.reputationStake.slashCount, "number");
-    assert.equal(typeof fixture.avgRating, "number");
     assert.equal(typeof fixture.manifestVersion, "number");
     assert.equal(fixture.manifestCid.length, 64);
     assert.equal(fixture.manifestHash.length, 32);
     assert.equal(fixture.manifestSignature.length, 64);
+    // AUD-007 (PR-Q): `totalTasksCompleted` and `avgRating` are NOT in the
+    // typed shape. Documented as absence to catch any IDL regression.
+    assert.equal(
+      (fixture as Record<string, unknown>).totalTasksCompleted,
+      undefined,
+    );
+    assert.equal((fixture as Record<string, unknown>).avgRating, undefined);
   });
 });
 

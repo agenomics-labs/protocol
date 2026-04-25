@@ -247,8 +247,9 @@ it("runs the full protocol lifecycle", async () => {
   // Fetch profile
   const providerProfile = await registryProgram.account.agentProfile.fetch(providerProfilePDA);
   info(`Reputation score: ${providerProfile.reputationScore}`);
-  info(`Tasks completed: ${providerProfile.tasksCompleted}`);
-  info(`Total earnings: ${providerProfile.totalEarnings} lamports`);
+  // AUD-007 (PR-Q): `tasksCompleted` and `totalEarnings` removed from
+  // `AgentProfile`. Per-task telemetry now belongs to the indexer; the
+  // Registry surface keeps only `reputation_score`.
 
   // ========================================================================
   // PHASE 3: SETTLEMENT — FULL ESCROW LIFECYCLE
@@ -387,9 +388,11 @@ it("runs the full protocol lifecycle", async () => {
 
   step(11, "Checking provider's updated reputation in Agent Registry...");
   const updatedProfile = await registryProgram.account.agentProfile.fetch(providerProfilePDA);
-  success(`Reputation score: ${updatedProfile.reputationScore} (was 0 → +50 from CPI)`);
-  success(`Tasks completed: ${updatedProfile.tasksCompleted} (was 0 → +1 from CPI)`);
-  success(`Total earnings: ${updatedProfile.totalEarnings} (updated via CPI)`);
+  // AUD-007 (PR-Q): only `reputationScore` is read here — `tasksCompleted` and
+  // `totalEarnings` were removed from `AgentProfile` (PR-G had already
+  // deleted the only writer). The Settlement→Registry CPI now mutates only
+  // the bounded `reputation_score`; per-task counts belong to the indexer.
+  success(`Reputation score: ${updatedProfile.reputationScore} (was 0; updated via propose_reputation_delta CPI)`);
 
   // ========================================================================
   // SUMMARY
