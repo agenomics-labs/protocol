@@ -25,4 +25,4 @@ wallet = "~/.config/solana/id.json"
 # (indexer, x402-relay) are plain unit suites whose deps (better-sqlite3,
 # express, jsonwebtoken) live in src/*/node_modules, not the workspace
 # root — sweeping them in via tests/**/*.ts fails at import time.
-test = "npx ts-mocha -p ./tsconfig.json -t 1000000 tests/settlement.ts tests/agent-registry.ts tests/agent-vault.ts"
+test = "npx ts-mocha -p ./tsconfig.json -t 1000000 tests/settlement.ts tests/agent-registry.ts tests/agent-vault.ts tests/cpi-failures.test.ts"
