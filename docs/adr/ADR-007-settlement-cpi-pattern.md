@@ -1,7 +1,7 @@
 # ADR-007: Improve Settlement-to-Registry CPI Pattern
 
 ## Status
-Accepted
+Superseded by code-evolution (Anchor CPI helper at programs/settlement/src/instructions/cpi.rs:74)
 
 ## Date
 2026-04-15
@@ -45,3 +45,12 @@ For a single CPI call with a stable interface, the manual pattern with PDA signi
 ## Files Changed
 - `programs/settlement/src/lib.rs` - `update_provider_reputation` rewritten with `invoke_signed`
 - `programs/settlement/src/lib.rs` - `ApproveMilestone` context updated with `settlement_authority` PDA
+
+## Revisions
+
+- 2026-04-25 — Status flipped to Superseded by code-evolution. The "manual
+  discriminator retained" decision was reversed by a later refactor adopting
+  Anchor's `agent_registry::cpi::update_reputation` helper at
+  `programs/settlement/src/instructions/cpi.rs:74`. The hardcoded byte array
+  `[194, 220, 43, 201, 54, 209, 49, 178]` survives only as a comment. No
+  successor ADR was written. AUD-2026-04-25 / AUD-048 / drift matrix §2.
