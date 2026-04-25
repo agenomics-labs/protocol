@@ -19,7 +19,7 @@ features:
   - title: Settlement Protocol
     details: Milestone-based SPL token escrow with submit/approve/reject cycles, dispute resolution, and CPI reputation updates.
   - title: MCP Server
-    details: 24 tools exposing all on-chain instructions via Model Context Protocol. Works with Claude, ChatGPT, and any MCP-compatible client.
+    details: 25 tools exposing all on-chain instructions via Model Context Protocol. Works with Claude, ChatGPT, and any MCP-compatible client.
 ---
 
 ## Quick Start
@@ -48,5 +48,5 @@ AEP consists of three Solana programs connected via real CPI:
 ## Links
 
 - [Getting Started](/getting-started) - Installation and first steps
-- [API Reference](/api-reference) - All 24 MCP tools documented
+- [API Reference](/api-reference) - All 25 MCP tools documented
 - [Integration Guide](/integration-guide) - ElizaOS, Solana Agent Kit, Claude/ChatGPT

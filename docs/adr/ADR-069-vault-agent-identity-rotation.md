@@ -65,3 +65,9 @@ Also amend the existing `update_policy` context in `programs/agent-vault` (which
 - `docs/adr/ADR-041-vault-has-one-authority.md` — existing Vault `has_one` pattern
 - `docs/adr/ADR-060-capability-descriptor-format.md` — identity/authority role separation
 - `programs/agent-vault/src/contexts.rs:74-89, 93-120`, `src/lib.rs:26`
+
+## Revisions
+- 2026-04-25 — MCP tool surface added by PR-U (AUD-015 closure):
+  `rotate_agent_identity` wraps `update_agent_identity` via mcp-server.
+  Operators can now invoke key rotation through the standard MCP
+  interface. Tool count 24 → 25.

@@ -29,21 +29,24 @@ function ctxWith(
 
 describe("ADR-058 Action pipeline", () => {
   describe("non-breaking tool set (ADR-058 §8)", () => {
-    it("exposes all 24 existing tool names", () => {
+    it("exposes all 25 existing tool names", () => {
       const names = allTools.map((t) => t.name).sort();
-      assert.equal(names.length, 24);
+      assert.equal(names.length, 25);
       assert.ok(names.includes("create_vault"));
       assert.ok(names.includes("register_agent"));
       assert.ok(names.includes("create_escrow"));
       assert.ok(names.includes("get_agent_reputation"));
+      // AUD-015 / PR-U: rotate_agent_identity wraps ADR-069's
+      // update_agent_identity ix; tool count 24 → 25.
+      assert.ok(names.includes("rotate_agent_identity"));
     });
 
-    it("the ADR-058 router handles all 24 tools", () => {
+    it("the ADR-058 router handles all 25 tools", () => {
       const allNames = new Set(allTools.map((t) => t.name));
       for (const routed of actionRouter.names()) {
         assert.ok(allNames.has(routed), `routed action '${routed}' missing from allTools`);
       }
-      assert.equal(pilotActionNames.size, 24);
+      assert.equal(pilotActionNames.size, 25);
       assert.deepEqual(actionRouter.names().sort(), [...allNames].sort());
     });
   });
@@ -227,6 +230,138 @@ describe("ADR-058 Action pipeline", () => {
           ]),
         /idempotencyKey/,
       );
+    });
+  });
+
+  // ========================================================================
+  // AUD-015 / PR-U: rotate_agent_identity wraps ADR-069's
+  // `update_agent_identity` instruction. The on-chain ix already shipped;
+  // this tool surfaces it through the standard MCP interface so off-chain
+  // operators can rotate the vault hot key without bespoke tooling.
+  // ========================================================================
+  describe("rotate_agent_identity (ADR-069 / AUD-015)", () => {
+    it("is registered in actions, tools, and the router", () => {
+      const action = pilotActions.find((a) => a.name === "rotate_agent_identity");
+      assert.ok(action, "rotate_agent_identity should be in pilotActions");
+      assert.ok(
+        allTools.some((t) => t.name === "rotate_agent_identity"),
+        "rotate_agent_identity should be in allTools",
+      );
+      assert.ok(
+        actionRouter.names().includes("rotate_agent_identity"),
+        "rotate_agent_identity should be wired into the router",
+      );
+    });
+
+    it("declares the canonical sign:vault capability and authority signer", () => {
+      const action = pilotActions.find((a) => a.name === "rotate_agent_identity");
+      assert.ok(action);
+      // Reuses the existing `sign:vault` capability — no new taxonomy entry
+      // is introduced (cross-checked against ALL_CAPABILITIES in src/index.ts).
+      assert.deepEqual(action!.capabilities, ["sign:vault"]);
+      assert.equal(action!.requiresSigner, true);
+      assert.equal(action!.readOnly, false);
+      // Cluster-health gate matches the sibling key-rotation-style updates
+      // (`update_vault_policy`); on-chain has_one + signer enforcement is
+      // the authoritative gate, which is why no rent-exempt or daily-cap
+      // gate is declared.
+      assert.deepEqual(action!.preflight, ["cluster_health"]);
+    });
+
+    describe("input schema (AUD-015 base58 validation)", () => {
+      it("rejects a missing newAgentIdentity", async () => {
+        const ctx = ctxWith(["sign:vault"]);
+        const result = await actionRouter.dispatch(
+          "rotate_agent_identity",
+          {},
+          ctx,
+        );
+        assert.equal(result.ok, false);
+        if (!result.ok) assert.equal(result.error.code, "INVALID_INPUT");
+      });
+
+      it("rejects a non-string newAgentIdentity", async () => {
+        const ctx = ctxWith(["sign:vault"]);
+        const result = await actionRouter.dispatch(
+          "rotate_agent_identity",
+          { newAgentIdentity: 12345 },
+          ctx,
+        );
+        assert.equal(result.ok, false);
+        if (!result.ok) assert.equal(result.error.code, "INVALID_INPUT");
+      });
+
+      it("rejects a non-base58 newAgentIdentity", async () => {
+        const ctx = ctxWith(["sign:vault"]);
+        const result = await actionRouter.dispatch(
+          "rotate_agent_identity",
+          { newAgentIdentity: "not-a-pubkey!!!" },
+          ctx,
+        );
+        assert.equal(result.ok, false);
+        if (!result.ok) assert.equal(result.error.code, "INVALID_INPUT");
+      });
+
+      it("rejects a too-short string that fails base58 pubkey decoding", async () => {
+        const ctx = ctxWith(["sign:vault"]);
+        const result = await actionRouter.dispatch(
+          "rotate_agent_identity",
+          { newAgentIdentity: "abc" },
+          ctx,
+        );
+        assert.equal(result.ok, false);
+        if (!result.ok) assert.equal(result.error.code, "INVALID_INPUT");
+      });
+
+      it("accepts a valid base58 pubkey and passes the input gate", async () => {
+        // Schema-valid input must clear the input gate. The handler then
+        // attempts an RPC call and fails because no wallet/RPC is wired in
+        // the unit-test harness — `wrap()` surfaces that as PROGRAM_ERROR.
+        // The point of this assertion is that we did NOT trip on
+        // INVALID_INPUT or CAPABILITY_MISSING — the schema and gate are
+        // correctly wired.
+        const ctx = ctxWith(["sign:vault"]);
+        const result = await actionRouter.dispatch(
+          "rotate_agent_identity",
+          { newAgentIdentity: ZERO_PUBKEY.toBase58() },
+          ctx,
+        );
+        if (!result.ok) {
+          assert.notEqual(result.error.code, "INVALID_INPUT");
+          assert.notEqual(result.error.code, "CAPABILITY_MISSING");
+          assert.notEqual(result.error.code, "SIGNER_UNAVAILABLE");
+        }
+      });
+    });
+
+    describe("capability gating (ADR-058 §4)", () => {
+      it("rejects when the wallet lacks sign:vault", async () => {
+        const ctx = ctxWith([]);
+        const result = await actionRouter.dispatch(
+          "rotate_agent_identity",
+          { newAgentIdentity: ZERO_PUBKEY.toBase58() },
+          ctx,
+        );
+        assert.equal(result.ok, false);
+        if (!result.ok) {
+          assert.equal(result.error.code, "CAPABILITY_MISSING");
+          const missing = (result.error.details as any).missing;
+          assert.ok(missing.includes("sign:vault"));
+        }
+      });
+    });
+
+    describe("signer-mode assertion (ADR-058 §5)", () => {
+      it("rejects under passthrough mode", async () => {
+        const ctx = ctxWith(["sign:vault"], "passthrough");
+        const result = await actionRouter.dispatch(
+          "rotate_agent_identity",
+          { newAgentIdentity: ZERO_PUBKEY.toBase58() },
+          ctx,
+        );
+        assert.equal(result.ok, false);
+        if (!result.ok) assert.equal(result.error.code, "SIGNER_UNAVAILABLE");
+      });
     });
   });
 });

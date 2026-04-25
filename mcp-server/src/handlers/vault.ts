@@ -210,6 +210,48 @@ export async function handleVaultTokenTransfer(args: Record<string, unknown>) {
 }
 
 /**
+ * ADR-069 / AUD-015: Rotate the vault's `agent_identity` hot key.
+ *
+ * `agent_identity` is the off-chain agent runtime's signing key, distinct
+ * from the human-custodied `authority`. This wraps the on-chain
+ * `update_agent_identity` ix (gated by `has_one = authority`) so off-chain
+ * operators can rotate via the standard MCP surface.
+ *
+ * Rotation is a pure key-swap: balances, policies, daily-spend counters,
+ * and rate-limit counters are intentionally preserved.
+ */
+export async function handleRotateAgentIdentity(args: Record<string, unknown>) {
+  const newAgentIdentity = parsePublicKey(requireString(args, "newAgentIdentity"));
+
+  const wallet = loadWallet();
+  const program = getVaultProgram();
+  const [vaultPDA] = deriveVaultPDA(wallet.publicKey);
+
+  // Fetch current state so we can return the rotated-from key alongside the
+  // rotated-to key — useful for operator audit logs.
+  const vaultBefore = await program.account.vault.fetch(vaultPDA);
+  const oldAgentIdentity = vaultBefore.agentIdentity.toBase58();
+
+  const sig = await program.methods
+    .updateAgentIdentity(newAgentIdentity)
+    .accountsPartial({
+      vault: vaultPDA,
+      authority: wallet.publicKey,
+    })
+    .signers([wallet])
+    .rpc();
+
+  return {
+    success: true,
+    vaultAddress: vaultPDA.toBase58(),
+    authority: wallet.publicKey.toBase58(),
+    oldAgentIdentity,
+    newAgentIdentity: newAgentIdentity.toBase58(),
+    transactionSignature: sig,
+  };
+}
+
+/**
  * Update the vault's spending policy.
  */
 export async function handleUpdateVaultPolicy(args: Record<string, unknown>) {

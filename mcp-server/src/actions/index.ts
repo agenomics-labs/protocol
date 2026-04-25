@@ -1,5 +1,9 @@
-// All 24 MCP Actions registered through the ADR-058 Action<I, O> shape.
+// All 25 MCP Actions registered through the ADR-058 Action<I, O> shape.
 // Legacy switch-case dispatch in src/index.ts is retired.
+//
+// AUD-015 / PR-U: `rotate_agent_identity` wraps the on-chain
+// `update_agent_identity` ix (ADR-069) so off-chain operators can rotate
+// the vault hot key through the standard MCP surface. Tool count 24 → 25.
 
 import type { Action } from "../types/action.js";
 import {
@@ -8,6 +12,7 @@ import {
   vaultTransferAction,
   vaultTokenTransferAction,
   updateVaultPolicyAction,
+  rotateAgentIdentityAction,
   pauseVaultAction,
   resumeVaultAction,
   manageAllowlistAction,
@@ -34,12 +39,13 @@ import {
 } from "./settlement.js";
 
 export const allActions: Action<any, any>[] = [
-  // Vault (8)
+  // Vault (9)
   createVaultAction,
   getVaultInfoAction,
   vaultTransferAction,
   vaultTokenTransferAction,
   updateVaultPolicyAction,
+  rotateAgentIdentityAction,
   pauseVaultAction,
   resumeVaultAction,
   manageAllowlistAction,
