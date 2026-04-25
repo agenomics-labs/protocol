@@ -5,11 +5,12 @@ use agent_registry::state::{AgentProfile, AgentStatus, OwnerNonce};
 use crate::state::Vault;
 use crate::errors::VaultError;
 
-/// ADR-050 + findings #13/#14: Explicit serialized size.
+/// ADR-050 + findings #13/#14 + PR-X (AUD-023): Explicit serialized size.
 /// 8 (disc) + 32 (agent_id) + 32 (authority) + 1 (paused) + 8 (spent_today) + 8 (last_day)
 /// + VaultPolicy: 8+8+4+324+324=668 + 4 (txs_window) + 8 (rate_start)
 /// + 4+(10*(32+8+8+8+8))=644 (token_spend_records, now carrying per-mint limits)
-/// + 1 (bump) + 8 (profile_nonce, ADR-095/097) = 1422 + 200 margin = 1622
+/// + 1 (bump) + 8 (profile_nonce, ADR-095/097)
+/// + 8 (last_rotation_at, PR-X / AUD-023) = 1430 + 200 margin = 1630
 ///
 /// AUD-008 (PR-J): The `profile_nonce` formerly arrived as a user-supplied
 /// `u64` argument and was written verbatim into `vault.profile_nonce`. A
@@ -24,7 +25,7 @@ pub struct InitializeVault<'info> {
     #[account(
         init,
         payer = authority,
-        space = 1622,
+        space = 1630,
         seeds = [b"vault", authority.key().as_ref()],
         bump
     )]

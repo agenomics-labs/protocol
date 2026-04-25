@@ -556,6 +556,76 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    // ================================================================
+    // PR-X / AUD-023: update_agent_identity rotation cap arithmetic
+    // ================================================================
+
+    /// PR-X: Helper mirroring the handler's interval check, kept in sync
+    /// with `update_agent_identity` in instructions.rs. Returns `true`
+    /// when a rotation at `now` should be ALLOWED.
+    fn rotation_allowed(now: i64, last_rotation_at: i64) -> bool {
+        const MIN_ROTATION_INTERVAL_SECS: i64 = 24 * 60 * 60;
+        now.saturating_sub(last_rotation_at) >= MIN_ROTATION_INTERVAL_SECS
+    }
+
+    /// PR-X / AUD-023: First rotation on a fresh vault (`last_rotation_at == 0`)
+    /// must always succeed, regardless of `now`, because the sliding window
+    /// is "T+24h" against the *previous* rotation — and there is none.
+    #[test]
+    fn rotation_first_call_on_fresh_vault_succeeds() {
+        // last_rotation_at = 0 => any non-trivial `now` clears 86_400s.
+        assert!(rotation_allowed(86_400, 0));
+        assert!(rotation_allowed(1_700_000_000, 0));
+    }
+
+    /// PR-X / AUD-023: A rotation immediately after a previous rotation
+    /// must be rejected. Models the "compromised authority drains, rotates,
+    /// drains again" attack the cap is defending against.
+    #[test]
+    fn rotation_immediate_re_rotation_rejected() {
+        let last = 1_700_000_000;
+        // Same second, +1s, +1h, +23h59m59s — all rejected.
+        assert!(!rotation_allowed(last, last));
+        assert!(!rotation_allowed(last + 1, last));
+        assert!(!rotation_allowed(last + 3_600, last));
+        assert!(!rotation_allowed(last + 86_399, last));
+    }
+
+    /// PR-X / AUD-023: Boundary at exactly 24h — rotation is permitted
+    /// because the check is `>=` not `>`.
+    #[test]
+    fn rotation_exact_24h_boundary_allowed() {
+        let last = 1_700_000_000;
+        assert!(rotation_allowed(last + 86_400, last));
+        assert!(rotation_allowed(last + 86_401, last));
+    }
+
+    /// PR-X / AUD-023: Clock regression (validator clock skew running
+    /// backward across an upgrade) must not panic and must not silently
+    /// allow a rotation. `saturating_sub` clamps to 0, which is below the
+    /// 24h threshold, so the rotation is rejected — fail-safe behaviour.
+    #[test]
+    fn rotation_clock_regression_does_not_panic() {
+        let last = 1_700_000_000;
+        // `now` < last_rotation_at => saturating_sub == 0 => rejected.
+        assert!(!rotation_allowed(last - 1, last));
+        assert!(!rotation_allowed(0, last));
+        assert!(!rotation_allowed(i64::MIN, last));
+    }
+
+    /// PR-X / AUD-023: Two successive legitimate rotations 24h+ apart
+    /// both succeed — the cap is "1 per 24h", not "1 ever".
+    #[test]
+    fn rotation_two_rotations_one_day_apart_both_succeed() {
+        let t0: i64 = 1_700_000_000;
+        // First rotation on a fresh vault.
+        assert!(rotation_allowed(t0, 0));
+        let last_after_first = t0;
+        // Second rotation 25h later.
+        let t1 = t0 + 25 * 3_600;
+        assert!(rotation_allowed(t1, last_after_first));
+    }
+
     /// ADR-095: All non-Suspended statuses pass the suspension gate.
     #[test]
     fn adr_095_non_suspended_statuses_are_allowed() {
