@@ -1681,19 +1681,6 @@
       ]
     },
     {
-      "name": "ReputationUpdateScheduled",
-      "discriminator": [
-        97,
-        17,
-        52,
-        194,
-        232,
-        19,
-        62,
-        195
-      ]
-    },
-    {
       "name": "TaskAccepted",
       "discriminator": [
         125,
@@ -2323,22 +2310,6 @@
           },
           {
             "name": "reputation_delta_expiry_undelivered",
-            "type": "i64"
-          }
-        ]
-      }
-    },
-    {
-      "name": "ReputationUpdateScheduled",
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "provider",
-            "type": "pubkey"
-          },
-          {
-            "name": "delta",
             "type": "i64"
           }
         ]

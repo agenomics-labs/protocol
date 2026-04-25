@@ -1,7 +1,5 @@
 use anchor_lang::prelude::*;
 
-use crate::events::*;
-
 /// CPIs into Agent Registry to update provider reputation after task completion.
 ///
 /// Uses a PDA-signed CPI pattern: the Settlement program derives a "settlement_authority"
@@ -40,6 +38,17 @@ use crate::events::*;
 /// `UpdateReputation` context (used to re-derive the profile PDA with the
 /// nonce component). Settlement CPI callers must pass the provider's
 /// `OwnerNonce` account alongside the authority and profile accounts.
+///
+/// AUD-032 (2026-04-25 audit): pre-fix this function emitted a
+/// `ReputationUpdateScheduled` event after the synchronous CPI returned.
+/// The name implied async/queued semantics that don't exist — by the
+/// time the event was emitted, the Registry had already processed the
+/// update and emitted its own canonical `ReputationUpdated` event.
+/// Indexers double-counted the change. The Registry's event is the
+/// single source of truth, so the Settlement-side emit (and the
+/// `ReputationUpdateScheduled` struct in `events.rs`) have been removed.
+/// The `_provider` argument stays in the signature so existing callers
+/// in `escrow.rs` and `dispute.rs` continue to compile without churn.
 // TODO(ADR-094): Replace `update_provider_reputation` with a call to
 // `Registry::propose_reputation_delta` via CPI. The new instruction owns the
 // reputation policy ([0, 100], |delta| <= MAX_DELTA_PER_CALL = 10), so
@@ -47,7 +56,7 @@ use crate::events::*;
 // deltas and supplies a reason code. Full CPI re-wiring (new account struct
 // + updated caller sites in escrow.rs) is tracked as a follow-up to ADR-094.
 pub fn update_provider_reputation<'info>(
-    provider: Pubkey,
+    _provider: Pubkey,
     earnings: u64,
     reputation_delta: i64,
     task_completed: bool,
@@ -78,11 +87,6 @@ pub fn update_provider_reputation<'info>(
         earnings,
         rating,
     )?;
-
-    emit!(ReputationUpdateScheduled {
-        provider,
-        delta: reputation_delta,
-    });
 
     Ok(())
 }

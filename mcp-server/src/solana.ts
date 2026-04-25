@@ -44,7 +44,7 @@ const __dirname = path.dirname(__filename);
  *
  * This module initializes:
  * - Solana RPC connection (configurable via SOLANA_RPC_URL)
- * - Wallet keypair (from SOLANA_KEYPAIR_PATH or default Solana CLI path)
+ * - Wallet keypair (from ANCHOR_WALLET, then SOLANA_KEYPAIR_PATH, then default Solana CLI path)
  * - Anchor Provider and Program instances for all three AEP programs
  * - PDA derivation utilities matching the on-chain program seeds
  */
@@ -144,7 +144,23 @@ export function getConnection(): Connection {
 
 /**
  * Load the agent's wallet keypair from disk.
- * Checks SOLANA_KEYPAIR_PATH env var, then falls back to ~/.config/solana/id.json.
+ *
+ * Resolution precedence (highest first):
+ *   1. `ANCHOR_WALLET`       — Anchor's documented convention. When set,
+ *                              this wins outright. Honouring it lets the
+ *                              MCP server inherit the wallet from
+ *                              `anchor test`, `anchor run`, and any
+ *                              IDE/CI integration that follows the
+ *                              Anchor convention.
+ *   2. `SOLANA_KEYPAIR_PATH` — legacy MCP-only env var. Kept for
+ *                              backward compatibility with deployments
+ *                              that already set it.
+ *   3. `~/.config/solana/id.json` — Solana CLI default.
+ *
+ * AUD-016 (2026-04-25 audit): pre-fix, only `SOLANA_KEYPAIR_PATH` was
+ * checked, so the standard Anchor env var was silently ignored and
+ * users would see "wallet not found" errors despite a working Anchor
+ * setup.
  *
  * ADR-083 Finding 5.1: refuses to load if the keyfile permission mode has any
  * group or other bits set (a `0644` keyfile is silently world-readable on
@@ -155,7 +171,10 @@ export function getConnection(): Connection {
 export function loadWallet(): Keypair {
   if (_wallet) return _wallet;
 
-  let keypath = process.env.SOLANA_KEYPAIR_PATH;
+  // AUD-016: ANCHOR_WALLET takes precedence over SOLANA_KEYPAIR_PATH so
+  // the MCP server matches Anchor's documented convention. If both are
+  // set, ANCHOR_WALLET wins (it's the more standard variable).
+  let keypath = process.env.ANCHOR_WALLET || process.env.SOLANA_KEYPAIR_PATH;
   if (!keypath) {
     const home = process.env.HOME || process.env.USERPROFILE || "";
     keypath = path.join(home, ".config", "solana", "id.json");
@@ -164,7 +183,7 @@ export function loadWallet(): Keypair {
   if (!fs.existsSync(keypath)) {
     throw new Error(
       `Wallet keypair not found at: ${keypath}. ` +
-        `Set SOLANA_KEYPAIR_PATH or run 'solana-keygen new'.`
+        `Set ANCHOR_WALLET or SOLANA_KEYPAIR_PATH or run 'solana-keygen new'.`
     );
   }
 
