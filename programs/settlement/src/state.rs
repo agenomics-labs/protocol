@@ -45,6 +45,15 @@ pub const DEFAULT_DISPUTE_TIMEOUT_SECONDS: i64 = 7 * 24 * 3600;
 /// belt-and-braces guard.
 pub const MAX_DISPUTE_TIMEOUT_SECONDS: i64 = 365 * 24 * 3600;
 
+/// AUD-024 (2026-04 audit): upper bound on the `deadline` argument to
+/// `create_escrow`. Without a ceiling, a client can lock funds with
+/// `deadline = i64::MAX`, effectively forever — the escrow can only be
+/// expired via `expire_escrow`, which requires `now > deadline`. 365
+/// days is long enough for any legitimate long-running task while
+/// keeping the lock bounded; together with `disputed_at` arithmetic
+/// elsewhere it leaves comfortable headroom against i64 overflow.
+pub const MAX_ESCROW_DEADLINE_SECS: i64 = 365 * 24 * 3600;
+
 /// Reputation deltas for CPI updates to the Agent Registry.
 /// Finding #19: Defaults for the governance-owned `ProtocolConfig` fields
 /// `reputation_delta_task_completed`, `_dispute_loss`, `_expiry_undelivered`.
