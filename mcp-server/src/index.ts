@@ -129,7 +129,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       content: [
         {
           type: "text",
-          text: JSON.stringify(result.data, null, 2),
+          text: JSON.stringify(result.value, null, 2),
         } as TextContent,
       ],
     };

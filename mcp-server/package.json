@@ -33,6 +33,7 @@
   "author": "Alejandro",
   "license": "UNLICENSED",
   "dependencies": {
+    "@agenomics/action-runtime": "*",
     "@agenomics/capability-manifest-validator": "file:../packages/capability-manifest-validator",
     "@agenomics/sas-resolver": "file:../packages/sas-resolver",
     "@coral-xyz/anchor": "^0.31.1",

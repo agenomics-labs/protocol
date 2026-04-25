@@ -280,21 +280,21 @@ describe("handleVaultTransferV2 — integration-lite", () => {
     if (!result.ok) return;
 
     // --- Output shape ---
-    assert.equal(result.data.success, true);
-    assert.equal(result.data.v2, true);
-    assert.equal(result.data.amountSol, 0.5);
-    assert.equal(result.data.vaultAddress, vaultPda.toBase58());
-    assert.equal(result.data.recipient, recipientKp.publicKey.toBase58());
-    assert.equal(typeof result.data.transactionSignature, "string");
-    assert.ok(result.data.transactionSignature.length > 0);
+    assert.equal(result.value.success, true);
+    assert.equal(result.value.v2, true);
+    assert.equal(result.value.amountSol, 0.5);
+    assert.equal(result.value.vaultAddress, vaultPda.toBase58());
+    assert.equal(result.value.recipient, recipientKp.publicKey.toBase58());
+    assert.equal(typeof result.value.transactionSignature, "string");
+    assert.ok(result.value.transactionSignature.length > 0);
 
     // --- Compute-budget sizing per ADR-059 §2 ---
     //   consumed=42_000 → max(42_000+100_000, ceil(42_000*1.2), 200_000)
     //   = max(142_000, 50_400, 200_000) = 200_000 (floor)
-    assert.equal(result.data.simulatedUnitsConsumed, 42_000);
-    assert.equal(result.data.computeUnitLimit, 200_000);
+    assert.equal(result.value.simulatedUnitsConsumed, 42_000);
+    assert.equal(result.value.computeUnitLimit, 200_000);
     // Percentile (mid=0.5) over [1_000, 5_000, 10_000] sorted, floor(0.5*3)=1 → 5_000
-    assert.equal(result.data.priorityMicroLamports, "5000");
+    assert.equal(result.value.priorityMicroLamports, "5000");
 
     // --- Simulation was called exactly once with base64 encoding ---
     assert.equal(simCalls.length, 1);

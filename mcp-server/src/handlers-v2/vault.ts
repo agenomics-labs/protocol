@@ -323,7 +323,7 @@ export async function handleVaultTransferV2(
       vaultAddress: deps.vaultAddress.toString(),
       recipient: recipientAddr.toString(),
       amountSol: input.amountSol,
-      transactionSignature: confirmResult.data,
+      transactionSignature: confirmResult.value,
       computeUnitLimit: cb.computedUnitLimit,
       simulatedUnitsConsumed: cb.simulatedUnitsConsumed,
       priorityMicroLamports: cb.priorityMicroLamports.toString(),
