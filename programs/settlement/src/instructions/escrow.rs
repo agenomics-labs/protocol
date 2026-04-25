@@ -60,6 +60,17 @@ pub fn create_escrow(
     let now = Clock::get()?.unix_timestamp;
     require!(deadline > now, SettlementError::DeadlineInPast);
 
+    // AUD-024: cap `deadline` at `now + MAX_ESCROW_DEADLINE_SECS` (365 days).
+    // Without this, a client could pass `deadline = i64::MAX` and lock the
+    // escrow funds effectively forever — `expire_escrow` only fires once
+    // `now > deadline`. The cap is computed via `checked_add` so a
+    // pathologically large `now` (year ~292e9) cannot overflow into a
+    // negative i64 and silently re-admit the unbounded value.
+    let max_deadline = now
+        .checked_add(MAX_ESCROW_DEADLINE_SECS)
+        .ok_or(SettlementError::AmountOverflow)?;
+    require!(deadline <= max_deadline, SettlementError::DeadlineTooFar);
+
     let escrow = &mut ctx.accounts.escrow;
     escrow.client = ctx.accounts.client.key();
     escrow.provider = ctx.accounts.provider.key();
