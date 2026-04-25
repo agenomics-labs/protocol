@@ -6,8 +6,10 @@
 
 - **Started**: 2026-04-25 with 4 parallel sub-audits (on-chain, off-chain TS, ADR governance, tests/CI).
 - **Findings inventoried**: 75 with stable `AUD-NNN` IDs.
-- **Closed in this cycle**: **29** (5 Critical / 6 High / 5 Medium / 6 Low / 2 Info / 5 Architecture).
+- **Closed in this cycle**: **30** (5 Critical / 7 High / 5 Medium / 6 Low / 2 Info / 5 Architecture).
 - **PR-Q (AUD-007)**: needs re-spec — base diverged after PR-G removed `update_reputation`. The agent built the fix on top of the now-deleted instruction, so it can't be cherry-picked as-is. Either (a) write a new `submit_rating` instruction, or (b) remove `avg_rating` field entirely. Deferred.
+
+**AUD-017 — CPI failure integration tests landed**: `tests/cpi-failures.test.ts` (818 lines) covers 5 active cases — closed AgentProfile, wrong OwnerNonce, suspended-provider behavior, spoofed `settlement_authority` address, cross-account provider/profile mismatch. 2 cases documented-skip (forged `invoke_signed` from non-Settlement program — needs helper program; discriminator drift — Anchor IDL prevents). All pass against the deployed binary; written to be forward-compatible with PR-G's CPI rewire. Closes the long-promised gap from ADR-001/007/014/095.
 - **All 5 Critical findings are Fixed**.
 - **Branch**: `chore/architecture-audit-2026-04-25` (22 commits, never pushed).
 - **Tests at HEAD**: 137 Rust unit, 110 TS Anchor integration, 180 MCP server, 19 SDK client.
