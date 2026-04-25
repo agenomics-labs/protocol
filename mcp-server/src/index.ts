@@ -31,6 +31,11 @@ import {
   newCorrelationId,
   withRequestContext,
 } from "./util/logger.js";
+import {
+  initTracing,
+  startMcpMetricsServer,
+  tracedToolCall,
+} from "./observability.js";
 
 /**
  * Agenomics MCP Server — all 23 actions dispatched through the ADR-058
@@ -94,45 +99,50 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const toolName = request.params.name;
   const args = (request.params.arguments ?? {}) as Record<string, unknown>;
 
-  // ADR-090: every dispatch boundary mints a correlation id. The id is
-  // attached to every log line emitted while this dispatch runs and is
-  // available downstream (via context) so indexer rows + x402 JWTs can
-  // pin back to the originating MCP call.
+  // ADR-090: mint a correlation id for every dispatch boundary.
   const reqId = newCorrelationId();
   const reqLog = withRequestContext(log, reqId);
   reqLog.debug({ tool: toolName }, "mcp dispatch begin");
 
-  const ctx = buildLocalDevContext();
-  const result = await actionRouter.dispatch(toolName, args, ctx);
+  return tracedToolCall(toolName, async () => {
+    const ctx = buildLocalDevContext();
+    const result = await actionRouter.dispatch(toolName, args, ctx);
 
-  if (!result.ok) {
-    reqLog.warn(
-      { tool: toolName, error_code: result.error.code },
-      "mcp dispatch error",
-    );
+    if (!result.ok) {
+      reqLog.warn(
+        { tool: toolName, error_code: result.error.code },
+        "mcp dispatch error",
+      );
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result.error, null, 2),
+          } as TextContent,
+        ],
+        isError: true,
+      };
+    }
+
+    reqLog.debug({ tool: toolName }, "mcp dispatch ok");
     return {
       content: [
         {
           type: "text",
-          text: JSON.stringify(result.error, null, 2),
+          text: JSON.stringify(result.data, null, 2),
         } as TextContent,
       ],
-      isError: true,
     };
-  }
-
-  reqLog.debug({ tool: toolName }, "mcp dispatch ok");
-  return {
-    content: [
-      {
-        type: "text",
-        text: JSON.stringify(result.data, null, 2),
-      } as TextContent,
-    ],
-  };
+  });
 });
 
 async function main() {
+  // ADR-104: initialise OTel tracing (opt-in via OTEL_EXPORTER_OTLP_ENDPOINT)
+  // and start the Prometheus scrape endpoint on METRICS_PORT (default 9101).
+  initTracing();
+  const metricsPort = Number(process.env.METRICS_PORT ?? 9101);
+  startMcpMetricsServer(metricsPort);
+
   // ADR-083: detect transport posture from env BEFORE we touch the wallet or
   // bind any socket. Misconfigured HTTP/Unix modes hard-fail here with an
   // actionable error message.
