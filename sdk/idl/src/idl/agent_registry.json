@@ -220,15 +220,21 @@
         "ADR-096: In-place account resize / migration.",
         "",
         "Grows the `AgentProfile` account to `8 + AgentProfile::SPACE +",
-        "MIGRATION_HEADROOM` bytes using Anchor's `realloc` constraint. New bytes",
-        "are zero-initialized by the constraint (`realloc::zero = true`), so newly",
+        "MIGRATION_HEADROOM` bytes using Anchor's `realloc` constraint (which",
+        "calls the System Program's `realloc` syscall). New bytes are",
+        "zero-initialized by the constraint (`realloc::zero = true`), so newly",
         "added fields whose zero value is a valid default require no explicit",
         "initialization here.",
         "",
         "The instruction is idempotent: if `profile.version >= target_version`",
-        "it returns `Ok(())` without any mutation.",
+        "it returns `Ok(())` without any mutation. This makes it safe to call",
+        "repeatedly from upgrade scripts without double-bumping the version or",
+        "triggering unnecessary rent charges.",
         "",
-        "Only the `owner` (authority) of the profile may call this instruction."
+        "Only the `owner` (authority) of the profile may call this instruction.",
+        "The `realloc::payer = owner` constraint debits any additional rent from",
+        "the signer's lamport balance; if the account already meets the target",
+        "size, the System Program call is skipped."
       ],
       "discriminator": [
         180,
@@ -243,6 +249,11 @@
       "accounts": [
         {
           "name": "owner",
+          "docs": [
+            "The authority that owns this `AgentProfile`. Named `owner` here to",
+            "keep the signer semantics distinct from the `authority` field name",
+            "used in `UpdateReputation` (where authority is an UncheckedAccount)."
+          ],
           "writable": true,
           "signer": true
         },
@@ -284,6 +295,162 @@
       "args": [
         {
           "name": "target_version",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "propose_reputation_delta",
+      "docs": [
+        "ADR-094: Invert the reputation trust hierarchy.",
+        "",
+        "Previously Settlement called `update_reputation` as a privileged setter",
+        "and imposed no score upper bound (scores grow to u64::MAX). This",
+        "instruction is the new entry point: Registry owns and enforces the",
+        "policy (`[0, MAX_REPUTATION_SCORE]`, `|delta| <= MAX_DELTA_PER_CALL`).",
+        "",
+        "Authorization: caller must present the Settlement program's",
+        "`settlement_authority` PDA as a signer (SEC-1 pattern from ADR-068).",
+        "",
+        "`reason` is a caller-supplied reason code:",
+        "0 = task_completed (positive delta)",
+        "1 = dispute_loss   (negative delta)",
+        "2 = expiry_undelivered (negative delta)",
+        "3-255 = reserved for future governance/slashing sources"
+      ],
+      "discriminator": [
+        11,
+        88,
+        137,
+        167,
+        186,
+        86,
+        245,
+        175
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "docs": [
+            "seed anchor for `agent_profile` and constrained equal to",
+            "`agent_profile.authority` via `has_one = authority`."
+          ],
+          "relations": [
+            "agent_profile"
+          ]
+        },
+        {
+          "name": "agent_profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "settlement_authority",
+          "docs": [
+            "seeds::program ensures this PDA was derived by the Settlement program,",
+            "proving the call originated there (SEC-1 pattern from ADR-068)."
+          ],
+          "signer": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  116,
+                  116,
+                  108,
+                  101,
+                  109,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                227,
+                132,
+                12,
+                30,
+                9,
+                78,
+                44,
+                188,
+                135,
+                187,
+                145,
+                68,
+                5,
+                84,
+                82,
+                239,
+                90,
+                255,
+                29,
+                178,
+                208,
+                214,
+                104,
+                25,
+                104,
+                107,
+                82,
+                183,
+                124,
+                88,
+                179,
+                116
+              ]
+            }
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "delta",
+          "type": "i16"
+        },
+        {
+          "name": "reason",
           "type": "u8"
         }
       ]
@@ -766,16 +933,21 @@
       "name": "update_manifest",
       "docs": [
         "ADR-060: publish or rotate the off-chain capability manifest pointer.",
+        "ADR-092: domain-separated manifest hash to prevent cross-protocol sig replay.",
         "",
         "Args:",
         "- `manifest_cid`: 64-byte pointer to off-chain manifest (IPFS CIDv1",
         "string or Arweave tx ID), zero-padded. M5 resolution chose",
         "`[u8; 64]` for CIDv1 + Arweave headroom.",
-        "- `manifest_hash`: SHA-256 of the RFC-8785 canonical-JSON manifest.",
-        "- `manifest_signature`: Ed25519 signature over `manifest_hash` by the",
-        "agent's `authority`. Verified via the paired ed25519-program",
-        "sig-verify instruction (standard Solana pattern — in-program",
-        "ed25519 is prohibitively expensive in compute units).",
+        "- `manifest_raw_hash`: SHA-256 of the RFC-8785 canonical-JSON manifest",
+        "(before domain tagging). The on-chain program applies the domain",
+        "separator: `manifest_hash = sha256(MANIFEST_HASH_DOMAIN || manifest_raw_hash)`.",
+        "The client's ed25519 signature must cover this tagged hash.",
+        "- `manifest_signature`: Ed25519 signature over the domain-tagged hash",
+        "(`tagged_manifest_hash(manifest_raw_hash)`) by the agent's `authority`.",
+        "Verified via the paired ed25519-program sig-verify instruction",
+        "(standard Solana pattern — in-program ed25519 is prohibitively",
+        "expensive in compute units).",
         "- `manifest_version`: packed semver (high byte = major, low byte = minor).",
         "- `manifest_capability_names`: the full list of capability names",
         "declared in the off-chain manifest. On-chain we assert",
@@ -886,7 +1058,7 @@
           }
         },
         {
-          "name": "manifest_hash",
+          "name": "manifest_raw_hash",
           "type": {
             "array": [
               "u8",
@@ -938,7 +1110,8 @@
         {
           "name": "owner_nonce",
           "docs": [
-            "ADR-097: Read-only nonce account for `agent_profile` PDA seed."
+            "ADR-097: Read-only nonce account. Provides the nonce component for the",
+            "`agent_profile` PDA seed derivation."
           ],
           "pda": {
             "seeds": [
@@ -1234,164 +1407,6 @@
       ]
     },
     {
-      "name": "propose_reputation_delta",
-      "docs": [
-        "ADR-094: Invert the reputation trust hierarchy.",
-        "",
-        "Previously Settlement called `update_reputation` as a privileged setter",
-        "and imposed no score upper bound (scores grow to u64::MAX). This",
-        "instruction is the new entry point: Registry owns and enforces the",
-        "policy (`[0, MAX_REPUTATION_SCORE]`, `|delta| <= MAX_DELTA_PER_CALL`).",
-        "",
-        "Authorization: caller must present the Settlement program's",
-        "`settlement_authority` PDA as a signer (SEC-1 pattern from ADR-068).",
-        "",
-        "`reason` is a caller-supplied reason code:",
-        "  0 = task_completed (positive delta)",
-        "  1 = dispute_loss   (negative delta)",
-        "  2 = expiry_undelivered (negative delta)",
-        "  3-255 = reserved for future governance/slashing sources"
-      ],
-      "discriminator": [
-        11,
-        88,
-        137,
-        167,
-        186,
-        86,
-        245,
-        175
-      ],
-      "accounts": [
-        {
-          "name": "authority",
-          "docs": [
-            "The agent whose reputation is being updated. Used as the external",
-            "seed anchor for `agent_profile` and constrained equal to",
-            "`agent_profile.authority` via `has_one = authority`."
-          ],
-          "relations": [
-            "agent_profile"
-          ]
-        },
-        {
-          "name": "agent_profile",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "account",
-                "path": "authority"
-              },
-              {
-                "kind": "const",
-                "value": [
-                  97,
-                  103,
-                  101,
-                  110,
-                  116,
-                  45,
-                  112,
-                  114,
-                  111,
-                  102,
-                  105,
-                  108,
-                  101
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "settlement_authority",
-          "docs": [
-            "Settlement authority PDA — must sign via invoke_signed.",
-            "seeds::program ensures this PDA was derived by the Settlement program,",
-            "proving the call originated there (SEC-1 pattern from ADR-068)."
-          ],
-          "signer": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  115,
-                  101,
-                  116,
-                  116,
-                  108,
-                  101,
-                  109,
-                  101,
-                  110,
-                  116,
-                  95,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
-                  121
-                ]
-              }
-            ],
-            "program": {
-              "kind": "const",
-              "value": [
-                227,
-                132,
-                12,
-                30,
-                9,
-                78,
-                44,
-                188,
-                135,
-                187,
-                145,
-                68,
-                5,
-                84,
-                82,
-                239,
-                90,
-                255,
-                29,
-                178,
-                208,
-                214,
-                104,
-                25,
-                104,
-                107,
-                82,
-                183,
-                124,
-                88,
-                179,
-                116
-              ]
-            }
-          }
-        }
-      ],
-      "args": [
-        {
-          "name": "delta",
-          "type": "i16"
-        },
-        {
-          "name": "reason",
-          "type": "u8"
-        }
-      ]
-    },
-    {
       "name": "update_status",
       "discriminator": [
         147,
@@ -1610,6 +1625,19 @@
       ]
     },
     {
+      "name": "ReputationDeltaProposed",
+      "discriminator": [
+        72,
+        60,
+        200,
+        150,
+        238,
+        216,
+        194,
+        252
+      ]
+    },
+    {
       "name": "ReputationStaked",
       "discriminator": [
         12,
@@ -1633,19 +1661,6 @@
         111,
         42,
         162
-      ]
-    },
-    {
-      "name": "ReputationDeltaProposed",
-      "discriminator": [
-        72,
-        60,
-        200,
-        150,
-        238,
-        216,
-        194,
-        252
       ]
     },
     {
@@ -1865,7 +1880,10 @@
         "Zero-value default is valid (first registration uses nonce 0).",
         "",
         "ADR-096: `version` is the schema version for in-place migration. Set to",
-        "`0` on creation; incremented by `migrate_agent_profile`."
+        "`0` on creation; incremented by `migrate_agent_profile`. New fields added",
+        "in future upgrades must use zero-value defaults so that the",
+        "`realloc::zero = true` constraint produces a valid initial state without",
+        "explicit writes."
       ],
       "type": {
         "kind": "struct",
@@ -1995,33 +2013,6 @@
           },
           {
             "name": "registration_nonce",
-            "docs": [
-              "ADR-097: monotonic registration nonce included in PDA seed.",
-              "Prevents address reuse after close (Sybil resistance)."
-            ],
-            "type": "u64"
-          }
-        ]
-      }
-    },
-    {
-      "name": "OwnerNonce",
-      "docs": [
-        "ADR-097: Per-owner monotonic nonce counter.",
-        "Seeded by `[authority.key().as_ref(), b\"owner-nonce\"]`.",
-        "Initialized to 0 on first `register_agent` (via `init_if_needed`).",
-        "Incremented by `deregister_agent` so subsequent registrations derive a",
-        "different `agent_profile` PDA, preventing Sybil address reuse."
-      ],
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "nonce",
-            "docs": [
-              "The current nonce value. Used as part of the `agent_profile` PDA seed",
-              "on `register_agent`. Incremented on `deregister_agent`."
-            ],
             "type": "u64"
           }
         ]
@@ -2187,6 +2178,30 @@
       }
     },
     {
+      "name": "OwnerNonce",
+      "docs": [
+        "ADR-097: Per-owner monotonic nonce counter.",
+        "",
+        "Seeded by `[authority.key().as_ref(), b\"owner-nonce\"]`.",
+        "Initialized to 0 on first `register_agent` (via `init_if_needed`).",
+        "Incremented by `deregister_agent` so subsequent registrations derive a",
+        "different `agent_profile` PDA, preventing Sybil address reuse."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "nonce",
+            "docs": [
+              "The current nonce value. Used as part of the `agent_profile` PDA seed",
+              "on `register_agent`. Incremented on `deregister_agent`."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
       "name": "PricingModel",
       "type": {
         "kind": "enum",
@@ -2199,6 +2214,44 @@
           },
           {
             "name": "PerToken"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ReputationDeltaProposed",
+      "docs": [
+        "ADR-094: emitted when `propose_reputation_delta` successfully applies a",
+        "validated delta. Subscribers (indexers, governance dashboards) can track",
+        "every reputation change through this single event, regardless of the",
+        "originating source (Settlement, future slashing circuits, etc.)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "delta",
+            "type": "i16"
+          },
+          {
+            "name": "reason",
+            "type": "u8"
+          },
+          {
+            "name": "old_score",
+            "type": "u8"
+          },
+          {
+            "name": "new_score",
+            "type": "u8"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
           }
         ]
       }
@@ -2235,44 +2288,6 @@
           {
             "name": "total_staked",
             "type": "u64"
-          },
-          {
-            "name": "timestamp",
-            "type": "i64"
-          }
-        ]
-      }
-    },
-    {
-      "name": "ReputationDeltaProposed",
-      "docs": [
-        "ADR-094: emitted when `propose_reputation_delta` successfully applies a",
-        "validated delta. Subscribers (indexers, governance dashboards) can track",
-        "every reputation change through this single event, regardless of the",
-        "originating source (Settlement, future slashing circuits, etc.)."
-      ],
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "authority",
-            "type": "pubkey"
-          },
-          {
-            "name": "delta",
-            "type": "i16"
-          },
-          {
-            "name": "reason",
-            "type": "u8"
-          },
-          {
-            "name": "old_score",
-            "type": "u8"
-          },
-          {
-            "name": "new_score",
-            "type": "u8"
           },
           {
             "name": "timestamp",
