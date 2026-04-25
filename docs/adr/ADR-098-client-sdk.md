@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by ADR-098-sdk-client-package
 
 ## Date
 
@@ -89,3 +89,11 @@ out of scope and will be added in a follow-up as the ecosystem matures.
 - `programs/agent-registry/src/state.rs` — `AgentProfile`, `AgentStatus`, `PricingModel`
 - `programs/agent-vault/src/state.rs` — `Vault`, `VaultPolicy`
 - `programs/settlement/src/state.rs` — `TaskEscrow`, `EscrowStatus`, `MilestoneStatus`
+
+## Revisions
+
+- 2026-04-25 — Marked Superseded. Two ADR-098 files were created in parallel
+  PRs (#50 / #51) and both landed as Accepted. The brief variant
+  (`ADR-098-sdk-client-package`) matches the actual code: `sdk/client/package.json`
+  declares `@agenomics/idl` as a dependency, contradicting §1.5 of this verbose
+  variant. Audit reference: AUD-2026-04-25 / AUD-047, drift matrix §1.

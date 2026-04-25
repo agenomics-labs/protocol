@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by ADR-099-idl-package
 
 ## Date
 
@@ -24,3 +24,12 @@ Create `sdk/idl/` publishing as `@agenomics/idl`. Provides:
 
 ## References
 - Architecture Audit 2026-04-23, Item 23, Arch §6.6; Item 31, Ops CFG-01
+
+## Revisions
+
+- 2026-04-25 — Marked Superseded by `ADR-099-idl-package`. Two ADR-099 files
+  were created in parallel and both landed as Accepted. The verbose variant
+  (`ADR-099-idl-package.md`) is a strict superset of this brief one: it covers
+  the vendored IDL JSON via ES2022 import attributes in addition to the
+  cluster-keyed program-ID manifest documented here. Audit reference:
+  AUD-2026-04-25 / AUD-047, drift matrix §1.
