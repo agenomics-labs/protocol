@@ -99,4 +99,14 @@ pub enum SettlementError {
     /// `Clock::get()?.slot >= milestone.grace_ends_at` before slashing.
     #[msg("Milestone is within grace period; slash not permitted yet (ADR-102)")]
     MilestoneInGracePeriod,
+
+    /// AUD-005 (PR-H): a non-upgrade-authority key attempted
+    /// `initialize_protocol_config`. The init context binds the
+    /// `payer` to the program's upgrade authority via the
+    /// BPF Upgradeable Loader's `ProgramData` account, closing the
+    /// front-running window between deploy and config init. After init,
+    /// `ProtocolConfig.authority` is fully independent of the upgrade
+    /// authority and no other instruction references `ProgramData`.
+    #[msg("Unauthorized: caller is not the program's upgrade authority")]
+    Unauthorized,
 }

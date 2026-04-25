@@ -936,6 +936,95 @@
           }
         },
         {
+          "name": "program_data",
+          "docs": [
+            "AUD-005: provided by the BPF Upgradeable Loader at program-deploy",
+            "time. The seeds derivation `[crate::ID]` under `bpf_loader_upgradeable::ID`",
+            "is the canonical address of this program's `ProgramData` account.",
+            "The constraint pins the `payer` to the program's current upgrade",
+            "authority. After init, `ProtocolConfig.authority` is independent —",
+            "no other instruction in this program may reference `ProgramData`."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  227,
+                  132,
+                  12,
+                  30,
+                  9,
+                  78,
+                  44,
+                  188,
+                  135,
+                  187,
+                  145,
+                  68,
+                  5,
+                  84,
+                  82,
+                  239,
+                  90,
+                  255,
+                  29,
+                  178,
+                  208,
+                  214,
+                  104,
+                  25,
+                  104,
+                  107,
+                  82,
+                  183,
+                  124,
+                  88,
+                  179,
+                  116
+                ]
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                2,
+                168,
+                246,
+                145,
+                78,
+                136,
+                161,
+                176,
+                226,
+                16,
+                21,
+                62,
+                247,
+                99,
+                174,
+                43,
+                0,
+                194,
+                185,
+                61,
+                22,
+                193,
+                36,
+                210,
+                192,
+                83,
+                122,
+                16,
+                4,
+                128,
+                0,
+                0
+              ]
+            }
+          }
+        },
+        {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
         }
@@ -1834,6 +1923,11 @@
       "code": 6027,
       "name": "MilestoneInGracePeriod",
       "msg": "Milestone is within grace period; slash not permitted yet (ADR-102)"
+    },
+    {
+      "code": 6028,
+      "name": "Unauthorized",
+      "msg": "Unauthorized: caller is not the program's upgrade authority"
     }
   ],
   "types": [
