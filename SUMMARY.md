@@ -17,7 +17,7 @@ The entire protocol is accessible to any AI agent through a Model Context Protoc
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                     MCP Server (TypeScript)                  │
-│           20 tools · Input validation · Error handling        │
+│           24 tools · Input validation · Error handling        │
 ├──────────────┬──────────────────┬────────────────────────────┤
 │  Agent Vault │  Agent Registry  │   Settlement Protocol      │
 │   (Anchor)   │    (Anchor)      │       (Anchor)             │
@@ -131,7 +131,7 @@ The vault can call any whitelisted program using `invoke_signed()` with the vaul
 
 ## MCP Server
 
-A TypeScript MCP server exposes all three programs as 20 tools that any AI agent can invoke through the Model Context Protocol.
+A TypeScript MCP server exposes all three programs as 24 tools that any AI agent can invoke through the Model Context Protocol.
 
 **Source:** `mcp-server/src/index.ts` (1,104 lines) + `solana.ts` (309 lines) + `tools.ts` (591 lines)
 **Tests:** 21 passing (`mcp-server/test/mcp-handlers.test.ts`, 724 lines)
@@ -140,9 +140,9 @@ A TypeScript MCP server exposes all three programs as 20 tools that any AI agent
 
 | Program | Tools |
 |---------|-------|
-| Agent Vault | `create_vault`, `get_vault_info`, `vault_transfer`, `update_vault_policy`, `manage_allowlist`, `pause_vault`, `resume_vault` |
-| Agent Registry | `register_agent`, `get_agent_profile`, `update_agent_profile`, `discover_agents` |
-| Settlement | `create_escrow`, `get_escrow_status`, `accept_task`, `submit_milestone`, `approve_milestone`, `reject_milestone`, `raise_dispute`, `resolve_dispute`, `cancel_escrow` |
+| Agent Vault (8) | `create_vault`, `get_vault_info`, `vault_transfer`, `vault_token_transfer`, `update_vault_policy`, `manage_allowlist`, `pause_vault`, `resume_vault` |
+| Agent Registry (5) + Reputation (1) | `register_agent`, `get_agent_profile`, `update_agent_profile`, `discover_agents`, `stake_reputation`, `get_agent_reputation` |
+| Settlement (10) | `create_escrow`, `get_escrow_status`, `accept_task`, `submit_milestone`, `approve_milestone`, `reject_milestone`, `raise_dispute`, `resolve_dispute`, `resolve_dispute_timeout`, `cancel_escrow` |
 
 **Features:**
 
@@ -288,4 +288,4 @@ aep/
 ---
 
 *Built by Alejandro for the Colosseum Frontier Hackathon (Apr 6 – May 11, 2026)*
-*114 tests passing · 3 programs · 20 MCP tools · Real CPI verified on-chain*
+*114 tests passing · 3 programs · 24 MCP tools · Real CPI verified on-chain*
