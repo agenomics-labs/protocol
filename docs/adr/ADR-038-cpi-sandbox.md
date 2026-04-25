@@ -52,3 +52,8 @@ Considered but rejected — agents need non-financial CPI for legitimate use cas
 
 ## Files Changed
 - `programs/agent-vault/src/lib.rs` — `execute_program_call` rewritten to use `invoke` without PDA signing; `AuditEntry` dead struct removed
+
+## Revisions
+
+- 2026-04-25 — Superseded by ADR-050/L1, which removed the `execute_program_call`
+  instruction entirely. AUD-2026-04-25 drift matrix §4.

@@ -47,3 +47,8 @@ Good long-term solution but adds infrastructure dependency. memcmp filters provi
 
 ## Files Changed
 - `mcp-server/src/index.ts` - `handleDiscoverAgents` rewritten with filters
+
+## Revisions
+
+- 2026-04-25 — Superseded by ADR-042 (memcmp offset removed). AUD-2026-04-25
+  drift matrix §4.

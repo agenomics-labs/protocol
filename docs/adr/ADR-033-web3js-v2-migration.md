@@ -49,3 +49,8 @@ Migrating to v2 improves bundle size (tree-shaking), type safety (branded addres
 ## Files Changed
 
 - `docs/WEB3_V2_MIGRATION.md` -- new migration plan document
+
+## Revisions
+
+- 2026-04-25 — Same-day duplicate of ADR-012. ADR-087 is canonical.
+  AUD-2026-04-25 drift matrix §4 / §8.

@@ -26,3 +26,8 @@ Create two scoped npm packages:
 - Framework integration is a single `npm install @agenomics/integrations` away.
 - Both packages publish only compiled `dist/` output, keeping source private.
 - Peer dependency on MCP SDK avoids version conflicts with host projects.
+
+## Revisions
+
+- 2026-04-25 — See also ADR-085 (agenomics-npm-scope-rename). AUD-2026-04-25
+  drift matrix §4.

@@ -60,3 +60,11 @@ The audit flagged this same anti-pattern in SEC-1 (Registry `UpdateReputation`) 
 - `docs/adr/ADR-031-mainnet-deployment.md` — upgrade-authority multisig
 - `programs/agent-registry/src/contexts.rs:70-85`, `src/lib.rs:127-130`
 - `programs/settlement/src/contexts.rs:153-159, 255-261, 309-316, 400-406`
+
+## Revisions
+
+- 2026-04-25 — Partially superseded by ADR-094. The new bounded
+  `propose_reputation_delta` instruction is the canonical path; legacy
+  `update_reputation` is on the deprecation track (TODO at
+  `programs/settlement/src/instructions/cpi.rs:43-48` and AUD-002).
+  AUD-2026-04-25 drift matrix §4.
