@@ -9,6 +9,7 @@ import {
   getVaultProgram,
   deriveVaultPDA,
   deriveAgentProfilePDA,
+  deriveOwnerNoncePDA,
   getAssociatedTokenAddressSync,
   parsePublicKey,
   solToLamports,
@@ -27,6 +28,16 @@ import {
 /**
  * Initialize a new vault for this agent.
  * Seeds: ["vault", authority] -> vault PDA
+ *
+ * AUD-008 / PR-J: Strict register-first. The vault context now requires the
+ * Registry's `OwnerNonce` PDA at `initialize_vault` time, replacing the old
+ * `profile_nonce: u64` argument that callers could supply (and silently
+ * brick downstream `agent_profile` lookups by passing a stale value). The
+ * `profileNonce` arg is no longer accepted; if a caller is mid-flow and has
+ * not yet registered, this call will revert at the on-chain seeds
+ * constraint. The SDK's `ensureAgentRegistered(authority)` helper (PR-JJ)
+ * will paper over the UX for first-time users; for now the MCP surface
+ * surfaces the on-chain failure directly.
  */
 export async function handleCreateVault(args: Record<string, unknown>) {
   const agentIdentity = parsePublicKey(requireString(args, "agentIdentity"));
@@ -37,25 +48,25 @@ export async function handleCreateVault(args: Record<string, unknown>) {
   const wallet = loadWallet();
   const program = getVaultProgram();
   const [vaultPDA] = deriveVaultPDA(wallet.publicKey);
+  // AUD-008 / PR-J: source the profile nonce from the Registry's `OwnerNonce`
+  // PDA. Anchor will reject the tx if the account does not exist (i.e. the
+  // authority has not yet `register_agent`'d), surfacing the protocol-level
+  // register-first invariant.
+  const [ownerNoncePDA] = deriveOwnerNoncePDA(wallet.publicKey);
 
   // ADR-088: see registry handler — `.accountsPartial()` accepts
   // PDA-resolvable accounts (e.g. `vault` here is `pda: ["vault", authority]`).
-  // ADR-097: `profile_nonce` binds this vault to a specific agent_profile PDA
-  // (seeds `[authority, "agent-profile", nonce-le]`). For first-time users the
-  // nonce is 0; the caller is responsible for re-initializing the vault with
-  // a fresh nonce after deregister+re-register.
-  const profileNonce = new BN((args.profileNonce as number | undefined) ?? 0);
   const sig = await program.methods
     .initializeVault(
       agentIdentity,
       new BN(solToLamports(dailyLimitSol)),
       new BN(solToLamports(perTxLimitSol)),
-      maxTxsPerHour,
-      profileNonce
+      maxTxsPerHour
     )
     .accountsPartial({
       vault: vaultPDA,
       authority: wallet.publicKey,
+      ownerNonce: ownerNoncePDA,
       systemProgram: SystemProgram.programId,
     })
     .signers([wallet])

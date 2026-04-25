@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{Token, TokenAccount};
-use agent_registry::state::{AgentProfile, AgentStatus};
+use agent_registry::state::{AgentProfile, AgentStatus, OwnerNonce};
 
 use crate::state::Vault;
 use crate::errors::VaultError;
@@ -10,6 +10,15 @@ use crate::errors::VaultError;
 /// + VaultPolicy: 8+8+4+324+324=668 + 4 (txs_window) + 8 (rate_start)
 /// + 4+(10*(32+8+8+8+8))=644 (token_spend_records, now carrying per-mint limits)
 /// + 1 (bump) + 8 (profile_nonce, ADR-095/097) = 1422 + 200 margin = 1622
+///
+/// AUD-008 (PR-J): The `profile_nonce` formerly arrived as a user-supplied
+/// `u64` argument and was written verbatim into `vault.profile_nonce`. A
+/// caller could pass a stale or wrong value and silently brick downstream
+/// `agent_profile` lookups in `execute_transfer` / `execute_token_transfer`.
+/// The instruction now reads the nonce from the Registry's authoritative
+/// `OwnerNonce` PDA below — register-first is enforced by the seeds
+/// constraint (the PDA must already exist). See
+/// `docs/audits/DESIGN-DECISIONS-2026-04-25.md` AUD-008 for rationale.
 #[derive(Accounts)]
 pub struct InitializeVault<'info> {
     #[account(
@@ -23,6 +32,31 @@ pub struct InitializeVault<'info> {
 
     #[account(mut)]
     pub authority: Signer<'info>,
+
+    /// AUD-008 / ADR-097: MUST exist — vault initialization requires prior
+    /// agent registration. Sources `vault.profile_nonce` from the Registry's
+    /// authoritative `OwnerNonce` account, eliminating the user-supplied
+    /// scalar that could brick transfers.
+    ///
+    /// The seeds constraint `[authority.key().as_ref(), b"owner-nonce"]`
+    /// under `agent_registry::ID` simultaneously:
+    /// 1. Enforces existence (Anchor fails to deserialize if the account is
+    ///    not initialized, surfacing `AccountNotInitialized`).
+    /// 2. Closes cross-account reuse: an attacker cannot pass another
+    ///    user's `OwnerNonce` account because PDA derivation is keyed on
+    ///    `authority.key()`. Substituting a foreign account fails
+    ///    `ConstraintSeeds`.
+    ///
+    /// `OwnerNonce` has only `nonce: u64`; a field-level
+    /// `owner_nonce.authority == authority.key()` check is unavailable and
+    /// unnecessary because the seeds derivation already binds the account
+    /// to `authority`.
+    #[account(
+        seeds = [authority.key().as_ref(), b"owner-nonce"],
+        seeds::program = agent_registry::ID,
+        bump,
+    )]
+    pub owner_nonce: Account<'info, OwnerNonce>,
 
     pub system_program: Program<'info, System>,
 }

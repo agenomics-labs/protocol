@@ -265,43 +265,12 @@ async function main() {
     { commitment: "confirmed" },
   );
 
-  // ==================== Step 3: vault creation ====================
-  // Idempotent: if the vault PDA is already initialized (prior smoke run with
-  // the same wallet), skip `initializeVault` rather than surface an
-  // "account already in use" error. Step 5 still verifies the on-chain state.
-  console.log("\n--- Step 3: Vault Program ---");
-  const vaultProgram = new Program(loadIdl("agent_vault"), provider);
-  const [vaultPDA] = PublicKey.findProgramAddressSync(
-    [Buffer.from("vault"), testKp.publicKey.toBuffer()],
-    VAULT_PROGRAM_ID,
-  );
-  const existingVaultInfo = await connection.getAccountInfo(vaultPDA);
-  if (existingVaultInfo) {
-    console.log(
-      `  Vault already exists at ${vaultPDA.toBase58()} — re-run, skipping init`,
-    );
-  } else {
-    try {
-      await vaultProgram.methods
-        .initializeVault(
-          testKp.publicKey,
-          new BN(LAMPORTS_PER_SOL),
-          new BN(LAMPORTS_PER_SOL / 10),
-          10,
-        )
-        .accounts({ vault: vaultPDA, authority: testKp.publicKey })
-        .signers([testKp])
-        .rpc();
-      console.log(`  Vault created: ${vaultPDA.toBase58()}`);
-    } catch (e) {
-      console.log(`  Vault creation failed: ${(e as Error).message}`);
-    }
-  }
-
-  // ==================== Step 4: agent registration ====================
-  // Idempotent: same guard as Step 3. If the agent-profile PDA already holds
-  // account data, skip `registerAgent` (re-run scenario). Step 5 verifies.
-  console.log("\n--- Step 4: Registry Program ---");
+  // ==================== Step 3: agent registration ====================
+  // AUD-008 / PR-J: Registry now precedes Vault in the smoke flow because
+  // `initialize_vault` requires the Registry's `OwnerNonce` PDA to exist.
+  // Idempotent: if the agent-profile PDA already holds account data, skip
+  // `registerAgent` (re-run scenario). Step 5 verifies.
+  console.log("\n--- Step 3: Registry Program (register-first per AUD-008) ---");
   const registryProgram = new Program(loadIdl("agent_registry"), provider);
   // ADR-097: agent_profile PDA seeds = [authority, "agent-profile", nonce-le].
   // Smoke test always uses a fresh keypair so nonce = 0.
@@ -314,6 +283,12 @@ async function main() {
   const [ownerNoncePDA] = PublicKey.findProgramAddressSync(
     [testKp.publicKey.toBuffer(), Buffer.from("owner-nonce")],
     REGISTRY_PROGRAM_ID,
+  );
+  // Vault PDA — derived now (used by the Registry's `vault` seed-constraint
+  // check) and by Step 4 below.
+  const [vaultPDA] = PublicKey.findProgramAddressSync(
+    [Buffer.from("vault"), testKp.publicKey.toBuffer()],
+    VAULT_PROGRAM_ID,
   );
   const existingProfileInfo = await connection.getAccountInfo(profilePDA);
   if (existingProfileInfo) {
@@ -343,6 +318,41 @@ async function main() {
       console.log(`  Agent registered: ${profilePDA.toBase58()}`);
     } catch (e) {
       console.log(`  Registration failed: ${(e as Error).message}`);
+    }
+  }
+
+  // ==================== Step 4: vault creation ====================
+  // Idempotent: if the vault PDA is already initialized (prior smoke run with
+  // the same wallet), skip `initializeVault` rather than surface an
+  // "account already in use" error. Step 5 still verifies the on-chain state.
+  console.log("\n--- Step 4: Vault Program ---");
+  const vaultProgram = new Program(loadIdl("agent_vault"), provider);
+  const existingVaultInfo = await connection.getAccountInfo(vaultPDA);
+  if (existingVaultInfo) {
+    console.log(
+      `  Vault already exists at ${vaultPDA.toBase58()} — re-run, skipping init`,
+    );
+  } else {
+    try {
+      await vaultProgram.methods
+        .initializeVault(
+          testKp.publicKey,
+          new BN(LAMPORTS_PER_SOL),
+          new BN(LAMPORTS_PER_SOL / 10),
+          10,
+        )
+        .accounts({
+          vault: vaultPDA,
+          authority: testKp.publicKey,
+          // AUD-008 / PR-J: vault init now sources `profile_nonce` from
+          // the Registry's authoritative OwnerNonce PDA.
+          ownerNonce: ownerNoncePDA,
+        })
+        .signers([testKp])
+        .rpc();
+      console.log(`  Vault created: ${vaultPDA.toBase58()}`);
+    } catch (e) {
+      console.log(`  Vault creation failed: ${(e as Error).message}`);
     }
   }
 

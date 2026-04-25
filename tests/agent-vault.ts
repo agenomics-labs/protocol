@@ -47,6 +47,11 @@ describe("Agent Vault Tests", () => {
   // Test-harness helper: register a minimal agent profile under `authority`
   // so ADR-095's suspension gate on execute_transfer has a valid account to
   // deserialize. Returns the profile PDA.
+  //
+  // AUD-008 (PR-J): MUST be called BEFORE `initializeVault` for any
+  // `authority`. The vault context now requires the Registry's `OwnerNonce`
+  // PDA to already exist — this helper creates it as a side-effect of
+  // `registerAgent` (Registry uses `init_if_needed` on the nonce account).
   async function registerMinimalAgent(
     authority: Keypair,
     vaultPda: PublicKey
@@ -115,16 +120,20 @@ describe("Agent Vault Tests", () => {
 
   describe("Happy Path: Vault Initialization", () => {
     it("should initialize a vault with correct parameters", async () => {
+      // AUD-008 (PR-J): register-first. The vault context now requires the
+      // Registry's `OwnerNonce` PDA to exist before init.
+      await registerMinimalAgent(authority, vaultPda);
+
       const tx = await program.methods
-        .initializeVault(agentIdentity.publicKey, new BN(DEFAULT_DAILY_LIMIT), new BN(DEFAULT_PER_TX_LIMIT), new BN(DEFAULT_MAX_TXS_PER_HOUR), new BN(0))
+        .initializeVault(agentIdentity.publicKey, new BN(DEFAULT_DAILY_LIMIT), new BN(DEFAULT_PER_TX_LIMIT), new BN(DEFAULT_MAX_TXS_PER_HOUR))
         .accounts({
           vault: vaultPda,
           authority: authority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(authority.publicKey)[0],
           systemProgram: anchor.web3.SystemProgram.programId,
         })
         .signers([authority])
         .rpc();
-      await registerMinimalAgent(authority, vaultPda);
 
       // Verify vault was created with correct data
       const vaultAccount = await program.account.vault.fetch(vaultPda);
@@ -147,6 +156,15 @@ describe("Agent Vault Tests", () => {
       );
       expect(vaultAccount.policy.tokenAllowlist.length).to.equal(0);
       expect(vaultAccount.policy.programAllowlist.length).to.equal(0);
+
+      // AUD-008 (PR-J): verify vault.profile_nonce was sourced from the
+      // Registry's OwnerNonce — the only on-chain link between the vault
+      // and the agent profile for the suspension gate (ADR-095).
+      const noncePda = deriveOwnerNoncePDA(authority.publicKey)[0];
+      const ownerNonce: any = await (registryProgram.account as any).ownerNonce.fetch(noncePda);
+      expect(vaultAccount.profileNonce.toString()).to.equal(
+        ownerNonce.nonce.toString()
+      );
     });
   });
 
@@ -515,16 +533,18 @@ describe("Agent Vault Tests", () => {
       const smallDailyLimit = 2 * LAMPORTS_PER_SOL;
       const smallPerTxLimit = 1.5 * LAMPORTS_PER_SOL;
 
+      // AUD-008 (PR-J): register-first.
+      await registerMinimalAgent(dailyLimitAuthority, dailyLimitVaultPda);
       await program.methods
-        .initializeVault(dailyLimitAgentId.publicKey, new BN(smallDailyLimit), new BN(smallPerTxLimit), new BN(10), new BN(0))
+        .initializeVault(dailyLimitAgentId.publicKey, new BN(smallDailyLimit), new BN(smallPerTxLimit), new BN(10))
         .accounts({
           vault: dailyLimitVaultPda,
           authority: dailyLimitAuthority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(dailyLimitAuthority.publicKey)[0],
           systemProgram: anchor.web3.SystemProgram.programId,
         })
         .signers([dailyLimitAuthority])
         .rpc();
-      await registerMinimalAgent(dailyLimitAuthority, dailyLimitVaultPda);
 
       // Fund the vault
       const vaultAirdropSig = await provider.connection.requestAirdrop(
@@ -599,17 +619,18 @@ describe("Agent Vault Tests", () => {
       );
       pauseVaultPda = vaultAddress;
 
-      // Initialize vault
+      // Initialize vault — AUD-008 (PR-J): register-first.
+      await registerMinimalAgent(pauseAuthority, pauseVaultPda);
       await program.methods
-        .initializeVault(pauseAgentId.publicKey, new BN(10 * LAMPORTS_PER_SOL), new BN(1 * LAMPORTS_PER_SOL), new BN(10), new BN(0))
+        .initializeVault(pauseAgentId.publicKey, new BN(10 * LAMPORTS_PER_SOL), new BN(1 * LAMPORTS_PER_SOL), new BN(10))
         .accounts({
           vault: pauseVaultPda,
           authority: pauseAuthority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(pauseAuthority.publicKey)[0],
           systemProgram: anchor.web3.SystemProgram.programId,
         })
         .signers([pauseAuthority])
         .rpc();
-      await registerMinimalAgent(pauseAuthority, pauseVaultPda);
 
       // Fund the vault
       const vaultAirdropSig = await provider.connection.requestAirdrop(
@@ -710,16 +731,18 @@ describe("Agent Vault Tests", () => {
       // Initialize vault with low tx rate limit for testing
       const lowMaxTxsPerHour = 3;
 
+      // AUD-008 (PR-J): register-first.
+      await registerMinimalAgent(rateLimitAuthority, rateLimitVaultPda);
       await program.methods
-        .initializeVault(rateLimitAgentId.publicKey, new BN(10 * LAMPORTS_PER_SOL), new BN(1 * LAMPORTS_PER_SOL), new BN(lowMaxTxsPerHour), new BN(0))
+        .initializeVault(rateLimitAgentId.publicKey, new BN(10 * LAMPORTS_PER_SOL), new BN(1 * LAMPORTS_PER_SOL), new BN(lowMaxTxsPerHour))
         .accounts({
           vault: rateLimitVaultPda,
           authority: rateLimitAuthority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(rateLimitAuthority.publicKey)[0],
           systemProgram: anchor.web3.SystemProgram.programId,
         })
         .signers([rateLimitAuthority])
         .rpc();
-      await registerMinimalAgent(rateLimitAuthority, rateLimitVaultPda);
 
       // Fund the vault
       const vaultAirdropSig = await provider.connection.requestAirdrop(
@@ -815,17 +838,18 @@ describe("Agent Vault Tests", () => {
       );
       authVaultPda = vaultAddress;
 
-      // Initialize vault
+      // Initialize vault — AUD-008 (PR-J): register-first.
+      await registerMinimalAgent(authVaultAuthority, authVaultPda);
       await program.methods
-        .initializeVault(authVaultAgentId.publicKey, new BN(10 * LAMPORTS_PER_SOL), new BN(1 * LAMPORTS_PER_SOL), new BN(10), new BN(0))
+        .initializeVault(authVaultAgentId.publicKey, new BN(10 * LAMPORTS_PER_SOL), new BN(1 * LAMPORTS_PER_SOL), new BN(10))
         .accounts({
           vault: authVaultPda,
           authority: authVaultAuthority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(authVaultAuthority.publicKey)[0],
           systemProgram: anchor.web3.SystemProgram.programId,
         })
         .signers([authVaultAuthority])
         .rpc();
-      await registerMinimalAgent(authVaultAuthority, authVaultPda);
     });
 
     it("should reject policy update from non-authority", async () => {
@@ -897,17 +921,18 @@ describe("Agent Vault Tests", () => {
       );
       pauseAuthVaultPda = vaultAddress;
 
-      // Initialize vault
+      // Initialize vault — AUD-008 (PR-J): register-first.
+      await registerMinimalAgent(pauseAuthVaultAuthority, pauseAuthVaultPda);
       await program.methods
-        .initializeVault(pauseAuthVaultAgentId.publicKey, new BN(10 * LAMPORTS_PER_SOL), new BN(1 * LAMPORTS_PER_SOL), new BN(10), new BN(0))
+        .initializeVault(pauseAuthVaultAgentId.publicKey, new BN(10 * LAMPORTS_PER_SOL), new BN(1 * LAMPORTS_PER_SOL), new BN(10))
         .accounts({
           vault: pauseAuthVaultPda,
           authority: pauseAuthVaultAuthority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(pauseAuthVaultAuthority.publicKey)[0],
           systemProgram: anchor.web3.SystemProgram.programId,
         })
         .signers([pauseAuthVaultAuthority])
         .rpc();
-      await registerMinimalAgent(pauseAuthVaultAuthority, pauseAuthVaultPda);
     });
 
     it("should reject pause from non-authority", async () => {
@@ -1031,21 +1056,23 @@ describe("Agent Vault Tests", () => {
       );
       sec5VaultPda = vaultAddress;
 
+      // AUD-008 (PR-J): register-first.
+      await registerMinimalAgent(sec5Authority, sec5VaultPda);
       await program.methods
         .initializeVault(
           sec5AgentId.publicKey,
           new BN(10 * LAMPORTS_PER_SOL),
           new BN(1 * LAMPORTS_PER_SOL),
-          new BN(5), new BN(0)
+          new BN(5)
         )
         .accounts({
           vault: sec5VaultPda,
           authority: sec5Authority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(sec5Authority.publicKey)[0],
           systemProgram: anchor.web3.SystemProgram.programId,
         })
         .signers([sec5Authority])
         .rpc();
-      await registerMinimalAgent(sec5Authority, sec5VaultPda);
 
       configuredMint = await createMint(
         provider.connection,
@@ -1118,21 +1145,23 @@ describe("Agent Vault Tests", () => {
         programId
       );
 
+      // AUD-008 (PR-J): register-first.
+      await registerMinimalAgent(emptyAuth, emptyVaultPda);
       await program.methods
         .initializeVault(
           emptyAgent.publicKey,
           new BN(10 * LAMPORTS_PER_SOL),
           new BN(1 * LAMPORTS_PER_SOL),
-          new BN(5), new BN(0)
+          new BN(5)
         )
         .accounts({
           vault: emptyVaultPda,
           authority: emptyAuth.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(emptyAuth.publicKey)[0],
           systemProgram: anchor.web3.SystemProgram.programId,
         })
         .signers([emptyAuth])
         .rpc();
-      await registerMinimalAgent(emptyAuth, emptyVaultPda);
 
       const badMint = await createMint(
         provider.connection,
@@ -1251,21 +1280,23 @@ describe("Agent Vault Tests", () => {
       );
       sec6VaultPda = vaultAddress;
 
+      // AUD-008 (PR-J): register-first.
+      await registerMinimalAgent(sec6Authority, sec6VaultPda);
       await program.methods
         .initializeVault(
           sec6AgentId.publicKey,
           new BN(10 * LAMPORTS_PER_SOL),
           new BN(1 * LAMPORTS_PER_SOL),
-          new BN(10), new BN(0)
+          new BN(10)
         )
         .accounts({
           vault: sec6VaultPda,
           authority: sec6Authority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(sec6Authority.publicKey)[0],
           systemProgram: anchor.web3.SystemProgram.programId,
         })
         .signers([sec6Authority])
         .rpc();
-      await registerMinimalAgent(sec6Authority, sec6VaultPda);
 
       sec6Mint = await createMint(
         provider.connection,
@@ -1410,21 +1441,23 @@ describe("Agent Vault Tests", () => {
       );
       rotVaultPda = vaultAddress;
 
+      // AUD-008 (PR-J): register-first.
+      await registerMinimalAgent(rotAuthority, rotVaultPda);
       await program.methods
         .initializeVault(
           rotOldAgentId.publicKey,
           new BN(10 * LAMPORTS_PER_SOL),
           new BN(1 * LAMPORTS_PER_SOL),
-          new BN(10), new BN(0)
+          new BN(10)
         )
         .accounts({
           vault: rotVaultPda,
           authority: rotAuthority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(rotAuthority.publicKey)[0],
           systemProgram: anchor.web3.SystemProgram.programId,
         })
         .signers([rotAuthority])
         .rpc();
-      await registerMinimalAgent(rotAuthority, rotVaultPda);
 
       // Fund vault so execute_transfer can actually move lamports
       const vaultAirdrop = await provider.connection.requestAirdrop(
@@ -1559,17 +1592,18 @@ describe("Agent Vault Tests", () => {
       );
       allowlistAuthVaultPda = vaultAddress;
 
-      // Initialize vault
+      // Initialize vault — AUD-008 (PR-J): register-first.
+      await registerMinimalAgent(allowlistAuthVaultAuthority, allowlistAuthVaultPda);
       await program.methods
-        .initializeVault(allowlistAuthVaultAgentId.publicKey, new BN(10 * LAMPORTS_PER_SOL), new BN(1 * LAMPORTS_PER_SOL), new BN(10), new BN(0))
+        .initializeVault(allowlistAuthVaultAgentId.publicKey, new BN(10 * LAMPORTS_PER_SOL), new BN(1 * LAMPORTS_PER_SOL), new BN(10))
         .accounts({
           vault: allowlistAuthVaultPda,
           authority: allowlistAuthVaultAuthority.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(allowlistAuthVaultAuthority.publicKey)[0],
           systemProgram: anchor.web3.SystemProgram.programId,
         })
         .signers([allowlistAuthVaultAuthority])
         .rpc();
-      await registerMinimalAgent(allowlistAuthVaultAuthority, allowlistAuthVaultPda);
     });
 
     it("should reject token allowlist add from non-authority", async () => {
@@ -1620,6 +1654,166 @@ describe("Agent Vault Tests", () => {
 
       vaultAccount = await program.account.vault.fetch(allowlistAuthVaultPda);
       expect(vaultAccount.policy.tokenAllowlist.length).to.equal(0);
+    });
+  });
+
+  // ============================================================================
+  // AUD-008 / PR-J: register-first vault initialization
+  // ============================================================================
+  //
+  // The vault context now requires the Registry's `OwnerNonce` PDA at
+  // `initialize_vault` time, replacing the user-supplied `profile_nonce: u64`
+  // argument. The seeds constraint enforces both existence and binding to
+  // the calling `authority`, closing AUD-008's brick-via-wrong-nonce hole.
+  // See `docs/audits/DESIGN-DECISIONS-2026-04-25.md` AUD-008 for rationale.
+  describe("AUD-008 / PR-J: Register-first OwnerNonce Sourcing", () => {
+    it("happy path: vault.profile_nonce equals OwnerNonce.nonce on chain", async () => {
+      const a = Keypair.generate();
+      const aId = Keypair.generate();
+      const sig = await provider.connection.requestAirdrop(
+        a.publicKey,
+        10 * LAMPORTS_PER_SOL
+      );
+      await provider.connection.confirmTransaction(sig);
+
+      const [aVaultPda] = await anchor.web3.PublicKey.findProgramAddress(
+        [Buffer.from("vault"), a.publicKey.toBuffer()],
+        programId
+      );
+
+      // Register first — initializes the OwnerNonce PDA in Registry.
+      await registerMinimalAgent(a, aVaultPda);
+
+      const [aNoncePda] = deriveOwnerNoncePDA(a.publicKey);
+      const beforeNonce: any = await (registryProgram.account as any).ownerNonce.fetch(aNoncePda);
+
+      await program.methods
+        .initializeVault(
+          aId.publicKey,
+          new BN(LAMPORTS_PER_SOL),
+          new BN(LAMPORTS_PER_SOL / 10),
+          new BN(10)
+        )
+        .accounts({
+          vault: aVaultPda,
+          authority: a.publicKey,
+          ownerNonce: aNoncePda,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .signers([a])
+        .rpc();
+
+      const vaultAccount = await program.account.vault.fetch(aVaultPda);
+      expect(vaultAccount.profileNonce.toString()).to.equal(
+        beforeNonce.nonce.toString()
+      );
+    });
+
+    it("rejects vault init when authority has not registered (OwnerNonce missing)", async () => {
+      const noReg = Keypair.generate();
+      const noRegId = Keypair.generate();
+      const sig = await provider.connection.requestAirdrop(
+        noReg.publicKey,
+        5 * LAMPORTS_PER_SOL
+      );
+      await provider.connection.confirmTransaction(sig);
+
+      const [noRegVaultPda] = await anchor.web3.PublicKey.findProgramAddress(
+        [Buffer.from("vault"), noReg.publicKey.toBuffer()],
+        programId
+      );
+      const [noRegNoncePda] = deriveOwnerNoncePDA(noReg.publicKey);
+
+      // Sanity: OwnerNonce PDA does NOT exist on chain.
+      const acc = await provider.connection.getAccountInfo(noRegNoncePda);
+      expect(acc).to.be.null;
+
+      let threw = false;
+      try {
+        await program.methods
+          .initializeVault(
+            noRegId.publicKey,
+            new BN(LAMPORTS_PER_SOL),
+            new BN(LAMPORTS_PER_SOL / 10),
+            new BN(10)
+          )
+          .accounts({
+            vault: noRegVaultPda,
+            authority: noReg.publicKey,
+            ownerNonce: noRegNoncePda,
+            systemProgram: anchor.web3.SystemProgram.programId,
+          })
+          .signers([noReg])
+          .rpc();
+      } catch (error: any) {
+        threw = true;
+        // Anchor raises AccountNotInitialized (or similar) when the PDA
+        // backing a non-init account constraint has no on-chain data.
+        // Don't pin the exact error code — message stability across Anchor
+        // versions is fragile. Just confirm the tx rejected.
+        expect(error).to.exist;
+      }
+      expect(threw, "vault init must fail when OwnerNonce is missing").to.equal(true);
+
+      // Confirm the vault PDA was NOT created.
+      const vaultAcc = await provider.connection.getAccountInfo(noRegVaultPda);
+      expect(vaultAcc).to.be.null;
+    });
+
+    it("rejects vault init when caller passes another authority's OwnerNonce", async () => {
+      // Alice registers; Bob attempts vault init using Alice's OwnerNonce
+      // PDA in his accounts struct. The seeds derivation under Bob's
+      // authority cannot produce Alice's OwnerNonce address, so Anchor
+      // raises a seeds-constraint failure.
+      const alice = Keypair.generate();
+      const bob = Keypair.generate();
+      const bobAgentId = Keypair.generate();
+
+      for (const kp of [alice, bob]) {
+        const s = await provider.connection.requestAirdrop(
+          kp.publicKey,
+          5 * LAMPORTS_PER_SOL
+        );
+        await provider.connection.confirmTransaction(s);
+      }
+
+      const [aliceVaultPda] = await anchor.web3.PublicKey.findProgramAddress(
+        [Buffer.from("vault"), alice.publicKey.toBuffer()],
+        programId
+      );
+      await registerMinimalAgent(alice, aliceVaultPda);
+      const [aliceNoncePda] = deriveOwnerNoncePDA(alice.publicKey);
+
+      const [bobVaultPda] = await anchor.web3.PublicKey.findProgramAddress(
+        [Buffer.from("vault"), bob.publicKey.toBuffer()],
+        programId
+      );
+
+      let threw = false;
+      try {
+        await program.methods
+          .initializeVault(
+            bobAgentId.publicKey,
+            new BN(LAMPORTS_PER_SOL),
+            new BN(LAMPORTS_PER_SOL / 10),
+            new BN(10)
+          )
+          .accounts({
+            vault: bobVaultPda,
+            authority: bob.publicKey,
+            ownerNonce: aliceNoncePda, // <-- Alice's nonce account
+            systemProgram: anchor.web3.SystemProgram.programId,
+          })
+          .signers([bob])
+          .rpc();
+      } catch (error: any) {
+        threw = true;
+        expect(error).to.exist;
+      }
+      expect(threw, "cross-authority OwnerNonce reuse must be rejected").to.equal(true);
+
+      const bobVaultAcc = await provider.connection.getAccountInfo(bobVaultPda);
+      expect(bobVaultAcc).to.be.null;
     });
   });
 });
