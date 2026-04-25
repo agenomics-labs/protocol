@@ -31,7 +31,7 @@
 | Agent Registry | `8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh` | 5 | `programs/agent-registry/src/lib.rs` |
 | Settlement | `GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3` | 8 | `programs/settlement/src/lib.rs` |
 
-**Agent Vault instructions**: `initialize_vault`, `update_policy`, `add_token_allowlist`, `remove_token_allowlist`, `add_program_allowlist`, `remove_program_allowlist`, `execute_transfer`, `execute_program_call`, `execute_token_transfer`, `pause_vault`, `resume_vault`
+**Agent Vault instructions**: `initialize_vault`, `update_policy`, `update_agent_identity`, `add_token_allowlist`, `remove_token_allowlist`, `add_program_allowlist`, `remove_program_allowlist`, `execute_transfer`, `execute_token_transfer`, `pause_vault`, `resume_vault`. (The `execute_program_call` instruction was removed by ADR-050; the vault has no cross-program-call surface and exposes only SOL transfers via `execute_transfer` and SPL transfers via `execute_token_transfer`.)
 
 **Agent Registry instructions**: `register_agent`, `update_profile`, `update_status`, `update_reputation`, `deregister_agent`
 
@@ -47,7 +47,7 @@
 ### 1.3 Cross-Program Interactions
 
 - **Settlement -> Agent Registry**: CPI call to `update_reputation` when all milestones are approved. Uses PDA-signed CPI pattern with `settlement_authority` PDA (seeds: `["settlement_authority"]`).
-- **Agent Vault -> Arbitrary Programs**: CPI via `execute_program_call` to any program on the vault's program allowlist. Vault PDA signs the CPI.
+- **Agent Vault -> System / Token Programs**: SOL transfers go to the System Program from `execute_transfer`; SPL token transfers go to the SPL Token Program from `execute_token_transfer` (vault PDA signs via `invoke_signed`). The vault has no arbitrary-CPI surface — the `execute_program_call` instruction was removed by ADR-050.
 
 ---
 
@@ -170,7 +170,7 @@
 
 **Vector**: Execute transfers while vault is paused.
 
-**Analysis**: All three execution instructions (`execute_transfer`, `execute_program_call`, `execute_token_transfer`) check `!vault.paused` before proceeding. The pause check occurs before any state mutation or CPI.
+**Analysis**: Both execution instructions (`execute_transfer`, `execute_token_transfer`) check `!vault.paused` before proceeding. The pause check occurs before any state mutation or CPI. (The `execute_program_call` instruction was removed by ADR-050.)
 
 **Risk**: Low. The check is explicit and early.
 
@@ -194,15 +194,15 @@
 
 **Audit focus**: Confirm `vault_account` is not used in any path that could redirect funds.
 
-#### V-A5: execute_program_call -- Arbitrary CPI
+#### V-A5: (historical) execute_program_call removed by ADR-050
 
-**Vector**: The vault PDA signs arbitrary CPIs to allowlisted programs. The `remaining_accounts` pattern passes accounts without Anchor validation.
+**Status**: Removed. The `execute_program_call` instruction is no longer part of the vault program.
 
-**Analysis**: The instruction verifies the target program is on the allowlist and that `remaining_accounts[0]` matches the declared `program_to_invoke` and is executable. The vault PDA is injected as signer for any account in the CPI that matches the vault key.
+**History**: Earlier vault revisions exposed an `execute_program_call` instruction that signed arbitrary CPIs to allowlisted programs using the vault PDA, with `remaining_accounts` passed unvalidated to the target program. This surface carried High risk: any malicious or compromised program on the allowlist could perform arbitrary actions with the vault PDA as signer.
 
-**Risk**: High. If a malicious program is on the allowlist, it can perform any action with the vault PDA as signer. The `remaining_accounts` are not validated by Anchor -- the target program must validate them.
+**Resolution**: ADR-050 removed `execute_program_call` entirely. Without vault PDA signing for general-purpose CPI (ADR-038), the instruction was a rate-limited `invoke` wrapper with limited utility. Financial operations are handled by `execute_transfer` (SOL via System Program) and `execute_token_transfer` (SPL via Token Program); non-financial CPI can be performed directly by the agent without going through the vault. The arbitrary-CPI attack surface is therefore gone.
 
-**Audit focus**: Review all code paths where vault PDA signing could be abused. Verify that the `is_vault` check in account meta construction cannot be tricked by passing the vault key as a non-vault account.
+**Auditor note**: No live attack surface here. Verify only that no orphaned code paths (e.g., test harness, IDL leftovers, unused account types) still reference the removed instruction.
 
 #### V-A6: Token Transfer Missing Daily/Per-TX Limits
 
@@ -339,7 +339,7 @@ The following properties must hold at all times. Violations indicate a critical 
 | INV-V1 | `vault.spent_today_lamports <= vault.policy.daily_limit_lamports` for the current day | Checked before every SOL transfer; counter resets on day boundary |
 | INV-V2 | No single SOL transfer exceeds `vault.policy.per_tx_limit_lamports` | Checked in `execute_transfer` before transfer |
 | INV-V3 | `vault.txs_in_current_window <= vault.policy.max_txs_per_hour` | Checked before all transfer/call instructions; window resets after 3600 seconds |
-| INV-V4 | Paused vault blocks all transfers and program calls | `!vault.paused` checked in `execute_transfer`, `execute_program_call`, `execute_token_transfer` |
+| INV-V4 | Paused vault blocks all transfers | `!vault.paused` checked in `execute_transfer` and `execute_token_transfer`. (`execute_program_call` was removed by ADR-050; no other CPI surface exists.) |
 | INV-V5 | Only vault authority can modify policies, allowlists, or pause/resume state | `authority: Signer` in context + `require!(authority.key() == vault.authority)` |
 
 ### 5.3 Registry Invariants
@@ -378,7 +378,7 @@ Ordered by priority (critical first):
 
 ### Priority 1: Critical (Must audit)
 
-1. **execute_program_call CPI signing** (V-A5): The vault PDA signs arbitrary CPIs to allowlisted programs. Verify that the `remaining_accounts` pattern cannot be abused to make the vault PDA sign unintended operations. Verify the `is_vault` signer injection logic.
+1. **Vault CPI surface confirmation** (V-A5, historical): The `execute_program_call` instruction was removed by ADR-050, eliminating the arbitrary-CPI attack surface. Confirm that no orphaned code paths, test harnesses, or IDL artifacts still reference it, and that the only remaining CPI surfaces from the vault are the System Program (via `execute_transfer`) and the SPL Token Program (via `execute_token_transfer`).
 
 2. **Settlement escrow fund flows** (S-A1, INV-S2, INV-S3): Trace all paths where tokens leave the escrow token account. Verify that `released_amount` accurately tracks disbursements and that no path allows extracting more than `total_amount`.
 

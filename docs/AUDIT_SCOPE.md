@@ -26,15 +26,17 @@
 |-------------|-------------|----------|
 | `initialize_vault` | Create vault PDA with spending policies | Medium |
 | `update_policy` | Modify daily/per-tx limits | Medium |
+| `update_agent_identity` | Update the agent identity bound to the vault | Medium |
 | `add_token_allowlist` | Add SPL mint to allowed list | Low |
 | `remove_token_allowlist` | Remove SPL mint from allowed list | Low |
 | `add_program_allowlist` | Add program ID to CPI allowlist | Medium |
 | `remove_program_allowlist` | Remove program ID from CPI allowlist | Medium |
-| `execute_transfer` | SOL transfer with policy enforcement | Critical |
-| `execute_program_call` | Arbitrary CPI via vault PDA signing | Critical |
-| `execute_token_transfer` | SPL token transfer via vault PDA | Critical |
+| `execute_transfer` | SOL transfer with policy enforcement (System Program CPI) | Critical |
+| `execute_token_transfer` | SPL token transfer via vault PDA (Token Program CPI) | Critical |
 | `pause_vault` | Emergency pause all vault operations | High |
 | `resume_vault` | Resume paused vault | High |
+
+> Note: the `execute_program_call` instruction (arbitrary CPI via vault PDA signing) was removed by ADR-050. The vault no longer has a generic cross-program-call surface; only the two transfer instructions above invoke other programs.
 
 ### 1.3 Agent Registry Instructions
 
@@ -137,11 +139,12 @@ AI Agent (untrusted) -> MCP Server (semi-trusted) -> Solana Runtime (trusted)
 
 | Vector | Program | Severity | Description |
 |--------|---------|----------|-------------|
-| V-A5 | Vault | Critical | Arbitrary CPI via `execute_program_call` with vault PDA signing |
 | S-A1 | Settlement | Critical | Escrow fund theft via unauthorized token account access |
 | R-S1 | Registry | Critical | Direct `update_reputation` call bypassing Settlement CPI |
 | V-T3 | Vault | Critical | Fraudulent `vault_account` in `ExecuteTransfer` |
 | S-E1 | Settlement | High | Dispute resolver collusion |
+
+> Historical / removed: V-A5 ("arbitrary CPI via `execute_program_call` with vault PDA signing") was previously the top-ranked vault risk. ADR-050 removed `execute_program_call` from the vault program; the surface no longer exists in scope. See `docs/SECURITY_AUDIT.md` §V-A5 for the audit-time confirmation note.
 
 ### 4.3 Trust Assumptions
 
