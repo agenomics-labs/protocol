@@ -20,7 +20,7 @@ The four design-blocked critical/high findings (AUD-001/002, AUD-004, AUD-005, A
 1. `ProposeReputationDelta` context must:
    - Include `owner_nonce: Account<'info, OwnerNonce>` with seeds `[authority.key().as_ref(), b"owner-nonce"]` under `agent_registry::ID`.
    - Use seeds `[authority.key().as_ref(), b"agent-profile", &owner_nonce.nonce.to_le_bytes()]` for `agent_profile`.
-   - Include `require_keys_eq!(owner_nonce.authority, authority.key(), Unauthorized)` to close cross-account reuse.
+   - **Note (PR-J finding, 2026-04-25)**: `OwnerNonce` has no `authority` field (only `pub nonce: u64`). The `require_keys_eq!(owner_nonce.authority, ...)` line in the original spec **does not compile**. The seeds binding `[authority.key().as_ref(), b"owner-nonce"]` already enforces the authority binding via PDA derivation — any account whose seeds don't match the passed `authority` fails `ConstraintSeeds`. Security property preserved without the explicit field check.
 2. Rewire `programs/settlement/src/instructions/cpi.rs:65-80` to invoke `propose_reputation_delta`. Drop the TODO comment at `cpi.rs:43-48`.
 3. Remove `update_reputation` from `programs/agent-registry/src/lib.rs:153-203` and its context.
 4. Extend `migrate_agent_profile` (ADR-096) to apply normalization at v→v+N bump:
@@ -126,14 +126,16 @@ The four design-blocked critical/high findings (AUD-001/002, AUD-004, AUD-005, A
 1. `InitializeVault` context (`programs/agent-vault/src/contexts.rs:13-28`) adds:
    ```rust
    /// MUST exist — vault initialization requires prior agent registration.
+   /// Seeds binding to `authority` enforces cross-account-reuse rejection
+   /// via PDA derivation (any non-matching authority fails ConstraintSeeds).
    #[account(
        seeds = [authority.key().as_ref(), b"owner-nonce"],
        seeds::program = agent_registry::ID,
        bump,
-       constraint = owner_nonce.authority == authority.key() @ VaultError::Unauthorized,
    )]
    pub owner_nonce: Account<'info, OwnerNonce>,
    ```
+   **Note (PR-J finding, 2026-04-25)**: original spec also included `constraint = owner_nonce.authority == authority.key()`. That line does not compile — `OwnerNonce` has only `pub nonce: u64`, no `authority` field. Seeds-derivation binding is sufficient.
 2. Handler reads `owner_nonce.nonce` and stores it in `vault.profile_nonce`. **Remove** any user-supplied `profile_nonce: u64` arg from `initialize_vault`.
 3. SDK responsibility (separate, not in this PR but tracked as PR-JJ): `@agenomics/client` adds `ensureAgentRegistered(authority)` helper that registers + then initializes vault if needed.
 
