@@ -51,8 +51,16 @@ export const mcpToolDuration = new Histogram({
 /**
  * Start the Prometheus scrape endpoint. Returns the http.Server so callers
  * can close it in tests.
+ *
+ * AUD-029: bind to `METRICS_HOST` (default `127.0.0.1`) instead of the
+ * Node default of `0.0.0.0`. The /metrics endpoint exposes tool-call rates
+ * and durations — operationally useful for a local Prometheus scraper but
+ * an information-disclosure surface if reachable from any peer on the LAN.
+ * Operators that need a non-loopback bind (e.g. a sidecar topology) opt in
+ * explicitly via `METRICS_HOST=0.0.0.0`.
  */
 export function startMcpMetricsServer(port: number = 9101): http.Server {
+  const host = process.env.METRICS_HOST ?? "127.0.0.1";
   const server = http.createServer(async (req, res) => {
     if (req.url === "/metrics") {
       res.setHeader("Content-Type", mcpRegistry.contentType);
@@ -63,9 +71,9 @@ export function startMcpMetricsServer(port: number = 9101): http.Server {
     }
   });
 
-  server.listen(port, () => {
+  server.listen(port, host, () => {
     console.error(
-      `[metrics] Prometheus scrape endpoint on http://0.0.0.0:${port}/metrics`,
+      `[metrics] Prometheus scrape endpoint on http://${host}:${port}/metrics`,
     );
   });
 
