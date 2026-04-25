@@ -1,4 +1,11 @@
 use anchor_lang::prelude::*;
+// AUD-005: the BPF Upgradeable Loader's program ID is the seed-program for
+// `ProgramData`. Solana's plan-of-record migration to `solana-loader-v3-interface`
+// is not yet reflected in Anchor 0.31.x (which still re-exports this module via
+// `solana_program::bpf_loader_upgradeable`); silencing the deprecation locally
+// avoids cascading the noise across the workspace until Anchor catches up.
+#[allow(deprecated)]
+use anchor_lang::solana_program::bpf_loader_upgradeable;
 use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token::{Mint, Token, TokenAccount};
 
@@ -484,9 +491,18 @@ pub struct ExpireEscrow<'info> {
     pub token_program: Program<'info, Token>,
 }
 
-/// Finding #19: One-shot context to create the singleton `ProtocolConfig`
-/// PDA. Any key may pay for initialization — `authority` is set to the
-/// `payer`. After this, only `UpdateProtocolConfig` can mutate the fields.
+/// Finding #19 + AUD-005 (PR-H): One-shot context to create the singleton
+/// `ProtocolConfig` PDA. The `payer` becomes the initial `authority`, but
+/// only the program's upgrade authority may pay — closing the front-running
+/// window between program deploy and config init.
+///
+/// AUD-005 design (DESIGN-DECISIONS-2026-04-25.md, Option C):
+/// - At init time, bind `payer` to the program's upgrade authority via the
+///   BPF Upgradeable Loader's `ProgramData` account.
+/// - After init, `ProtocolConfig.authority` is fully independent of the
+///   upgrade authority. No other instruction in this program references
+///   `ProgramData`. Future governance evolves through
+///   `update_protocol_config`'s authority rotation, not the loader.
 #[derive(Accounts)]
 pub struct InitializeProtocolConfig<'info> {
     #[account(mut)]
@@ -500,6 +516,21 @@ pub struct InitializeProtocolConfig<'info> {
         bump,
     )]
     pub protocol_config: Account<'info, ProtocolConfig>,
+
+    /// AUD-005: provided by the BPF Upgradeable Loader at program-deploy
+    /// time. The seeds derivation `[crate::ID]` under `bpf_loader_upgradeable::ID`
+    /// is the canonical address of this program's `ProgramData` account.
+    /// The constraint pins the `payer` to the program's current upgrade
+    /// authority. After init, `ProtocolConfig.authority` is independent —
+    /// no other instruction in this program may reference `ProgramData`.
+    #[account(
+        seeds = [crate::ID.as_ref()],
+        bump,
+        seeds::program = bpf_loader_upgradeable::ID,
+        constraint = program_data.upgrade_authority_address == Some(payer.key())
+            @ SettlementError::Unauthorized,
+    )]
+    pub program_data: Account<'info, ProgramData>,
 
     pub system_program: Program<'info, System>,
 }
