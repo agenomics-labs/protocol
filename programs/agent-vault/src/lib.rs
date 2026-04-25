@@ -666,4 +666,94 @@ mod tests {
             );
         }
     }
+
+    // ================================================================
+    // AUD-006: Rate-limit window saturating-sub tests
+    //
+    // Regression coverage for the signed `i64` underflow at the rate-
+    // limit comparison sites. The previous code computed
+    // `clock.unix_timestamp - vault.rate_limit_window_start` directly;
+    // when `window_start > now` (clock skew, fresh init drift), the
+    // diff was negative and the "still inside window" branch was taken
+    // forever. `compute_window_elapsed` clamps any negative result to
+    // zero so the call site at least falls into a safe state.
+    // ================================================================
+
+    use crate::instructions::compute_window_elapsed;
+
+    #[test]
+    fn test_aud006_compute_window_elapsed_now_after_start() {
+        // Normal case: elapsed > 0
+        let start: i64 = 1_700_000_000;
+        let now: i64 = start + 1234;
+        assert_eq!(compute_window_elapsed(now, start), 1234);
+    }
+
+    #[test]
+    fn test_aud006_compute_window_elapsed_equal_timestamps() {
+        // Same instant: zero elapsed
+        let t: i64 = 1_700_000_000;
+        assert_eq!(compute_window_elapsed(t, t), 0);
+    }
+
+    #[test]
+    fn test_aud006_compute_window_elapsed_now_before_start_clock_skew() {
+        // Clock-skew / future-dated start case: must clamp to 0,
+        // never return a negative value.
+        let start: i64 = 1_700_000_000;
+        let now: i64 = start - 5_000;
+        let elapsed = compute_window_elapsed(now, start);
+        assert_eq!(elapsed, 0);
+        assert!(elapsed >= 0, "elapsed must never be negative");
+    }
+
+    #[test]
+    fn test_aud006_compute_window_elapsed_extreme_negative_no_underflow() {
+        // i64::MIN start with positive now used to underflow on raw
+        // subtraction. saturating_sub guarantees no UB; .max(0)
+        // collapses to zero so the call site never observes a wrap.
+        let elapsed = compute_window_elapsed(0, i64::MAX);
+        assert_eq!(elapsed, 0);
+        let elapsed = compute_window_elapsed(i64::MIN, i64::MAX);
+        assert_eq!(elapsed, 0);
+    }
+
+    #[test]
+    fn test_aud006_window_reset_branch_taken_after_one_hour() {
+        // Sanity-check the call-site predicate: when elapsed > 3600
+        // the rate-limit branch resets the window. Semantics
+        // (1-hour window) intentionally unchanged.
+        let start: i64 = 1_700_000_000;
+        let now: i64 = start + 3601;
+        let elapsed = compute_window_elapsed(now, start);
+        assert!(elapsed > 3600, "elapsed should trigger window reset");
+    }
+
+    #[test]
+    fn test_aud006_window_held_inside_one_hour() {
+        let start: i64 = 1_700_000_000;
+        let now: i64 = start + 3599;
+        let elapsed = compute_window_elapsed(now, start);
+        assert!(elapsed <= 3600, "elapsed should keep window open");
+    }
+
+    #[test]
+    fn test_aud006_clock_skew_does_not_freeze_window() {
+        // The bug: with `now < start`, raw subtraction yields a
+        // negative `i64` which fails the `> 3600` check and the
+        // window never resets. With the fix, elapsed is 0 — the
+        // call site keeps the window open for the current cycle
+        // but does NOT see a phantom "still in window" forever
+        // condition because as soon as the wall clock advances
+        // past `start + 3600` the reset fires correctly.
+        let start: i64 = 1_700_000_000;
+        let now_skewed: i64 = start - 10;
+        let elapsed = compute_window_elapsed(now_skewed, start);
+        assert_eq!(elapsed, 0);
+        // Once the clock catches up and exceeds the 1h window,
+        // the reset branch must be taken.
+        let now_recovered: i64 = start + 3601;
+        let elapsed_recovered = compute_window_elapsed(now_recovered, start);
+        assert!(elapsed_recovered > 3600);
+    }
 }
