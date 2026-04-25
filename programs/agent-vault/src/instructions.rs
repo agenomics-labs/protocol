@@ -6,6 +6,34 @@ use crate::errors::*;
 use crate::events::*;
 use crate::contexts::*;
 
+/// AUD-006: Saturating, non-negative elapsed-seconds between two `i64`
+/// unix timestamps.
+///
+/// Previously the rate-limit sites computed `now - window_start` directly,
+/// then compared the signed `i64` result against `3600`. If
+/// `window_start > now` (clock skew on the validator, a fresh
+/// `initialize_vault` whose timestamp leads the next slot's clock, or any
+/// future-dated start), the difference is negative and the
+/// "still inside window" branch was taken — meaning the window would
+/// never reset and the `txs_in_current_window` counter would never roll.
+///
+/// `saturating_sub` clamps at `i64::MIN` (no UB), and `.max(0)` collapses
+/// any negative result to zero. A zero elapsed time is then compared
+/// against `3600`, which always falls into the "still in window" branch
+/// safely without making the bug worse — but the companion fix is that
+/// the window-reset branch in the call site now triggers as soon as the
+/// real elapsed time crosses 3600s, rather than depending on a signed
+/// comparison succeeding.
+///
+/// Behavior:
+/// - `now > start` → returns `now - start` (positive elapsed)
+/// - `now == start` → returns `0`
+/// - `now < start` → returns `0` (clock-skew / future-dated start)
+#[inline]
+pub fn compute_window_elapsed(now: i64, window_start: i64) -> i64 {
+    now.saturating_sub(window_start).max(0)
+}
+
 pub fn initialize_vault(
     ctx: Context<InitializeVault>,
     agent_identity: Pubkey,
@@ -312,7 +340,11 @@ pub fn execute_transfer(
         new_last_spend_day = last_day;
 
         // Check rate limit
-        let time_since_window_start = clock.unix_timestamp - vault.rate_limit_window_start;
+        // AUD-006: Use saturating subtraction clamped to >=0 so that
+        // `window_start > now` (clock skew, fresh-init drift) does not
+        // produce a negative `i64` that incorrectly stays in the window.
+        let time_since_window_start =
+            compute_window_elapsed(clock.unix_timestamp, vault.rate_limit_window_start);
         let mut window_start = vault.rate_limit_window_start;
         let mut txs = vault.txs_in_current_window;
         if time_since_window_start > 3600 {
@@ -487,7 +519,10 @@ pub fn execute_token_transfer(
 
         // (4) Global rate-limit window — pure read. Compute the post-window
         // state but defer the write to phase (5).
-        let time_since_window_start = clock.unix_timestamp - vault.rate_limit_window_start;
+        // AUD-006: saturating, non-negative elapsed — see
+        // `compute_window_elapsed` doc-comment for the clock-skew case.
+        let time_since_window_start =
+            compute_window_elapsed(clock.unix_timestamp, vault.rate_limit_window_start);
         let (new_window_start, new_window_count) = if time_since_window_start >= 3600 {
             (clock.unix_timestamp, 0u32)
         } else {
