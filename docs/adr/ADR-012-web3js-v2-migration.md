@@ -66,3 +66,9 @@ Preferred long-term but timeline is uncertain. The compatibility layer approach 
 ## Files Changed
 - `mcp-server/src/solana-v2.ts` — v2 compatibility layer (new)
 - `mcp-server/package.json` — Added @solana/kit dependency
+
+## Revisions
+
+- 2026-04-25 — ADR-087 (Solana Kit dual-stack adapter) is the canonical
+  web3.js v2 migration ADR; this and ADR-033 are early-iteration plans now
+  subsumed. AUD-2026-04-25 drift matrix §4 / §8.

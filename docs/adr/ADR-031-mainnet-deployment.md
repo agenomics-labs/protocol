@@ -47,3 +47,10 @@ AEP has been developed and tested on Solana devnet with three on-chain programs 
 
 - `docs/MAINNET_CHECKLIST.md` -- new mainnet deployment checklist
 - `scripts/mainnet-deploy.sh` -- new mainnet deployment script
+
+## Revisions
+
+- 2026-04-25 — ADR-080 operationalises this decision and identifies four bugs
+  in the deliverable script (local-outside-function, MULTISIG_ADDRESS
+  skip-prompt, hash-verification theatre, no source-tree integrity). See also
+  ADR-080. AUD-2026-04-25 drift matrix §4.
