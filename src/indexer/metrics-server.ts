@@ -37,8 +37,13 @@ export const indexerErrors = new Counter({
 /**
  * Start the Prometheus scrape endpoint. Safe to call once at process startup.
  * Returns the underlying http.Server so callers can close it in tests.
+ *
+ * AUD-029: bind to `METRICS_HOST` (default `127.0.0.1`) instead of the
+ * Node default of `0.0.0.0`. Mirrors the same change in
+ * `mcp-server/src/observability.ts`.
  */
 export function startMetricsServer(port: number = 9100): http.Server {
+  const host = process.env.METRICS_HOST ?? "127.0.0.1";
   const server = http.createServer(async (req, res) => {
     if (req.url === "/metrics") {
       res.setHeader("Content-Type", indexerRegistry.contentType);
@@ -49,8 +54,8 @@ export function startMetricsServer(port: number = 9100): http.Server {
     }
   });
 
-  server.listen(port, () => {
-    console.log(`[metrics] Prometheus scrape endpoint on http://0.0.0.0:${port}/metrics`);
+  server.listen(port, host, () => {
+    console.log(`[metrics] Prometheus scrape endpoint on http://${host}:${port}/metrics`);
   });
 
   return server;
