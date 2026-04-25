@@ -1928,6 +1928,11 @@
       "code": 6028,
       "name": "Unauthorized",
       "msg": "Unauthorized: caller is not the program's upgrade authority"
+    },
+    {
+      "code": 6029,
+      "name": "DeadlineTooFar",
+      "msg": "Deadline is too far in the future (max 365 days from now)"
     }
   ],
   "types": [

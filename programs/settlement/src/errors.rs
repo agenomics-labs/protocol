@@ -109,4 +109,12 @@ pub enum SettlementError {
     /// authority and no other instruction references `ProgramData`.
     #[msg("Unauthorized: caller is not the program's upgrade authority")]
     Unauthorized,
+
+    /// AUD-024 (2026-04 audit): `create_escrow` rejected a `deadline`
+    /// further than `MAX_ESCROW_DEADLINE_SECS` (365 days) into the
+    /// future. Without this cap a client could lock funds with
+    /// `deadline = i64::MAX`, making the escrow effectively
+    /// unrecoverable.
+    #[msg("Deadline is too far in the future (max 365 days from now)")]
+    DeadlineTooFar,
 }
