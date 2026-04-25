@@ -2046,4 +2046,180 @@ describe("Settlement Protocol Tests", () => {
       }
     });
   });
+
+  // ============================================================================
+  // AUD-009: accept_task deadline guard (PR-R)
+  // ============================================================================
+  //
+  // Pre-fix, accept_task only required `escrow.status == Created`. A provider
+  // could therefore accept an already-expired escrow, flipping it to Active
+  // and locking client funds until expire_escrow ran (cancel_escrow is
+  // Created-only). Fix: reject with `DeadlinePassed` when `now > deadline`.
+
+  describe("AUD-009: accept_task deadline guard", () => {
+    let audClient: Keypair;
+    let audProvider: Keypair;
+    let audClientTA: PublicKey;
+    let audProviderTA: PublicKey;
+
+    before(async () => {
+      audClient = Keypair.generate();
+      audProvider = Keypair.generate();
+
+      const airdropAmount = 10 * LAMPORTS_PER_SOL;
+      for (const kp of [audClient, audProvider]) {
+        const sig = await connection.requestAirdrop(kp.publicKey, airdropAmount);
+        await connection.confirmTransaction(sig);
+      }
+
+      audClientTA = await getOrCreateTokenAccount(audClient.publicKey, audClient);
+      audProviderTA = await getOrCreateTokenAccount(audProvider.publicKey, audClient);
+      await mintTo(connection, mintAuthority, tokenMint, audClientTA, mintAuthority.publicKey, 10000000n);
+
+      // Register provider for downstream CPI consistency (not strictly
+      // needed for accept_task, but matches the rest of the suite's setup).
+      const registryProgram = anchor.workspace.AgentRegistry as Program;
+      const [profilePDA] = deriveAgentProfilePDA(audProvider.publicKey);
+      await registryProgram.methods
+        .registerAgent(
+          "AUD-009 Provider",
+          "Provider for AUD-009 deadline guard tests",
+          "aud009-testing",
+          ["task-execution"],
+          { perTask: {} },
+          new BN(100000),
+          [tokenMint]
+        )
+        .accounts({
+          authority: audProvider.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(audProvider.publicKey)[0],
+          agentProfile: profilePDA,
+          vault: deriveVaultPDA(audProvider.publicKey)[0],
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([audProvider])
+        .rpc();
+    });
+
+    it("should reject accept_task when deadline has already passed", async () => {
+      // Use a short-but-future deadline so create_escrow passes
+      // (`deadline > now` enforced there), then sleep past it before
+      // attempting accept_task. Mirrors the wait pattern used by the
+      // T-02 expire_escrow test elsewhere in this file.
+      const taskId = new BN(950);
+      const shortDeadline = new BN(Math.floor(Date.now() / 1000) + 3);
+
+      const [escrowPDA] = await deriveEscrowPDA(
+        audClient.publicKey,
+        audProvider.publicKey,
+        taskId
+      );
+      const escrowTA = deriveEscrowTokenAccount(escrowPDA);
+
+      await program.methods
+        .createEscrow(
+          taskId,
+          new BN(1000000),
+          Buffer.alloc(32),
+          shortDeadline,
+          [createMilestoneData(1000000n, Buffer.alloc(32, 1))],
+          null
+        )
+        .accounts({
+          client: audClient.publicKey,
+          clientVault: vaultFor(audClient.publicKey),
+          providerVault: vaultFor(audProvider.publicKey),
+          protocolConfig: PROTOCOL_CONFIG_PDA,
+          provider: audProvider.publicKey,
+          tokenMint: tokenMint,
+          clientTokenAccount: audClientTA,
+          escrow: escrowPDA,
+          escrowTokenAccount: escrowTA,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        })
+        .signers([audClient])
+        .rpc();
+
+      // Confirm the escrow is Created — otherwise the deadline guard
+      // we're testing wouldn't even get a chance to run.
+      const created = await program.account.taskEscrow.fetch(escrowPDA);
+      expect(created.status.created).to.be.ok;
+
+      // Wait until the deadline is firmly behind us.
+      await new Promise((resolve) => setTimeout(resolve, 4000));
+
+      try {
+        await program.methods
+          .acceptTask()
+          .accounts({
+            provider: audProvider.publicKey,
+            escrow: escrowPDA,
+          })
+          .signers([audProvider])
+          .rpc();
+        expect.fail("Should have thrown DeadlinePassed error");
+      } catch (error: any) {
+        expect(error).to.exist;
+        expect(error.toString()).to.include("DeadlinePassed");
+      }
+
+      // Escrow must still be Created — the failed accept_task must not
+      // have transitioned the state machine. cancel_escrow is therefore
+      // still available to the client.
+      const post = await program.account.taskEscrow.fetch(escrowPDA);
+      expect(post.status.created).to.be.ok;
+    });
+
+    it("should accept task when deadline is well in the future", async () => {
+      const taskId = new BN(951);
+      const [escrowPDA] = await deriveEscrowPDA(
+        audClient.publicKey,
+        audProvider.publicKey,
+        taskId
+      );
+      const escrowTA = deriveEscrowTokenAccount(escrowPDA);
+
+      await program.methods
+        .createEscrow(
+          taskId,
+          new BN(1000000),
+          Buffer.alloc(32),
+          FUTURE_DEADLINE,
+          [createMilestoneData(1000000n, Buffer.alloc(32, 1))],
+          null
+        )
+        .accounts({
+          client: audClient.publicKey,
+          clientVault: vaultFor(audClient.publicKey),
+          providerVault: vaultFor(audProvider.publicKey),
+          protocolConfig: PROTOCOL_CONFIG_PDA,
+          provider: audProvider.publicKey,
+          tokenMint: tokenMint,
+          clientTokenAccount: audClientTA,
+          escrow: escrowPDA,
+          escrowTokenAccount: escrowTA,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        })
+        .signers([audClient])
+        .rpc();
+
+      await program.methods
+        .acceptTask()
+        .accounts({
+          provider: audProvider.publicKey,
+          escrow: escrowPDA,
+        })
+        .signers([audProvider])
+        .rpc();
+
+      const escrow = await program.account.taskEscrow.fetch(escrowPDA);
+      expect(escrow.status.active).to.be.ok;
+    });
+  });
 });

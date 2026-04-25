@@ -116,6 +116,17 @@ pub fn accept_task(ctx: Context<AcceptTask>) -> Result<()> {
 
     require!(escrow.status == EscrowStatus::Created, SettlementError::InvalidStatus);
 
+    // AUD-009: Reject acceptance after the deadline has already passed.
+    // Without this guard, a provider can accept an already-expired escrow,
+    // transitioning it from Created → Active. Once Active, `cancel_escrow`
+    // (which is Created-only) is no longer available to the client, so the
+    // client's funds are locked until `expire_escrow` fires — and the
+    // provider has done zero work. This is a pure grief vector: it lets a
+    // provider strand client funds for the deadline window and forces the
+    // expire path to do the cleanup. Refuse the transition here.
+    let now = Clock::get()?.unix_timestamp;
+    require!(now <= escrow.deadline, SettlementError::DeadlinePassed);
+
     escrow.status = EscrowStatus::Active;
 
     emit!(TaskAccepted {

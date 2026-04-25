@@ -453,6 +453,46 @@ mod tests {
         assert!(within_deadline);
     }
 
+    // ================================================================
+    // AUD-009: accept_task deadline guard (PR-R)
+    // ================================================================
+
+    /// AUD-009: A provider must not be able to accept an escrow whose
+    /// deadline has already passed. The pre-fix handler only checked
+    /// `status == Created`, which let a provider grief-flip an expired
+    /// Created escrow to Active and lock client funds until
+    /// `expire_escrow` fires. The new guard `now <= deadline` rejects
+    /// the transition with `DeadlinePassed`.
+    #[test]
+    fn aud009_accept_task_rejects_post_deadline() {
+        let now: i64 = 2_000;
+        let deadline: i64 = 1_000;
+        let within_deadline = now <= deadline;
+        assert!(!within_deadline, "post-deadline accept_task must fail");
+    }
+
+    /// AUD-009: Happy path — accept_task is permitted when the deadline
+    /// is still in the future. Symmetric with submit_milestone /
+    /// approve_milestone deadline gating.
+    #[test]
+    fn aud009_accept_task_accepts_pre_deadline() {
+        let now: i64 = 500;
+        let deadline: i64 = 1_000;
+        let within_deadline = now <= deadline;
+        assert!(within_deadline);
+    }
+
+    /// AUD-009: Edge case — accepting at exactly the deadline boundary
+    /// is allowed. The guard is `now <= deadline` (inclusive), matching
+    /// the convention used by submit_milestone and approve_milestone.
+    #[test]
+    fn aud009_accept_task_accepts_at_deadline_boundary() {
+        let now: i64 = 1_000;
+        let deadline: i64 = 1_000;
+        let within_deadline = now <= deadline;
+        assert!(within_deadline, "now == deadline must be accepted (inclusive)");
+    }
+
     /// C3: A dispute_resolver equal to the client is rejected. Without
     /// this guard, the client can flip `is_resolver = true` in
     /// resolve_dispute and trigger provider reputation slashing
