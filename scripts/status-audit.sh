@@ -2,6 +2,11 @@
 # status-audit.sh: scaffold a STATUS-AUDIT-YYYY-MM-DD.md per the
 # shape specification in `docs/adr/STATUS-AUDIT-TEMPLATE.md`.
 #
+# NOTE: this script is a doc-scaffolder, NOT a linter. For the actual
+# ADR shape/integrity lint (duplicate numbers, dead path:line citations,
+# broken supersession chains, missing required sections), see
+# `scripts/adr-lint.sh` (added under PR-CC / AUD-053).
+#
 # By default this writes a dry-run skeleton to stdout so you can
 # inspect it. Use `--write` to land it at
 # `docs/adr/STATUS-AUDIT-<UTC-DATE>.md` (refuses to overwrite).
