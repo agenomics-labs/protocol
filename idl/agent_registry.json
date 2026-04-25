@@ -262,7 +262,8 @@
           "docs": [
             "The authority that owns this `AgentProfile`. Named `owner` here to",
             "keep the signer semantics distinct from the `authority` field name",
-            "used in `UpdateReputation` (where authority is an UncheckedAccount)."
+            "used in `ProposeReputationDelta` (where `authority` is an",
+            "UncheckedAccount)."
           ],
           "writable": true,
           "signer": true
@@ -312,21 +313,28 @@
     {
       "name": "propose_reputation_delta",
       "docs": [
-        "ADR-094: Invert the reputation trust hierarchy.",
+        "ADR-094 / AUD-001 / AUD-002: Reputation policy entry point.",
         "",
-        "Previously Settlement called `update_reputation` as a privileged setter",
-        "and imposed no score upper bound (scores grow to u64::MAX). This",
-        "instruction is the new entry point: Registry owns and enforces the",
-        "policy (`[0, MAX_REPUTATION_SCORE]`, `|delta| <= MAX_DELTA_PER_CALL`).",
+        "Previously Settlement called `update_reputation` as a privileged",
+        "setter that imposed no score upper bound (scores grew to u64::MAX).",
+        "This instruction is now the SOLE reputation-mutation surface: Registry",
+        "owns and enforces the policy (`[0, MAX_REPUTATION_SCORE]`,",
+        "`|delta| <= MAX_DELTA_PER_CALL`).",
         "",
-        "Authorization: caller must present the Settlement program's",
-        "`settlement_authority` PDA as a signer (SEC-1 pattern from ADR-068).",
+        "Authorization (defense in depth): the `ProposeReputationDelta`",
+        "context (contexts.rs) bundles the SEC-1 signer check, the ADR-097",
+        "nonce-seeded profile derivation, and the `has_one = authority`",
+        "guard so a CPI cannot land on a profile whose authority does not",
+        "match the seeds.",
         "",
         "`reason` is a caller-supplied reason code:",
         "0 = task_completed (positive delta)",
         "1 = dispute_loss   (negative delta)",
         "2 = expiry_undelivered (negative delta)",
-        "3-255 = reserved for future governance/slashing sources"
+        "3-255 = reserved for future governance/slashing sources",
+        "",
+        "Post-mutation, the closed-state-machine `assert_valid_profile`",
+        "invariant is enforced. Any violation panic-reverts the transaction."
       ],
       "discriminator": [
         11,
@@ -340,14 +348,37 @@
       ],
       "accounts": [
         {
-          "name": "authority",
+          "name": "owner_nonce",
           "docs": [
-            "seed anchor for `agent_profile` and constrained equal to",
-            "`agent_profile.authority` via `has_one = authority`."
+            "ADR-097: Read-only nonce account. Seeded by",
+            "`[authority.key().as_ref(), b\"owner-nonce\"]`. The seeds constraint",
+            "binds the account address to `authority.key()`, providing the",
+            "cross-account-reuse guard called for in AUD-001."
           ],
-          "relations": [
-            "agent_profile"
-          ]
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114,
+                  45,
+                  110,
+                  111,
+                  110,
+                  99,
+                  101
+                ]
+              }
+            ]
+          }
         },
         {
           "name": "agent_profile",
@@ -375,6 +406,11 @@
                   108,
                   101
                 ]
+              },
+              {
+                "kind": "account",
+                "path": "owner_nonce.nonce",
+                "account": "OwnerNonce"
               }
             ]
           }
@@ -452,6 +488,17 @@
               ]
             }
           }
+        },
+        {
+          "name": "authority",
+          "docs": [
+            "external seed anchor for `owner_nonce` and `agent_profile`, and",
+            "constrained equal to `agent_profile.authority` via",
+            "`has_one = authority`. Not deserialized; only `.key()` is read."
+          ],
+          "relations": [
+            "agent_profile"
+          ]
         }
       ],
       "args": [
@@ -1238,185 +1285,6 @@
       ]
     },
     {
-      "name": "update_reputation",
-      "discriminator": [
-        194,
-        220,
-        43,
-        201,
-        54,
-        209,
-        49,
-        178
-      ],
-      "accounts": [
-        {
-          "name": "authority",
-          "docs": [
-            "external seed anchor for `agent_profile` and constrained equal to",
-            "`agent_profile.authority` via `has_one = authority`."
-          ],
-          "relations": [
-            "agent_profile"
-          ]
-        },
-        {
-          "name": "owner_nonce",
-          "docs": [
-            "ADR-097: Read-only nonce account for `agent_profile` PDA seed.",
-            "Seeded by `[authority.key(), b\"owner-nonce\"]`."
-          ],
-          "pda": {
-            "seeds": [
-              {
-                "kind": "account",
-                "path": "authority"
-              },
-              {
-                "kind": "const",
-                "value": [
-                  111,
-                  119,
-                  110,
-                  101,
-                  114,
-                  45,
-                  110,
-                  111,
-                  110,
-                  99,
-                  101
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "agent_profile",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "account",
-                "path": "authority"
-              },
-              {
-                "kind": "const",
-                "value": [
-                  97,
-                  103,
-                  101,
-                  110,
-                  116,
-                  45,
-                  112,
-                  114,
-                  111,
-                  102,
-                  105,
-                  108,
-                  101
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "owner_nonce.nonce",
-                "account": "OwnerNonce"
-              }
-            ]
-          }
-        },
-        {
-          "name": "settlement_authority",
-          "signer": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  115,
-                  101,
-                  116,
-                  116,
-                  108,
-                  101,
-                  109,
-                  101,
-                  110,
-                  116,
-                  95,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
-                  121
-                ]
-              }
-            ],
-            "program": {
-              "kind": "const",
-              "value": [
-                227,
-                132,
-                12,
-                30,
-                9,
-                78,
-                44,
-                188,
-                135,
-                187,
-                145,
-                68,
-                5,
-                84,
-                82,
-                239,
-                90,
-                255,
-                29,
-                178,
-                208,
-                214,
-                104,
-                25,
-                104,
-                107,
-                82,
-                183,
-                124,
-                88,
-                179,
-                116
-              ]
-            }
-          }
-        }
-      ],
-      "args": [
-        {
-          "name": "reputation_delta",
-          "type": "i64"
-        },
-        {
-          "name": "task_completed",
-          "type": "bool"
-        },
-        {
-          "name": "earnings",
-          "type": "u64"
-        },
-        {
-          "name": "rating",
-          "type": "u8"
-        }
-      ]
-    },
-    {
       "name": "update_status",
       "discriminator": [
         147,
@@ -1512,6 +1380,113 @@
           }
         }
       ]
+    },
+    {
+      "name": "verify_protocol_invariants",
+      "docs": [
+        "AUD-001 / AUD-002: Post-migration sweep. Iterates the",
+        "`remaining_accounts` list, deserializes each as `AgentProfile`, and",
+        "runs `assert_valid_profile`. Any violation reverts the transaction",
+        "— making the failure loud and the offending account index visible",
+        "in the program log. Designed to be called once per migration window",
+        "over a bounded batch (Solana's tx-level account cap is 64).",
+        "",
+        "Authorization: signer must equal `ProtocolConfig.authority` (Settlement",
+        "program). The context binds `protocol_config` via seeds; this handler",
+        "reads the `authority: Pubkey` field at offset 8 (after the 8-byte",
+        "discriminator) and asserts it matches the signer. We deliberately do",
+        "NOT couple to the program's BPF upgrade authority (per",
+        "design-decisions AUD-001/002 §6 — \"Choose the latter for less",
+        "coupling\"). This keeps governance evolution on a single rail",
+        "(`ProtocolConfig.authority` rotation)."
+      ],
+      "discriminator": [
+        73,
+        244,
+        11,
+        229,
+        29,
+        109,
+        161,
+        3
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true
+        },
+        {
+          "name": "protocol_config",
+          "docs": [
+            "Address is bound by `seeds::program = SETTLEMENT_PROGRAM_ID`. We accept",
+            "it as `UncheckedAccount` to avoid pulling in a Settlement crate",
+            "dependency; the handler reads the `authority: Pubkey` field at the",
+            "known offset (8 disc bytes) and asserts it equals the signer."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                227,
+                132,
+                12,
+                30,
+                9,
+                78,
+                44,
+                188,
+                135,
+                187,
+                145,
+                68,
+                5,
+                84,
+                82,
+                239,
+                90,
+                255,
+                29,
+                178,
+                208,
+                214,
+                104,
+                25,
+                104,
+                107,
+                82,
+                183,
+                124,
+                88,
+                179,
+                116
+              ]
+            }
+          }
+        }
+      ],
+      "args": []
     }
   ],
   "accounts": [
@@ -1810,6 +1785,26 @@
       "code": 6021,
       "name": "ReputationDeltaExceedsMax",
       "msg": "Reputation delta magnitude exceeds MAX_DELTA_PER_CALL (10); split into smaller increments"
+    },
+    {
+      "code": 6022,
+      "name": "InvalidReputationScore",
+      "msg": "AgentProfile.reputation_score must be in [0, MAX_REPUTATION_SCORE] (AUD-001/002)"
+    },
+    {
+      "code": 6023,
+      "name": "InvalidSuspendedProfile",
+      "msg": "AgentProfile in Suspended status must have slash_count >= 3 (AUD-001/002)"
+    },
+    {
+      "code": 6024,
+      "name": "InvalidClearedCount",
+      "msg": "AgentProfile.cleared_count must be <= 3 (AUD-001/002, paired with PR-I)"
+    },
+    {
+      "code": 6025,
+      "name": "Unauthorized",
+      "msg": "Unauthorized: caller is not the ProtocolConfig authority"
     }
   ],
   "types": [

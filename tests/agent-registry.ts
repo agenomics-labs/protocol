@@ -1545,4 +1545,63 @@ describe("Agent Registry Program Tests", () => {
       expect(after.status).to.have.property("paused");
     });
   });
+
+  // ================================================================
+  // AUD-001 / AUD-002 (PR-G): unified reputation policy + invariants
+  // ================================================================
+
+  describe("AUD-001 / AUD-002: legacy update_reputation removed", () => {
+    it("should NOT expose `updateReputation` on the program IDL", () => {
+      // PR-G: the legacy update_reputation instruction was removed in
+      // favour of propose_reputation_delta. Anchor camelCases IDL names
+      // at runtime. Absence of the old name + presence of the new name
+      // is the contract.
+      const ixNames = (program as any).idl.instructions.map(
+        (i: { name: string }) => i.name
+      );
+      expect(ixNames).to.not.include("updateReputation");
+      expect(ixNames).to.include("proposeReputationDelta");
+    });
+
+    it("should NOT expose the `updateReputation` method on the JS surface", () => {
+      expect((program.methods as any).updateReputation).to.equal(undefined);
+      expect((program.methods as any).proposeReputationDelta).to.be.a("function");
+    });
+
+    it("should expose `verifyProtocolInvariants` on the program IDL", () => {
+      const ixNames = (program as any).idl.instructions.map(
+        (i: { name: string }) => i.name
+      );
+      expect(ixNames).to.include("verifyProtocolInvariants");
+    });
+  });
+
+  describe("AUD-001 / AUD-002: ProposeReputationDelta context shape", () => {
+    it("should declare the four expected accounts with the new seed shape", () => {
+      // The rewired context (contexts.rs) carries:
+      //   owner_nonce, agent_profile, settlement_authority, authority
+      // Snapshot the IDL so a future schema drift trips this test.
+      const ix = (program as any).idl.instructions.find(
+        (i: { name: string }) => i.name === "proposeReputationDelta"
+      );
+      expect(ix).to.exist;
+      const accountNames = ix.accounts.map((a: { name: string }) => a.name);
+      // Anchor's runtime IDL converts account names to camelCase too.
+      expect(accountNames).to.include.members([
+        "ownerNonce",
+        "agentProfile",
+        "settlementAuthority",
+        "authority",
+      ]);
+    });
+
+    it("should accept i16 delta + u8 reason as the only args", () => {
+      const ix = (program as any).idl.instructions.find(
+        (i: { name: string }) => i.name === "proposeReputationDelta"
+      );
+      expect(ix.args).to.have.lengthOf(2);
+      const argNames = ix.args.map((a: { name: string }) => a.name);
+      expect(argNames).to.include.members(["delta", "reason"]);
+    });
+  });
 });

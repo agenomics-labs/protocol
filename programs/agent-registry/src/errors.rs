@@ -65,4 +65,25 @@ pub enum AgentRegistryError {
     // and makes large shifts require multiple observable transactions.
     #[msg("Reputation delta magnitude exceeds MAX_DELTA_PER_CALL (10); split into smaller increments")]
     ReputationDeltaExceedsMax,
+
+    // AUD-001 / AUD-002 (PR-G): closed-state-machine invariants enforced by
+    // `assert_valid_profile`. Each variant maps to one of the three rules:
+    //   - InvalidReputationScore     → `score <= MAX_REPUTATION_SCORE`
+    //   - InvalidSuspendedProfile    → `status == Suspended ⇒ slash_count >= 3`
+    //   - InvalidClearedCount        → `cleared_count <= MAX_CLEARED` (3)
+    // Trips occur only if a mutation or migration produced inconsistent
+    // state — i.e. a bug. Surfacing them as typed errors makes the
+    // failure mode obvious in transaction logs.
+    #[msg("AgentProfile.reputation_score must be in [0, MAX_REPUTATION_SCORE] (AUD-001/002)")]
+    InvalidReputationScore,
+    #[msg("AgentProfile in Suspended status must have slash_count >= 3 (AUD-001/002)")]
+    InvalidSuspendedProfile,
+    #[msg("AgentProfile.cleared_count must be <= 3 (AUD-001/002, paired with PR-I)")]
+    InvalidClearedCount,
+
+    // AUD-001 / AUD-002 (PR-G): `verify_protocol_invariants` requires the
+    // signer to match `ProtocolConfig.authority` from the Settlement program.
+    // Same code is reused by other admin-only paths if they ever appear.
+    #[msg("Unauthorized: caller is not the ProtocolConfig authority")]
+    Unauthorized,
 }

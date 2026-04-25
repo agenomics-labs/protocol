@@ -265,26 +265,19 @@ mod tests {
         assert_ne!(total_refund, remaining);
     }
 
-    /// Finding #17: After the typed-CPI migration, the settlement program
-    /// no longer stores a hard-coded discriminator byte array. Instead it
-    /// calls `agent_registry::cpi::update_reputation(...)`, which re-derives
-    /// the discriminator on every build from the Registry's `#[program]`
-    /// module. A rename or argument reorder in the Registry is a compile
-    /// error here, not a silent runtime break.
-    ///
-    /// This test pins the invariant by asserting that the Anchor-generated
-    /// CPI module still exports the `update_reputation` symbol and the
-    /// `UpdateReputation` account-struct with the two expected fields.
-    /// If any of those disappear, this file fails to compile — which is
-    /// exactly the goal of the finding.
+    /// AUD-001 / AUD-002 (PR-G): the typed-CPI invariant test now pins
+    /// `propose_reputation_delta` instead of the legacy `update_reputation`.
+    /// The Registry program owns the unified reputation policy (i16 delta,
+    /// [0, 100] clamp, |delta| <= 10); Settlement calls into it via the
+    /// Anchor-generated `agent_registry::cpi::propose_reputation_delta`
+    /// helper. If that symbol or the `ProposeReputationDelta` account
+    /// struct is renamed/reshaped in the Registry, the settlement build
+    /// breaks here — exactly the compile-time guarantee Finding #17 set
+    /// up for the prior CPI surface.
     #[test]
-    fn test_cpi_update_reputation_symbol_exists() {
-        // If `update_reputation` is renamed, or `UpdateReputation` changes
-        // shape in the registry crate, the settlement build breaks here —
-        // exactly the compile-time guarantee the hard-coded discriminator
-        // lacked. The real runtime guarantee lives in cpi.rs, which is the
-        // only caller and would also fail to compile on a drift.
-        type _UpdateReputationAccounts<'a> = agent_registry::cpi::accounts::UpdateReputation<'a>;
+    fn test_cpi_propose_reputation_delta_symbol_exists() {
+        type _ProposeReputationDeltaAccounts<'a> =
+            agent_registry::cpi::accounts::ProposeReputationDelta<'a>;
     }
 
     /// Finding #19: ProtocolConfig defaults must match the compile-time

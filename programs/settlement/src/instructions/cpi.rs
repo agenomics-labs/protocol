@@ -1,66 +1,51 @@
 use anchor_lang::prelude::*;
 
-/// CPIs into Agent Registry to update provider reputation after task completion.
+/// AUD-001 / AUD-002 (PR-G): CPI into Agent Registry's
+/// `propose_reputation_delta`. Replaces the legacy `update_reputation` call.
 ///
-/// Uses a PDA-signed CPI pattern: the Settlement program derives a "settlement_authority"
-/// PDA and signs the CPI with it. The Registry program verifies this PDA as a signer
-/// with seeds::program = SETTLEMENT_PROGRAM_ID, cryptographically proving the call
-/// originated from this program.
+/// The Registry program owns the unified reputation policy:
+///   - score is bounded to `[0, 100]` (Registry constant `MAX_REPUTATION_SCORE`)
+///   - `|delta| <= MAX_DELTA_PER_CALL` (= 10)
+///   - signature is `i16` delta + `u8` reason code
 ///
-/// Finding #17 (ARCHITECTURE_DEEP_CRITIQUE): the previous implementation built the
-/// `Instruction` by hand with a hard-coded discriminator
-/// `[194, 220, 43, 201, 54, 209, 49, 178]` and manually-encoded args. If the
-/// registry renamed `update_reputation` or reordered its arguments, the
-/// discriminator would silently mismatch at runtime. This version uses the
-/// Anchor-generated `agent_registry::cpi::update_reputation` helper, which is
-/// regenerated from the Registry's `#[program]` module on every build — any
-/// rename/reorder becomes a compile error, not a runtime break.
+/// Settlement no longer reasons about score ranges; it only proposes deltas
+/// (clamped to the i16 range) and supplies a reason code. Caller-side
+/// reasons:
+///   0 = task_completed (positive delta)
+///   1 = dispute_loss   (negative delta)
+///   2 = expiry_undelivered (negative delta)
 ///
-/// ADR-039: Accepts `reputation_delta` and `task_completed` as parameters,
-/// enabling both positive reputation (task completion) and negative reputation
-/// (dispute/expiry slashing).
+/// Authorization (defense in depth):
+///   - The Settlement program's `settlement_authority` PDA signs the CPI
+///     via `invoke_signed`; Registry's `ProposeReputationDelta` context
+///     verifies the signer with `seeds::program = SETTLEMENT_PROGRAM_ID`
+///     (SEC-1 pattern, ADR-068).
+///   - Registry's context binds `agent_profile` to the supplied
+///     `provider_authority` via `has_one = authority` AND seeds derived
+///     from `[authority.key(), b"agent-profile", owner_nonce.nonce.to_le_bytes()]`,
+///     closing the cross-account-reuse hole AUD-001 reported.
 ///
-/// Finding #8 (ARCHITECTURE_DEEP_CRITIQUE): pre-fix, `rating` was hard-coded to 0
-/// here, and `update_reputation` in the registry only folds rating into
-/// `avg_rating` when it's non-zero — so `avg_rating` was always 0 for every
-/// agent. The CPI now surfaces `rating` as a real caller argument; only
-/// `approve_milestone` (the client's explicit ratification step) supplies a
-/// non-zero value. Slash/expire/dispute paths pass 0 because no rating
-/// judgment exists on those paths.
+/// Note on `delta` clamping: the Settlement-level `reputation_delta`
+/// parameter is `i64` (governance-controlled via `ProtocolConfig`); the
+/// Registry-side parameter is `i16`. We clamp into the `i16` range here.
+/// `update_protocol_config` (settlement/instructions/protocol_config.rs)
+/// caps slash magnitudes at `MIN_REPUTATION_DELTA = -1_000_000`, which is
+/// far outside `i16`; the Registry's own per-call cap (`MAX_DELTA_PER_CALL`
+/// = 10) will further reject the call if the magnitude is unreasonable.
+/// The clamp is therefore a safety net, not the primary policy.
 ///
-/// SEC-1 (per ADR-068, Accepted 2026-04-23): the Registry's `UpdateReputation`
-/// account struct now requires an explicit `authority` account whose
-/// `.key()` anchors the `agent_profile` PDA derivation. Callers pass
-/// `escrow.provider` (via a new `provider_authority: UncheckedAccount`
-/// constrained with `address = escrow.provider`). This closes the
-/// self-referential-seed hole in the pre-fix Registry context.
-/// ADR-097: `owner_nonce` is now a required account in the Registry's
-/// `UpdateReputation` context (used to re-derive the profile PDA with the
-/// nonce component). Settlement CPI callers must pass the provider's
-/// `OwnerNonce` account alongside the authority and profile accounts.
-///
-/// AUD-032 (2026-04-25 audit): pre-fix this function emitted a
-/// `ReputationUpdateScheduled` event after the synchronous CPI returned.
-/// The name implied async/queued semantics that don't exist — by the
-/// time the event was emitted, the Registry had already processed the
-/// update and emitted its own canonical `ReputationUpdated` event.
-/// Indexers double-counted the change. The Registry's event is the
-/// single source of truth, so the Settlement-side emit (and the
-/// `ReputationUpdateScheduled` struct in `events.rs`) have been removed.
-/// The `_provider` argument stays in the signature so existing callers
-/// in `escrow.rs` and `dispute.rs` continue to compile without churn.
-// TODO(ADR-094): Replace `update_provider_reputation` with a call to
-// `Registry::propose_reputation_delta` via CPI. The new instruction owns the
-// reputation policy ([0, 100], |delta| <= MAX_DELTA_PER_CALL = 10), so
-// Settlement no longer needs to reason about valid ranges — it only proposes
-// deltas and supplies a reason code. Full CPI re-wiring (new account struct
-// + updated caller sites in escrow.rs) is tracked as a follow-up to ADR-094.
+/// `_earnings`, `_task_completed`, and `_rating` are retained in the
+/// signature so existing callers in `escrow.rs` and `dispute.rs` keep
+/// compiling without churn during this PR. A follow-up will trim them.
+/// They are unused in the new CPI (Registry no longer folds rating into
+/// `avg_rating` here — that side-effect was removed alongside the legacy
+/// instruction).
 pub fn update_provider_reputation<'info>(
     _provider: Pubkey,
-    earnings: u64,
+    _earnings: u64,
     reputation_delta: i64,
     task_completed: bool,
-    rating: u8,
+    _rating: u8,
     registry_program: AccountInfo<'info>,
     provider_profile: AccountInfo<'info>,
     provider_authority: AccountInfo<'info>,
@@ -71,22 +56,34 @@ pub fn update_provider_reputation<'info>(
     let signer_seeds: &[&[u8]] = &[b"settlement_authority", &[settlement_authority_bump]];
     let cpi_signer: &[&[&[u8]]] = &[signer_seeds];
 
-    let cpi_accounts = agent_registry::cpi::accounts::UpdateReputation {
-        authority: provider_authority,
+    let cpi_accounts = agent_registry::cpi::accounts::ProposeReputationDelta {
         owner_nonce: provider_owner_nonce,
         agent_profile: provider_profile,
         settlement_authority,
+        authority: provider_authority,
     };
 
     let cpi_ctx = CpiContext::new_with_signer(registry_program, cpi_accounts, cpi_signer);
 
-    agent_registry::cpi::update_reputation(
-        cpi_ctx,
-        reputation_delta,
-        task_completed,
-        earnings,
-        rating,
-    )?;
+    // Map governance i64 delta into the policy i16 range. Clamping below
+    // i16::MIN / above i16::MAX would have masked a configuration bug; we
+    // clamp explicitly so the Registry's per-call magnitude check fires
+    // visibly rather than silently truncating.
+    let delta_i16: i16 = reputation_delta
+        .clamp(i16::MIN as i64, i16::MAX as i64) as i16;
+
+    // Reason code: positive task-completed deltas map to reason 0, negative
+    // task-completed deltas would be a logic bug, and !task_completed
+    // (dispute / expiry) maps to reason 1 or 2. Without a third bit of
+    // information here we encode the two callers we have:
+    //   - approve_milestone → task_completed=true → reason 0
+    //   - resolve_dispute / resolve_dispute_timeout → !task_completed → reason 1
+    //   - expire_escrow → !task_completed → reason 2 (currently shares
+    //     reason 1 because the call site does not differentiate; a follow-up
+    //     PR will plumb explicit reason codes through the call sites).
+    let reason: u8 = if task_completed { 0 } else { 1 };
+
+    agent_registry::cpi::propose_reputation_delta(cpi_ctx, delta_i16, reason)?;
 
     Ok(())
 }
