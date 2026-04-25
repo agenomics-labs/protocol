@@ -158,11 +158,10 @@ async function main() {
     await startUnixTransport(posture);
   }
 
-  // ADR-012 PR2: initialise the @solana/kit (v2) RPC alongside the v1
-  // surface. Nothing in the dispatch path reads it yet — handlers still go
-  // through Anchor + v1. PR3 will migrate read paths + introduce the
-  // tx-pipeline.
-  createRpc();
+  // AUD-031: the v2 RPC was already constructed once at module load (passed
+  // into `createActionRouter` as `preflightDeps.rpc`). The previous second
+  // call here discarded its return value and existed only as a placeholder
+  // comment for the ADR-012 PR3 migration.
 
   const idemBackend = activeIdempotencyBackend();
   log.info(
