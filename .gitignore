@@ -36,6 +36,12 @@ yarn.lock
 .nyc_output
 coverage/
 aep-events.db*
+aeap-events.db*
+
+# ADR-089: only root /package-lock.json is canonical; per-workspace
+# lockfiles MUST NOT be committed (see comment under "Node" above).
+**/package-lock.json
+!/package-lock.json
 
 # Local AgentDB + ruvector instances (created by claude-flow tooling)
 agentdb.rvf
