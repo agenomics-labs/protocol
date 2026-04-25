@@ -7,6 +7,7 @@ export {
   vaultTransferTool,
   vaultTokenTransferTool,
   updateVaultPolicyTool,
+  rotateAgentIdentityTool,
   pauseVaultTool,
   resumeVaultTool,
   manageAllowlistTool,
@@ -43,6 +44,7 @@ import {
   vaultTransferTool,
   vaultTokenTransferTool,
   updateVaultPolicyTool,
+  rotateAgentIdentityTool,
   pauseVaultTool,
   resumeVaultTool,
   manageAllowlistTool,
@@ -71,8 +73,9 @@ import {
 } from "./settlement.js";
 
 /**
- * All 24 Agenomics MCP tools organized by domain:
- * - Vault (8): Agent wallet management with spending policies
+ * All 25 Agenomics MCP tools organized by domain:
+ * - Vault (9): Agent wallet management with spending policies
+ *   (includes `rotate_agent_identity` per ADR-069 / AUD-015)
  * - Registry (5) + reputation snapshot (1): Agent discovery and reputation
  * - Settlement (10): Escrow lifecycle and milestone-based payments
  */
@@ -83,6 +86,7 @@ export const allTools: Tool[] = [
   vaultTransferTool,
   vaultTokenTransferTool,
   updateVaultPolicyTool,
+  rotateAgentIdentityTool,
   pauseVaultTool,
   resumeVaultTool,
   manageAllowlistTool,
@@ -112,6 +116,7 @@ export type ToolName =
   | "vault_transfer"
   | "vault_token_transfer"
   | "update_vault_policy"
+  | "rotate_agent_identity"
   | "pause_vault"
   | "resume_vault"
   | "manage_allowlist"

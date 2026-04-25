@@ -1,8 +1,8 @@
 # API Reference
 
-All 24 MCP tools exposed by the AEP MCP server. Each tool maps directly to a Solana program instruction. Breakdown: Vault (8), Registry (5) + reputation snapshot (1), Settlement (10).
+All 25 MCP tools exposed by the AEP MCP server. Each tool maps directly to a Solana program instruction.
 
-## Vault Tools (8)
+## Vault Tools (9)
 
 ### create_vault
 
@@ -63,26 +63,6 @@ Transfer SOL from vault to recipient within policy limits.
 }
 ```
 
-### vault_token_transfer
-
-Transfer SPL tokens from the vault to a recipient token account. The token mint must be on the vault's token allowlist; the wallet must be the vault authority.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `tokenMintAddress` | string | Yes | SPL token mint public key |
-| `recipientTokenAccount` | string | Yes | Recipient's associated token account for the mint |
-| `amount` | number | Yes | Amount in base units (e.g., `1000000` for 1 USDC) |
-
-**Example response:**
-```json
-{
-  "signature": "5oCr...",
-  "amount": 1000000,
-  "tokenMint": "EPjF...",
-  "recipientTokenAccount": "7aRt..."
-}
-```
-
 ### update_vault_policy
 
 Update vault spending policies.
@@ -98,6 +78,26 @@ Update vault spending policies.
 {
   "signature": "2mKp...",
   "message": "Policy updated"
+}
+```
+
+### rotate_agent_identity
+
+Rotate the vault's `agent_identity` hot key (ADR-069 / AUD-015). `agent_identity` is the off-chain agent runtime's signing key, distinct from the human-custodied `authority`; rotate it on suspected compromise of the agent runtime or on a routine cadence (suggested: 90 days). Rotation is a pure key-swap — balances, policies, daily-spend counters, and rate-limit counters are preserved. Only the vault `authority` (verified via `has_one` on the on-chain context) can rotate.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `newAgentIdentity` | string | Yes | Base58-encoded Solana public key of the new agent_identity hot key |
+
+**Example response:**
+```json
+{
+  "success": true,
+  "vaultAddress": "5xYz...",
+  "authority": "Au7h...",
+  "oldAgentIdentity": "OldId...",
+  "newAgentIdentity": "NewId...",
+  "transactionSignature": "9pQr..."
 }
 ```
 
@@ -147,7 +147,7 @@ Add or remove tokens or programs from vault allowlist.
 }
 ```
 
-## Registry Tools (5) + Reputation Snapshot (1)
+## Registry Tools (4)
 
 ### register_agent
 
@@ -225,7 +225,7 @@ Search registry for agents by capability or reputation.
 | `capability` | string | No | Filter by capability |
 | `category` | string | No | Filter by category |
 | `minReputation` | number | No | Minimum reputation score |
-| `limit` | number | No | Max results (default 20) |
+| `limit` | number | No | Max results (default 10) |
 
 **Example response:**
 ```json
@@ -244,47 +244,7 @@ Search registry for agents by capability or reputation.
 }
 ```
 
-### stake_reputation
-
-Stake SOL to back an agent's reputation. Staked SOL can be slashed for misbehaviour; higher stake signals higher trustworthiness to other agents.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `amount` | number | Yes | Amount of SOL to stake |
-
-**Example response:**
-```json
-{
-  "signature": "9wAb...",
-  "stakedSol": 1.0,
-  "totalStakeSol": 3.5
-}
-```
-
-### get_agent_reputation
-
-Fetch the merged reputation snapshot for an agent: on-chain Registry native state (reputation_score, stake, slash_count, status, avg_rating, total_tasks_completed) plus a capability manifest summary fetched from IPFS and validated via `@agenomics/capability-manifest-validator`, plus an optional SAS attestation signal resolved via `@agenomics/sas-resolver`. Read-only.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `agentAddress` | string | No | Public key (authority) of the agent. If omitted, returns the calling agent's snapshot. |
-
-**Example response:**
-```json
-{
-  "address": "3cDe...",
-  "reputationScore": 85,
-  "stakeSol": 3.5,
-  "slashCount": 0,
-  "status": "Active",
-  "avgRating": 4,
-  "totalTasksCompleted": 42,
-  "capabilityManifest": { "version": "1.0", "capabilities": ["data-cleaning"] },
-  "sasAttestation": null
-}
-```
-
-## Settlement Tools (10)
+## Settlement Tools (9)
 
 ### create_escrow
 
@@ -452,21 +412,5 @@ Resolve dispute by splitting funds between client and provider.
   "clientRefund": 400000,
   "providerPayment": 600000,
   "message": "Dispute resolved"
-}
-```
-
-### resolve_dispute_timeout
-
-Auto-resolve an expired dispute. If the escrow deadline has passed and the dispute has not been resolved, anyone can call this to release funds according to the default timeout resolution policy.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `escrowAddress` | string | Yes | Public key of the escrow with an expired dispute |
-
-**Example response:**
-```json
-{
-  "signature": "9iTu...",
-  "message": "Dispute auto-resolved by timeout policy"
 }
 ```

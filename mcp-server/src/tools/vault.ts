@@ -1,7 +1,7 @@
 import { Tool } from "@modelcontextprotocol/sdk/types";
 
 /**
- * Vault Tools (8) - Agent wallet management with spending policies
+ * Vault Tools (9) - Agent wallet management with spending policies
  */
 
 export const createVaultTool: Tool = {
@@ -95,6 +95,23 @@ export const updateVaultPolicyTool: Tool = {
       },
     },
     required: ["dailyLimitSol", "perTxLimitSol", "maxTxsPerHour"],
+  },
+};
+
+export const rotateAgentIdentityTool: Tool = {
+  name: "rotate_agent_identity",
+  description:
+    "Rotate the vault's `agent_identity` hot key (ADR-069 / AUD-015). `agent_identity` is the off-chain agent runtime's signing key, distinct from the human-custodied `authority`; it should be rotated on suspected compromise of the agent runtime or on a routine cadence (suggested: 90 days). Rotation is a pure key-swap — balances, policies, daily-spend counters, and rate-limit counters are preserved. Only the vault `authority` (verified via `has_one` on the on-chain context) can rotate.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      newAgentIdentity: {
+        type: "string",
+        description:
+          "Base58-encoded Solana public key of the new agent_identity hot key. Must be a valid pubkey; on-chain accepts any valid curve point (no further validation by design — see ADR-069).",
+      },
+    },
+    required: ["newAgentIdentity"],
   },
 };
 

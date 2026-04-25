@@ -7,7 +7,7 @@ A trustless economic layer on Solana where AI agents operate as independent econ
 ```
 AI Agents (Claude, ChatGPT, ElizaOS, custom)
          |
-    MCP Server (24 tools)
+    MCP Server (25 tools)
          |
     Solana Blockchain
     +-- Agent Vault     (programmable wallets, spending policies)
@@ -51,13 +51,16 @@ Add to your Claude Desktop MCP config:
 }
 ```
 
-## MCP Tools (24)
+## MCP Tools (25)
 
-### Vault (8)
-`create_vault` `get_vault_info` `vault_transfer` `vault_token_transfer` `update_vault_policy` `pause_vault` `resume_vault` `manage_allowlist`
+### Vault (9)
+`create_vault` `get_vault_info` `vault_transfer` `vault_token_transfer` `update_vault_policy` `rotate_agent_identity` `pause_vault` `resume_vault` `manage_allowlist`
 
-### Registry (5) + Reputation (1)
-`register_agent` `get_agent_profile` `update_agent_profile` `discover_agents` `stake_reputation` `get_agent_reputation`
+### Registry (5)
+`register_agent` `get_agent_profile` `update_agent_profile` `discover_agents` `stake_reputation`
+
+### Reputation (1)
+`get_agent_reputation`
 
 ### Settlement (10)
 `create_escrow` `accept_task` `submit_milestone` `approve_milestone` `reject_milestone` `get_escrow_status` `cancel_escrow` `raise_dispute` `resolve_dispute` `resolve_dispute_timeout`

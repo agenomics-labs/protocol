@@ -14,12 +14,13 @@ import {
   handleVaultTransfer,
   handleVaultTokenTransfer,
   handleUpdateVaultPolicy,
+  handleRotateAgentIdentity,
   handlePauseVault,
   handleResumeVault,
   handleManageAllowlist,
 } from "../handlers/vault.js";
 import { handleVaultTransferV2 } from "../handlers-v2/vault.js";
-import { deriveVaultPDA, getWalletPublicKey } from "../solana.js";
+import { deriveVaultPDA, getWalletPublicKey, isValidPublicKey } from "../solana.js";
 import { serverLogger } from "../util/logger.js";
 
 const log = serverLogger.child({ action: "vault_transfer" });
@@ -274,6 +275,50 @@ export const updateVaultPolicyAction: Action<
   preflight: ["cluster_health"],
   requiresSigner: true,
   handler: wrap(handleUpdateVaultPolicy),
+};
+
+// ---------- rotate_agent_identity ----------
+
+/**
+ * ADR-069 / AUD-015: zod refinement that validates a string is a syntactically
+ * valid base58 Solana public key. Reuses the same `PublicKey`-construction
+ * check the rest of the surface uses (`isValidPublicKey`), so the schema gate
+ * matches the handler-level parse contract exactly.
+ */
+const zPubkey = z
+  .string()
+  .min(32, { message: "expected base58-encoded Solana public key" })
+  .refine(isValidPublicKey, {
+    message: "expected base58-encoded Solana public key",
+  });
+
+const rotateAgentIdentityInput = {
+  newAgentIdentity: zPubkey,
+} as const;
+
+export const rotateAgentIdentityAction: Action<
+  z.infer<z.ZodObject<typeof rotateAgentIdentityInput>>,
+  unknown
+> = {
+  name: "rotate_agent_identity",
+  title: "Rotate vault agent identity",
+  description:
+    "Rotate the vault's `agent_identity` hot key (ADR-069). `agent_identity` is " +
+    "the off-chain agent runtime's signing key, distinct from the human-custodied " +
+    "`authority`; it should be rotated on suspected compromise of the agent " +
+    "runtime or on a routine cadence (suggested: 90 days). Rotation is a pure " +
+    "key-swap — balances, policies, daily-spend counters, and rate-limit " +
+    "counters are preserved. Only the vault `authority` (verified via `has_one` " +
+    "on the on-chain context) can rotate.",
+  inputSchema: rotateAgentIdentityInput,
+  outputSchema: z.unknown(),
+  similes: ["rotate hot key", "rotate agent key", "rotate agent identity"],
+  examples: [],
+  readOnly: false,
+  capabilities: ["sign:vault"],
+  preflight: ["cluster_health"],
+  requiresSigner: true,
+  handler: wrap(handleRotateAgentIdentity),
 };
 
 // ---------- pause_vault / resume_vault ----------
