@@ -1,0 +1,50 @@
+name: ADR Lint
+
+# AUD-053: real ADR-lint replacing the stats-only `status-audit.sh`.
+# Authoritative reference: scripts/adr-lint.sh + docs/adr/ADR-TEMPLATE.md.
+#
+# Path-filtered: only triggers on PRs (and pushes to main) that touch
+# `docs/adr/**` or the lint script itself. Keeps PR latency low for
+# changes that don't touch ADRs.
+#
+# Status: ADVISORY (`continue-on-error: true`).
+#
+# Promote to BLOCKING once the residual findings on `main` are resolved
+# by the parallel cleanup PRs (PR-A duplicates / PR-B canonical-heading
+# migration). Tracked as a follow-up in REMEDIATION-PLAN.md → AUD-053.
+# To promote: drop the `continue-on-error: true` line on the lint step.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/adr/**"
+      - "scripts/adr-lint.sh"
+      - ".github/workflows/adr-lint.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "docs/adr/**"
+      - "scripts/adr-lint.sh"
+      - ".github/workflows/adr-lint.yml"
+
+concurrency:
+  group: adr-lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  adr-lint:
+    name: ADR Lint (scripts/adr-lint.sh)
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Run ADR lint
+        # Pure-bash check; no external installs needed. Findings print
+        # to stderr in `path:line: diagnostic` form. Summary line on
+        # stdout.
+        run: |
+          chmod +x scripts/adr-lint.sh
+          scripts/adr-lint.sh
+        # ADVISORY for now — see workflow header for the promotion plan.
+        continue-on-error: true
