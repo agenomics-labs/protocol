@@ -8,14 +8,14 @@
 
 // JWT_SECRET must be set BEFORE importing the relay module,
 // because the module calls process.exit(1) if it is missing.
-process.env.JWT_SECRET = "test-secret-for-unit-tests";
+process.env.JWT_SECRET = "test-secret-for-unit-tests-32b!!";
 process.env.PAYMENT_RECIPIENT = "11111111111111111111111111111111";
 
 import { expect } from "chai";
 import { verifyAccessToken } from "../src/x402-relay/index";
 import jwt from "jsonwebtoken";
 
-const JWT_SECRET = "test-secret-for-unit-tests";
+const JWT_SECRET = "test-secret-for-unit-tests-32b!!";
 
 describe("x402 Relay - verifyAccessToken", () => {
   it("should return null for an invalid token", () => {

@@ -20,6 +20,18 @@ if (!JWT_SECRET_RAW) {
 // below still see the original union. Bind to a `string`-typed local so
 // `jwt.sign`/`jwt.verify` overloads resolve without `!` non-null assertions.
 const JWT_SECRET: string = JWT_SECRET_RAW;
+// AUD-027: enforce a minimum-entropy floor on the HS256 signing key. A short
+// secret (e.g. 5 chars ≈ 25 bits of entropy) produces tokens that pass
+// `jwt.verify` but are trivially brute-forceable. Mirror the MCP server's
+// bearer-token policy (`MIN_TOKEN_BYTES=16` in `mcp-server/src/transport/
+// auth-gate.ts`) with a stricter floor for symmetric signing keys: 32 bytes
+// matches `openssl rand -hex 32` and the HS256 key-size guidance in RFC 7518.
+const MIN_JWT_SECRET_BYTES = 32;
+if (Buffer.byteLength(JWT_SECRET, "utf8") < MIN_JWT_SECRET_BYTES) {
+  throw new Error(
+    `JWT_SECRET must be at least ${MIN_JWT_SECRET_BYTES} bytes; got ${Buffer.byteLength(JWT_SECRET, "utf8")}.`,
+  );
+}
 const JWT_ALGORITHM: jwt.Algorithm = "HS256";
 const TOKEN_EXPIRY_SECONDS = parseInt(process.env.TOKEN_EXPIRY || "3600", 10);
 const PAYMENT_RECIPIENT = process.env.PAYMENT_RECIPIENT || "";
