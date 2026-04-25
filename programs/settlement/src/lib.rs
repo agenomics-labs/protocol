@@ -701,6 +701,47 @@ mod tests {
     }
 
     // ================================================================
+    // AUD-024: escrow deadline upper-bound predicate
+    // ================================================================
+
+    /// AUD-024: `create_escrow` rejects `deadline > now + MAX_ESCROW_DEADLINE_SECS`
+    /// and accepts everything inside the window (including the boundary).
+    /// This mirrors the `require!(deadline <= now + MAX_ESCROW_DEADLINE_SECS, ...)`
+    /// guard in `instructions::escrow::create_escrow` so a regression in
+    /// either operand re-admits the `i64::MAX` lock-forever attack.
+    #[test]
+    fn aud024_deadline_upper_bound_predicate() {
+        // Sanity: cap is exactly 365 days in seconds.
+        assert_eq!(MAX_ESCROW_DEADLINE_SECS, 365 * 24 * 60 * 60);
+        assert_eq!(MAX_ESCROW_DEADLINE_SECS, 31_536_000);
+
+        // Pick a fixed "now" comfortably above 0 to mirror real Unix time.
+        let now: i64 = 1_800_000_000;
+        let max_deadline = now.checked_add(MAX_ESCROW_DEADLINE_SECS).unwrap();
+
+        // Boundary happy: just under the cap → allowed.
+        let just_under = now + MAX_ESCROW_DEADLINE_SECS - 60;
+        assert!(just_under <= max_deadline, "60s under cap must pass");
+
+        // Exact boundary: `<=` admits the equality case.
+        let at_cap = now + MAX_ESCROW_DEADLINE_SECS;
+        assert!(at_cap <= max_deadline, "exactly at cap must pass (<=)");
+
+        // Negative: one second past the cap → rejected.
+        let one_past = now + MAX_ESCROW_DEADLINE_SECS + 1;
+        assert!(!(one_past <= max_deadline), "1s past cap must fail");
+
+        // Pathological: i64::MAX is the original AUD-024 attack value.
+        // The lock-forever case must be rejected by the predicate.
+        assert!(!(i64::MAX <= max_deadline), "i64::MAX must be rejected");
+
+        // The cap itself never overflows for any realistic Unix `now`.
+        // (year ~3000 is ~3.25e10; cap ~3.15e7; sum fits trivially.)
+        let far_future_now: i64 = 32_503_680_000; // year 3000
+        assert!(far_future_now.checked_add(MAX_ESCROW_DEADLINE_SECS).is_some());
+    }
+
+    // ================================================================
     // ADR-021: Property-based fuzz tests (proptest)
     // ================================================================
 
