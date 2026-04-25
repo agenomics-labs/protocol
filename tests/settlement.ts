@@ -1845,7 +1845,7 @@ describe("Settlement Protocol Tests", () => {
         .signers([expProvider]).rpc();
     });
 
-    it("C1: should auto-pay Submitted milestones to provider on expiry (silence = acceptance)", async () => {
+    it("C1 + AUD-010: all-Approved on expiry → status Completed + success-path reputation CPI", async () => {
       // AUD-055: Poll the on-chain clock until `now > escrow.deadline` rather
       // than burning a fixed 6s wall-clock wait. `expire_escrow` checks
       // `clock.unix_timestamp > escrow.deadline`, so we wait on the same
@@ -1864,6 +1864,14 @@ describe("Settlement Protocol Tests", () => {
       }
 
       const [provProfilePDA] = deriveAgentProfilePDA(expProvider.publicKey);
+      const registryProgram = anchor.workspace.AgentRegistry as Program;
+
+      // AUD-010: Snapshot the provider's reputation BEFORE expire so we
+      // can verify the success-path CPI fires (was previously skipped on
+      // the timeout rail). M0 was already approved manually in `before`,
+      // which already added one `reputation_delta_task_completed` (=10).
+      const profileBefore = await registryProgram.account.agentProfile.fetch(provProfilePDA);
+      const repBefore = BigInt(profileBefore.reputationScore.toString());
 
       await program.methods.expireEscrow()
         .accounts({
@@ -1874,7 +1882,7 @@ describe("Settlement Protocol Tests", () => {
           providerTokenAccount: expProviderTA,
           registryProgram: REGISTRY_PROGRAM_ID,
           providerProfile: provProfilePDA,
-          providerOwnerNonce: deriveOwnerNoncePDA(provider_account.publicKey)[0],
+          providerOwnerNonce: deriveOwnerNoncePDA(expProvider.publicKey)[0],
           // SEC-1: external authority anchor for Registry UpdateReputation CPI.
           providerAuthority: expProvider.publicKey,
           settlementAuthority: SETTLEMENT_AUTHORITY_PDA,
@@ -1884,7 +1892,17 @@ describe("Settlement Protocol Tests", () => {
         .signers([expClient]).rpc();
 
       const escrow = await program.account.taskEscrow.fetch(expEscrowPDA);
-      expect(escrow.status.expired).to.be.ok;
+
+      // AUD-010: When the auto-approval sweep leaves every milestone in
+      // `Approved`, the escrow effectively completed via the timeout
+      // rail. Status MUST be `Completed`, NOT `Expired`.
+      expect(escrow.status.completed, `expected status=Completed, got ${JSON.stringify(escrow.status)}`).to.be.ok;
+      expect(escrow.status.expired).to.be.undefined;
+
+      // AUD-010: Both milestones must end in `Approved`.
+      for (const m of escrow.milestones) {
+        expect(m.status.approved, `milestone status was ${JSON.stringify(m.status)}`).to.be.ok;
+      }
 
       // C1: Milestone 1 was Submitted-but-not-Approved at deadline.
       // Under the fixed semantics, silence = acceptance: the provider
@@ -1899,6 +1917,187 @@ describe("Settlement Protocol Tests", () => {
       // Submitted-on-expiry = 1M total.
       const providerBalance = await connection.getTokenAccountBalance(expProviderTA);
       expect(BigInt(providerBalance.value.amount)).to.equal(1000000n);
+
+      // AUD-010 core assertion: success-path CPI fired. The provider's
+      // `reputation_score` is bumped by `reputation_delta_task_completed`
+      // (= 10 post-PR-G). Pre-fix, the timeout rail silently skipped this
+      // even when every milestone ended up Approved, costing the provider
+      // the +task_completed reward simply because the client was slow.
+      const profileAfter = await registryProgram.account.agentProfile.fetch(provProfilePDA);
+      const repAfter = BigInt(profileAfter.reputationScore.toString());
+      expect(repAfter - repBefore).to.equal(10n);
+    });
+  });
+
+  // ============================================================================
+  // T-02b: EXPIRE ESCROW WITH MIXED PENDING/SUBMITTED (AUD-010 NEGATIVE)
+  // ============================================================================
+  // AUD-010: When the milestones at expiry are NOT all Approved (i.e. at
+  // least one is Pending — the provider failed to submit), the slash path
+  // remains unchanged: status → Expired, negative reputation CPI fires
+  // (reason 1, expiry_undelivered). This guards against the fix
+  // accidentally changing the slash semantics.
+
+  describe("Expire escrow with mixed Pending/Submitted (T-02b, AUD-010 negative)", () => {
+    let mixClient: Keypair;
+    let mixProvider: Keypair;
+    let mixEscrowPDA: PublicKey;
+    let mixEscrowTA: PublicKey;
+    let mixClientTA: PublicKey;
+    let mixProviderTA: PublicKey;
+    const mixTaskId = new BN(903);
+
+    before(async () => {
+      mixClient = Keypair.generate();
+      mixProvider = Keypair.generate();
+
+      const airdropAmount = 10 * LAMPORTS_PER_SOL;
+      for (const kp of [mixClient, mixProvider]) {
+        const sig = await connection.requestAirdrop(kp.publicKey, airdropAmount);
+        await connection.confirmTransaction(sig);
+      }
+
+      mixClientTA = await getOrCreateTokenAccount(mixClient.publicKey, mixClient);
+      mixProviderTA = await getOrCreateTokenAccount(mixProvider.publicKey, mixClient);
+      await mintTo(connection, mintAuthority, tokenMint, mixClientTA, mintAuthority.publicKey, 10000000n);
+
+      // Register provider for CPI
+      const registryProgram = anchor.workspace.AgentRegistry as Program;
+      const [profilePDA] = deriveAgentProfilePDA(mixProvider.publicKey);
+      await registryProgram.methods
+        .registerAgent(
+          "Mixed Test Provider",
+          "Provider for mixed-state expire tests",
+          "mixed-testing",
+          ["task-execution"],
+          { perTask: {} },
+          new BN(100000),
+          [tokenMint]
+        )
+        .accounts({
+          authority: mixProvider.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(mixProvider.publicKey)[0],
+          agentProfile: profilePDA,
+          vault: deriveVaultPDA(mixProvider.publicKey)[0],
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([mixProvider])
+        .rpc();
+
+      // Same short-deadline pattern as T-02 (we poll on-chain time below).
+      const shortDeadline = new BN(Math.floor(Date.now() / 1000) + 2);
+
+      const milestonesData = [
+        createMilestoneData(500000n, Buffer.alloc(32, 1)),
+        createMilestoneData(500000n, Buffer.alloc(32, 2)),
+      ];
+
+      [mixEscrowPDA] = await anchor.web3.PublicKey.findProgramAddress(
+        [
+          Buffer.from("escrow"),
+          mixClient.publicKey.toBuffer(),
+          mixProvider.publicKey.toBuffer(),
+          mixTaskId.toArrayLike(Buffer, "le", 8),
+        ],
+        program.programId
+      );
+      mixEscrowTA = getAssociatedTokenAddressSync(tokenMint, mixEscrowPDA, true);
+
+      await program.methods
+        .createEscrow(mixTaskId, new BN(1000000), Buffer.alloc(32), shortDeadline, milestonesData, null)
+        .accounts({
+          client: mixClient.publicKey,
+          clientVault: vaultFor(mixClient.publicKey),
+          providerVault: vaultFor(mixProvider.publicKey),
+          protocolConfig: PROTOCOL_CONFIG_PDA,
+          provider: mixProvider.publicKey,
+          tokenMint: tokenMint,
+          clientTokenAccount: mixClientTA,
+          escrow: mixEscrowPDA,
+          escrowTokenAccount: mixEscrowTA,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        })
+        .signers([mixClient])
+        .rpc();
+
+      // Accept task → status becomes Active (precondition for slash).
+      await program.methods.acceptTask()
+        .accounts({ provider: mixProvider.publicKey, escrow: mixEscrowPDA })
+        .signers([mixProvider]).rpc();
+
+      // Provider only submits 1 of 2 milestones; M1 is left Pending. This
+      // is the "mixed Pending/Submitted" shape AUD-010 leaves untouched.
+      await program.methods.submitMilestone(new BN(0), new BN(0))
+        .accounts({ provider: mixProvider.publicKey, escrow: mixEscrowPDA })
+        .signers([mixProvider]).rpc();
+    });
+
+    it("AUD-010 negative: mixed state on expiry → status Expired + slash CPI (NOT success CPI)", async () => {
+      // Wait for on-chain time to cross the deadline.
+      const escrowAcct = await program.account.taskEscrow.fetch(mixEscrowPDA);
+      const deadline = escrowAcct.deadline.toNumber();
+      const pollDeadline = Date.now() + 30_000;
+      while (Date.now() < pollDeadline) {
+        const slot = await connection.getSlot("confirmed");
+        const chainTime = await connection.getBlockTime(slot);
+        if (chainTime !== null && chainTime > deadline) break;
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+
+      const [provProfilePDA] = deriveAgentProfilePDA(mixProvider.publicKey);
+      const registryProgram = anchor.workspace.AgentRegistry as Program;
+
+      // Snapshot reputation BEFORE expire. Fresh agent starts at 0, so
+      // the slash will be capped at 0 by the Registry's lower bound, but
+      // we still verify the call DID NOT bump the score upward (which is
+      // what would happen if the success CPI mistakenly fired here).
+      const profileBefore = await registryProgram.account.agentProfile.fetch(provProfilePDA);
+      const repBefore = BigInt(profileBefore.reputationScore.toString());
+
+      await program.methods.expireEscrow()
+        .accounts({
+          payer: mixClient.publicKey,
+          escrow: mixEscrowPDA,
+          escrowTokenAccount: mixEscrowTA,
+          clientTokenAccount: mixClientTA,
+          providerTokenAccount: mixProviderTA,
+          registryProgram: REGISTRY_PROGRAM_ID,
+          providerProfile: provProfilePDA,
+          providerOwnerNonce: deriveOwnerNoncePDA(mixProvider.publicKey)[0],
+          providerAuthority: mixProvider.publicKey,
+          settlementAuthority: SETTLEMENT_AUTHORITY_PDA,
+          protocolConfig: PROTOCOL_CONFIG_PDA,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([mixClient]).rpc();
+
+      const escrow = await program.account.taskEscrow.fetch(mixEscrowPDA);
+
+      // AUD-010: Mixed state MUST land on `Expired`, not `Completed`.
+      expect(escrow.status.expired, `expected status=Expired, got ${JSON.stringify(escrow.status)}`).to.be.ok;
+      expect(escrow.status.completed).to.be.undefined;
+
+      // M0 (Submitted) auto-approved; M1 (Pending) stays Pending.
+      expect(escrow.milestones[0].status.approved).to.be.ok;
+      expect(escrow.milestones[1].status.pending).to.be.ok;
+
+      // Provider received 500K (M0 silence=acceptance); client refunded 500K (M1).
+      const providerBalance = await connection.getTokenAccountBalance(mixProviderTA);
+      expect(BigInt(providerBalance.value.amount)).to.equal(500000n);
+      const clientBalance = await connection.getTokenAccountBalance(mixClientTA);
+      // Started with 10M, locked 1M, refunded 500K = 9.5M.
+      expect(BigInt(clientBalance.value.amount)).to.equal(9500000n);
+
+      // Slash CPI fired (reputation_score did NOT increase). Score stays
+      // at 0 because the Registry clamps to [0, 100] and this is a fresh
+      // agent — but critically it did NOT jump up by +10, which would
+      // indicate the success CPI was incorrectly fired on the slash path.
+      const profileAfter = await registryProgram.account.agentProfile.fetch(provProfilePDA);
+      const repAfter = BigInt(profileAfter.reputationScore.toString());
+      expect(repAfter <= repBefore, `slash path must not bump reputation up; before=${repBefore} after=${repAfter}`).to.be.true;
     });
   });
 
