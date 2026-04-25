@@ -102,7 +102,13 @@ export class AepClient {
   /**
    * Derive the agent-profile PDA for a given owner public key (base58) and nonce.
    *
-   * Seeds: [ ownerPubkey.toBytes(), "agent-profile", nonce as little-endian i64 ]
+   * Seeds: [ ownerPubkey.toBytes(), "agent-profile", nonce as little-endian u64 ]
+   *
+   * AUD-003: `OwnerNonce::nonce` is `u64` on-chain (see
+   * `programs/agent-registry/src/state.rs`). Pre-fix this helper encoded
+   * the seed via `BigInt64Array` (signed i64); `BigUint64Array` matches
+   * the on-chain type and keeps this helper byte-identical to
+   * `AgentRegistryClient.profilePda`.
    *
    * Returns the PDA as a base58-encoded string.
    */
@@ -113,7 +119,7 @@ export class AepClient {
       [
         authority.toBytes(),
         Buffer.from("agent-profile"),
-        Buffer.from(new Uint8Array(new BigInt64Array([nonce]).buffer)),
+        Buffer.from(new Uint8Array(new BigUint64Array([nonce]).buffer)),
       ],
       registryProgramId,
     );
