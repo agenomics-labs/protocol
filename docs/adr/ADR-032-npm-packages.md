@@ -1,7 +1,12 @@
 # ADR-032: npm Package Preparation
 
-**Status:** Accepted
-**Date:** 2026-04-15
+## Status
+
+Accepted
+
+## Date
+
+2026-04-15
 
 ## Context
 

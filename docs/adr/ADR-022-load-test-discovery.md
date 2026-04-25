@@ -1,7 +1,12 @@
 # ADR-022: Load Test for Agent Discovery
 
-- **Status**: Accepted
-- **Date**: 2026-04-15
+## Status
+
+Accepted
+
+## Date
+
+2026-04-15
 
 ## Context
 

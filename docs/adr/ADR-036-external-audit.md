@@ -1,7 +1,12 @@
 # ADR-036: External Audit Engagement
 
-- **Status**: Accepted
-- **Date**: 2026-04-15
+## Status
+
+Accepted
+
+## Date
+
+2026-04-15
 
 ## Context
 

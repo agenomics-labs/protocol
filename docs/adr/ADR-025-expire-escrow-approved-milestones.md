@@ -1,7 +1,12 @@
 # ADR-025: Expire Escrow with Approved Milestone Handling (S-A6 Fix)
 
-- **Status**: Accepted
-- **Date**: 2026-04-15
+## Status
+
+Accepted
+
+## Date
+
+2026-04-15
 
 ## Context
 

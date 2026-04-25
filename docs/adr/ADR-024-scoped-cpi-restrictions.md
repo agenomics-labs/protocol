@@ -1,7 +1,12 @@
 # ADR-024: Scoped CPI Restrictions (V-A5 Fix)
 
-- **Status**: Accepted
-- **Date**: 2026-04-15
+## Status
+
+Accepted
+
+## Date
+
+2026-04-15
 
 ## Context
 

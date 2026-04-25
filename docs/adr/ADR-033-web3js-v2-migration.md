@@ -1,7 +1,12 @@
 # ADR-033: Web3.js v2 Migration Plan
 
-- **Status**: Accepted
-- **Date**: 2026-04-15
+## Status
+
+Accepted
+
+## Date
+
+2026-04-15
 
 ## Context
 

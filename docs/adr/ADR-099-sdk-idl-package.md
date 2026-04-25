@@ -1,9 +1,12 @@
 # ADR-099 — @agenomics/idl SDK Package
 
-| Field | Value |
-|-------|-------|
-| Status | Accepted |
-| Date | 2026-04-23 |
+## Status
+
+Accepted
+
+## Date
+
+2026-04-23
 
 ## Context
 Program IDs are duplicated across mcp-server, indexer, x402-relay, and tests.

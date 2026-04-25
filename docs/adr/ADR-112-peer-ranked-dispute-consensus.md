@@ -1,11 +1,14 @@
 # ADR-112: Peer-ranked dispute consensus (Bradley-Terry aggregation)
 
-- **Status**: Proposed
-- **Date**: 2026-04-23
-- **Related**: ADR-025 (expire escrow approved milestones), ADR-026
-  (resolve-dispute bookkeeping), ADR-030 (dispute timeout), ADR-094
-  (reputation trust inversion), ADR-106 (TraceRank), ADR-107
-  (reputation decay), ADR-108 (stake-backed discovery)
+## Status
+
+Proposed
+
+## Date
+
+2026-04-23
+
+**Related:** ADR-025 (expire escrow approved milestones), ADR-026 (resolve-dispute bookkeeping), ADR-030 (dispute timeout), ADR-094 (reputation trust inversion), ADR-106 (TraceRank), ADR-107 (reputation decay), ADR-108 (stake-backed discovery)
 
 ## Context
 

@@ -1,7 +1,12 @@
 # ADR-026: Resolve Dispute Bookkeeping Fix (S-A7)
 
-- **Status**: Accepted
-- **Date**: 2026-04-15
+## Status
+
+Accepted
+
+## Date
+
+2026-04-15
 
 ## Context
 

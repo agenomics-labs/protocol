@@ -1,9 +1,12 @@
 # ADR-095 — Vault ↔ Registry Suspension Coupling
 
-| Field | Value |
-|-------|-------|
-| Status | Accepted |
-| Date | 2026-04-23 |
+## Status
+
+Accepted
+
+## Date
+
+2026-04-23
 
 ## Context
 

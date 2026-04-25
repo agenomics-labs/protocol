@@ -1,7 +1,12 @@
 # ADR-043: Category Length Validation
 
-- **Status**: Accepted
-- **Date**: 2026-04-16
+## Status
+
+Accepted
+
+## Date
+
+2026-04-16
 
 ## Context
 

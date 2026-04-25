@@ -1,7 +1,12 @@
 # ADR-105: Self-hosted GitHub Actions runners
 
-- **Status**: Accepted
-- **Date**: 2026-04-23
+## Status
+
+Accepted
+
+## Date
+
+2026-04-23
 
 ## Context
 

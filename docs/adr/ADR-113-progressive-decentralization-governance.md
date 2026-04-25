@@ -1,12 +1,14 @@
 # ADR-113: Progressive decentralization governance
 
-- **Status**: Proposed
-- **Date**: 2026-04-23
-- **Related**: ADR-019 (security audit prep), ADR-063 (Squads
-  multisig), ADR-075 (ProtocolConfig validation bounds), ADR-077
-  (governance ADR backfill), ADR-078 (governance roles), ADR-079
-  (governance policy), ADR-081 (emergency suspend), ADR-094
-  (reputation trust inversion)
+## Status
+
+Proposed
+
+## Date
+
+2026-04-23
+
+**Related:** ADR-019 (security audit prep), ADR-063 (Squads multisig), ADR-075 (ProtocolConfig validation bounds), ADR-077 (governance ADR backfill), ADR-078 (governance roles), ADR-079 (governance policy), ADR-081 (emergency suspend), ADR-094 (reputation trust inversion)
 
 ## Context
 

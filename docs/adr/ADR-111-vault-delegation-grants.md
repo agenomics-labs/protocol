@@ -1,11 +1,14 @@
 # ADR-111: Vault delegation grants — bounded, auditable sub-authority
 
-- **Status**: Proposed
-- **Date**: 2026-04-23
-- **Related**: ADR-024 (scoped CPI restrictions), ADR-028 (anti-
-  Sybil), ADR-038 (vault CPI pattern), ADR-050 (execute_program_call
-  removal), ADR-069 (agent identity rotation), ADR-072 (recipient
-  guards), ADR-081 (emergency suspend)
+## Status
+
+Proposed
+
+## Date
+
+2026-04-23
+
+**Related:** ADR-024 (scoped CPI restrictions), ADR-028 (anti- Sybil), ADR-038 (vault CPI pattern), ADR-050 (execute_program_call removal), ADR-069 (agent identity rotation), ADR-072 (recipient guards), ADR-081 (emergency suspend)
 
 ## Context
 

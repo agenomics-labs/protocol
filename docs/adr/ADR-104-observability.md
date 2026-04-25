@@ -1,7 +1,12 @@
 # ADR-104: Prometheus Metrics + OpenTelemetry Tracing for Off-chain Services
 
-**Status:** Accepted
-**Date:** 2026-04-23
+## Status
+
+Accepted
+
+## Date
+
+2026-04-23
 
 ## Context
 

@@ -1,11 +1,14 @@
 # ADR-110: Versioned Capability Vectors (VCV) for semantic agent discovery
 
-- **Status**: Proposed
-- **Date**: 2026-04-23
-- **Related**: ADR-018 (framework integrations), ADR-022 (memcmp
-  discovery), ADR-060 (capability manifest), ADR-082 (indexer event
-  coverage), ADR-106 (TraceRank), ADR-108 (stake-backed discovery),
-  ADR-109 (aep: URI scheme)
+## Status
+
+Proposed
+
+## Date
+
+2026-04-23
+
+**Related:** ADR-018 (framework integrations), ADR-022 (memcmp discovery), ADR-060 (capability manifest), ADR-082 (indexer event coverage), ADR-106 (TraceRank), ADR-108 (stake-backed discovery), ADR-109 (aep: URI scheme)
 
 ## Context
 

@@ -1,8 +1,14 @@
 # ADR-050: Final Audit Polish
 
-- **Status**: Accepted
-- **Date**: 2026-04-16
-- **Context**: Pre-mainnet audit sweep addressing medium and low-severity findings across all three on-chain programs and the MCP server layer.
+## Status
+
+Accepted
+
+## Date
+
+2026-04-16
+
+**Context:** Pre-mainnet audit sweep addressing medium and low-severity findings across all three on-chain programs and the MCP server layer.
 
 ## Summary
 

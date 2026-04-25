@@ -1,7 +1,13 @@
 # ADR-098: `@agenomics/client` — TypeScript SDK for AEP on-chain programs
 
-**Status:** Accepted
-**Date:** 2026-04-23
+## Status
+
+Accepted
+
+## Date
+
+2026-04-23
+
 **Audit-item:** ARCHITECTURE-AUDIT-2026-04-23 → item 23
 **References:** ADR-088 (typed Anchor program clients), ADR-099 (`@agenomics/idl` package)
 

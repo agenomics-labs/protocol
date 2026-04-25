@@ -1,11 +1,15 @@
 # ADR-094 — Reputation Trust Hierarchy Inversion
 
-| Field | Value |
-|-------|-------|
-| Status | Accepted |
-| Date | 2026-04-23 |
-| Supersedes | — |
-| Related | ADR-039, ADR-068, ADR-075 |
+## Status
+
+Accepted
+
+## Date
+
+2026-04-23
+
+**Supersedes:** —
+**Related:** ADR-039, ADR-068, ADR-075
 
 ## Context
 

@@ -1,7 +1,12 @@
 # ADR-046: Add Missing MCP Tools (vault_token_transfer, stake_reputation, resolve_dispute_timeout)
 
-**Status:** Accepted
-**Date:** 2026-04-16
+## Status
+
+Accepted
+
+## Date
+
+2026-04-16
 
 ## Context
 

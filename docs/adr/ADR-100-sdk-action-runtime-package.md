@@ -1,9 +1,12 @@
 # ADR-100 — @agenomics/action-runtime SDK Package
 
-| Field | Value |
-|-------|-------|
-| Status | Accepted |
-| Date | 2026-04-23 |
+## Status
+
+Accepted
+
+## Date
+
+2026-04-23
 
 ## Context
 The MCP server contains action-definition boilerplate (Result type, wrap helper,

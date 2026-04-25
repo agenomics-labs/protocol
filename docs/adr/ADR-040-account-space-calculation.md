@@ -1,7 +1,12 @@
 # ADR-040: Account Space Calculation
 
-- **Status**: Accepted
-- **Date**: 2026-04-16
+## Status
+
+Accepted
+
+## Date
+
+2026-04-16
 
 ## Context
 

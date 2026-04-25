@@ -1,7 +1,12 @@
 # ADR-031: Mainnet Deployment Preparation
 
-- **Status**: Accepted
-- **Date**: 2026-04-15
+## Status
+
+Accepted
+
+## Date
+
+2026-04-15
 
 ## Context
 

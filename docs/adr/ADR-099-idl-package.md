@@ -1,7 +1,13 @@
 # ADR-099: `@agenomics/idl` — published npm package for on-chain IDL JSON and TypeScript types
 
-**Status:** Accepted
-**Date:** 2026-04-23
+## Status
+
+Accepted
+
+## Date
+
+2026-04-23
+
 **Audit-items:** ARCHITECTURE-AUDIT-2026-04-23 → items 23 & 31
 
 ## Context

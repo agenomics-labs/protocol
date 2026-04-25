@@ -1,9 +1,12 @@
 # ADR-102 — submit_milestone Grace Window
 
-| Field | Value |
-|-------|-------|
-| Status | Accepted |
-| Date | 2026-04-23 |
+## Status
+
+Accepted
+
+## Date
+
+2026-04-23
 
 ## Context
 An attacker observing the mempool can front-run a valid `submit_milestone` call

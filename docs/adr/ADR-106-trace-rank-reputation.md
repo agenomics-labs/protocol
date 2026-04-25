@@ -1,9 +1,14 @@
 # ADR-106: TraceRank — payment-weighted reputation propagation
 
-- **Status**: Proposed
-- **Date**: 2026-04-23
-- **Related**: ADR-020 (reputation staking), ADR-028 (anti-Sybil), ADR-094
-  (reputation trust inversion), ADR-017 (x402 HTTP payment relay)
+## Status
+
+Proposed
+
+## Date
+
+2026-04-23
+
+**Related:** ADR-020 (reputation staking), ADR-028 (anti-Sybil), ADR-094 (reputation trust inversion), ADR-017 (x402 HTTP payment relay)
 
 ## Context
 
