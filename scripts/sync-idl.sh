@@ -28,4 +28,14 @@ for f in target/idl/*.json; do
   cp "$f" "idl/$(basename "$f")"
 done
 
-echo "IDL synced into idl/. Review with 'git diff idl/' and commit."
+# ADR-099: @agenomics/idl ships the IDL JSON vendored under
+# `sdk/idl/src/idl/` so downstream consumers don't need a local
+# `anchor build`. Keep it byte-identical to the top-level idl/ copy.
+if [ -d sdk/idl/src/idl ]; then
+  for f in target/idl/*.json; do
+    cp "$f" "sdk/idl/src/idl/$(basename "$f")"
+  done
+  echo "IDL synced into idl/ and sdk/idl/src/idl/. Review with 'git diff idl/ sdk/idl/src/idl/' and commit."
+else
+  echo "IDL synced into idl/. Review with 'git diff idl/' and commit."
+fi

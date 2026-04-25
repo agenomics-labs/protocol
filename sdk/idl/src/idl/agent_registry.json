@@ -1,0 +1,2372 @@
+{
+  "address": "8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh",
+  "metadata": {
+    "name": "agent_registry",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Agent Registry - Discovery and identity component for the Agent Economy Protocol (AEP) on Solana"
+  },
+  "instructions": [
+    {
+      "name": "clear_suspension",
+      "docs": [
+        "C5: Appeal path out of the permanent-suspension trap. Before this",
+        "instruction existed, a 3-strike slash sequence would `Suspend` the",
+        "agent and `update_status` refused every outbound transition except",
+        "`Retired`, leaving no way back into productive state. This is an",
+        "interim, self-service governance path — a richer on-chain",
+        "governance authority is deferred to a future ADR.",
+        "",
+        "The cost is non-trivial: the agent's reputation_score is halved,",
+        "slash_count is reset to 0, and status moves to `Paused` (not",
+        "`Active`) so re-entry is a deliberate second action."
+      ],
+      "discriminator": [
+        156,
+        37,
+        95,
+        180,
+        249,
+        61,
+        229,
+        76
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "agent_profile"
+          ]
+        },
+        {
+          "name": "owner_nonce",
+          "docs": [
+            "ADR-097: Read-only nonce account for `agent_profile` PDA seed."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114,
+                  45,
+                  110,
+                  111,
+                  110,
+                  99,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "agent_profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner_nonce.nonce",
+                "account": "OwnerNonce"
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "deregister_agent",
+      "docs": [
+        "SEC-4 (per ADR-070, in-flight): closing the profile without first",
+        "draining the staking PDA let an attacker re-register under the same",
+        "authority seeds and reset Suspended state + slash_count to zero. The",
+        "`reputation-stake` PDA is seeded by `[authority, \"reputation-stake\"]`",
+        "— those seeds survive deregistration — so simply adding a balance",
+        "guard here suffices: a later `register_agent` requires a",
+        "`staked_amount == 0` profile field, which mirrors the PDA after the",
+        "required unstake.",
+        "",
+        "Chosen fix: refuse deregistration while stake is present. Caller must",
+        "issue `unstake_reputation(full_amount)` first, which drains the PDA",
+        "back to 0 lamports (Solana GCs it at end of tx) and resets",
+        "`reputation_stake.staked_amount` to 0. No new instruction needed."
+      ],
+      "discriminator": [
+        227,
+        208,
+        166,
+        164,
+        48,
+        69,
+        111,
+        1
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "agent_profile"
+          ]
+        },
+        {
+          "name": "owner_nonce",
+          "docs": [
+            "ADR-097: Mutable nonce account. The handler increments `nonce` after",
+            "closing the profile, ensuring the next `register_agent` produces a",
+            "different PDA address."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114,
+                  45,
+                  110,
+                  111,
+                  110,
+                  99,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "agent_profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner_nonce.nonce",
+                "account": "OwnerNonce"
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "migrate_agent_profile",
+      "docs": [
+        "ADR-096: In-place account resize / migration.",
+        "",
+        "Grows the `AgentProfile` account to `8 + AgentProfile::SPACE +",
+        "MIGRATION_HEADROOM` bytes using Anchor's `realloc` constraint (which",
+        "calls the System Program's `realloc` syscall). New bytes are",
+        "zero-initialized by the constraint (`realloc::zero = true`), so newly",
+        "added fields whose zero value is a valid default require no explicit",
+        "initialization here.",
+        "",
+        "The instruction is idempotent: if `profile.version >= target_version`",
+        "it returns `Ok(())` without any mutation. This makes it safe to call",
+        "repeatedly from upgrade scripts without double-bumping the version or",
+        "triggering unnecessary rent charges.",
+        "",
+        "Only the `owner` (authority) of the profile may call this instruction.",
+        "The `realloc::payer = owner` constraint debits any additional rent from",
+        "the signer's lamport balance; if the account already meets the target",
+        "size, the System Program call is skipped."
+      ],
+      "discriminator": [
+        180,
+        28,
+        7,
+        129,
+        35,
+        192,
+        140,
+        105
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "docs": [
+            "The authority that owns this `AgentProfile`. Named `owner` here to",
+            "keep the signer semantics distinct from the `authority` field name",
+            "used in `UpdateReputation` (where authority is an UncheckedAccount)."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "agent_profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "target_version",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "propose_reputation_delta",
+      "docs": [
+        "ADR-094: Invert the reputation trust hierarchy.",
+        "",
+        "Previously Settlement called `update_reputation` as a privileged setter",
+        "and imposed no score upper bound (scores grow to u64::MAX). This",
+        "instruction is the new entry point: Registry owns and enforces the",
+        "policy (`[0, MAX_REPUTATION_SCORE]`, `|delta| <= MAX_DELTA_PER_CALL`).",
+        "",
+        "Authorization: caller must present the Settlement program's",
+        "`settlement_authority` PDA as a signer (SEC-1 pattern from ADR-068).",
+        "",
+        "`reason` is a caller-supplied reason code:",
+        "0 = task_completed (positive delta)",
+        "1 = dispute_loss   (negative delta)",
+        "2 = expiry_undelivered (negative delta)",
+        "3-255 = reserved for future governance/slashing sources"
+      ],
+      "discriminator": [
+        11,
+        88,
+        137,
+        167,
+        186,
+        86,
+        245,
+        175
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "docs": [
+            "seed anchor for `agent_profile` and constrained equal to",
+            "`agent_profile.authority` via `has_one = authority`."
+          ],
+          "relations": [
+            "agent_profile"
+          ]
+        },
+        {
+          "name": "agent_profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "settlement_authority",
+          "docs": [
+            "seeds::program ensures this PDA was derived by the Settlement program,",
+            "proving the call originated there (SEC-1 pattern from ADR-068)."
+          ],
+          "signer": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  116,
+                  116,
+                  108,
+                  101,
+                  109,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                227,
+                132,
+                12,
+                30,
+                9,
+                78,
+                44,
+                188,
+                135,
+                187,
+                145,
+                68,
+                5,
+                84,
+                82,
+                239,
+                90,
+                255,
+                29,
+                178,
+                208,
+                214,
+                104,
+                25,
+                104,
+                107,
+                82,
+                183,
+                124,
+                88,
+                179,
+                116
+              ]
+            }
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "delta",
+          "type": "i16"
+        },
+        {
+          "name": "reason",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "register_agent",
+      "discriminator": [
+        135,
+        157,
+        66,
+        195,
+        2,
+        113,
+        175,
+        30
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "owner_nonce",
+          "docs": [
+            "ADR-097: Per-owner nonce counter. `init_if_needed` creates it on",
+            "the first registration; subsequent registrations (after a deregister)",
+            "find it already initialized with an incremented `nonce` value.",
+            "",
+            "Space: 8 (discriminator) + 8 (nonce u64) = 16 bytes."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114,
+                  45,
+                  110,
+                  111,
+                  110,
+                  99,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "agent_profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner_nonce.nonce",
+                "account": "OwnerNonce"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "docs": [
+            "Finding #9: The agent's canonical vault PDA, owned by the Agent Vault",
+            "program. Seeds `[b\"vault\", authority]` match `InitializeVault` in the",
+            "vault program. Anchor enforces the seed constraint at deserialization,",
+            "so an attacker cannot substitute an unrelated Pubkey. The account is",
+            "passed as `UncheckedAccount` because the registry doesn't need to read",
+            "its state — it only needs the runtime to prove the address is the",
+            "correct cross-program derivation.",
+            "",
+            "The vault does not need to exist (initialize_vault may run later or",
+            "never); we only bind the stored vault_address to the canonical PDA."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "authority"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                58,
+                152,
+                159,
+                38,
+                133,
+                79,
+                251,
+                15,
+                87,
+                50,
+                154,
+                60,
+                143,
+                112,
+                72,
+                173,
+                150,
+                146,
+                57,
+                236,
+                63,
+                162,
+                74,
+                120,
+                90,
+                248,
+                41,
+                19,
+                87,
+                106,
+                1,
+                253
+              ]
+            }
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "description",
+          "type": "string"
+        },
+        {
+          "name": "category",
+          "type": "string"
+        },
+        {
+          "name": "capabilities",
+          "type": {
+            "vec": "string"
+          }
+        },
+        {
+          "name": "pricing_model",
+          "type": {
+            "defined": {
+              "name": "PricingModel"
+            }
+          }
+        },
+        {
+          "name": "pricing_amount",
+          "type": "u64"
+        },
+        {
+          "name": "accepted_tokens",
+          "type": {
+            "vec": "pubkey"
+          }
+        }
+      ]
+    },
+    {
+      "name": "stake_reputation",
+      "discriminator": [
+        104,
+        250,
+        157,
+        87,
+        16,
+        190,
+        180,
+        238
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "agent_profile"
+          ]
+        },
+        {
+          "name": "owner_nonce",
+          "docs": [
+            "ADR-097: Read-only nonce account for `agent_profile` PDA seed."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114,
+                  45,
+                  110,
+                  111,
+                  110,
+                  99,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "agent_profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner_nonce.nonce",
+                "account": "OwnerNonce"
+              }
+            ]
+          }
+        },
+        {
+          "name": "staking_pda",
+          "docs": [
+            "the system program transfer implicitly creates it. Minimum stake must",
+            "exceed rent exemption (~0.00089 SOL) to avoid garbage collection."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  112,
+                  117,
+                  116,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110,
+                  45,
+                  115,
+                  116,
+                  97,
+                  107,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "unstake_reputation",
+      "discriminator": [
+        221,
+        129,
+        253,
+        42,
+        124,
+        107,
+        139,
+        106
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "agent_profile"
+          ]
+        },
+        {
+          "name": "owner_nonce",
+          "docs": [
+            "ADR-097: Read-only nonce account for `agent_profile` PDA seed."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114,
+                  45,
+                  110,
+                  111,
+                  110,
+                  99,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "agent_profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner_nonce.nonce",
+                "account": "OwnerNonce"
+              }
+            ]
+          }
+        },
+        {
+          "name": "staking_pda",
+          "docs": [
+            "C4: Withdrawals use `invoke_signed(system_program::transfer)` with",
+            "these seeds as the signer. Direct lamport manipulation is illegal",
+            "here because the account is owned by the System Program, not this",
+            "program — only the owner can subtract lamports."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  112,
+                  117,
+                  116,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110,
+                  45,
+                  115,
+                  116,
+                  97,
+                  107,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "update_manifest",
+      "docs": [
+        "ADR-060: publish or rotate the off-chain capability manifest pointer.",
+        "ADR-092: domain-separated manifest hash to prevent cross-protocol sig replay.",
+        "",
+        "Args:",
+        "- `manifest_cid`: 64-byte pointer to off-chain manifest (IPFS CIDv1",
+        "string or Arweave tx ID), zero-padded. M5 resolution chose",
+        "`[u8; 64]` for CIDv1 + Arweave headroom.",
+        "- `manifest_raw_hash`: SHA-256 of the RFC-8785 canonical-JSON manifest",
+        "(before domain tagging). The on-chain program applies the domain",
+        "separator: `manifest_hash = sha256(MANIFEST_HASH_DOMAIN || manifest_raw_hash)`.",
+        "The client's ed25519 signature must cover this tagged hash.",
+        "- `manifest_signature`: Ed25519 signature over the domain-tagged hash",
+        "(`tagged_manifest_hash(manifest_raw_hash)`) by the agent's `authority`.",
+        "Verified via the paired ed25519-program sig-verify instruction",
+        "(standard Solana pattern — in-program ed25519 is prohibitively",
+        "expensive in compute units).",
+        "- `manifest_version`: packed semver (high byte = major, low byte = minor).",
+        "- `manifest_capability_names`: the full list of capability names",
+        "declared in the off-chain manifest. On-chain we assert",
+        "`agent_profile.capabilities ⊆ manifest_capability_names` per",
+        "ADR-060 §1 \"Relationship to existing\". The caller supplies the",
+        "list out-of-band because the manifest body itself is off-chain."
+      ],
+      "discriminator": [
+        232,
+        75,
+        222,
+        229,
+        60,
+        55,
+        168,
+        49
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "agent_profile"
+          ]
+        },
+        {
+          "name": "owner_nonce",
+          "docs": [
+            "ADR-097: Read-only nonce account for `agent_profile` PDA seed."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114,
+                  45,
+                  110,
+                  111,
+                  110,
+                  99,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "agent_profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner_nonce.nonce",
+                "account": "OwnerNonce"
+              }
+            ]
+          }
+        },
+        {
+          "name": "instructions_sysvar",
+          "docs": [
+            "canonical sysvar pubkey. Used to locate the paired ed25519-program",
+            "sig-verify instruction in the current transaction."
+          ],
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "manifest_cid",
+          "type": {
+            "array": [
+              "u8",
+              64
+            ]
+          }
+        },
+        {
+          "name": "manifest_raw_hash",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "manifest_signature",
+          "type": {
+            "array": [
+              "u8",
+              64
+            ]
+          }
+        },
+        {
+          "name": "manifest_version",
+          "type": "u16"
+        },
+        {
+          "name": "manifest_capability_names",
+          "type": {
+            "vec": "string"
+          }
+        }
+      ]
+    },
+    {
+      "name": "update_profile",
+      "discriminator": [
+        98,
+        67,
+        99,
+        206,
+        86,
+        115,
+        175,
+        1
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "agent_profile"
+          ]
+        },
+        {
+          "name": "owner_nonce",
+          "docs": [
+            "ADR-097: Read-only nonce account. Provides the nonce component for the",
+            "`agent_profile` PDA seed derivation."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114,
+                  45,
+                  110,
+                  111,
+                  110,
+                  99,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "agent_profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner_nonce.nonce",
+                "account": "OwnerNonce"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "name",
+          "type": {
+            "option": "string"
+          }
+        },
+        {
+          "name": "description",
+          "type": {
+            "option": "string"
+          }
+        },
+        {
+          "name": "category",
+          "type": {
+            "option": "string"
+          }
+        },
+        {
+          "name": "capabilities",
+          "type": {
+            "option": {
+              "vec": "string"
+            }
+          }
+        },
+        {
+          "name": "pricing_model",
+          "type": {
+            "option": {
+              "defined": {
+                "name": "PricingModel"
+              }
+            }
+          }
+        },
+        {
+          "name": "pricing_amount",
+          "type": {
+            "option": "u64"
+          }
+        },
+        {
+          "name": "accepted_tokens",
+          "type": {
+            "option": {
+              "vec": "pubkey"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "update_reputation",
+      "discriminator": [
+        194,
+        220,
+        43,
+        201,
+        54,
+        209,
+        49,
+        178
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "docs": [
+            "external seed anchor for `agent_profile` and constrained equal to",
+            "`agent_profile.authority` via `has_one = authority`."
+          ],
+          "relations": [
+            "agent_profile"
+          ]
+        },
+        {
+          "name": "owner_nonce",
+          "docs": [
+            "ADR-097: Read-only nonce account for `agent_profile` PDA seed.",
+            "Seeded by `[authority.key(), b\"owner-nonce\"]`."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114,
+                  45,
+                  110,
+                  111,
+                  110,
+                  99,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "agent_profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner_nonce.nonce",
+                "account": "OwnerNonce"
+              }
+            ]
+          }
+        },
+        {
+          "name": "settlement_authority",
+          "signer": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  116,
+                  116,
+                  108,
+                  101,
+                  109,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                227,
+                132,
+                12,
+                30,
+                9,
+                78,
+                44,
+                188,
+                135,
+                187,
+                145,
+                68,
+                5,
+                84,
+                82,
+                239,
+                90,
+                255,
+                29,
+                178,
+                208,
+                214,
+                104,
+                25,
+                104,
+                107,
+                82,
+                183,
+                124,
+                88,
+                179,
+                116
+              ]
+            }
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "reputation_delta",
+          "type": "i64"
+        },
+        {
+          "name": "task_completed",
+          "type": "bool"
+        },
+        {
+          "name": "earnings",
+          "type": "u64"
+        },
+        {
+          "name": "rating",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "update_status",
+      "discriminator": [
+        147,
+        215,
+        74,
+        174,
+        55,
+        191,
+        42,
+        0
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "agent_profile"
+          ]
+        },
+        {
+          "name": "owner_nonce",
+          "docs": [
+            "ADR-097: Read-only nonce account for `agent_profile` PDA seed."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114,
+                  45,
+                  110,
+                  111,
+                  110,
+                  99,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "agent_profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner_nonce.nonce",
+                "account": "OwnerNonce"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "new_status",
+          "type": {
+            "defined": {
+              "name": "AgentStatus"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "AgentProfile",
+      "discriminator": [
+        60,
+        227,
+        42,
+        24,
+        0,
+        87,
+        86,
+        205
+      ]
+    },
+    {
+      "name": "OwnerNonce",
+      "discriminator": [
+        44,
+        80,
+        115,
+        195,
+        32,
+        200,
+        29,
+        163
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "AgentDeregistered",
+      "discriminator": [
+        132,
+        69,
+        246,
+        19,
+        135,
+        65,
+        28,
+        134
+      ]
+    },
+    {
+      "name": "AgentMigrated",
+      "discriminator": [
+        58,
+        251,
+        115,
+        70,
+        18,
+        230,
+        95,
+        164
+      ]
+    },
+    {
+      "name": "AgentProfileUpdated",
+      "discriminator": [
+        37,
+        86,
+        36,
+        71,
+        59,
+        237,
+        6,
+        247
+      ]
+    },
+    {
+      "name": "AgentRegistered",
+      "discriminator": [
+        191,
+        78,
+        217,
+        54,
+        232,
+        100,
+        189,
+        85
+      ]
+    },
+    {
+      "name": "AgentSlashed",
+      "discriminator": [
+        120,
+        151,
+        39,
+        77,
+        227,
+        13,
+        229,
+        185
+      ]
+    },
+    {
+      "name": "AgentStatusUpdated",
+      "discriminator": [
+        196,
+        209,
+        177,
+        67,
+        67,
+        223,
+        225,
+        10
+      ]
+    },
+    {
+      "name": "ManifestUpdated",
+      "discriminator": [
+        105,
+        65,
+        152,
+        106,
+        54,
+        175,
+        253,
+        179
+      ]
+    },
+    {
+      "name": "ReputationDeltaProposed",
+      "discriminator": [
+        72,
+        60,
+        200,
+        150,
+        238,
+        216,
+        194,
+        252
+      ]
+    },
+    {
+      "name": "ReputationStaked",
+      "discriminator": [
+        12,
+        70,
+        73,
+        125,
+        30,
+        125,
+        6,
+        10
+      ]
+    },
+    {
+      "name": "ReputationUnstaked",
+      "discriminator": [
+        146,
+        173,
+        71,
+        160,
+        129,
+        111,
+        42,
+        162
+      ]
+    },
+    {
+      "name": "ReputationUpdated",
+      "discriminator": [
+        26,
+        36,
+        187,
+        150,
+        235,
+        90,
+        106,
+        89
+      ]
+    },
+    {
+      "name": "SuspensionCleared",
+      "discriminator": [
+        89,
+        41,
+        64,
+        20,
+        171,
+        221,
+        50,
+        215
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "NameTooLong",
+      "msg": "Agent name exceeds maximum length of 64 bytes"
+    },
+    {
+      "code": 6001,
+      "name": "DescriptionTooLong",
+      "msg": "Description exceeds maximum length of 256 bytes"
+    },
+    {
+      "code": 6002,
+      "name": "InvalidCapabilitiesCount",
+      "msg": "Invalid number of capabilities (must be 1-10)"
+    },
+    {
+      "code": 6003,
+      "name": "InvalidTokensCount",
+      "msg": "Invalid number of accepted tokens (must be 1-5)"
+    },
+    {
+      "code": 6004,
+      "name": "InvalidRating",
+      "msg": "Invalid rating (must be 0-5)"
+    },
+    {
+      "code": 6005,
+      "name": "UnauthorizedCaller",
+      "msg": "Unauthorized caller (must be settlement program for reputation updates)"
+    },
+    {
+      "code": 6006,
+      "name": "InvalidPDA",
+      "msg": "Invalid PDA derivation"
+    },
+    {
+      "code": 6007,
+      "name": "InvalidStatusTransition",
+      "msg": "Invalid status transition: Retired agents cannot be reactivated"
+    },
+    {
+      "code": 6008,
+      "name": "InvalidStakeAmount",
+      "msg": "Invalid stake amount (must be > 0)"
+    },
+    {
+      "code": 6009,
+      "name": "InsufficientStake",
+      "msg": "Insufficient staked amount for withdrawal"
+    },
+    {
+      "code": 6010,
+      "name": "CategoryTooLong",
+      "msg": "Category exceeds maximum length of 50 bytes"
+    },
+    {
+      "code": 6011,
+      "name": "WouldOrphanStakeAccount",
+      "msg": "Unstake would leave the stake account with a non-zero sub-rent-exempt balance, which would be garbage-collected and strand funds"
+    },
+    {
+      "code": 6012,
+      "name": "StakeBelowRentExempt",
+      "msg": "Stake amount is below the rent-exempt minimum for the staking PDA"
+    },
+    {
+      "code": 6013,
+      "name": "NotSuspended",
+      "msg": "clear_suspension requires status == Suspended and slash_count >= 3"
+    },
+    {
+      "code": 6014,
+      "name": "InvalidManifestSignature",
+      "msg": "Ed25519 signature over manifest_hash failed verification against the authority pubkey"
+    },
+    {
+      "code": 6015,
+      "name": "CapabilitySubsetViolation",
+      "msg": "On-chain capabilities are not a subset of the supplied manifest capability name list"
+    },
+    {
+      "code": 6016,
+      "name": "InvalidManifestVersion",
+      "msg": "Manifest version must be non-zero (packed semver: high=major, low=minor)"
+    },
+    {
+      "code": 6017,
+      "name": "MissingEd25519Instruction",
+      "msg": "update_manifest requires a paired Ed25519 precompile instruction in the same transaction"
+    },
+    {
+      "code": 6018,
+      "name": "Ed25519InstructionMismatch",
+      "msg": "The paired Ed25519 instruction does not match the supplied manifest_hash / manifest_signature / authority"
+    },
+    {
+      "code": 6019,
+      "name": "StakePresentOnDeregister",
+      "msg": "Cannot deregister while reputation stake is present; call unstake_reputation for the full amount first (SEC-4)"
+    },
+    {
+      "code": 6020,
+      "name": "ReputationDeltaOverflow",
+      "msg": "Reputation delta magnitude overflows i64 negation (delta == i64::MIN); governance must choose a valid slash magnitude (SEC-11)"
+    },
+    {
+      "code": 6021,
+      "name": "ReputationDeltaExceedsMax",
+      "msg": "Reputation delta magnitude exceeds MAX_DELTA_PER_CALL (10); split into smaller increments"
+    }
+  ],
+  "types": [
+    {
+      "name": "AgentDeregistered",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AgentMigrated",
+      "docs": [
+        "ADR-096: emitted when `migrate_agent_profile` successfully bumps the",
+        "schema version. Indexers can use this to track which accounts have",
+        "been migrated and alert when stragglers remain."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "old_version",
+            "type": "u8"
+          },
+          {
+            "name": "new_version",
+            "type": "u8"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AgentProfile",
+      "docs": [
+        "AgentProfile: The core account representing a registered agent.",
+        "",
+        "ADR-040: Account space is explicitly calculated as 1414 bytes",
+        "(1243 baseline + 162 bytes for the ADR-060 manifest fields:",
+        "manifest_cid 64 + manifest_hash 32 + manifest_signature 64 + manifest_version 2 = 162,",
+        "+ 1 byte for ADR-096 version: u8 + 8 bytes for ADR-097 registration_nonce: u64 = 1414).",
+        "",
+        "ADR-060 adds four manifest fields that point to an off-chain capability",
+        "manifest (IPFS CIDv1 or Arweave tx ID). The on-chain fields are the",
+        "integrity commitment; the manifest body is off-chain. M5 resolution:",
+        "`manifest_cid` is `[u8; 64]` to fit CIDv1 string encodings (≤ ~60 chars)",
+        "or Arweave 43-char base64url tx IDs with headroom. Unused bytes are",
+        "zero-padded; readers trim trailing 0x00.",
+        "",
+        "The existing `capabilities: Vec<String>` stays as a denormalized on-chain",
+        "search index (ADR-060 §1 \"Relationship\"); the manifest is the source of",
+        "truth. `update_manifest` re-validates the invariant",
+        "`capabilities ⊆ manifest.capabilities[].name`.",
+        "",
+        "ADR-097: `registration_nonce` is included in the PDA seed to prevent",
+        "Sybil reuse via close-then-reopen. The nonce is taken from the owner's",
+        "`OwnerNonce` account at registration time and incremented on deregister.",
+        "Zero-value default is valid (first registration uses nonce 0).",
+        "",
+        "ADR-096: `version` is the schema version for in-place migration. Set to",
+        "`0` on creation; incremented by `migrate_agent_profile`. New fields added",
+        "in future upgrades must use zero-value defaults so that the",
+        "`realloc::zero = true` constraint produces a valid initial state without",
+        "explicit writes."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "description",
+            "type": "string"
+          },
+          {
+            "name": "category",
+            "type": "string"
+          },
+          {
+            "name": "capabilities",
+            "type": {
+              "vec": "string"
+            }
+          },
+          {
+            "name": "pricing_model",
+            "type": {
+              "defined": {
+                "name": "PricingModel"
+              }
+            }
+          },
+          {
+            "name": "pricing_amount",
+            "type": "u64"
+          },
+          {
+            "name": "accepted_tokens",
+            "type": {
+              "vec": "pubkey"
+            }
+          },
+          {
+            "name": "vault_address",
+            "type": "pubkey"
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "AgentStatus"
+              }
+            }
+          },
+          {
+            "name": "reputation_score",
+            "type": "u64"
+          },
+          {
+            "name": "total_tasks_completed",
+            "type": "u64"
+          },
+          {
+            "name": "total_earnings",
+            "type": "u64"
+          },
+          {
+            "name": "avg_rating",
+            "type": "u8"
+          },
+          {
+            "name": "created_at",
+            "type": "i64"
+          },
+          {
+            "name": "updated_at",
+            "type": "i64"
+          },
+          {
+            "name": "reputation_stake",
+            "type": {
+              "defined": {
+                "name": "ReputationStake"
+              }
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "manifest_cid",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "manifest_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "manifest_signature",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "manifest_version",
+            "type": "u16"
+          },
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "registration_nonce",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AgentProfileUpdated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AgentRegistered",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "category",
+            "type": "string"
+          },
+          {
+            "name": "vault_address",
+            "type": "pubkey"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AgentSlashed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "slash_count",
+            "type": "u8"
+          },
+          {
+            "name": "suspended",
+            "type": "bool"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AgentStatus",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Active"
+          },
+          {
+            "name": "Paused"
+          },
+          {
+            "name": "Retired"
+          },
+          {
+            "name": "Suspended"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AgentStatusUpdated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "new_status",
+            "type": {
+              "defined": {
+                "name": "AgentStatus"
+              }
+            }
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ManifestUpdated",
+      "docs": [
+        "ADR-060: emitted when an agent publishes or rotates their off-chain",
+        "capability manifest pointer. Subscribers can use this to pin IPFS",
+        "content, refresh the capability index, or invalidate caches."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "manifest_cid",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "manifest_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "manifest_version",
+            "type": "u16"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OwnerNonce",
+      "docs": [
+        "ADR-097: Per-owner monotonic nonce counter.",
+        "",
+        "Seeded by `[authority.key().as_ref(), b\"owner-nonce\"]`.",
+        "Initialized to 0 on first `register_agent` (via `init_if_needed`).",
+        "Incremented by `deregister_agent` so subsequent registrations derive a",
+        "different `agent_profile` PDA, preventing Sybil address reuse."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "nonce",
+            "docs": [
+              "The current nonce value. Used as part of the `agent_profile` PDA seed",
+              "on `register_agent`. Incremented on `deregister_agent`."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PricingModel",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "PerTask"
+          },
+          {
+            "name": "PerHour"
+          },
+          {
+            "name": "PerToken"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ReputationDeltaProposed",
+      "docs": [
+        "ADR-094: emitted when `propose_reputation_delta` successfully applies a",
+        "validated delta. Subscribers (indexers, governance dashboards) can track",
+        "every reputation change through this single event, regardless of the",
+        "originating source (Settlement, future slashing circuits, etc.)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "delta",
+            "type": "i16"
+          },
+          {
+            "name": "reason",
+            "type": "u8"
+          },
+          {
+            "name": "old_score",
+            "type": "u8"
+          },
+          {
+            "name": "new_score",
+            "type": "u8"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ReputationStake",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "staked_amount",
+            "type": "u64"
+          },
+          {
+            "name": "slash_count",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ReputationStaked",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "total_staked",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ReputationUnstaked",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "remaining_staked",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ReputationUpdated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "new_reputation_score",
+            "type": "u64"
+          },
+          {
+            "name": "reputation_delta",
+            "type": "i64"
+          },
+          {
+            "name": "task_completed",
+            "type": "bool"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SuspensionCleared",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "new_reputation_score",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    }
+  ]
+}
