@@ -6,7 +6,7 @@
 
 - **Started**: 2026-04-25 with 4 parallel sub-audits (on-chain, off-chain TS, ADR governance, tests/CI).
 - **Findings inventoried**: 75 with stable `AUD-NNN` IDs.
-- **Closed in this cycle**: **21** (5 Critical / 4 High / 3 Medium / 4 Low / 1 Info / 4 Architecture).
+- **Closed in this cycle**: **25** (5 Critical / 6 High / 3 Medium / 5 Low / 1 Info / 5 Architecture).
 - **All 5 Critical findings are Fixed**.
 - **Branch**: `chore/architecture-audit-2026-04-25` (22 commits, never pushed).
 - **Tests at HEAD**: 137 Rust unit, 110 TS Anchor integration, 180 MCP server, 19 SDK client.
@@ -23,14 +23,15 @@
 | AUD-004 | Reputation laundering via self-Suspended + clear_suspension | `31586e9` |
 | AUD-005 | `initialize_protocol_config` permissionless front-run | `5aa2f85` |
 
-### High (4 closed)
+### High (6 closed)
 
 | ID | Title | Commit |
 |---|---|---|
 | AUD-008 | Vault user-supplied `profile_nonce` | `a1c40da` |
+| AUD-009 | `accept_task` no deadline check (grief vector) | `4fa7443` |
 | AUD-011 | SDK uses `BigInt64Array` for `u64` nonce | `e262db9` |
 | AUD-012 | SDK PDA tests assert shape only, not equivalence | `e262db9` |
-| AUD-014 | Tool-count contradiction (23/20/24) | `22dc7a7` |
+| AUD-014 | Tool-count contradiction (23/20/24) | `22dc7a7` (+ `edf2117` site-doc follow-up) |
 | AUD-016 | `ANCHOR_WALLET` env var ignored | `9213c1a` |
 
 ### Medium (3 closed)
@@ -41,13 +42,21 @@
 | AUD-029 | `/metrics` binds 0.0.0.0 with no auth | `440ecac` |
 | AUD-031 | Redundant `createRpc()` call | `3a77002` |
 
-### Low (4 closed; 1 reclassified)
+### Low (5 closed; 1 reclassified)
 
 | ID | Title | Commit |
 |---|---|---|
 | AUD-032 | `ReputationUpdateScheduled` event misnamed | `9213c1a` |
+| AUD-039 | Indexer reconnect peeks private API | `f01d841` (heartbeat ping replaces `_rpcWebSocket`) |
 | AUD-040 | Dead capability constant | **Wontfix** — verified actually used by 4 settlement actions + a test |
 | (more low items pending) | | |
+
+### Architecture / quality (added this batch)
+
+| ID | Title | Commit |
+|---|---|---|
+| AUD-055 | Wall-clock setTimeout waits in tests | `0c7c794` (settlement.ts), `0c48e0e` (agent-registry.ts) |
+| AUD-072 follow-up | `execute_program_call` in SECURITY_AUDIT/AUDIT_SCOPE | `9fb6278` (full subsection rewrite) |
 
 ### Architecture / governance (5 closed)
 
