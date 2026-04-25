@@ -80,3 +80,6 @@ governance/attestation-log/
 .claude/helpers/*.mjs
 .claude/statusline.mjs
 .claude/statusline.sh
+.claude/scheduled_tasks.lock
+.claude/session-env/
+.claude/tasks/
