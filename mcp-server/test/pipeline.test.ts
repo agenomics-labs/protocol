@@ -90,9 +90,9 @@ describe("ADR-059 §5 InMemoryIdempotencyStore", () => {
     release!(ok(42));
     const [r1, r2, r3] = await Promise.all([p1, p2, p3]);
 
-    assert.deepEqual(r1, { ok: true, data: 42 });
-    assert.deepEqual(r2, { ok: true, data: 42 });
-    assert.deepEqual(r3, { ok: true, data: 42 });
+    assert.deepEqual(r1, { ok: true, value: 42 });
+    assert.deepEqual(r2, { ok: true, value: 42 });
+    assert.deepEqual(r3, { ok: true, value: 42 });
     assert.equal(invocations, 1);
     assert.equal(store.size(), 1);
   });
@@ -116,8 +116,8 @@ describe("ADR-059 §5 InMemoryIdempotencyStore", () => {
       store.acquire("b", fnB),
     ]);
 
-    assert.deepEqual(rA, { ok: true, data: "A" });
-    assert.deepEqual(rB, { ok: true, data: "B" });
+    assert.deepEqual(rA, { ok: true, value: "A" });
+    assert.deepEqual(rB, { ok: true, value: "B" });
     assert.equal(invocA, 1);
     assert.equal(invocB, 1);
     assert.equal(store.size(), 2);
@@ -133,19 +133,19 @@ describe("ADR-059 §5 InMemoryIdempotencyStore", () => {
     };
 
     const r1 = await store.acquire("k", fn);
-    assert.deepEqual(r1, { ok: true, data: 1 });
+    assert.deepEqual(r1, { ok: true, value: 1 });
     assert.equal(store.size(), 1);
 
     // Before TTL expiry — cache hit, same result, same count.
     const r1b = await store.acquire("k", fn);
-    assert.deepEqual(r1b, { ok: true, data: 1 });
+    assert.deepEqual(r1b, { ok: true, value: 1 });
     assert.equal(invocations, 1);
 
     // Wait past TTL so the entry is evicted.
     await new Promise((resolve) => setTimeout(resolve, 80));
 
     const r2 = await store.acquire("k", fn);
-    assert.deepEqual(r2, { ok: true, data: 2 }, "should re-run after TTL");
+    assert.deepEqual(r2, { ok: true, value: 2 }, "should re-run after TTL");
     assert.equal(invocations, 2);
     assert.equal(store.size(), 1);
   });
@@ -194,9 +194,9 @@ describe("ADR-059 §5 RedisIdempotencyStore (ioredis-mock)", () => {
     release!(ok(42));
     const [r1, r2, r3] = await Promise.all([p1, p2, p3]);
 
-    assert.deepEqual(r1, { ok: true, data: 42 });
-    assert.deepEqual(r2, { ok: true, data: 42 });
-    assert.deepEqual(r3, { ok: true, data: 42 });
+    assert.deepEqual(r1, { ok: true, value: 42 });
+    assert.deepEqual(r2, { ok: true, value: 42 });
+    assert.deepEqual(r3, { ok: true, value: 42 });
     assert.equal(invocations, 1);
   });
 
@@ -216,10 +216,10 @@ describe("ADR-059 §5 RedisIdempotencyStore (ioredis-mock)", () => {
     };
 
     const r1 = await store.acquire("k", fn);
-    assert.deepEqual(r1, { ok: true, data: { answer: 1 } });
+    assert.deepEqual(r1, { ok: true, value: { answer: 1 } });
 
     const r2 = await store.acquire("k", fn);
-    assert.deepEqual(r2, { ok: true, data: { answer: 1 } }, "cache hit");
+    assert.deepEqual(r2, { ok: true, value: { answer: 1 } }, "cache hit");
     assert.equal(invocations, 1, "fn only ran on the first acquire");
   });
 
@@ -240,12 +240,12 @@ describe("ADR-059 §5 RedisIdempotencyStore (ioredis-mock)", () => {
     };
 
     const r1 = await store.acquire("k", fn);
-    assert.deepEqual(r1, { ok: true, data: 1 });
+    assert.deepEqual(r1, { ok: true, value: 1 });
 
     await new Promise((resolve) => setTimeout(resolve, 80));
 
     const r2 = await store.acquire("k", fn);
-    assert.deepEqual(r2, { ok: true, data: 2 }, "should re-run after TTL");
+    assert.deepEqual(r2, { ok: true, value: 2 }, "should re-run after TTL");
     assert.equal(invocations, 2);
   });
 
@@ -275,7 +275,7 @@ describe("ADR-059 §5 RedisIdempotencyStore (ioredis-mock)", () => {
     assert.equal(pending, null, "pending marker should be released");
 
     const r2 = await store.acquire("k", flakyFn);
-    assert.deepEqual(r2, { ok: true, data: "ok" });
+    assert.deepEqual(r2, { ok: true, value: "ok" });
     assert.equal(attempts, 2, "handler was re-entered after the first throw");
   });
 
@@ -1211,7 +1211,7 @@ describe("capability-gated preflight wiring", () => {
     const r = await wrapped.handler(ctx, { foo: "bar" });
 
     assert.equal(r.ok, true);
-    if (r.ok) assert.equal(r.data, 1);
+    if (r.ok) assert.equal(r.value, 1);
     assert.equal(calls.count, 1);
   });
 
@@ -1330,7 +1330,7 @@ describe("ADR-059 §4 sendAndConfirmWithBlockhashExpiry", () => {
     assert.equal(r.ok, true, "wrapper should resolve on retry success");
     assert.equal(buildAndSignCalls, 2, "buildAndSign called per attempt");
     assert.equal(sendCalls, 2);
-    if (r.ok) assert.equal(typeof r.data, "string");
+    if (r.ok) assert.equal(typeof r.value, "string");
   });
 
   it("gives up with RPC_ERROR after maxRetries exhausted", async () => {

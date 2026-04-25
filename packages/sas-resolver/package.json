@@ -34,6 +34,7 @@
   ],
   "license": "UNLICENSED",
   "dependencies": {
+    "@agenomics/action-runtime": "*",
     "zod": "^3.23.8"
   },
   "peerDependencies": {

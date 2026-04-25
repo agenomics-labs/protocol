@@ -104,7 +104,7 @@ async function runClusterHealth(deps: PreflightDeps): Promise<Result<void>> {
     // small and positive. We only fail if it somehow goes negative (time
     // travel on the RPC side) or if it exceeds the safety floor.
     if (lag < 0 || lag > CLUSTER_HEALTH_MAX_SLOT_LAG) {
-      const result = err<void>({
+      const result = err({
         code: "PREFLIGHT_FAILED",
         message: `cluster_health: slot progress out of range (${lag})`,
         details: { gate: "cluster_health", lag },
@@ -114,7 +114,7 @@ async function runClusterHealth(deps: PreflightDeps): Promise<Result<void>> {
     }
 
     if (samples.length === 0) {
-      const result = err<void>({
+      const result = err({
         code: "PREFLIGHT_FAILED",
         message: "cluster_health: no recent performance samples",
         details: { gate: "cluster_health" },
@@ -125,7 +125,7 @@ async function runClusterHealth(deps: PreflightDeps): Promise<Result<void>> {
 
     const sample = samples[0];
     if (sample.numSlots === 0n) {
-      const result = err<void>({
+      const result = err({
         code: "PREFLIGHT_FAILED",
         message: "cluster_health: sample window reported 0 slots",
         details: { gate: "cluster_health" },
@@ -136,7 +136,7 @@ async function runClusterHealth(deps: PreflightDeps): Promise<Result<void>> {
 
     const txPerSlot = Number(sample.numTransactions) / Number(sample.numSlots);
     if (txPerSlot < CLUSTER_HEALTH_MIN_TX_PER_SLOT) {
-      const result = err<void>({
+      const result = err({
         code: "PREFLIGHT_FAILED",
         message: `cluster_health: tx/slot below floor (${txPerSlot.toFixed(2)})`,
         details: { gate: "cluster_health", txPerSlot },
