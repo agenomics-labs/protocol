@@ -40,3 +40,10 @@ The 50-byte limit aligns with the space reserved in ADR-040's explicit account s
 - `programs/aep/src/instructions/update_profile.rs` -- added `require!(category.len() <= 50, ...)`
 - `programs/aep/src/errors.rs` -- added `CategoryTooLong` variant to `AepError`
 - `tests/agent_registration.ts` -- added test for category exceeding 50 characters
+
+## Revisions
+
+- 2026-04-25 — Files Changed citation refers to a pre-ADR-049 mono-program
+  layout (`programs/aep/...` / `programs/vault/...`); current code lives at
+  `programs/agent-registry/src/{errors.rs:26,lib.rs:55,126}` after the
+  multi-program split. AUD-2026-04-25 / drift matrix §5.

@@ -52,3 +52,10 @@ Each field size is documented inline in the constant definition to make future f
 - `programs/aep/src/state/agent.rs` -- replaced `ACCOUNT_SPACE` constant with explicit 1243-byte sum
 - `programs/aep/src/instructions/register_agent.rs` -- updated `space` parameter in `init` constraint
 - `tests/agent_registration.ts` -- updated expected account size in test assertions
+
+## Revisions
+
+- 2026-04-25 — Files Changed citation refers to a pre-ADR-049 mono-program
+  layout (`programs/aep/...` / `programs/vault/...`); current code lives at
+  `programs/agent-registry/src/state.rs` after the multi-program split.
+  AUD-2026-04-25 / drift matrix §5.

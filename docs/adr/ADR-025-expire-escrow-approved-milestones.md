@@ -44,3 +44,10 @@ The provider is guaranteed payment for all work the client has already approved,
 - `programs/settlement/src/instructions/expire_escrow.rs` -- milestone iteration and split payout logic
 - `programs/settlement/src/contexts/expire_escrow.rs` -- add `provider_token_account` to context
 - `tests/settlement/expire-approved-milestones.test.ts` -- new test covering partial approval + expiry
+
+## Revisions
+
+- 2026-04-25 — Files Changed citation refers to a pre-ADR-049 mono-program
+  layout (`programs/aep/...` / `programs/vault/...`); current code lives at
+  `programs/settlement/src/instructions/escrow.rs:376` after the multi-program
+  split. AUD-2026-04-25 / drift matrix §5.

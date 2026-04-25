@@ -41,3 +41,10 @@ This ensures that after dispute resolution the escrow state is fully consistent 
 - `programs/settlement/src/instructions/resolve_dispute.rs` -- add `released_amount` update and invariant check
 - `programs/settlement/src/error.rs` -- add `BookkeepingMismatch` error variant
 - `tests/settlement/resolve-dispute-bookkeeping.test.ts` -- new test verifying `released_amount` after resolution
+
+## Revisions
+
+- 2026-04-25 — Files Changed citation refers to a pre-ADR-049 mono-program
+  layout (`programs/aep/...` / `programs/vault/...`); current code lives at
+  `programs/settlement/src/instructions/dispute.rs:27` after the multi-program
+  split. AUD-2026-04-25 / drift matrix §5.

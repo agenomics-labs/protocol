@@ -40,3 +40,10 @@ This is performed in the `remove_token_allowlist` handler immediately after the 
 
 - `programs/aep/src/instructions/manage_allowlist.rs` -- added `vault.token_spend_records.retain(|r| r.mint != token_mint)` in `remove_token_allowlist`
 - `tests/vault_allowlist.ts` -- added test verifying spend records are cleaned on token removal
+
+## Revisions
+
+- 2026-04-25 — Files Changed citation refers to a pre-ADR-049 mono-program
+  layout (`programs/aep/...` / `programs/vault/...`); current code lives at
+  `programs/agent-vault/src/instructions.rs` (find the `retain` call) after
+  the multi-program split. AUD-2026-04-25 / drift matrix §5.
