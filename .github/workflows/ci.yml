@@ -11,7 +11,7 @@ jobs:
     name: Rust Check & Test
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
 
       - name: Verify preinstalled Rust toolchain
         # ADR-105: self-hosted runner ships with stable + nightly toolchains
@@ -25,7 +25,7 @@ jobs:
           rustup toolchain list
 
       - name: Cache cargo registry & build
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # pin v5 (AUD-406)
         with:
           path: |
             ~/.cargo/registry
@@ -52,7 +52,7 @@ jobs:
     name: Security Audit
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
 
       - name: Verify preinstalled Rust toolchain
         # ADR-105: self-hosted runner ships with stable + nightly toolchains
@@ -66,7 +66,7 @@ jobs:
           rustup toolchain list
 
       - name: Cache cargo registry
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # pin v5 (AUD-406)
         with:
           path: |
             ~/.cargo/registry
@@ -100,9 +100,9 @@ jobs:
     # under `target/types/` before running `tsc --noEmit`.
     needs: anchor-build
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # pin v6 (AUD-406)
         with:
           node-version: "20"
           cache: "npm"
@@ -113,7 +113,7 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       - name: Download Anchor-generated TS types
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # pin v8 (AUD-406)
         with:
           name: anchor-types
           path: target/types
@@ -157,8 +157,8 @@ jobs:
     name: TypeScript Check (indexer)
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # pin v6 (AUD-406)
         with:
           node-version: "20"
           cache: "npm"
@@ -178,8 +178,8 @@ jobs:
     name: TypeScript Check + Tests (x402-relay)
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # pin v6 (AUD-406)
         with:
           node-version: "20"
           cache: "npm"
@@ -199,8 +199,8 @@ jobs:
     name: TypeScript Check (capability-manifest-validator)
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # pin v6 (AUD-406)
         with:
           node-version: "20"
           cache: "npm"
@@ -221,8 +221,8 @@ jobs:
     name: TypeScript Check (sas-resolver)
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # pin v6 (AUD-406)
         with:
           node-version: "20"
           cache: "npm"
@@ -254,13 +254,13 @@ jobs:
     # resolves once `target/types/agent_registry.ts` is on disk.
     needs: anchor-build
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # pin v6 (AUD-406)
         with:
           node-version: "20"
           cache: "npm"
       - name: Download Anchor-generated TS types
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # pin v8 (AUD-406)
         with:
           name: anchor-types
           path: target/types
@@ -293,8 +293,8 @@ jobs:
     name: Workspace build-order check
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # pin v6 (AUD-406)
         with:
           node-version: "20"
           cache: "npm"
@@ -321,8 +321,8 @@ jobs:
     name: Lockfile determinism check
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # pin v6 (AUD-406)
         with:
           node-version: "20"
       - name: npm ci from clean clone (must match lockfile exactly)
@@ -348,14 +348,14 @@ jobs:
     name: Secret Scan
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
         with:
           # TruffleHog needs the commit history to diff against `base`.
           fetch-depth: 0
 
       - name: TruffleHog (PR diff)
         if: github.event_name == 'pull_request'
-        uses: trufflesecurity/trufflehog@main
+        uses: trufflesecurity/trufflehog@3fc0c2aa6648d54242e4af6fbfde0701796e4fb0 # pin main snapshot 2026-04-26 (AUD-406; vendor planned)
         with:
           path: ./
           base: ${{ github.event.pull_request.base.sha }}
@@ -364,7 +364,7 @@ jobs:
 
       - name: TruffleHog (full history on main)
         if: github.event_name == 'push'
-        uses: trufflesecurity/trufflehog@main
+        uses: trufflesecurity/trufflehog@3fc0c2aa6648d54242e4af6fbfde0701796e4fb0 # pin main snapshot 2026-04-26 (AUD-406; vendor planned)
         with:
           path: ./
           extra_args: --results=verified,unknown
@@ -392,7 +392,7 @@ jobs:
       SOLANA_VERSION: v3.1.13
       ANCHOR_VERSION: 0.31.1
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
 
       - name: Verify preinstalled Rust toolchain
         # ADR-105: self-hosted runner ships with stable + nightly toolchains
@@ -406,7 +406,7 @@ jobs:
           rustup toolchain list
 
       - name: Cache cargo registry & target
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # pin v5 (AUD-406)
         with:
           path: |
             ~/.cargo/registry
@@ -417,7 +417,7 @@ jobs:
 
       - name: Cache solana CLI
         id: cache-solana
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # pin v5 (AUD-406)
         with:
           path: ~/.local/share/solana
           key: ${{ runner.os }}-solana-${{ env.SOLANA_VERSION }}
@@ -437,7 +437,7 @@ jobs:
 
       - name: Cache anchor CLI
         id: cache-anchor
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # pin v5 (AUD-406)
         with:
           path: ~/.cargo/bin/anchor
           key: ${{ runner.os }}-anchor-${{ env.ANCHOR_VERSION }}
@@ -463,7 +463,7 @@ jobs:
 
       - name: Upload generated IDL
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # pin v7 (AUD-406)
         with:
           name: anchor-idl
           path: target/idl/*.json
@@ -476,7 +476,7 @@ jobs:
       # repeat the full anchor-build (~6-10 min) themselves.
       - name: Upload generated Anchor TS types
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # pin v7 (AUD-406)
         with:
           name: anchor-types
           path: target/types/*.ts
@@ -515,7 +515,7 @@ jobs:
       SOLANA_VERSION: v3.1.13
       ANCHOR_VERSION: 0.31.1
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
 
       - name: Verify preinstalled Rust toolchain
         # ADR-105: self-hosted runner ships with stable + nightly toolchains
@@ -529,7 +529,7 @@ jobs:
           rustup toolchain list
 
       - name: Cache cargo registry & target
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # pin v5 (AUD-406)
         with:
           path: |
             ~/.cargo/registry
@@ -540,7 +540,7 @@ jobs:
 
       - name: Cache solana CLI
         id: cache-solana
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # pin v5 (AUD-406)
         with:
           path: ~/.local/share/solana
           key: ${{ runner.os }}-solana-${{ env.SOLANA_VERSION }}
@@ -560,7 +560,7 @@ jobs:
 
       - name: Cache anchor CLI
         id: cache-anchor
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # pin v5 (AUD-406)
         with:
           path: ~/.cargo/bin/anchor
           key: ${{ runner.os }}-anchor-${{ env.ANCHOR_VERSION }}

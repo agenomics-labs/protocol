@@ -35,7 +35,7 @@ jobs:
     outputs:
       tag_version: ${{ steps.meta.outputs.tag_version }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
 
       - name: Extract tag version
         id: meta
@@ -59,7 +59,7 @@ jobs:
           fi
           echo "Both packages at $tag."
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # pin v6 (AUD-406)
         with:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
@@ -88,9 +88,9 @@ jobs:
     permissions:
       contents: write     # for creating the GitHub Release
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # pin v6 (AUD-406)
         with:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
@@ -120,7 +120,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # pin v2 (AUD-406)
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
