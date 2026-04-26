@@ -1,0 +1,228 @@
+# Dependabot configuration — implements ADR-114
+# Three ecosystems: cargo, npm (workspace root + leaf services), github-actions.
+# Weekly cadence, labeled `dependencies`, direct-only updates, security patches
+# grouped into one PR per ecosystem per week. No ignore list (visibility is the
+# point). No auto-merge — every PR goes through the normal CI gate; revisit
+# once ADR-115 lands.
+# References:
+#   - docs/adr/ADR-114-dependabot-dependency-hygiene.md
+#   - docs/adr/ADR-089-reproducible-installs.md (lockfile canon — drives
+#     versioning-strategy choice below)
+#   - docs/adr/ADR-115-ci-blocking-security-gates.md (companion gate)
+
+version: 2
+updates:
+  # ---------------------------------------------------------------------------
+  # Cargo workspace — root Cargo.toml + on-chain programs
+  # (agent-registry, agent-vault, settlement). Workspace inheritance means a
+  # single root entry covers transitive program crates; their Cargo.toml files
+  # do not need their own Dependabot entries.
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "rust"
+    reviewers:
+      - "agenomics-labs/core"
+    versioning-strategy: "increase"
+    # Direct-only — no transitive churn noise.
+    allow:
+      - dependency-type: "direct"
+    groups:
+      security-patches:
+        applies-to: security-updates
+        patterns:
+          - "*"
+
+  # ---------------------------------------------------------------------------
+  # npm — root workspace
+  # versioning-strategy: increase (per ADR-089, root workspace bumps lockfile)
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "javascript"
+    reviewers:
+      - "agenomics-labs/core"
+    versioning-strategy: "increase"
+    allow:
+      - dependency-type: "direct"
+    groups:
+      security-patches:
+        applies-to: security-updates
+        patterns:
+          - "*"
+
+  # ---------------------------------------------------------------------------
+  # npm — leaf services (versioning-strategy: increase-if-necessary, so leaf
+  # lockfile pins are preserved unless a security/range bump forces a change)
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: "npm"
+    directory: "/mcp-server"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "javascript"
+    reviewers:
+      - "agenomics-labs/core"
+    versioning-strategy: "increase-if-necessary"
+    allow:
+      - dependency-type: "direct"
+    groups:
+      security-patches:
+        applies-to: security-updates
+        patterns:
+          - "*"
+
+  - package-ecosystem: "npm"
+    directory: "/src/indexer"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "javascript"
+    reviewers:
+      - "agenomics-labs/core"
+    versioning-strategy: "increase-if-necessary"
+    allow:
+      - dependency-type: "direct"
+    groups:
+      security-patches:
+        applies-to: security-updates
+        patterns:
+          - "*"
+
+  - package-ecosystem: "npm"
+    directory: "/src/x402-relay"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "javascript"
+    reviewers:
+      - "agenomics-labs/core"
+    versioning-strategy: "increase-if-necessary"
+    allow:
+      - dependency-type: "direct"
+    groups:
+      security-patches:
+        applies-to: security-updates
+        patterns:
+          - "*"
+
+  - package-ecosystem: "npm"
+    directory: "/sdk/client"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "javascript"
+    reviewers:
+      - "agenomics-labs/core"
+    versioning-strategy: "increase-if-necessary"
+    allow:
+      - dependency-type: "direct"
+    groups:
+      security-patches:
+        applies-to: security-updates
+        patterns:
+          - "*"
+
+  - package-ecosystem: "npm"
+    directory: "/sdk/idl"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "javascript"
+    reviewers:
+      - "agenomics-labs/core"
+    versioning-strategy: "increase-if-necessary"
+    allow:
+      - dependency-type: "direct"
+    groups:
+      security-patches:
+        applies-to: security-updates
+        patterns:
+          - "*"
+
+  - package-ecosystem: "npm"
+    directory: "/packages/capability-manifest-validator"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "javascript"
+    reviewers:
+      - "agenomics-labs/core"
+    versioning-strategy: "increase-if-necessary"
+    allow:
+      - dependency-type: "direct"
+    groups:
+      security-patches:
+        applies-to: security-updates
+        patterns:
+          - "*"
+
+  - package-ecosystem: "npm"
+    directory: "/packages/sas-resolver"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "javascript"
+    reviewers:
+      - "agenomics-labs/core"
+    versioning-strategy: "increase-if-necessary"
+    allow:
+      - dependency-type: "direct"
+    groups:
+      security-patches:
+        applies-to: security-updates
+        patterns:
+          - "*"
+
+  # ---------------------------------------------------------------------------
+  # GitHub Actions — surface bumps for actions pinned by major tag (S-xcut-06)
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "ci"
+    reviewers:
+      - "agenomics-labs/core"
+    groups:
+      security-patches:
+        applies-to: security-updates
+        patterns:
+          - "*"
