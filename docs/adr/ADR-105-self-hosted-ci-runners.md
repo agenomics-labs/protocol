@@ -244,6 +244,19 @@ journalctl --user -u gh-runner.service -n 50 --no-pager
   jobs)
 - `.github/workflows/shellcheck.yml` — pattern for installing a missing
   binary on the runner without sudo
+- `docs/runbooks/CI-runner-maintenance.md` — recurring maintenance
+  tasks (action-tarball pre-cache, cache invalidation, health checks)
+- `scripts/runner-precache-actions.sh` — pre-populates the runner's
+  `_work/_actions/` cache from `github.com/<owner>/<repo>/archive/<ref>.tar.gz`
+  to mitigate `api.github.com` flakes (AUD-406)
 - GitHub Actions docs: <https://docs.github.com/en/actions/hosting-your-own-runners>
 - Security model for self-hosted runners:
   <https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/about-self-hosted-runners#self-hosted-runner-security>
+
+## Revisions
+
+- 2026-04-25 — AUD-406: added `scripts/runner-precache-actions.sh` and
+  `docs/runbooks/CI-runner-maintenance.md` to mitigate the recurring
+  ~60% `api.github.com` tarball-fetch flake rate. Operators run the
+  pre-cache after every runner image upgrade and after any
+  `_work/_actions/` cache invalidation.
