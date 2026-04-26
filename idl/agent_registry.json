@@ -1956,7 +1956,7 @@
         "between `reputation_score` and `created_at`), a clean removal would shift",
         "every subsequent field's serialization offset and silently corrupt every",
         "existing account on upgrade. We therefore retain a single 17-byte",
-        "`_reserved_aud007` array of equivalent total size (8 + 8 + 1) at the same",
+        "`__padding_aud007` array of equivalent total size (8 + 8 + 1) at the same",
         "position to preserve the binary layout, while removing the fields from the",
         "public API. Future schema work (governance-owned rating ix, telemetry",
         "rework) MAY consume these reserved bytes via a dedicated migration; until",
@@ -2046,7 +2046,7 @@
             "type": "u64"
           },
           {
-            "name": "_reserved_aud007",
+            "name": "__padding_aud007",
             "docs": [
               "AUD-007 (PR-Q) layout-preserving padding.",
               "",

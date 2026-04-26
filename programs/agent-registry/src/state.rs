@@ -37,7 +37,7 @@ pub const MIGRATION_HEADROOM: usize = 64;
 /// between `reputation_score` and `created_at`), a clean removal would shift
 /// every subsequent field's serialization offset and silently corrupt every
 /// existing account on upgrade. We therefore retain a single 17-byte
-/// `_reserved_aud007` array of equivalent total size (8 + 8 + 1) at the same
+/// `__padding_aud007` array of equivalent total size (8 + 8 + 1) at the same
 /// position to preserve the binary layout, while removing the fields from the
 /// public API. Future schema work (governance-owned rating ix, telemetry
 /// rework) MAY consume these reserved bytes via a dedicated migration; until
@@ -89,7 +89,7 @@ pub struct AgentProfile {
     /// The bytes carry no semantics and are not read by any instruction.
     /// Future PRs MAY repurpose this region via an explicit migration with a
     /// version bump.
-    pub _reserved_aud007: [u8; 17],
+    pub __padding_aud007: [u8; 17],
     pub created_at: i64,
     pub updated_at: i64,
     pub reputation_stake: ReputationStake,
@@ -125,7 +125,7 @@ impl AgentProfile {
     /// ADR-097 addition: registration_nonce u64 = 8 bytes.
     /// AUD-004 addition: cleared_count u8 = 1 byte.
     /// AUD-007 (PR-Q): replaced 17 bytes (8 + 8 + 1) of dangling fields with a
-    /// 17-byte `_reserved_aud007: [u8; 17]` padding array. Net delta = 0.
+    /// 17-byte `__padding_aud007: [u8; 17]` padding array. Net delta = 0.
     /// Total SPACE: 1415 bytes (unchanged across PR-Q on purpose — the
     /// padding preserves the on-disk layout for existing accounts).
     ///
