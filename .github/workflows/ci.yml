@@ -355,7 +355,7 @@ jobs:
 
       - name: TruffleHog (PR diff)
         if: github.event_name == 'pull_request'
-        uses: trufflesecurity/trufflehog@3fc0c2aa6648d54242e4af6fbfde0701796e4fb0 # pin main snapshot 2026-04-26 (AUD-406; vendor planned)
+        uses: ./.github/actions/trufflehog # vendored composite — see .github/actions/trufflehog/UPSTREAM (AUD-406)
         with:
           path: ./
           base: ${{ github.event.pull_request.base.sha }}
@@ -364,7 +364,7 @@ jobs:
 
       - name: TruffleHog (full history on main)
         if: github.event_name == 'push'
-        uses: trufflesecurity/trufflehog@3fc0c2aa6648d54242e4af6fbfde0701796e4fb0 # pin main snapshot 2026-04-26 (AUD-406; vendor planned)
+        uses: ./.github/actions/trufflehog # vendored composite — see .github/actions/trufflehog/UPSTREAM (AUD-406)
         with:
           path: ./
           extra_args: --results=verified,unknown
