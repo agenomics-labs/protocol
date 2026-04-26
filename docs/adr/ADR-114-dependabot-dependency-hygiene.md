@@ -1,7 +1,7 @@
 # ADR-114: Dependabot-based automated dependency hygiene
 
 ## Status
-Proposed
+Accepted
 
 ## Date
 2026-04-24
@@ -60,3 +60,11 @@ Key policy points:
 - `docs/ARCHITECTURE_REAUDIT_2026-05.md` R-xcut-03.
 - `docs/adr/ADR-089-reproducible-installs.md` (lockfile canon).
 - `docs/adr/ADR-115-ci-blocking-security-gates.md` (companion).
+
+## Revisions
+
+- 2026-04-26 — Implemented: .github/dependabot.yml landed. Cargo +
+  npm + github-actions ecosystems on weekly cadence with grouped
+  security patches. Major bumps for Anchor / web3.js / better-sqlite3
+  / React / Tailwind deferred per the dep-tier policy in
+  AUDIT-STATUS-2026-04-26.md.
