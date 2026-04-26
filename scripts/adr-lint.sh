@@ -128,6 +128,32 @@ is_meta_adr() {
   return 1
 }
 
+# Known mega-ADRs that bundle multiple sub-decisions and don't fit the
+# strict 5-section template (Status/Date/Context/Decision/Consequences).
+# Documented exception, narrowly scoped: ADR-050 ("Final Audit Polish")
+# packages nine independent sub-decisions, each with their own internal
+# Summary/Fixes/Resolution structure, rather than a single Context +
+# Consequences pair. Splitting it into ADR-123..131 is a separate
+# overhaul tracked outside this lint cleanup. Until then, ADR-050 is
+# excused from the section-shape check only — it still must pass
+# duplicates / status / citations / supersession / xref-dups.
+#
+# Add filenames to this list (without the docs/adr/ prefix) to extend
+# the exception. Keep the list short and document each addition.
+SECTION_CHECK_EXCEPTIONS=(
+  "ADR-050-final-audit-polish.md"
+)
+
+is_section_check_exception() {
+  local base
+  base=$(basename "$1")
+  local x
+  for x in "${SECTION_CHECK_EXCEPTIONS[@]}"; do
+    [ "$base" = "$x" ] && return 0
+  done
+  return 1
+}
+
 # Extract the ADR number from a filename. Returns the zero-padded NNN.
 adr_number() {
   basename "$1" | sed -E 's|^ADR-([0-9]+)-.*|\1|'
@@ -163,6 +189,7 @@ check_sections() {
   local f
   while IFS= read -r f; do
     is_meta_adr "$f" && continue
+    is_section_check_exception "$f" && continue
     # Extract level-2 headings; keep only the ones in the required set.
     local observed
     observed=$(
