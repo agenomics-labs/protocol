@@ -7,7 +7,8 @@
     "start": "ts-node index.ts",
     "dev": "ts-node-dev --respawn index.ts",
     "build": "tsc",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
     "@solana/web3.js": "^1.95.0",
@@ -22,6 +23,7 @@
     "@types/node": "^20.0.0",
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.4.0"
   }
 }
