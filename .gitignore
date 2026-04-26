@@ -63,6 +63,11 @@ ruvector.db
 .claude-flow/
 .claude/local/
 .claude/worktrees/
+# Per-user permission cache — collects ad-hoc Bash/Read approvals
+# during interactive sessions. Project-level settings live in
+# `.claude/settings.json` (tracked); .local.json is intentionally
+# personal.
+.claude/settings.local.json
 .swarm/
 
 # Build artifacts
