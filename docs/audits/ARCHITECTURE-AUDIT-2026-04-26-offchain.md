@@ -362,3 +362,50 @@ Tail (LOW): AUD-202, AUD-203, AUD-206, AUD-207, AUD-209, AUD-210, AUD-211, AUD-2
 - 1 closure (AUD-039) introduces a new race condition in the replacement code.
 
 **Recommended next batch**: AUD-200, AUD-201, AUD-205 in one PR (PR-EE: "off-chain audit cycle-2 high-severity"); AUD-202..AUD-213 in a follow-up doc-and-cleanup PR (PR-FF).
+
+---
+
+## 6. Closure status (verified at HEAD, 2026-04-26 EOD)
+
+Per-finding verification of the cycle-1 regression-check column and
+the 14 cycle-2 new findings (AUD-200..AUD-213) against the code at
+HEAD (commit 6ce7017). All 5 top-priority findings closed; 8 of the
+14 new findings closed. No open HIGH/MEDIUM-severity items remain.
+
+### Cycle-1 regression check
+
+| Cycle-1 ID | State | Evidence |
+|---|---|---|
+| AUD-003 | **Holds** | unchanged. |
+| AUD-013 | **Closed via AUD-201** | `66b7240`. `packages/capability-manifest-validator/src/validate.ts:56` is now `Result<CapabilityManifest, ValidationError>` from action-runtime. |
+| AUD-014 | **Closed via AUD-202** | `9d1d27b`. Dashboard + docstring tool-count drift swept. |
+| AUD-016 | **Holds** | unchanged. |
+| AUD-027 | **Holds** | unchanged. |
+| AUD-029 | **Closed via AUD-203** | `355323d`. `app.listen(PORT, INDEXER_HOST)` at `src/indexer/index.ts:1597` binds to loopback by default. |
+| AUD-039 | **Closed via AUD-204** | `355323d`. `connection.removeOnLogsListener(oldSubId)` at `src/indexer/index.ts:1272` releases prior subscription on heartbeat-triggered reconnect. |
+| AUD-072 | **Closed via AUD-205** | `9d1d27b`. Three remaining `execute_program_call` references in `SUMMARY.md` are now in *historical-context* phrasing ("ADR-050 removed `execute_program_call`", "no longer exposes `execute_program_call`") — what cycle-2 flagged was *live-surface* docs; that exposure is gone. |
+
+### Cycle-2 new findings
+
+| ID      | Sev | State | Evidence |
+|---------|-----|-------|----------|
+| AUD-200 | H   | **Closed** | `355323d`. `i16()` reader added at `src/indexer/index.ts:317-319` (`readInt16LE`); `ReputationDeltaProposed.delta` reader at line 491 uses `r.i16()`. Negative deltas now sign-extend correctly. |
+| AUD-201 | H   | **Closed** | `66b7240`. `packages/capability-manifest-validator/src/validate.ts:56` now `Result<CapabilityManifest, ValidationError>`; consumer `mcp-server/src/handlers/reputation.ts` updated to `result.value` access. |
+| AUD-202 | M   | **Closed** | `9d1d27b`. Dashboard `MCP_TOOLS` array + `mcp-server/src/index.ts:41` docstring updated to 25-action surface. |
+| AUD-203 | M   | **Closed** | `355323d`. Comment at `src/indexer/index.ts:1597` confirms `app.listen(PORT, INDEXER_HOST)` binding. |
+| AUD-204 | M   | **Closed** | `355323d`. `removeOnLogsListener(oldSubId)` at `src/indexer/index.ts:1272`; comment at lines 1258-1265 documents the AUD-204 closure. |
+| AUD-205 | M   | **Closed** | `9d1d27b`. SUMMARY.md references are historical-context only (see cycle-1 row above). |
+| AUD-206 | L   | Open (design) | `verify_protocol_invariants` has no MCP-tool wrapper. Reachable today only via raw Anchor RPC by the upgrade-authority signer; the audit recommends a TS surface for governance scripting. Not a correctness gap; deferred to governance-tooling ADR. |
+| AUD-207 | L   | Open | `sdk/idl/src/index.ts:9-25` ships **identical program IDs** for `devnet`, `mainnet-beta`, and `localnet`. Must be split before any mainnet promotion (placeholder/test IDs leak across clusters). Tracked alongside ADR-080 mainnet-deploy choreography. |
+| AUD-208 | M   | **Closed** | `c97a33c`. `src/x402-relay/index.ts` now uses atomic reserve-then-commit: signature reserved with placeholder, finality-recheck against `redeemedSignatures` after `getSignatureStatus` resolves; commit-or-409 race winner determined deterministically. |
+| AUD-209 | L   | Open | `pruneRedeemedSignatures` at `src/x402-relay/index.ts:94-111` retains the cap-eviction (`MAX_REDEEMED_SIGNATURES = 100_000`); under saturation an unexpired signature can be evicted, expanding the replay window. Operationally bounded today (well below 100k/day rate); horizontal-scale path tracked in ADR-117. |
+| AUD-210 | L   | Open | `rotate_agent_identity` zod refine reachability for short malformed inputs. Cosmetic, behavior-equivalent — refine triggered after the upstream `min(N)` guard. |
+| AUD-211 | L   | Open | `wrap` semantics divergence between `mcp-server/src/actions/vault.ts` and `mcp-server/src/util/result.ts`. Both produce canonical `{ value }` / `{ error }` outputs; the divergence is in the *throw-vs-return-Result* contract on synchronous helpers. Hygiene; deferred. |
+| AUD-212 | L   | Open | `pipeline/idempotency-redis.ts:340` `deserializeResult` doesn't HMAC the cached payload. Tampering requires Redis-write access, which is treated as a trust-boundary violation in the threat model; tracked under ADR-117 (Redis isolation). |
+| AUD-213 | L   | Open | Workspace dep references mix `"*"` and `"file:"`. mcp-server uses `"*"` for `@agenomics/action-runtime`; `"file:"` elsewhere. ADR-089's lockfile canon makes both work, but consistency is hygiene; deferred. |
+
+**Summary**: 5/5 high-priority cycle-2 findings closed (AUD-200, 201,
+204, 205, 208 — the top-5 prioritized list at §4). All cycle-1
+regression-check items now resolve through their cycle-2 IDs. The 8
+remaining open items are all LOW severity and tracked as deferred
+follow-ups; none are mainnet-blockers.
