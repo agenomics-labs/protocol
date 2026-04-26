@@ -2348,12 +2348,25 @@ describe("Settlement Protocol Tests", () => {
     });
 
     it("should reject accept_task when deadline has already passed", async () => {
-      // Use a short-but-future deadline so create_escrow passes
-      // (`deadline > now` enforced there), then sleep past it before
-      // attempting accept_task. Mirrors the wait pattern used by the
-      // T-02 expire_escrow test elsewhere in this file.
+      // The on-chain check is `now <= escrow.deadline` where `now` is
+      // `Clock::get()?.unix_timestamp`. solana-test-validator's clock
+      // starts at the validator's boot time and lags Date.now() by
+      // seconds-to-tens-of-seconds on fresh boot — so a deadline
+      // computed from Date.now() + 3 plus a 4s wall-clock sleep is
+      // not guaranteed to land past the on-chain deadline.
+      //
+      // Same fix-pattern as commit 702d4da (AUD-024 boundary): query
+      // on-chain time via getBlockTime, set the deadline relative to
+      // that, then poll on-chain time until it crosses the deadline.
       const taskId = new BN(950);
-      const shortDeadline = new BN(Math.floor(Date.now() / 1000) + 3);
+      const startSlot = await connection.getSlot("confirmed");
+      const onchainNow = await connection.getBlockTime(startSlot);
+      if (onchainNow === null) {
+        throw new Error(
+          "getBlockTime returned null; cannot compute deadline-passed test"
+        );
+      }
+      const shortDeadline = new BN(onchainNow + 2);
 
       const [escrowPDA] = await deriveEscrowPDA(
         audClient.publicKey,
@@ -2394,8 +2407,17 @@ describe("Settlement Protocol Tests", () => {
       const created = await program.account.taskEscrow.fetch(escrowPDA);
       expect(created.status.created).to.be.ok;
 
-      // Wait until the deadline is firmly behind us.
-      await new Promise((resolve) => setTimeout(resolve, 4000));
+      // Poll on-chain time until it has crossed the deadline. ~30s safety
+      // bound vs the typical ~1-2 slot completion (~400-800ms).
+      const deadlineSecs = shortDeadline.toNumber();
+      const maxWaitMs = 30_000;
+      const pollStart = Date.now();
+      while (Date.now() - pollStart < maxWaitMs) {
+        const s = await connection.getSlot("confirmed");
+        const t = await connection.getBlockTime(s);
+        if (t !== null && t > deadlineSecs) break;
+        await new Promise((resolve) => setImmediate(resolve));
+      }
 
       try {
         await program.methods
