@@ -88,3 +88,44 @@ This is a hostile re-audit. Every flagged item was checked against the actual co
 The Phase 3 PRs were strong on closing the specific holes they targeted. They were weak on system-level invariants — the cleanup of the legacy reputation path took the slash → suspend mechanic with it, and the migration instruction's seeds were not regression-tested against the seed shape that every other context in the same file uses.
 
 **Recommendation: do not promote to mainnet until AUD-100, AUD-101, and AUD-102 are closed. AUD-103, AUD-104, and AUD-117 should land in the same release window.** Track AUD-105 onward as cycle-2 follow-up.
+
+## Closure status (verified at HEAD, 2026-04-26 EOD)
+
+Verified-against-HEAD pass over each cycle-2 onchain finding. The 5
+mainnet-blocking findings are closed; the remaining 18 are either
+closed-by-pairing, open-as-deferred-follow-up, or open-as-doc-only
+items. No new code mainnet-blockers.
+
+| ID      | Sev | State | Evidence |
+|---------|-----|-------|----------|
+| AUD-100 | C   | **Closed** | `fc3c72a`. Slash path restored — `programs/agent-registry/src/lib.rs:269-289` increments `slash_count` and writes `Suspended` at threshold via `propose_reputation_delta` reasons 1/2. |
+| AUD-101 | C   | **Closed** | `fc3c72a`. `MigrateAgentProfile` context at `programs/agent-registry/src/contexts.rs:401-426` adds `owner_nonce: Account<OwnerNonce>` and seeds `[owner.key().as_ref(), b"agent-profile", &owner_nonce.nonce.to_le_bytes()]`. |
+| AUD-102 | H   | **Closed** | `7fd151d`. `MIN_REPUTATION_DELTA = -10` (matches Registry's `MAX_DELTA_PER_CALL = 10`); `programs/settlement/src/instructions/cpi.rs:32` comment confirms `[-10, +10]` window; `update_protocol_config` validates against the tightened bound. |
+| AUD-103 | H   | **Closed** | `fc3c72a`. `assert_valid_profile(agent_profile)?` now called at `lib.rs:189` (`update_status`), `:293` (`propose_reputation_delta`), `:442` (`clear_suspension`), `:629` (`migrate_agent_profile`). Four-of-four design-mandated sites. |
+| AUD-104 | H   | **Closed** | `fc3c72a`. `verify_protocol_invariants` at `lib.rs:655-700` retains the offset-8 bytes-read pattern (cheaper than a `settlement` crate dep) but adds a discriminator check (`PROTOCOL_CONFIG_DISCRIMINATOR`, lib.rs:674-677) — closes the cross-program drift exposure the audit flagged. |
+| AUD-105 | M   | Open | `accept_task` at `programs/settlement/src/instructions/escrow.rs:139` retains `now <= escrow.deadline` (audit recommended `<`). Behavioral change with test impact; tracked as cycle-3 follow-up. |
+| AUD-106 | M   | Open | `verify_protocol_invariants` iterates `ctx.remaining_accounts.iter()` (lib.rs:696) with no `MAX_BATCH` cap. Solana's tx-level account cap (~64) is the implicit bound; explicit cap + partial-progress event tracked as cycle-3 follow-up. |
+| AUD-107 | M   | **Closed (paired)** | Closed by AUD-100. With slashing restored, the Phase-3 default deltas (10/-5/-3) drive a state machine that can actually fire `Suspended`. Re-tuning is now a calibration question (governance), not a closure question. |
+| AUD-108 | M   | Open | `propose_reputation_delta` (lib.rs:235) accepts any `reason: u8` and emits it unfiltered. Workaround: Settlement is the sole CPI caller and only passes 0/1/2. Explicit `require!` deferred. |
+| AUD-109 | M   | Open | `update_provider_reputation` at `programs/settlement/src/instructions/cpi.rs:50` still derives `reason` from `task_completed: bool`, conflating dispute-loss (1) and expiry-undelivered (2). Indexers use the conflated reason today; explicit reason-plumbing through 4 call sites tracked as cycle-3 follow-up (paired with AUD-113). |
+| AUD-110 | L   | Open | `_reserved_aud007: [u8; 17]` retained as field name (`programs/agent-registry/src/state.rs:92`). IDL exposes the padding. Rename + IDL post-process is a coordinated SDK-touching change; deferred. |
+| AUD-111 | L   | Open | `AgentSlashed` event still has `slash_count: u8` (`programs/agent-registry/src/events.rs:47`). Rename to `total_slashes: u32` is a wire-format-breaking event change; deferred to next event-schema window. |
+| AUD-112 | L   | Open | Pre-migration profile clamp on read in SDK is doc-only; deferred to SDK-side ADR. |
+| AUD-113 | L   | Open | `_earnings`, `_task_completed`, `_rating` parameters at `cpi.rs:48-51` retained. Drop is paired with AUD-109 (explicit reason plumbing). |
+| AUD-114 | A   | **Closed (paired)** | Closed by AUD-100. With the slash path live, `require_not_suspended` at `programs/agent-vault/src/lib.rs:123,141` is load-bearing. Implementation cost (~5k CU per transfer) now buys real protection. |
+| AUD-115 | A   | Open (doc) | Operational runbook update (clarify upgrade-authority ↔ ProtocolConfig.authority coupling). Tracked as part of mainnet-deploy runbook ownership; not a code change. |
+| AUD-116 | M   | Open | Vault `agent_identity` initial-bind has no Ed25519 proof-of-control (`programs/agent-vault/src/instructions.rs:39,47`). `update_agent_identity`'s 24h cap protects rotation, not init. ADR-091-style domain-separated sig at init is in scope for a follow-up PR. |
+| AUD-117 | M   | Open | `provider_profile` and `provider_owner_nonce` are still `UncheckedAccount` in 4 Settlement contexts (`programs/settlement/src/contexts.rs:175-181, 309-313, 375-379, 476-480`). Defense-in-depth seeds constraints with `seeds::program = AGENT_REGISTRY_PROGRAM_ID` deferred to cycle-3. |
+| AUD-118 | L   | Open (doc) | `OwnerNonce.nonce` saturating-add behavior at u64 overflow is a soft cap; doc-only acknowledgement deferred. |
+| AUD-119 | L   | Open | `register_agent` retains 2 `Clock::get()` calls (vs. cached). Hygiene-only; deferred. |
+| AUD-120 | L   | Open | `update_status` catch-all match arm is shape-hazard; explicit accept-list refactor deferred. |
+| AUD-121 | A   | Open (doc) | 730-day worst-case `Disputed` fund lock window; doc-only acknowledgement deferred. |
+| AUD-122 | A   | Open | `init_if_needed` on `OwnerNonce` (`contexts.rs:22`) is load-bearing for vault-init nonce read. Today protected by Solana ordering + seeds-program guard; explicit anti-re-init constraint tracked as cycle-3 follow-up. |
+| AUD-044 | L   | **Closed (doc)** | Carry-over from cycle 1. Adjacency design (`current ± 1`) is documented in-line at `programs/agent-registry/src/lib.rs:759-761` ("The sig-verify ix may be placed before or after the program ix; we try both sides of `current_index`"). Audit's "None; document." recommendation is satisfied. |
+
+**Mainnet promotion status (post-fc3c72a + post-7fd151d)**: AUD-100,
+101, 102, 103, 104 closed. The verdict-block recommendation ("do not
+promote until 100/101/102 close, 103/104/117 same window") is met for
+5 of 6; AUD-117 is the lone open item from the verdict's
+release-window list. Tracked as the highest-priority cycle-3 onchain
+fix.
