@@ -67,3 +67,8 @@ action definitions.
     shape.
   - `packages/sas-resolver/package.json` and `mcp-server/package.json`
     — added `@agenomics/action-runtime` as a workspace dependency.
+
+- 2026-04-26 — Cycle-2 audit (AUD-201) caught capability-manifest-validator
+  was missed by PR-T. Migrated. Three Result shapes is now actually two
+  (canonical + AepError-typed mcp-server alias). Tracked toward "single
+  shape" by gradual mcp-server consumer migration.

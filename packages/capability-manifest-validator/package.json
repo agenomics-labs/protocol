@@ -30,6 +30,7 @@
   ],
   "license": "UNLICENSED",
   "dependencies": {
+    "@agenomics/action-runtime": "*",
     "@noble/curves": "^1.4.0",
     "@noble/hashes": "^1.4.0",
     "canonicalize": "2.0.0",

@@ -83,10 +83,10 @@ describe("ADR-060 CapabilityManifest validator", () => {
 
       assert.equal(result.ok, true);
       if (result.ok) {
-        assert.equal(result.manifest.version, "1.0");
-        assert.equal(result.manifest.agent.name, "Test Agent");
-        assert.equal(result.manifest.capabilities.length, 1);
-        assert.equal(result.manifest.capabilities[0]!.name, "transfer-funds");
+        assert.equal(result.value.version, "1.0");
+        assert.equal(result.value.agent.name, "Test Agent");
+        assert.equal(result.value.capabilities.length, 1);
+        assert.equal(result.value.capabilities[0]!.name, "transfer-funds");
       }
     });
 

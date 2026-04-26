@@ -159,8 +159,8 @@ describe("smoke/integration: capability-manifest-validator", () => {
     });
     assert.equal(res.ok, true);
     if (res.ok) {
-      assert.equal(res.manifest.version, "1.0");
-      assert.equal(res.manifest.agent.name, "AgentA");
+      assert.equal(res.value.version, "1.0");
+      assert.equal(res.value.agent.name, "AgentA");
     }
   });
 
@@ -464,7 +464,7 @@ describe("smoke/integration: validator + resolver composed", () => {
     });
     const { resolver } = makeResolver(new Map([[attPk, bytes]]), env);
     const rRes = await resolver.resolve(
-      { agent: (vRes as any).manifest.agent },
+      { agent: (vRes as any).value.agent },
       agent.publicKey.toBase58(),
     );
     assert.equal(rRes.ok, true);
