@@ -67,8 +67,12 @@ jobs:
 
           # Status-column "Pending" cells. Match the table cell, not the
           # literal word, so descriptive prose mentioning "pending" in
-          # passing does not trip the gate.
-          PENDING=$(grep -nE '\|\s*Pending\s*\|' "$CHECKLIST" || true)
+          # passing does not trip the gate. Two patterns: pipe-wrapped
+          # cell, and end-of-row cell with the trailing pipe omitted
+          # (legal per GFM). AUD-309 hardening — without the second
+          # pattern a future maintainer dropping the trailing pipe would
+          # silently bypass the gate.
+          PENDING=$(grep -nE '\|\s*Pending\s*\||\|\s*Pending\s*$' "$CHECKLIST" || true)
 
           # Unchecked GFM task list items.
           UNCHECKED=$(grep -nE '^\s*-\s*\[ \]' "$CHECKLIST" || true)
