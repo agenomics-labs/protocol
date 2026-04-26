@@ -13,6 +13,17 @@ import { logger, programLogger } from "./logger.js";
 
 const RPC_URL = process.env.SOLANA_RPC_URL || "http://127.0.0.1:8899";
 const PORT = parseInt(process.env.INDEXER_PORT || "3100", 10);
+// AUD-203 (regression-class of AUD-029, mirrors mcp-server PR-F /
+// observability.ts:55-73): the indexer's Express server hosts `/metrics`
+// alongside `/events`, `/agents`, `/stats`, `/health`. Letting Node bind
+// to its `0.0.0.0` default exposes the metrics surface — and the read-
+// only event/agent endpoints — on every interface. Default to loopback,
+// allow `INDEXER_METRICS_HOST=0.0.0.0` (or any other interface) to opt
+// into a non-loopback bind explicitly. `METRICS_HOST` is honoured as a
+// secondary fallback so deployments that already export the shared
+// convention from `metrics-server.ts` keep working without renaming env.
+const INDEXER_HOST =
+  process.env.INDEXER_METRICS_HOST ?? process.env.METRICS_HOST ?? "127.0.0.1";
 const PROGRAM_IDS = {
   vault: new PublicKey("4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN"),
   registry: new PublicKey("8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh"),
@@ -298,6 +309,17 @@ class BorshReader {
     return v;
   }
 
+  // AUD-200: signed 16-bit, little-endian, two's-complement. Required by
+  // ReputationDeltaProposed.delta (i16 in programs/agent-registry/src/
+  // events.rs). Reading via `u16()` silently aliased negative values onto
+  // the [32768, 65535] range — e.g. on-chain `-5` surfaced as `65531` to
+  // dashboards consuming the indexed payload.
+  i16(): number {
+    const v = this.buf.readInt16LE(this.offset);
+    this.offset += 2;
+    return v;
+  }
+
   u32(): number {
     const v = this.buf.readUInt32LE(this.offset);
     this.offset += 4;
@@ -460,9 +482,13 @@ const EVENT_DECODERS: Record<string, EventDecoder> = {
   //   pub old_score: u8
   //   pub new_score: u8
   //   pub timestamp: i64
+  //
+  // AUD-200: `delta` MUST be read as signed two's-complement; the previous
+  // `r.u16()` mapped on-chain `-5` to `65531` for every downstream
+  // consumer (dashboards, analytics, audit logs).
   ReputationDeltaProposed: (r) => ({
     authority: r.pubkey(),
-    delta: r.u16(),    // i16 in Rust wire-encodes as u16 (little-endian, two's complement)
+    delta: r.i16(),
     reason: r.u8(),
     old_score: r.u8(),
     new_score: r.u8(),
@@ -1229,6 +1255,27 @@ function subscribeToPrograms(
         );
         state.connected = false;
         state.lastError = `heartbeat failed: ${reason}`;
+        // AUD-204: release the prior onLogs subscription with the RPC
+        // server BEFORE dropping it from `subscriptionIds` and starting
+        // a fresh subscribe. Without this, every heartbeat-driven
+        // reconnect on a flaky network stacks an extra listener inside
+        // @solana/web3.js's `Connection`, eventually causing duplicate
+        // log delivery (idempotency saves correctness via the UNIQUE
+        // index, but inflates parseErrors/duplicateSkipped metrics and
+        // wastes memory). `removeOnLogsListener` is fire-and-forget at
+        // this layer — if the server has already closed the slot we
+        // just log and continue.
+        const oldSubId = subscriptionIds.get(label);
+        if (oldSubId !== undefined) {
+          // Don't await: `onConnectionLost` is not async and we don't
+          // want a slow RPC to delay the reconnect schedule.
+          void connection.removeOnLogsListener(oldSubId).catch((err) => {
+            programLogger(label).warn(
+              { err: String(err), sub_id: oldSubId },
+              "removeOnLogsListener failed (subscription likely already gone)",
+            );
+          });
+        }
         subscriptionIds.delete(label);
         scheduleReconnect(label, programId);
       }
@@ -1547,9 +1594,13 @@ async function main(): Promise<void> {
 
   const { states, metrics, heartbeat } = subscribeToPrograms(connection, db);
   const app = createApi(db, states, metrics);
-  app.listen(PORT, () => {
+  // AUD-203: bind to INDEXER_HOST (loopback by default) so the /metrics
+  // endpoint (and its sibling read-only routes) are not advertised on
+  // every interface. Mirrors mcp-server/observability.ts post-PR-F.
+  app.listen(PORT, INDEXER_HOST, () => {
     logger.info(
       {
+        host: INDEXER_HOST,
         port: PORT,
         endpoints: [
           "GET /health",
@@ -1595,6 +1646,7 @@ export {
   PROGRAM_IDS,
   DISCRIMINATOR_MAP,
   COMMITMENT,
+  INDEXER_HOST,
   HEARTBEAT_INTERVAL_MS,
   HEARTBEAT_TIMEOUT_MS,
   HEARTBEAT_FAILURE_THRESHOLD,

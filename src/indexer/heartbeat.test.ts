@@ -1,5 +1,7 @@
 /**
- * Unit tests for `startConnectionHeartbeat` (AUD-039 / ADR-118).
+ * Unit tests for `startConnectionHeartbeat` (AUD-039 / ADR-118) and the
+ * heartbeat-driven reconnect path that releases stale onLogs
+ * subscriptions (AUD-204).
  *
  * Verifies that the heartbeat ping correctly:
  *   1. Calls `getSlot` on each interval tick.
@@ -11,13 +13,41 @@
  *      runs, so a single outage produces a single reconnect signal.
  *   6. Stops cleanly via `handle.stop()` (no further ticks fire).
  *
+ * AUD-204 coverage:
+ *   7. The heartbeat-triggered reconnect calls
+ *      `connection.removeOnLogsListener` exactly once per affected
+ *      program before re-subscribing, so transient network slowness
+ *      cannot accumulate duplicate listeners.
+ *
  * Pure-unit test — no real Connection, no network, no timers leaked.
  */
 
+// AUD-204 plumbing: shrink the heartbeat window so the
+// subscribeToPrograms test below can trip the reconnect path inside the
+// node:test default timeout. These constants are read at module load
+// inside ./index.ts, and TypeScript hoists `import` declarations above
+// every statement — so the env overrides MUST be applied before
+// ./index.ts is required. We side-step the hoist by using `require()`
+// for the indexer module directly inside the test, after this block
+// has run. The other tests in this file pass explicit `opts` to
+// `startConnectionHeartbeat` and are unaffected by these globals.
+process.env.INDEXER_HEARTBEAT_INTERVAL_MS = "20";
+process.env.INDEXER_HEARTBEAT_TIMEOUT_MS = "50";
+process.env.INDEXER_HEARTBEAT_FAILURE_THRESHOLD = "1";
+
 import { describe, it } from "node:test";
 import * as assert from "node:assert/strict";
+import type { Database as DatabaseType } from "better-sqlite3";
 import type { Connection } from "@solana/web3.js";
-import { startConnectionHeartbeat } from "./index";
+import type * as IndexerModule from "./index";
+
+// `require` (synchronous, declaration-order) so the env overrides above
+// have taken effect by the time index.ts evaluates its module-load
+// constants.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const indexer: typeof IndexerModule = require("./index");
+const { startConnectionHeartbeat, subscribeToPrograms, initDb, PROGRAM_IDS } =
+  indexer;
 
 /** Build a `Pick<Connection, "getSlot">` that returns whatever the
  *  caller-supplied function produces. Each call returns a fresh promise. */
@@ -215,5 +245,114 @@ describe("startConnectionHeartbeat (AUD-039)", () => {
     handle.stop();
 
     assert.ok(calls > before, "ticks stopped after callback throw");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AUD-204: heartbeat-triggered reconnect must release the prior onLogs
+// subscription via `removeOnLogsListener` so transient network slowness
+// does not accumulate duplicate listeners on the connection.
+// ---------------------------------------------------------------------------
+
+/**
+ * Stand-in for `@solana/web3.js`'s `Connection` exposing exactly the
+ * methods `subscribeToPrograms` reaches for. We control:
+ *   - getSlot — drive the heartbeat into a "lost" state on demand
+ *   - onLogs — hand out monotonically-increasing subscription ids and
+ *     record the registrations
+ *   - removeOnLogsListener — record each unsubscription so the test
+ *     can assert exact call counts per program
+ *   - getSignaturesForAddress — return [] so backfill is a no-op
+ */
+function fakeIndexerConnection(): {
+  conn: Connection;
+  state: {
+    nextSubId: number;
+    onLogsCalls: Array<{ programId: string; subId: number }>;
+    removed: number[];
+    failGetSlot: boolean;
+  };
+} {
+  const state = {
+    nextSubId: 1,
+    onLogsCalls: [] as Array<{ programId: string; subId: number }>,
+    removed: [] as number[],
+    failGetSlot: false,
+  };
+  const conn = {
+    onLogs: ((programId: { toBase58: () => string }) => {
+      const subId = state.nextSubId++;
+      state.onLogsCalls.push({ programId: programId.toBase58(), subId });
+      return subId;
+    }) as Connection["onLogs"],
+    removeOnLogsListener: (async (subId: number) => {
+      state.removed.push(subId);
+    }) as Connection["removeOnLogsListener"],
+    getSlot: (async () => {
+      if (state.failGetSlot) {
+        throw new Error("rpc down");
+      }
+      return 1;
+    }) as Connection["getSlot"],
+    getSignaturesForAddress: (async () => []) as Connection["getSignaturesForAddress"],
+  } as unknown as Connection;
+  return { conn, state };
+}
+
+describe("AUD-204: heartbeat reconnect releases stale onLogs subscriptions", () => {
+  it("removeOnLogsListener is called once per program when the heartbeat trips", async () => {
+    // The heartbeat constants used by `subscribeToPrograms` were
+    // shrunk via env overrides at the top of this file (interval=20ms,
+    // timeout=50ms, threshold=1) so the reconnect path fires inside
+    // the default node:test timeout. The PRODUCTION defaults
+    // (10s/5s/3) are unchanged.
+    const { conn, state: connState } = fakeIndexerConnection();
+    const db: DatabaseType = initDb(":memory:");
+
+    const programCount = Object.keys(PROGRAM_IDS).length;
+    const { heartbeat } = subscribeToPrograms(conn, db);
+
+    // After subscribe, every program should have called onLogs exactly
+    // once.
+    assert.equal(
+      connState.onLogsCalls.length,
+      programCount,
+      `expected ${programCount} initial onLogs calls, got ${connState.onLogsCalls.length}`,
+    );
+    assert.equal(
+      connState.removed.length,
+      0,
+      "no removals expected before failure",
+    );
+
+    const initialSubIds = connState.onLogsCalls
+      .map((c) => c.subId)
+      .sort((a, b) => a - b);
+
+    // Trip the heartbeat. With threshold=1 the very next tick observing
+    // failGetSlot=true fires onConnectionLost, which iterates every
+    // subscribed program and calls removeOnLogsListener BEFORE the
+    // reconnect (which itself will call onLogs again on
+    // RECONNECT_DELAY_MS=3000 — comfortably outside our 150ms window).
+    connState.failGetSlot = true;
+    await sleep(150);
+
+    heartbeat.stop();
+    db.close();
+
+    // Core AUD-204 assertion: each initial subscription was released
+    // exactly once before any re-subscribe could pile on a duplicate
+    // listener.
+    const removed = [...connState.removed].sort((a, b) => a - b);
+    assert.deepEqual(
+      removed,
+      initialSubIds,
+      `expected each initial subId to be released once; got removed=${JSON.stringify(removed)} initial=${JSON.stringify(initialSubIds)}`,
+    );
+    assert.equal(
+      removed.length,
+      programCount,
+      `expected ${programCount} removeOnLogsListener calls (one per program), got ${removed.length}`,
+    );
   });
 });
