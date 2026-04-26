@@ -1,0 +1,134 @@
+name: Mainnet Readiness Gate
+
+# Blocking gate for `v*-mainnet` tag pushes. Operationalizes ADR-080
+# (mainnet deploy safety mandates) by refusing to let a tag propagate
+# to publish unless every prerequisite is real, not aspirational.
+#
+# Authoritative reference: docs/adr/ADR-122-mainnet-readiness-ci-gate.md
+# Closes audit finding: AUD-059.
+#
+# What this gate enforces (all blocking, no `continue-on-error`):
+#   1. The pushed tag is GPG-signed (`git tag -v`).
+#   2. `docs/MAINNET_CHECKLIST.md` has zero unresolved rows — no
+#      `| Pending |` table cells and no unchecked `- [ ]` task items.
+#   3. `config/AUDIT_REPORT_HASHES` is populated with real auditor
+#      values (not the all-zero placeholder shipped per ADR-080 §2).
+#   4. `scripts/mainnet-deploy.sh --self-test` exits 0.
+#
+# A failure on any step prevents downstream publish jobs from firing.
+
+on:
+  push:
+    tags:
+      - "v*-mainnet"
+
+concurrency:
+  group: mainnet-readiness-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  readiness-gate:
+    name: Mainnet readiness gate (ADR-080)
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Full history + tags are required so `git tag -v` can verify
+          # the signature on the tag that triggered this run.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Verify tag is GPG-signed
+        # Per ADR-080 §1: every mainnet-bound tag must be signed by a
+        # maintainer key in the project's allowlist. `git tag -v`
+        # exits non-zero if the signature is missing or invalid.
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF#refs/tags/}"
+          echo "Verifying tag: $TAG"
+          if ! git tag -v "$TAG" 2>&1; then
+            echo "::error::Tag $TAG is not GPG-signed (or signature invalid). ADR-080 requires signed tags for mainnet."
+            exit 1
+          fi
+
+      - name: Parse MAINNET_CHECKLIST.md for unresolved rows
+        # The checklist uses two conventions for "not yet done":
+        #   - Status-column tables: `| <item> | Pending | ... |`
+        #   - Bullet task lists: `- [ ] <item>`
+        # Both are hard fails — silently propagating either to mainnet
+        # is exactly the foot-gun AUD-059 flagged.
+        run: |
+          set -euo pipefail
+          CHECKLIST=docs/MAINNET_CHECKLIST.md
+          if [ ! -f "$CHECKLIST" ]; then
+            echo "::error::$CHECKLIST not found"
+            exit 1
+          fi
+
+          # Status-column "Pending" cells. Match the table cell, not the
+          # literal word, so descriptive prose mentioning "pending" in
+          # passing does not trip the gate.
+          PENDING=$(grep -nE '\|\s*Pending\s*\|' "$CHECKLIST" || true)
+
+          # Unchecked GFM task list items.
+          UNCHECKED=$(grep -nE '^\s*-\s*\[ \]' "$CHECKLIST" || true)
+
+          if [ -n "$PENDING" ] || [ -n "$UNCHECKED" ]; then
+            echo "::error::MAINNET_CHECKLIST.md has unresolved items. Resolve them before tagging v*-mainnet."
+            if [ -n "$PENDING" ]; then
+              echo "--- Pending status-column rows ---"
+              echo "$PENDING"
+            fi
+            if [ -n "$UNCHECKED" ]; then
+              echo "--- Unchecked task list items ---"
+              echo "$UNCHECKED"
+            fi
+            exit 1
+          fi
+          echo "::notice::All MAINNET_CHECKLIST.md items resolved."
+
+      - name: Verify AUDIT_REPORT_HASHES is populated
+        # Per ADR-080 §2: this file ships as a placeholder template
+        # whose three lines hold all-zero SHA-256 hashes. Mainnet
+        # requires real auditor-provided hashes that the deploy
+        # script's `sha256sum --check --strict` can verify against
+        # the rebuilt artifacts.
+        run: |
+          set -euo pipefail
+          HASHES=config/AUDIT_REPORT_HASHES
+          if [ ! -f "$HASHES" ]; then
+            echo "::error::$HASHES not found"
+            exit 1
+          fi
+          if [ ! -s "$HASHES" ]; then
+            echo "::error::$HASHES is empty"
+            exit 1
+          fi
+
+          # Strip comments + blank lines, then refuse any line whose
+          # hash field is all zeros (the ADR-080 placeholder shape).
+          PAYLOAD=$(grep -vE '^\s*(#|$)' "$HASHES" || true)
+          if [ -z "$PAYLOAD" ]; then
+            echo "::error::$HASHES has no non-comment hash lines"
+            exit 1
+          fi
+          if echo "$PAYLOAD" | grep -qE '^0{64}\s'; then
+            echo "::error::$HASHES still contains placeholder all-zero hashes (per ADR-080 §2). Auditors must populate before mainnet."
+            echo "--- offending lines ---"
+            echo "$PAYLOAD" | grep -nE '^0{64}\s' || true
+            exit 1
+          fi
+          echo "::notice::AUDIT_REPORT_HASHES populated with non-placeholder values."
+
+      - name: Run mainnet-deploy.sh --self-test
+        # Mirrors the same self-test invoked by shellcheck.yml. Cheap,
+        # I/O-free, and asserts the script's gate functions are intact
+        # and its parser still accepts the AUDIT_REPORT_HASHES shape.
+        run: |
+          set -euo pipefail
+          if [ ! -f scripts/mainnet-deploy.sh ]; then
+            echo "::error::scripts/mainnet-deploy.sh not found"
+            exit 1
+          fi
+          chmod +x scripts/mainnet-deploy.sh
+          ./scripts/mainnet-deploy.sh --self-test
