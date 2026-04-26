@@ -382,6 +382,13 @@ pub struct UpdateManifest<'info> {
 /// the `owner` payer. The instruction is idempotent — calling it when
 /// the account is already the right size or when `version` already
 /// meets `target_version` is a safe no-op.
+///
+/// AUD-101 (cycle-2): the original definition omitted the `owner_nonce`
+/// account and used the legacy 2-component PDA seeds, which was unreachable
+/// for any account whose `nonce > 0` (i.e. anything that had survived a
+/// deregister cycle under ADR-097). Now mirrors the 3-seed derivation used
+/// everywhere else (`ProposeReputationDelta`, `UpdateProfile`, etc.) so
+/// migration is reachable on the full account population.
 #[derive(Accounts)]
 pub struct MigrateAgentProfile<'info> {
     /// The authority that owns this `AgentProfile`. Named `owner` here to
@@ -391,6 +398,17 @@ pub struct MigrateAgentProfile<'info> {
     #[account(mut)]
     pub owner: Signer<'info>,
 
+    /// AUD-101 (cycle-2): per-owner nonce account. Provides the nonce
+    /// component for the `agent_profile` PDA seed derivation. The seeds
+    /// constraint binds the account address to `owner.key()`, so callers
+    /// cannot substitute a different owner's `OwnerNonce`.
+    #[account(
+        seeds = [owner.key().as_ref(), b"owner-nonce"],
+        seeds::program = crate::ID,
+        bump,
+    )]
+    pub owner_nonce: Account<'info, OwnerNonce>,
+
     #[account(
         mut,
         // Explicit constraint: agent_profile.authority must equal owner.key().
@@ -398,7 +416,13 @@ pub struct MigrateAgentProfile<'info> {
         // ambiguity when the signer field is named `owner` but the stored
         // field is `authority`.
         constraint = agent_profile.authority == owner.key() @ AgentRegistryError::UnauthorizedCaller,
-        seeds = [owner.key().as_ref(), b"agent-profile"],
+        // ADR-097 + AUD-101: include nonce in seed so existing accounts
+        // resolve correctly post-deregister cycles.
+        seeds = [
+            owner.key().as_ref(),
+            b"agent-profile",
+            &owner_nonce.nonce.to_le_bytes(),
+        ],
         bump = agent_profile.bump,
         realloc = 8 + AgentProfile::SPACE + MIGRATION_HEADROOM,
         realloc::payer = owner,

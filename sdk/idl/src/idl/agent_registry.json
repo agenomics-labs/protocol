@@ -269,6 +269,76 @@
           "signer": true
         },
         {
+          "name": "owner_nonce",
+          "docs": [
+            "AUD-101 (cycle-2): per-owner nonce account. Provides the nonce",
+            "component for the `agent_profile` PDA seed derivation. The seeds",
+            "constraint binds the account address to `owner.key()`, so callers",
+            "cannot substitute a different owner's `OwnerNonce`."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114,
+                  45,
+                  110,
+                  111,
+                  110,
+                  99,
+                  101
+                ]
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                111,
+                73,
+                24,
+                49,
+                52,
+                190,
+                122,
+                126,
+                199,
+                7,
+                50,
+                181,
+                32,
+                117,
+                156,
+                113,
+                255,
+                182,
+                22,
+                1,
+                161,
+                163,
+                9,
+                83,
+                218,
+                73,
+                82,
+                170,
+                121,
+                206,
+                92,
+                240
+              ]
+            }
+          }
+        },
+        {
           "name": "agent_profile",
           "writable": true,
           "pda": {
@@ -294,6 +364,11 @@
                   108,
                   101
                 ]
+              },
+              {
+                "kind": "account",
+                "path": "owner_nonce.nonce",
+                "account": "OwnerNonce"
               }
             ]
           }
@@ -1805,6 +1880,11 @@
       "code": 6025,
       "name": "Unauthorized",
       "msg": "Unauthorized: caller is not the ProtocolConfig authority"
+    },
+    {
+      "code": 6026,
+      "name": "InvalidProtocolConfigAccount",
+      "msg": "ProtocolConfig discriminator mismatch — account is not a Settlement ProtocolConfig (AUD-104)"
     }
   ],
   "types": [
