@@ -8,7 +8,7 @@
     "dev": "ts-node-dev --respawn index.ts",
     "build": "tsc",
     "clean": "rm -rf dist",
-    "test": "tsx --test metrics-server.test.ts heartbeat.test.ts"
+    "test": "tsx --test metrics-server.test.ts heartbeat.test.ts decoder.test.ts"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.30.0",
