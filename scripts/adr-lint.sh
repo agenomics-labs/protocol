@@ -226,7 +226,7 @@ check_sections() {
 # heading to be present, so any ADR that uses non-heading Status form
 # will already have been flagged.
 
-STATUS_VALUE_RE='^(Accepted|Proposed|Reserved|Deprecated|Not Written)([[:space:]].*)?$|^Superseded by ADR-[0-9]+([[:space:]].*)?$|^Superseded[[:space:]]\(.+\)$'
+STATUS_VALUE_RE='^(Accepted|Proposed|Reserved|Deprecated|Not Written)([[:space:]].*)?$|^Superseded by (ADR-[0-9]+(-[a-z0-9-]+)?|code-evolution( \(.*\))?)([[:space:]].*)?$|^Superseded[[:space:]]\(.+\)$'
 
 check_status() {
   local f
