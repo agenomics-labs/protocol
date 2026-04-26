@@ -25,7 +25,7 @@ jobs:
           rustup toolchain list
 
       - name: Cache cargo registry & build
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -66,7 +66,7 @@ jobs:
           rustup toolchain list
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -102,7 +102,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "20"
           cache: "npm"
@@ -113,7 +113,7 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       - name: Download Anchor-generated TS types
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: anchor-types
           path: target/types
@@ -158,7 +158,7 @@ jobs:
     runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "20"
           cache: "npm"
@@ -179,7 +179,7 @@ jobs:
     runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "20"
           cache: "npm"
@@ -200,7 +200,7 @@ jobs:
     runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "20"
           cache: "npm"
@@ -222,7 +222,7 @@ jobs:
     runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "20"
           cache: "npm"
@@ -255,12 +255,12 @@ jobs:
     needs: anchor-build
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "20"
           cache: "npm"
       - name: Download Anchor-generated TS types
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: anchor-types
           path: target/types
@@ -294,7 +294,7 @@ jobs:
     runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "20"
           cache: "npm"
@@ -322,7 +322,7 @@ jobs:
     runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "20"
       - name: npm ci from clean clone (must match lockfile exactly)
@@ -406,7 +406,7 @@ jobs:
           rustup toolchain list
 
       - name: Cache cargo registry & target
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -417,7 +417,7 @@ jobs:
 
       - name: Cache solana CLI
         id: cache-solana
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.local/share/solana
           key: ${{ runner.os }}-solana-${{ env.SOLANA_VERSION }}
@@ -437,7 +437,7 @@ jobs:
 
       - name: Cache anchor CLI
         id: cache-anchor
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cargo/bin/anchor
           key: ${{ runner.os }}-anchor-${{ env.ANCHOR_VERSION }}
@@ -463,7 +463,7 @@ jobs:
 
       - name: Upload generated IDL
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: anchor-idl
           path: target/idl/*.json
@@ -476,7 +476,7 @@ jobs:
       # repeat the full anchor-build (~6-10 min) themselves.
       - name: Upload generated Anchor TS types
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: anchor-types
           path: target/types/*.ts
@@ -529,7 +529,7 @@ jobs:
           rustup toolchain list
 
       - name: Cache cargo registry & target
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -540,7 +540,7 @@ jobs:
 
       - name: Cache solana CLI
         id: cache-solana
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.local/share/solana
           key: ${{ runner.os }}-solana-${{ env.SOLANA_VERSION }}
@@ -560,7 +560,7 @@ jobs:
 
       - name: Cache anchor CLI
         id: cache-anchor
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cargo/bin/anchor
           key: ${{ runner.os }}-anchor-${{ env.ANCHOR_VERSION }}
