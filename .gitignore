@@ -1,6 +1,9 @@
 # Rust
 /target/
-Cargo.lock
+# Cargo.lock IS committed — Anchor program binary reproducibility
+# depends on locked transitive deps. ADR-089 (reproducible-installs)
+# and ADR-114 (Dependabot) both assume the lockfile is in version
+# control. Tier-2 dep sweep (2026-04-26) restored that assumption.
 **/*.rs.bk
 
 # Anchor
