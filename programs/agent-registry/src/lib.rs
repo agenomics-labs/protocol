@@ -86,9 +86,9 @@ pub mod agent_registry {
         agent_profile.reputation_score = 0;
         // AUD-007 (PR-Q): the legacy aggregates (`total_tasks_completed`,
         // `total_earnings`, `avg_rating`) are gone — replaced by the
-        // `_reserved_aud007` padding array, which Anchor zero-initializes
+        // `__padding_aud007` padding array, which Anchor zero-initializes
         // through the discriminator-init path. No explicit assignment needed.
-        agent_profile._reserved_aud007 = [0u8; 17];
+        agent_profile.__padding_aud007 = [0u8; 17];
         // AUD-119: cache the sysvar read once; created_at and updated_at must
         // be equal at registration anyway, and a second `Clock::get()` would
         // pay the sysvar-load cost without changing the value.
@@ -613,13 +613,13 @@ pub mod agent_registry {
 
         // AUD-007 (PR-Q): the dangling `total_tasks_completed`,
         // `total_earnings`, and `avg_rating` aggregates were retired. The
-        // bytes they occupied are now `_reserved_aud007: [u8; 17]` — a
+        // bytes they occupied are now `__padding_aud007: [u8; 17]` — a
         // padding array preserving the binary layout for existing accounts.
         // Pre-migration profiles may carry non-zero values from the legacy
         // `update_reputation` writes; zero them so the post-migration state
         // matches a freshly-registered profile and downstream consumers
         // cannot accidentally read stale telemetry.
-        profile._reserved_aud007 = [0u8; 17];
+        profile.__padding_aud007 = [0u8; 17];
 
         // AUD-001 / AUD-002 (PR-G): the legacy `update_reputation` had no
         // upper bound on `reputation_score` — pre-migration profiles can
@@ -1664,7 +1664,7 @@ mod tests {
             // AUD-007 (PR-Q): the `total_tasks_completed`, `total_earnings`,
             // and `avg_rating` fields were retired in favor of a 17-byte
             // padding array preserving on-disk layout.
-            _reserved_aud007: [0u8; 17],
+            __padding_aud007: [0u8; 17],
             created_at: 0,
             updated_at: 0,
             reputation_stake: ReputationStake { staked_amount: 0, slash_count },
@@ -1796,26 +1796,26 @@ mod tests {
     #[test]
     fn aud_007_reserved_padding_is_exactly_seventeen_bytes() {
         let p = fixture_profile(0, AgentStatus::Active, 0);
-        assert_eq!(p._reserved_aud007.len(), 17,
+        assert_eq!(p.__padding_aud007.len(), 17,
             "padding must equal 8 + 8 + 1 bytes of removed fields");
-        assert_eq!(std::mem::size_of_val(&p._reserved_aud007), 17,
+        assert_eq!(std::mem::size_of_val(&p.__padding_aud007), 17,
             "the array must serialize to its declared 17-byte size");
     }
 
     /// AUD-007: a fresh `register_agent`-shaped profile zero-fills the
-    /// padding. Mirrors the `_reserved_aud007 = [0u8; 17]` assignment in
+    /// padding. Mirrors the `__padding_aud007 = [0u8; 17]` assignment in
     /// the handler — if anyone reverts to leaving it implicit, this test
     /// fails immediately (the fixture writes [0u8; 17] and we compare).
     #[test]
     fn aud_007_register_agent_zero_initializes_reserved_padding() {
         let p = fixture_profile(0, AgentStatus::Active, 0);
-        assert_eq!(p._reserved_aud007, [0u8; 17],
+        assert_eq!(p.__padding_aud007, [0u8; 17],
             "fresh registration must zero the AUD-007 reserved bytes");
     }
 
     /// AUD-007: the reserved padding survives the migration normalization
     /// (zeroed regardless of pre-migration state). Mirrors the handler line
-    /// `profile._reserved_aud007 = [0u8; 17];` so a pre-migration profile
+    /// `profile.__padding_aud007 = [0u8; 17];` so a pre-migration profile
     /// carrying stale legacy values lands in the canonical zero state.
     #[test]
     fn aud_007_migrate_zeros_reserved_padding_from_stale_state() {
@@ -1823,16 +1823,16 @@ mod tests {
         // Simulate stale on-disk bytes from the legacy `update_reputation`
         // writes. A non-canonical IDL deserialization could conceivably
         // surface these as the old typed fields.
-        p._reserved_aud007 = [0xAB; 17];
+        p.__padding_aud007 = [0xAB; 17];
         // Mirror the migrate_agent_profile assignment.
-        p._reserved_aud007 = [0u8; 17];
-        assert_eq!(p._reserved_aud007, [0u8; 17],
+        p.__padding_aud007 = [0u8; 17];
+        assert_eq!(p.__padding_aud007, [0u8; 17],
             "post-migration padding must be zero regardless of prior bytes");
     }
 
     /// AUD-007 / ADR-040: the SPACE constant is unchanged at 1415 bytes
     /// across PR-Q. The 17 bytes of removed fields are replaced 1:1 by 17
-    /// bytes of `_reserved_aud007` padding. If this test fails after PR-Q,
+    /// bytes of `__padding_aud007` padding. If this test fails after PR-Q,
     /// the layout is no longer compatible with existing accounts.
     #[test]
     fn aud_007_space_constant_unchanged_across_pr_q() {

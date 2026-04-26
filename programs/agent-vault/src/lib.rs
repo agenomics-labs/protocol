@@ -532,8 +532,8 @@ mod tests {
             status: AgentStatus::Suspended,
             reputation_score: 0,
             // AUD-007 (PR-Q): legacy aggregates removed; the bytes they
-            // occupied are now `_reserved_aud007` padding.
-            _reserved_aud007: [0u8; 17],
+            // occupied are now `__padding_aud007` padding.
+            __padding_aud007: [0u8; 17],
             created_at: 0,
             updated_at: 0,
             reputation_stake: ReputationStake { staked_amount: 0, slash_count: 3 },
@@ -643,8 +643,8 @@ mod tests {
             status: AgentStatus::Active,
             reputation_score: 100,
             // AUD-007 (PR-Q): legacy aggregates removed; the bytes they
-            // occupied are now `_reserved_aud007` padding.
-            _reserved_aud007: [0u8; 17],
+            // occupied are now `__padding_aud007` padding.
+            __padding_aud007: [0u8; 17],
             created_at: 0,
             updated_at: 0,
             reputation_stake: ReputationStake { staked_amount: 0, slash_count: 0 },
