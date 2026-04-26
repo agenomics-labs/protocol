@@ -199,6 +199,11 @@ jobs:
           cache: "npm"
       - name: Install workspace deps (npm ci)
         run: npm ci --no-audit --no-fund
+      # capability-manifest-validator now depends on @agenomics/action-runtime
+      # (PR-T completion / AUD-201 / commit 66b7240). Build action-runtime
+      # first so its d.ts is on disk for the typecheck.
+      - name: Build @agenomics/action-runtime
+        run: npm run build --workspace @agenomics/action-runtime
       - name: Type check
         working-directory: packages/capability-manifest-validator
         run: npx tsc --noEmit

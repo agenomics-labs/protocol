@@ -5,14 +5,14 @@
   "main": "target/types/index.ts",
   "private": true,
   "workspaces": [
+    "sdk/idl",
+    "sdk/action-runtime",
     "packages/*",
+    "sdk/client",
     "mcp-server",
     "src/indexer",
     "src/x402-relay",
-    "dashboard",
-    "sdk/idl",
-    "sdk/action-runtime",
-    "sdk/client"
+    "dashboard"
   ],
   "scripts": {
     "build": "anchor build",
