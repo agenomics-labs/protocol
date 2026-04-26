@@ -89,8 +89,12 @@ pub mod agent_registry {
         // `_reserved_aud007` padding array, which Anchor zero-initializes
         // through the discriminator-init path. No explicit assignment needed.
         agent_profile._reserved_aud007 = [0u8; 17];
-        agent_profile.created_at = Clock::get()?.unix_timestamp;
-        agent_profile.updated_at = Clock::get()?.unix_timestamp;
+        // AUD-119: cache the sysvar read once; created_at and updated_at must
+        // be equal at registration anyway, and a second `Clock::get()` would
+        // pay the sysvar-load cost without changing the value.
+        let now = Clock::get()?.unix_timestamp;
+        agent_profile.created_at = now;
+        agent_profile.updated_at = now;
         agent_profile.reputation_stake = ReputationStake { staked_amount: 0, slash_count: 0 };
         agent_profile.bump = ctx.bumps.agent_profile;
 
@@ -258,7 +262,10 @@ pub mod agent_registry {
 
         let old_score_u8 = old_score as u8;
         agent_profile.reputation_score = new_score as u64;
-        agent_profile.updated_at = Clock::get()?.unix_timestamp;
+        // AUD-119: cache the sysvar read once and reuse for both
+        // `updated_at` and any emitted-event timestamps.
+        let now = Clock::get()?.unix_timestamp;
+        agent_profile.updated_at = now;
 
         // AUD-100 (cycle-2): restore the slash → Suspended path that PR-G
         // inadvertently severed when it removed `update_reputation`. The
@@ -276,14 +283,14 @@ pub mod agent_registry {
                     authority: agent_profile.authority,
                     slash_count: agent_profile.reputation_stake.slash_count,
                     suspended: true,
-                    timestamp: Clock::get()?.unix_timestamp,
+                    timestamp: now,
                 });
             } else {
                 emit!(AgentSlashed {
                     authority: agent_profile.authority,
                     slash_count: agent_profile.reputation_stake.slash_count,
                     suspended: false,
-                    timestamp: Clock::get()?.unix_timestamp,
+                    timestamp: now,
                 });
             }
         }
@@ -475,6 +482,16 @@ pub mod agent_registry {
         // The profile account is closed by Anchor's `close = authority`
         // constraint; this nonce bump ensures the next `register_agent`
         // derives a different PDA address, preventing Sybil address reuse.
+        //
+        // AUD-118 (cycle-2): `saturating_add` is the deliberate choice over
+        // `checked_add`. On the unreachable `2^64`-deregistrations boundary
+        // the nonce stays at `u64::MAX` and the next `register_agent` would
+        // re-derive the same PDA as the prior deregistered profile (Anchor
+        // `init` rejects the collision, locking the authority out of further
+        // registrations). The alternative — panicking via `checked_add` —
+        // would grief every other future operation on the same authority,
+        // including `unstake_reputation` paths. The soft cap on per-authority
+        // registration count is accepted as architecturally bounded.
         let owner_nonce = &mut ctx.accounts.owner_nonce;
         owner_nonce.nonce = owner_nonce.nonce.saturating_add(1);
 
