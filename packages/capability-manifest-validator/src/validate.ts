@@ -7,6 +7,7 @@
 // owns that layer.
 
 import { ed25519 } from "@noble/curves/ed25519";
+import { ok, err, type Result } from "@agenomics/action-runtime";
 import {
   CapabilityManifestSchema,
   type CapabilityManifest,
@@ -40,9 +41,19 @@ export interface ValidationError {
   details?: unknown;
 }
 
-export type ValidationResult =
-  | { ok: true; manifest: CapabilityManifest }
-  | { ok: false; error: ValidationError };
+/**
+ * Canonical validator result.
+ *
+ * ADR-103: aliased to `Result<CapabilityManifest, ValidationError>` from
+ * `@agenomics/action-runtime` — the success branch is `{ ok: true; value:
+ * CapabilityManifest }` (was `{ ok: true; manifest }` pre-AUD-201). The
+ * failure branch is unchanged: `{ ok: false; error: ValidationError }`.
+ *
+ * AUD-201 (2026-04-25): PR-T migrated mcp-server + sas-resolver but missed
+ * this package, leaving three Result shapes coexisting. This alias closes
+ * that gap so the validator's surface matches the canonical shape.
+ */
+export type ValidationResult = Result<CapabilityManifest, ValidationError>;
 
 export interface ValidateInput {
   /** Raw parsed JSON object (unknown shape until schema-validated). */
@@ -133,7 +144,7 @@ export function validateManifest(input: ValidateInput): ValidationResult {
     );
   }
 
-  return { ok: true, manifest: parsed.data };
+  return ok(parsed.data);
 }
 
 function fail(
@@ -141,7 +152,7 @@ function fail(
   message: string,
   details?: unknown,
 ): ValidationResult {
-  return { ok: false, error: { code, message, details } };
+  return err({ code, message, details });
 }
 
 function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {

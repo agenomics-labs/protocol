@@ -408,7 +408,10 @@ export async function handleGetAgentReputation(
     );
   }
 
-  const manifest: CapabilityManifest = result.manifest;
+  // ADR-103 / AUD-201: validator returns canonical Result<T, E> from
+  // @agenomics/action-runtime — success branch field is `value` (was
+  // `manifest` pre-2026-04-25).
+  const manifest: CapabilityManifest = result.value;
 
   const manifestSummary = {
     cid: pointer.cid,
