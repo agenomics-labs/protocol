@@ -169,8 +169,13 @@ jobs:
         run: npx tsc --noEmit
 
   # Finding #22: same gap for the x402 relay.
+  # AUD-402: also runs the npm test suite — gates the JWT_SECRET length-floor
+  # regression (`test/jwt-secret-length.test.ts`) added in cycle-2 audit
+  # closure. The suite spawns `tsx index.ts` as a child process per case so
+  # it has no need for solana-test-validator and stays scoped to the
+  # workspace `npm test` job (NOT `anchor test`).
   typescript-check-x402-relay:
-    name: TypeScript Check (x402-relay)
+    name: TypeScript Check + Tests (x402-relay)
     runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v5
@@ -183,6 +188,8 @@ jobs:
       - name: Type check
         working-directory: src/x402-relay
         run: npx tsc --noEmit
+      - name: Unit tests (node:test + tsx)
+        run: npm test --workspace @agenomics/x402-relay
 
   # Added alongside the `packages/*` TS packages introduced with ADR-060
   # (`@agenomics/capability-manifest-validator`) and ADR-064 (`@agenomics/sas-resolver`).
