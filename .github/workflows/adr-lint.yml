@@ -8,13 +8,16 @@ name: ADR Lint
 # `docs/adr/**` or the lint script itself. Keeps PR latency low for
 # changes that don't touch ADRs.
 #
-# Status: BLOCKING (AUD-405). Cycle-1 dedup + cycle-2 status flips
-# brought the corpus to a clean state modulo 4 documented benign
-# findings (ADR-098/099 same-number-different-files pair + ADR-050
-# mega-ADR sections). Those are tracked separately and the regex was
-# tightened in PR-Phase-3.5 to accept `Superseded by ADR-NNN-slug` and
-# `Superseded by code-evolution`, eliminating the 4 false-positive
-# findings the corpus actually uses.
+# Status: BLOCKING (AUD-405). Cycle-1 dedup + cycle-2 status flips +
+# cycle-3 corpus cleanup brought the corpus to a fully clean state:
+#   - ADR-098/099 Superseded variants relocated to docs/adr/superseded/
+#     so the duplicate-number prefix no longer appears in the linted set
+#     while preserving the historical record.
+#   - ADR-050 (mega-ADR with nine sub-decisions) is on the
+#     SECTION_CHECK_EXCEPTIONS list in scripts/adr-lint.sh — documented
+#     in-script.
+# scripts/adr-lint.sh now reports 0 findings; this gate is enforcing.
+# Any new finding fails the PR.
 
 on:
   push:
@@ -46,14 +49,11 @@ jobs:
         # to stderr in `path:line: diagnostic` form. Summary line on
         # stdout.
         #
-        # CURRENTLY ADVISORY (continue-on-error: true) — 4 benign
-        # pre-existing findings remain (ADR-098/099 same-number-different-
-        # files pair + ADR-050 mega-ADR sections). Promotion to BLOCKING
-        # is gated on those getting physically cleaned up (ADR-098/099
-        # need filename dedup; ADR-050 needs section split). After that
-        # cleanup, drop continue-on-error to make the gate enforcing.
-        # Tracked under follow-up cleanup PR.
+        # BLOCKING: corpus is at 0 findings as of the cycle-3 cleanup
+        # commit. Any non-zero exit fails the PR. To debug locally:
+        #   bash scripts/adr-lint.sh
+        #   bash scripts/adr-lint.sh --check sections   # narrow scope
+        # See scripts/adr-lint.sh header for the full list of checks.
         run: |
           chmod +x scripts/adr-lint.sh
           scripts/adr-lint.sh
-        continue-on-error: true
