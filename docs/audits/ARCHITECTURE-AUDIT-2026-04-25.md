@@ -213,3 +213,65 @@ The four sub-audit reports are preserved in this directory as appendices:
 - `appendix-tests-ci.md`
 
 Each finding above traces back to a specific section of one or more appendices.
+
+---
+
+## Closure status (verified at HEAD, 2026-04-26 EOD)
+
+**This snapshot doc is intentionally not edited in-place** (per the
+ADR-TEMPLATE.md immutability principle and the policy stated in §How
+to use this doc, item 4). The "Status" column above reflects the
+state at 2026-04-25 only. Authoritative current state lives in:
+
+- `AUDIT-STATUS-2026-04-25.md` — canonical cycle-1 closure tracker
+  (per-finding commit attributions; first source-of-truth for any
+  AUD-001..AUD-099 query at HEAD).
+- `ARCHITECTURE-AUDIT-2026-04-26-onchain.md` §"Closure status" —
+  cycle-2 onchain re-verification + AUD-100..AUD-122 + AUD-044
+  carry-over.
+- `ARCHITECTURE-AUDIT-2026-04-26-offchain.md` §6 "Closure status" —
+  cycle-2 offchain re-verification + AUD-200..AUD-213.
+- `ARCHITECTURE-AUDIT-2026-04-26-tests-ci.md` §6/§7 — cycle-2 tests/CI
+  audit + AUD-401..AUD-409 + AUD-300..AUD-309 (ADR audit) + AUD-400
+  + AUD-406 hybrid mitigation.
+
+### Cycle-1 Critical / High summary (verified per AUDIT-STATUS)
+
+All 5 Critical and all 7 High cycle-1 findings closed pre-cycle-2.
+Spot-verified at HEAD via the cycle-2 onchain "Regressions" table
+(`ARCHITECTURE-AUDIT-2026-04-26-onchain.md` §Regressions): AUD-001,
+002, 005..010, 018, 019, 023, 024, 065 all marked **Held** (i.e., the
+cycle-1 fix is still in place at cycle-2 HEAD).
+
+### Cycle-1 Medium / Low / Info / Architecture
+
+The 65 rows above marked `| Open |` were Open *as of 2026-04-25*; the
+majority have closed since. Rather than propagate edits through this
+snapshot doc, refer to:
+
+1. `AUDIT-STATUS-2026-04-25.md` — Phase-3 closures section enumerates
+   the Medium / Low / Info closures committed under PR-G..PR-Z and
+   the cycle-1 follow-up commits (`edf2117`, `9fb6278`, `0c48e0e`,
+   `0c7c794`, `33354f3`, etc.).
+2. The cycle-2 audit closure sections (links above) — every cycle-1
+   ID re-tested by cycle-2 has its current state in those sections.
+
+### Mainnet-promotion blockers at HEAD (2026-04-26)
+
+Of the 75 cycle-1 + 50+ cycle-2 inventoried findings, **one**
+mainnet-promotion blocker remains open at HEAD:
+
+- **AUD-207** (cycle-2 offchain, L) — `sdk/idl/src/index.ts:9-25`
+  ships **identical program IDs across all 3 clusters**
+  (devnet/mainnet-beta/localnet). Must be split before any
+  `v*-mainnet` tag push. Tracked alongside the ADR-080 mainnet-deploy
+  choreography.
+
+All other open items are deferred follow-ups (cycle-3 candidates), all
+non-blocking. The cycle-2 onchain audit's verdict-block release-window
+list (AUD-100/101/102/103/104/117) is closed 5-of-6; AUD-117 is the
+lone open item from that list.
+
+This closure-status section was added 2026-04-26 EOD to provide a
+top-level pointer to the canonical state. The body of this doc above
+remains the verbatim 2026-04-25 snapshot for historical reference.
