@@ -75,3 +75,7 @@ day" anti-pattern.
   R-offchain-06, R-offchain-09.
 - `.github/workflows/ci.yml:43` (inline rationale for current state).
 - `docs/adr/ADR-114-dependabot-dependency-hygiene.md` (companion).
+- `docs/adr/ADR-122-mainnet-readiness-checklist-gate.md` (companion —
+  the mainnet-readiness gate calls into the same blocking-CI policy
+  this ADR establishes; back-reference per drift-matrix §4 GOLD
+  STANDARD pattern, AUD-306).

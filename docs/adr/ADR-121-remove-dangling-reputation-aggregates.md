@@ -115,6 +115,9 @@ Concrete steps applied in PR-Q:
 
 ## References
 
+- ADR-040 — explicit account-space calculation (the `AgentProfile`
+  space comment at `programs/agent-registry/src/state.rs:118-129`,
+  which this ADR's removal of `avg_rating` / `total_*` field-shrinks).
 - ADR-094 — bounded reputation policy (PR-G).
 - ADR-096 — in-place account-resize migration mechanism.
 - AUD-001 / AUD-002 — `update_reputation` removal (closed by PR-G).
