@@ -65,14 +65,24 @@ jobs:
             exit 1
           fi
 
-          # Status-column "Pending" cells. Match the table cell, not the
-          # literal word, so descriptive prose mentioning "pending" in
-          # passing does not trip the gate. Two patterns: pipe-wrapped
-          # cell, and end-of-row cell with the trailing pipe omitted
-          # (legal per GFM). AUD-309 hardening — without the second
-          # pattern a future maintainer dropping the trailing pipe would
-          # silently bypass the gate.
-          PENDING=$(grep -nE '\|\s*Pending\s*\||\|\s*Pending\s*$' "$CHECKLIST" || true)
+          # Status-column unresolved cells. Match the table cell, not the
+          # literal word, so descriptive prose mentioning a status in
+          # passing does not trip the gate. Two patterns per status:
+          # pipe-wrapped cell, and end-of-row cell with the trailing
+          # pipe omitted (legal per GFM).
+          #
+          # Status vocabulary (AUD-400): broader than `Pending` alone so
+          # that introducing `TBD`, `Partial`, `In Progress`,
+          # `InProgress`, `Blocked`, or `WIP` in a future row cannot
+          # silently bypass the gate. The current checklist uses only
+          # `Pending`, so this is purely additive — no behavior change
+          # against today's corpus.
+          #
+          # GFM trailing-pipe handling (AUD-309): without the
+          # alternation a future maintainer dropping the trailing pipe
+          # on a row would silently bypass the gate.
+          STATUSES='Pending|TBD|Partial|In Progress|InProgress|Blocked|WIP'
+          PENDING=$(grep -nE "\|\s*($STATUSES)\s*\||\|\s*($STATUSES)\s*\$" "$CHECKLIST" || true)
 
           # Unchecked GFM task list items.
           UNCHECKED=$(grep -nE '^\s*-\s*\[ \]' "$CHECKLIST" || true)
