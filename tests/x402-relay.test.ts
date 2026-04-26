@@ -12,7 +12,11 @@ process.env.JWT_SECRET = "test-secret-for-unit-tests-32b!!";
 process.env.PAYMENT_RECIPIENT = "11111111111111111111111111111111";
 
 import { expect } from "chai";
-import { verifyAccessToken } from "../src/x402-relay/index";
+import {
+  verifyAccessToken,
+  processPaymentRequest,
+  __resetRedemptionStateForTests,
+} from "../src/x402-relay/index";
 import jwt from "jsonwebtoken";
 
 const JWT_SECRET = "test-secret-for-unit-tests-32b!!";
@@ -72,6 +76,167 @@ describe("x402 Relay - verifyAccessToken", () => {
   it("should return null for an empty string token", () => {
     const result = verifyAccessToken("");
     expect(result).to.be.null;
+  });
+});
+
+/**
+ * AUD-208: TOCTOU race in /pay between has(redeemedSignatures) and set(...).
+ * Before the fix, two concurrent POSTs with the same txSignature could both
+ * pass the existence check, both fire the 200-1000ms `verifyPaymentOnChain`
+ * RPC, and both receive a fresh JWT — i.e. one on-chain payment yielded
+ * multiple JWTs.
+ *
+ * The fix: an in-flight verify cache keyed by txSignature (concurrent
+ * callers share one Promise), plus a post-verify re-check of
+ * `redeemedSignatures` so only the first awaiter to wake commits.
+ *
+ * These tests drive the invariants directly via `processPaymentRequest`
+ * rather than through HTTP; this avoids a `supertest` dependency and lets
+ * us count exactly how many times the verifier was invoked.
+ */
+describe("x402 Relay - AUD-208 concurrent /pay redemption race", () => {
+  const RECIPIENT = "11111111111111111111111111111111";
+  const SIGNATURE = "concurrent-tx-sig-AUD208";
+
+  beforeEach(() => {
+    __resetRedemptionStateForTests();
+  });
+
+  it("fires verifier exactly once and issues exactly one JWT for 5 concurrent calls with the same txSignature", async () => {
+    let verifierCallCount = 0;
+    const verifier = async (sig: string) => {
+      verifierCallCount += 1;
+      // Simulate the 100-1000ms Solana RPC roundtrip described in the
+      // audit. 100ms is more than enough to let all 5 concurrent
+      // microtasks queue up against the same in-flight Promise.
+      await new Promise((r) => setTimeout(r, 100));
+      return {
+        valid: true,
+        sender: "SenderPubkey-AUD208",
+        recipient: RECIPIENT,
+        amountSol: 0.05,
+        slot: 12345,
+      };
+    };
+
+    // Fire 5 concurrent calls. They must all start before the verifier
+    // resolves (i.e. before its 100ms timer fires) — Promise.all on the
+    // same tick guarantees this because each invocation hits the
+    // synchronous `inFlightVerify.has` / `redeemedSignatures.has` path
+    // before yielding to the timer queue.
+    const results = await Promise.all([
+      processPaymentRequest(SIGNATURE, verifier, RECIPIENT),
+      processPaymentRequest(SIGNATURE, verifier, RECIPIENT),
+      processPaymentRequest(SIGNATURE, verifier, RECIPIENT),
+      processPaymentRequest(SIGNATURE, verifier, RECIPIENT),
+      processPaymentRequest(SIGNATURE, verifier, RECIPIENT),
+    ]);
+
+    // Invariant 1: in-flight dedup means the verifier ran exactly once.
+    expect(verifierCallCount, "verifier called more than once").to.equal(1);
+
+    // Invariant 2: exactly one JWT issued (the first awaiter to commit).
+    const okResults = results.filter((r) => r.kind === "ok");
+    expect(okResults, "expected exactly one ok result").to.have.lengthOf(1);
+
+    // Invariant 3: the other 4 receive "redeemed" (which the route maps
+    // to HTTP 409). None must receive "ok" or "invalid".
+    const redeemedResults = results.filter((r) => r.kind === "redeemed");
+    expect(
+      redeemedResults,
+      "expected the other 4 callers to be 409-redeemed",
+    ).to.have.lengthOf(4);
+
+    // Defensive: no other result kinds should appear.
+    expect(
+      results.filter(
+        (r) => r.kind !== "ok" && r.kind !== "redeemed",
+      ),
+      "unexpected result kinds present",
+    ).to.have.lengthOf(0);
+
+    // Invariant 4: the issued JWT must be a non-empty string and must
+    // carry the txSignature in its payload, so we know it's the genuine
+    // article (not an empty placeholder).
+    const ok = okResults[0];
+    if (ok.kind !== "ok") throw new Error("unreachable");
+    expect(ok.accessToken).to.be.a("string").and.not.empty;
+    const decoded = verifyAccessToken(ok.accessToken);
+    expect(decoded).to.not.be.null;
+    expect(decoded!.txSignature).to.equal(SIGNATURE);
+  });
+
+  it("a sequential second call to a previously-redeemed signature returns 'redeemed' without invoking the verifier", async () => {
+    let verifierCallCount = 0;
+    const verifier = async (_sig: string) => {
+      verifierCallCount += 1;
+      return {
+        valid: true,
+        sender: "SenderPubkey-AUD208",
+        recipient: RECIPIENT,
+        amountSol: 0.05,
+        slot: 99,
+      };
+    };
+
+    const first = await processPaymentRequest(
+      "sequential-sig-AUD208",
+      verifier,
+      RECIPIENT,
+    );
+    expect(first.kind).to.equal("ok");
+    expect(verifierCallCount).to.equal(1);
+
+    const second = await processPaymentRequest(
+      "sequential-sig-AUD208",
+      verifier,
+      RECIPIENT,
+    );
+    expect(second.kind).to.equal("redeemed");
+    // Fast-reject path means the verifier is NOT consulted again.
+    expect(verifierCallCount, "fast-reject must skip the verifier").to.equal(
+      1,
+    );
+  });
+
+  it("a failed verification does not poison the in-flight cache for retries", async () => {
+    let verifierCallCount = 0;
+    const verifier = async (_sig: string) => {
+      verifierCallCount += 1;
+      // First attempt: tx not yet finalized; later retry should succeed.
+      if (verifierCallCount === 1) {
+        await new Promise((r) => setTimeout(r, 50));
+        return {
+          valid: false,
+          sender: "",
+          recipient: RECIPIENT,
+          amountSol: 0,
+          slot: 0,
+          error: "Transaction not found",
+        };
+      }
+      return {
+        valid: true,
+        sender: "SenderPubkey-AUD208",
+        recipient: RECIPIENT,
+        amountSol: 0.05,
+        slot: 100,
+      };
+    };
+
+    const SIG = "retry-after-fail-AUD208";
+    const first = await processPaymentRequest(SIG, verifier, RECIPIENT);
+    expect(first.kind).to.equal("invalid");
+
+    // The .finally() handler must have cleared the in-flight entry by
+    // the time the awaiter resumes (since `await` on the same Promise
+    // is observed only after all `.then`/`.finally` for that Promise
+    // have queued — and our `.finally(() => delete)` was registered
+    // synchronously in `processPaymentRequest`). A retry must therefore
+    // re-invoke the verifier rather than reusing the cached failure.
+    const second = await processPaymentRequest(SIG, verifier, RECIPIENT);
+    expect(second.kind).to.equal("ok");
+    expect(verifierCallCount).to.equal(2);
   });
 });
 

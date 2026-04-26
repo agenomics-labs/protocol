@@ -69,6 +69,28 @@ const redeemedSignatures = new Map<string, number>();
 const SIGNATURE_TTL_MS = (TOKEN_EXPIRY_SECONDS + 300) * 1000;
 const MAX_REDEEMED_SIGNATURES = 100_000;
 
+// AUD-208: TOCTOU race fix. The previous get-then-set pattern allowed two
+// concurrent POST /pay calls with the same txSignature to both pass the
+// existence check, both perform a 200-1000ms `verifyPaymentOnChain` RPC,
+// and both receive a fresh JWT for the same on-chain payment. Two JWTs
+// for one payment is a privilege-escalation bug (the relay's whole job
+// is to enforce 1 payment = 1 token).
+//
+// Fix: an in-flight verify cache keyed by txSignature. Concurrent callers
+// for the same signature await the same Promise — only the first verifier
+// runs the RPC, saving cost and collapsing the race window. After verify
+// resolves we re-check `redeemedSignatures` (a racing redeemer that
+// committed first wins; everyone else gets 409). Each redemption commit
+// is then atomic with respect to the JS event loop, since `Map.set` is
+// synchronous and Node is single-threaded per process.
+//
+// Scope: SINGLE-INSTANCE ONLY. Two relay processes behind a load balancer
+// can still issue duplicate JWTs because they don't share `inFlightVerify`
+// or `redeemedSignatures`. ADR-117 / AUD-028 tracks the horizontal-scale
+// fix (replace these in-memory maps with a Redis SET-IF-NOT-EXISTS or
+// Postgres unique-constraint-backed reservation table).
+const inFlightVerify = new Map<string, Promise<PaymentVerification>>();
+
 function pruneRedeemedSignatures(): void {
   const now = Date.now();
   for (const [sig, expiresAt] of redeemedSignatures) {
@@ -305,6 +327,105 @@ app.get("/health", (_req: Request, res: Response) => {
   });
 });
 
+/**
+ * AUD-208: extracted /pay handler core. Takes an injectable verifier so
+ * tests can drive the concurrency invariants (single RPC per signature,
+ * single JWT per signature) without standing up a full Express server or
+ * a real Solana validator. Production code passes the bound
+ * `verifyPaymentOnChain`; the unit test passes a 100ms-delayed mock.
+ *
+ * Returns a discriminated union the route handler maps onto HTTP status:
+ *   - { kind: "ok",       ... } -> 200
+ *   - { kind: "redeemed" }      -> 409
+ *   - { kind: "invalid",  ... } -> 402
+ *   - { kind: "bad-input" }     -> 400 (handled by caller, not here)
+ *   - { kind: "no-config" }     -> 500
+ */
+type PayResult =
+  | {
+      kind: "ok";
+      accessToken: string;
+      expiresIn: number;
+      sender: string;
+      amountSol: number;
+      slot: number;
+    }
+  | { kind: "redeemed" }
+  | { kind: "invalid"; details?: string; verification: PaymentVerification }
+  | { kind: "no-config" };
+
+async function processPaymentRequest(
+  txSignature: string,
+  verifier: (sig: string) => Promise<PaymentVerification>,
+  recipient: string,
+): Promise<PayResult> {
+  // Fast-reject: prior commit short-circuits before paying for an RPC
+  // roundtrip. The check is repeated post-verify below to close the
+  // TOCTOU window.
+  const existingExpiry = redeemedSignatures.get(txSignature);
+  if (existingExpiry !== undefined && Date.now() < existingExpiry) {
+    return { kind: "redeemed" };
+  }
+
+  if (!recipient) {
+    return { kind: "no-config" };
+  }
+
+  // In-flight verify dedup. If another request for this same txSignature
+  // is already mid-RPC, await its Promise instead of firing a second
+  // `getTransaction` call. Verification is a pure function of
+  // (signature, recipient, minAmount); recipient and minAmount are
+  // process-wide constants, so sharing the result across concurrent
+  // callers with the same signature is safe. The first caller to reach
+  // this branch installs the Promise; later callers find it via `.get`.
+  let verifyPromise = inFlightVerify.get(txSignature);
+  if (!verifyPromise) {
+    verifyPromise = verifier(txSignature);
+    inFlightVerify.set(txSignature, verifyPromise);
+    // Drop the cache entry once the RPC settles, regardless of outcome.
+    // `.finally` runs after every awaiter has resolved their `.then`,
+    // so no awaiter races a second attempt against a half-deleted entry.
+    verifyPromise.finally(() => {
+      inFlightVerify.delete(txSignature);
+    });
+  }
+
+  const verification = await verifyPromise;
+
+  if (!verification.valid) {
+    return { kind: "invalid", details: verification.error, verification };
+  }
+
+  // Race-window collapse: re-check redeemedSignatures *after* the RPC
+  // settles. Without this, two concurrent callers that both passed the
+  // pre-verify check (no prior commit) and shared a single in-flight
+  // Promise would both reach the commit step. The map is mutated on a
+  // single thread (Node event loop) so this `has` + `set` pair runs
+  // without interleaving — the first awaiter to wake commits and the
+  // rest get "redeemed". `Map.has` and `Map.set` are synchronous; no
+  // `await` may appear between them, otherwise the atomicity guarantee
+  // is lost.
+  if (redeemedSignatures.has(txSignature)) {
+    return { kind: "redeemed" };
+  }
+  redeemedSignatures.set(txSignature, Date.now() + SIGNATURE_TTL_MS);
+
+  const accessToken = issueAccessToken(
+    verification.sender,
+    txSignature,
+    verification.amountSol,
+  );
+
+  return {
+    kind: "ok",
+    accessToken,
+    expiresIn: TOKEN_EXPIRY_SECONDS,
+    sender: verification.sender,
+    amountSol: verification.amountSol,
+    slot: verification.slot,
+  };
+}
+
 app.post("/pay", async (req: Request, res: Response) => {
   const { txSignature } = req.body;
 
@@ -313,47 +434,38 @@ app.post("/pay", async (req: Request, res: Response) => {
     return;
   }
 
-  const existingExpiry = redeemedSignatures.get(txSignature);
-  if (existingExpiry !== undefined && Date.now() < existingExpiry) {
-    res.status(409).json({ error: "Transaction signature already redeemed" });
-    return;
-  }
-
-  if (!PAYMENT_RECIPIENT) {
-    res.status(500).json({ error: "Relay not configured: PAYMENT_RECIPIENT not set" });
-    return;
-  }
-
-  const verification = await verifyPaymentOnChain(
+  const result = await processPaymentRequest(
     txSignature,
+    (sig) => verifyPaymentOnChain(sig, PAYMENT_RECIPIENT, REQUIRED_AMOUNT_SOL),
     PAYMENT_RECIPIENT,
-    REQUIRED_AMOUNT_SOL
   );
 
-  if (!verification.valid) {
-    res.status(402).json({
-      error: "Payment verification failed",
-      details: verification.error,
-      verification,
-    });
-    return;
+  switch (result.kind) {
+    case "redeemed":
+      res.status(409).json({ error: "Transaction signature already redeemed" });
+      return;
+    case "no-config":
+      res
+        .status(500)
+        .json({ error: "Relay not configured: PAYMENT_RECIPIENT not set" });
+      return;
+    case "invalid":
+      res.status(402).json({
+        error: "Payment verification failed",
+        details: result.details,
+        verification: result.verification,
+      });
+      return;
+    case "ok":
+      res.json({
+        accessToken: result.accessToken,
+        expiresIn: result.expiresIn,
+        sender: result.sender,
+        amountSol: result.amountSol,
+        slot: result.slot,
+      });
+      return;
   }
-
-  redeemedSignatures.set(txSignature, Date.now() + SIGNATURE_TTL_MS);
-
-  const accessToken = issueAccessToken(
-    verification.sender,
-    txSignature,
-    verification.amountSol
-  );
-
-  res.json({
-    accessToken,
-    expiresIn: TOKEN_EXPIRY_SECONDS,
-    sender: verification.sender,
-    amountSol: verification.amountSol,
-    slot: verification.slot,
-  });
 });
 
 app.get("/verify", (req: Request, res: Response) => {
@@ -396,4 +508,20 @@ app.listen(PORT, () => {
   );
 });
 
-export { app, requirePayment, verifyPaymentOnChain, verifyAccessToken };
+// AUD-208 test hook: reset the in-memory redemption + in-flight state so a
+// test suite can run multiple `processPaymentRequest` scenarios in
+// isolation without polluting global module state. Not part of the public
+// runtime contract — production callers must never invoke this.
+function __resetRedemptionStateForTests(): void {
+  redeemedSignatures.clear();
+  inFlightVerify.clear();
+}
+
+export {
+  app,
+  requirePayment,
+  verifyPaymentOnChain,
+  verifyAccessToken,
+  processPaymentRequest,
+  __resetRedemptionStateForTests,
+};
