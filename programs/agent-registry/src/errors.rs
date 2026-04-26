@@ -86,4 +86,14 @@ pub enum AgentRegistryError {
     // Same code is reused by other admin-only paths if they ever appear.
     #[msg("Unauthorized: caller is not the ProtocolConfig authority")]
     Unauthorized,
+
+    // AUD-104 (cycle-2): `verify_protocol_invariants` reads the
+    // ProtocolConfig PDA's raw bytes (via UncheckedAccount) to avoid pulling
+    // in a Settlement crate dependency. Before reading the authority field
+    // at offset [8..40], the 8-byte Anchor discriminator must match
+    // sha256("account:ProtocolConfig")[..8]. A mismatch means the address
+    // was hijacked by an account of a different type and the read would be
+    // garbage; reject with this typed error rather than trusting the bytes.
+    #[msg("ProtocolConfig discriminator mismatch — account is not a Settlement ProtocolConfig (AUD-104)")]
+    InvalidProtocolConfigAccount,
 }
