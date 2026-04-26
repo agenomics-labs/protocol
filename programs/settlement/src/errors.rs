@@ -84,7 +84,7 @@ pub enum SettlementError {
     #[msg("Invalid ProtocolConfig value: violates sanity bounds")]
     InvalidProtocolConfigValue,
 
-    /// SEC-7 (per ADR-073, in-flight): `resolve_dispute` on an escrow whose
+    /// SEC-7 (per ADR-073, Accepted 2026-04-25): `resolve_dispute` on an escrow whose
     /// `dispute_resolver == None`. The only legitimate path for a
     /// no-resolver dispute is `resolve_dispute_timeout`, which refunds the
     /// full remaining balance symmetrically to the client (no slashing). A

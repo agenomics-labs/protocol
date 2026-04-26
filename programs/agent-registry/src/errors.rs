@@ -53,7 +53,7 @@ pub enum AgentRegistryError {
     #[msg("Cannot deregister while reputation stake is present; call unstake_reputation for the full amount first (SEC-4)")]
     StakePresentOnDeregister,
 
-    // SEC-11 (per ADR-075, in-flight): the slashing path did
+    // SEC-11 (per ADR-075, Accepted 2026-04-25): the slashing path did
     // `(-reputation_delta) as u64` which panics in debug for
     // `reputation_delta == i64::MIN`. Use `checked_neg` and surface the
     // overflow as a typed error rather than a panic.

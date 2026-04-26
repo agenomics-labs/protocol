@@ -28,11 +28,14 @@ use anchor_lang::prelude::*;
 /// Note on `delta` clamping: the Settlement-level `reputation_delta`
 /// parameter is `i64` (governance-controlled via `ProtocolConfig`); the
 /// Registry-side parameter is `i16`. We clamp into the `i16` range here.
-/// `update_protocol_config` (settlement/instructions/protocol_config.rs)
-/// caps slash magnitudes at `MIN_REPUTATION_DELTA = -1_000_000`, which is
-/// far outside `i16`; the Registry's own per-call cap (`MAX_DELTA_PER_CALL`
-/// = 10) will further reject the call if the magnitude is unreasonable.
-/// The clamp is therefore a safety net, not the primary policy.
+/// AUD-102 (cycle-2): `update_protocol_config` now caps governance values
+/// at `[MIN_REPUTATION_DELTA, MAX_REPUTATION_DELTA] = [-10, +10]`,
+/// matching the Registry's `MAX_DELTA_PER_CALL = 10` per-call cap exactly.
+/// Pre-fix the bounds were `[-1_000_000, +i64::MAX]`, so a "valid"
+/// governance value beyond ±10 would have reached this CPI and reverted
+/// at the Registry's i16 magnitude check; tightening at governance time
+/// turns that runtime revert into a config-time reject. The i16 clamp
+/// here remains as a safety net for any future signature mismatch.
 ///
 /// `_earnings`, `_task_completed`, and `_rating` are retained in the
 /// signature so existing callers in `escrow.rs` and `dispute.rs` keep

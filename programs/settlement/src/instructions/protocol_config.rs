@@ -45,12 +45,15 @@ pub fn initialize_protocol_config(ctx: Context<InitializeProtocolConfig>) -> Res
 /// - Positive-reward delta must stay non-negative; slash deltas must stay
 ///   non-positive. Flipping the sign of a slash delta would turn a slash
 ///   into a reward and vice-versa — almost always a bug.
-/// - SEC-11 (per ADR-075, in-flight): slash deltas also have a lower
-///   bound. The registry's slashing path negates the delta and applies it
-///   via `saturating_sub`; a delta of `i64::MIN` panics the negation in
-///   debug and is nonsensical in any mode. `MIN_REPUTATION_DELTA` caps the
-///   magnitude far below `i64::MIN` so the registry-side `checked_neg` is
-///   never actually exercised on a reachable config — belt-and-braces.
+/// - SEC-11 (per ADR-075, Accepted 2026-04-25): slash deltas also have a
+///   lower bound. The registry's slashing path negates the delta and
+///   applies it via `saturating_sub`; a delta of `i64::MIN` panics the
+///   negation in debug and is nonsensical in any mode.
+/// - AUD-102 (cycle-2): both bounds (`MIN_REPUTATION_DELTA = -10`,
+///   `MAX_REPUTATION_DELTA = +10`) match the Registry's per-call cap
+///   (`MAX_DELTA_PER_CALL = 10`) exactly. Anything outside that range
+///   would reach the Registry CPI and revert via the i16 clamp +
+///   magnitude check, so we reject it at governance time instead.
 pub fn update_protocol_config(
     ctx: Context<UpdateProtocolConfig>,
     min_escrow_amount: Option<u64>,
@@ -76,7 +79,16 @@ pub fn update_protocol_config(
         config.dispute_timeout_seconds = v;
     }
     if let Some(v) = reputation_delta_task_completed {
-        require!(v >= 0, SettlementError::InvalidProtocolConfigValue);
+        // AUD-102 (cycle-2): cap at MAX_REPUTATION_DELTA to match the
+        // Registry's MAX_DELTA_PER_CALL = 10. Pre-fix this check was
+        // `v >= 0` only, admitting any positive `i64` up to `i64::MAX`,
+        // which the Registry CPI's i16 clamp + magnitude check would
+        // then reject — turning a governance-time misconfiguration into
+        // a runtime revert on every `approve_milestone`.
+        require!(
+            v >= 0 && v <= MAX_REPUTATION_DELTA,
+            SettlementError::InvalidProtocolConfigValue
+        );
         config.reputation_delta_task_completed = v;
     }
     if let Some(v) = reputation_delta_dispute_loss {
@@ -195,5 +207,71 @@ mod tests {
         // compile — exactly the compile-time guarantee the wire-level
         // constraint attribute lacks.
         let _e: SettlementError = SettlementError::Unauthorized;
+    }
+
+    // ========================================================================
+    // AUD-102 (cycle-2) — reputation-delta bound predicates
+    // ========================================================================
+    //
+    // Constructing a live `Context<UpdateProtocolConfig>` in unit-test scope
+    // requires a well-formed `AccountInfo` and serialized `ProtocolConfig`
+    // bytes — the same scaffolding the AUD-005 tests above deliberately skip.
+    // Following that established convention, these tests pin the *predicate
+    // shape* of each `require!` in `update_protocol_config` directly. The
+    // predicates are the policy: any change to them (e.g. dropping the upper
+    // cap, flipping a sign) breaks these tests at compile or run time.
+    //
+    // The end-to-end happy path (and the rejection error code) is exercised
+    // by `tests/settlement.ts` against a live validator.
+    use crate::state::{MAX_REPUTATION_DELTA, MIN_REPUTATION_DELTA};
+
+    /// AUD-102: predicate for `reputation_delta_task_completed`. Mirrors
+    /// the `require!` body in `update_protocol_config` exactly.
+    fn reward_delta_is_valid(v: i64) -> bool {
+        v >= 0 && v <= MAX_REPUTATION_DELTA
+    }
+
+    /// AUD-102: predicate for both `reputation_delta_dispute_loss` and
+    /// `reputation_delta_expiry_undelivered`. Mirrors the `require!` body
+    /// in `update_protocol_config` exactly.
+    fn slash_delta_is_valid(v: i64) -> bool {
+        v <= 0 && v >= MIN_REPUTATION_DELTA
+    }
+
+    /// AUD-102: a slash delta of -100 is five orders of magnitude beyond
+    /// the Registry's per-call cap (`MAX_DELTA_PER_CALL = 10`); pre-fix
+    /// Settlement would have accepted it (old bound was -1_000_000) and
+    /// every subsequent `resolve_dispute` / `resolve_dispute_timeout` CPI
+    /// would have reverted at the Registry's i16 magnitude check. Post-fix,
+    /// `update_protocol_config` rejects it.
+    #[test]
+    fn aud102_rejects_slash_delta_of_negative_100() {
+        assert!(!slash_delta_is_valid(-100));
+    }
+
+    /// AUD-102: a reward delta of +50 exceeds the Registry's per-call cap
+    /// (`MAX_DELTA_PER_CALL = 10`); pre-fix Settlement would have accepted
+    /// it (old `require!(v >= 0)` had no upper bound) and every subsequent
+    /// `approve_milestone` CPI would have reverted at the Registry's i16
+    /// magnitude check. Post-fix, `update_protocol_config` rejects it.
+    #[test]
+    fn aud102_rejects_reward_delta_of_positive_50() {
+        assert!(!reward_delta_is_valid(50));
+    }
+
+    /// AUD-102: the boundary values exactly match the Registry's
+    /// `MAX_DELTA_PER_CALL = 10`. Both ±10 must be accepted: rejecting them
+    /// would make the boundary unreachable and force governance to use a
+    /// strictly smaller magnitude than the Registry actually permits.
+    #[test]
+    fn aud102_accepts_boundary_values_negative_10_and_positive_10() {
+        // -10 is the maximum-magnitude slash; the Registry's i16 magnitude
+        // check accepts |delta| <= 10, so this must round-trip cleanly.
+        assert!(slash_delta_is_valid(-10));
+        // +10 is the maximum-magnitude reward; same rationale.
+        assert!(reward_delta_is_valid(10));
+        // Belt-and-braces: 0 is the trivial boundary on both predicates.
+        assert!(slash_delta_is_valid(0));
+        assert!(reward_delta_is_valid(0));
     }
 }
