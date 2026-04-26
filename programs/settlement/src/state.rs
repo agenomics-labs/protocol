@@ -72,14 +72,29 @@ pub const DEFAULT_REPUTATION_DELTA_TASK_COMPLETED: i64 = 10;
 pub const DEFAULT_REPUTATION_DELTA_DISPUTE_LOSS: i64 = -5;
 pub const DEFAULT_REPUTATION_DELTA_EXPIRY_UNDELIVERED: i64 = -3;
 
-/// SEC-11 (per ADR-075, in-flight): lower bound on slash-style reputation
-/// deltas. The pre-fix `update_protocol_config` check was `v <= 0`, which
-/// admits `i64::MIN`. The registry's slashing math then panics on
-/// `(-reputation_delta) as u64` in debug mode because `-i64::MIN`
-/// overflows. -1_000_000 is four orders of magnitude beyond the default
-/// slash magnitude (-25) — enough headroom for any plausible tuning while
-/// keeping the registry's `checked_neg` comfortably safe.
-pub const MIN_REPUTATION_DELTA: i64 = -1_000_000;
+/// SEC-11 (per ADR-075, Accepted 2026-04-25): lower bound on slash-style
+/// reputation deltas. The pre-fix `update_protocol_config` check was `v <=
+/// 0`, which admits `i64::MIN`. The registry's slashing math then panics
+/// on `(-reputation_delta) as u64` in debug mode because `-i64::MIN`
+/// overflows.
+///
+/// AUD-102 (cycle-2): match Registry's per-call cap (`MAX_DELTA_PER_CALL =
+/// 10`). The previous Settlement-side bounds (`-1_000_000`) were five
+/// orders of magnitude wider than the Registry's `i16` cap, so any
+/// "valid" Settlement-side governance value beyond ±10 would revert at the
+/// Registry constraint via the i16 clamp + magnitude check in
+/// `propose_reputation_delta`. Tightening here turns a runtime CPI revert
+/// into a governance-time `update_protocol_config` reject, matching the
+/// Registry policy exactly.
+pub const MIN_REPUTATION_DELTA: i64 = -10;
+
+/// AUD-102 (cycle-2): upper bound on reward-style reputation deltas. The
+/// pre-fix `update_protocol_config` check was `v >= 0`, which admits
+/// `i64::MAX` — and the Registry's `i16` clamp + `|delta| <=
+/// MAX_DELTA_PER_CALL = 10` would then reject every CPI. Cap at +10 here
+/// so governance-time values are guaranteed to satisfy the Registry's
+/// per-call cap.
+pub const MAX_REPUTATION_DELTA: i64 = 10;
 
 /// Finding #19: Seed for the single-instance `ProtocolConfig` PDA.
 /// Derived as `[b"protocol_config"]` under this program's ID.

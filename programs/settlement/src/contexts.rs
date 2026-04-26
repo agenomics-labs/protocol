@@ -249,7 +249,7 @@ pub struct ResolveDispute<'info> {
     #[account(mut)]
     pub resolver: Signer<'info>,
 
-    /// Finding #20 + SEC-7 (per ADR-073, in-flight): Authorization hoisted
+    /// Finding #20 + SEC-7 (per ADR-073, Accepted 2026-04-25): Authorization hoisted
     /// to account-level constraint for visibility parity with Registry's
     /// `has_one = authority` pattern. Anchor's `has_one` cannot express
     /// OR-logic against an `Option<Pubkey>`, so explicit constraints are
