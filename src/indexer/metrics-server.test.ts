@@ -122,3 +122,68 @@ describe("indexer metrics-server (ADR-104)", () => {
     );
   });
 });
+
+// ===========================================================================
+// AUD-029 / AUD-403 — /metrics default-bind regression (indexer)
+// ===========================================================================
+//
+// `startMetricsServer()` (src/indexer/metrics-server.ts) reads METRICS_HOST
+// from process.env and falls back to "127.0.0.1" — same default-loopback
+// posture as mcp-server's `startMcpMetricsServer`. AUD-403 (cycle-2 audit)
+// flagged the cycle-1 closure (440ecac) as config-only with no automated
+// bind assertion. These tests are that assertion for the indexer.
+
+describe("AUD-029 / AUD-403: indexer /metrics binding default 127.0.0.1", () => {
+  function awaitListening(s: http.Server): Promise<void> {
+    return new Promise((resolve, reject) => {
+      s.once("listening", () => resolve());
+      s.once("error", reject);
+    });
+  }
+
+  async function bindAndInspect(): Promise<{ address: string; family: string; port: number }> {
+    // Port 0 lets the OS pick a free ephemeral port — avoids racing the
+    // 19100 fixture above.
+    const s = startMetricsServer(0);
+    try {
+      await awaitListening(s);
+      const addr = s.address();
+      assert.ok(addr && typeof addr === "object", "server.address() must be an AddressInfo");
+      return addr as { address: string; family: string; port: number };
+    } finally {
+      await new Promise<void>((r) => s.close(() => r()));
+    }
+  }
+
+  it("defaults to 127.0.0.1 when METRICS_HOST is unset", async () => {
+    const saved = process.env.METRICS_HOST;
+    delete process.env.METRICS_HOST;
+    try {
+      const addr = await bindAndInspect();
+      assert.equal(
+        addr.address,
+        "127.0.0.1",
+        "default bind must be loopback IPv4 (AUD-029 / AUD-403)",
+      );
+    } finally {
+      if (saved !== undefined) process.env.METRICS_HOST = saved;
+      else delete process.env.METRICS_HOST;
+    }
+  });
+
+  it("honours METRICS_HOST=0.0.0.0 when an operator opts in to a wider bind", async () => {
+    const saved = process.env.METRICS_HOST;
+    process.env.METRICS_HOST = "0.0.0.0";
+    try {
+      const addr = await bindAndInspect();
+      assert.equal(
+        addr.address,
+        "0.0.0.0",
+        "explicit METRICS_HOST=0.0.0.0 must propagate to the listen() call",
+      );
+    } finally {
+      if (saved !== undefined) process.env.METRICS_HOST = saved;
+      else delete process.env.METRICS_HOST;
+    }
+  });
+});
