@@ -1,0 +1,15 @@
+repo: trufflesecurity/trufflehog
+sha: 3fc0c2aa6648d54242e4af6fbfde0701796e4fb0
+version: v3.95.2 (matches `main` snapshot at vendor time)
+vendored_on: 2026-04-26
+vendored_by_commit: AUD-406 follow-up
+notes: |
+  Composite action only — action.yml is the entire surface.
+  Runtime image (ghcr.io/trufflesecurity/trufflehog:${VERSION}) is
+  pulled from the Docker registry, not api.github.com.
+  Re-vendor procedure:
+    1. SHA=$(gh api repos/trufflesecurity/trufflehog/commits/main --jq .sha)
+    2. gh api repos/trufflesecurity/trufflehog/contents/action.yml \
+         --jq '.content' --header "Accept: application/vnd.github.v3.raw" \
+         > .github/actions/trufflehog/action.yml
+    3. Update sha + vendored_on in this file.
