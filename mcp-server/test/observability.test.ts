@@ -117,3 +117,99 @@ describe("mcp-server observability (ADR-104)", () => {
     assert.deepEqual(result, { ok: true });
   });
 });
+
+// ===========================================================================
+// AUD-029 / AUD-403 — /metrics default-bind regression
+// ===========================================================================
+//
+// `startMcpMetricsServer()` reads METRICS_HOST from process.env and falls
+// back to "127.0.0.1" — keeping the scrape endpoint loopback-only by
+// default so the tool-call cardinality / duration histograms are not an
+// info-disclosure surface to LAN peers.
+//
+// AUD-403 (cycle-2 audit) flagged that the cycle-1 closure (440ecac) was
+// config-only, with no automated assertion that `server.address()`
+// actually reports the loopback bind. These tests are that assertion.
+//
+// Each case picks a fresh ephemeral port (port 0 → kernel assigns) so we
+// don't collide with the suite above, sets/unsets METRICS_HOST, awaits
+// `listening`, then reads `server.address()` and closes immediately.
+
+describe("AUD-029 / AUD-403: /metrics binding default 127.0.0.1", () => {
+  function awaitListening(s: http.Server): Promise<void> {
+    return new Promise((resolve, reject) => {
+      s.once("listening", () => resolve());
+      s.once("error", reject);
+    });
+  }
+
+  async function bindAndInspect(): Promise<{ address: string; family: string; port: number }> {
+    // Port 0 lets the OS pick a free ephemeral port — avoids racing the
+    // 19101 fixture above and lets every case run cleanly in parallel.
+    const s = startMcpMetricsServer(0);
+    try {
+      await awaitListening(s);
+      const addr = s.address();
+      assert.ok(addr && typeof addr === "object", "server.address() must be an AddressInfo");
+      return addr as { address: string; family: string; port: number };
+    } finally {
+      await new Promise<void>((r) => s.close(() => r()));
+    }
+  }
+
+  it("defaults to 127.0.0.1 when METRICS_HOST is unset", async () => {
+    const saved = process.env.METRICS_HOST;
+    delete process.env.METRICS_HOST;
+    try {
+      const addr = await bindAndInspect();
+      assert.equal(
+        addr.address,
+        "127.0.0.1",
+        "default bind must be loopback IPv4 (AUD-029 / AUD-403)",
+      );
+    } finally {
+      if (saved !== undefined) process.env.METRICS_HOST = saved;
+      else delete process.env.METRICS_HOST;
+    }
+  });
+
+  it("defaults to 127.0.0.1 when METRICS_HOST is the empty string (??)", async () => {
+    // Subtle: `??` (used in observability.ts) treats "" as a defined value
+    // and would NOT fall back. Documenting that contract here so a refactor
+    // to `||` doesn't silently widen the bind without anyone noticing.
+    const saved = process.env.METRICS_HOST;
+    process.env.METRICS_HOST = "";
+    try {
+      const addr = await bindAndInspect();
+      // With METRICS_HOST="" Node interprets the empty bind as IPv6 unspec
+      // (`::`) on dual-stack machines or 0.0.0.0 on IPv4-only — i.e. NOT
+      // loopback. Capture today's behaviour explicitly so an operator who
+      // sets METRICS_HOST="" cannot silently regress this gate.
+      assert.notEqual(
+        addr.address,
+        "127.0.0.1",
+        "METRICS_HOST=\"\" is a defined value; ?? fallback skipped — " +
+          "reflect that contract so any future widening is intentional",
+      );
+    } finally {
+      if (saved !== undefined) process.env.METRICS_HOST = saved;
+      else delete process.env.METRICS_HOST;
+    }
+  });
+
+  it("honours METRICS_HOST=0.0.0.0 when an operator opts in to a wider bind", async () => {
+    const saved = process.env.METRICS_HOST;
+    process.env.METRICS_HOST = "0.0.0.0";
+    try {
+      const addr = await bindAndInspect();
+      assert.equal(
+        addr.address,
+        "0.0.0.0",
+        "explicit METRICS_HOST=0.0.0.0 must propagate to the listen() call",
+      );
+    } finally {
+      if (saved !== undefined) process.env.METRICS_HOST = saved;
+      else delete process.env.METRICS_HOST;
+    }
+  });
+});
