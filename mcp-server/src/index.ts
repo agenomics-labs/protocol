@@ -38,7 +38,7 @@ import {
 } from "./observability.js";
 
 /**
- * Agenomics MCP Server — all 23 actions dispatched through the ADR-058
+ * Agenomics MCP Server — all 25 actions dispatched through the ADR-058
  * capability-gated ActionRouter. Legacy switch-case dispatch retired in PR1.5.
  *
  * Replay-protection backend (ADR-059 §5) is selected by the `AEP_REDIS_URL`

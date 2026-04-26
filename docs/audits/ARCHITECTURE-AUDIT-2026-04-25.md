@@ -91,7 +91,7 @@ Plus: closed-state-machine invariant `assert_valid_profile()` enforced post-muta
 | **AUD-004** | C | Reputation-laundering loop via self-`Suspended` + `clear_suspension` | `programs/agent-registry/src/lib.rs:137-151` + `:349-368` | ADR-070 | Open |
 | **AUD-005** | C | `initialize_protocol_config` is permissionless (front-runnable governance) | `programs/settlement/src/instructions/protocol_config.rs:16-36`, `contexts.rs:491-505` | ADR-031, ADR-080 | Open |
 | **AUD-006** | H | Vault rate-limit window arithmetic mixes signed/unsigned | `programs/agent-vault/src/instructions.rs:280-294`, `:455-468` | none | Open |
-| **AUD-007** | H | `avg_rating` denominator unbounded; gameable by ordering | `programs/agent-registry/src/lib.rs:177-188` | ADR-005 | Open |
+| **AUD-007** | H | `avg_rating` denominator unbounded; gameable by ordering | `programs/agent-registry/src/lib.rs:177-188` | ADR-005, **ADR-121** | Fixed in `8fb8511` (ADR-121) |
 | **AUD-008** | H | Vault user-supplied `profile_nonce` can permanently brick vault | `programs/agent-vault/src/contexts.rs:141-150`, `:191-200` | ADR-093, ADR-097 | Open |
 | **AUD-009** | H | `accept_task` has no deadline check; provider can grief | `programs/settlement/src/instructions/escrow.rs:114-128` | none | Open |
 | **AUD-010** | H | `expire_escrow` skips success-path reputation CPI for already-Submitted milestones | `programs/settlement/src/instructions/escrow.rs:172-294`, `:495-508` | ADR-025 | Open |
