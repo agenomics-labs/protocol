@@ -118,9 +118,15 @@ jobs:
           name: anchor-types
           path: target/types
 
-      # mcp-server consumes @agenomics/capability-manifest-validator and
-      # @agenomics/sas-resolver via `file:` deps. tsc --noEmit in mcp-server
-      # needs the d.ts output from those packages, so build them first.
+      # mcp-server consumes @agenomics/capability-manifest-validator,
+      # @agenomics/sas-resolver, and @agenomics/action-runtime via `file:`
+      # deps. tsc --noEmit in mcp-server needs the d.ts output from those
+      # packages, so build them first. action-runtime is built before
+      # sas-resolver because PR-T (AUD-013) made sas-resolver re-export from
+      # action-runtime.
+      - name: Build @agenomics/action-runtime
+        run: npm run build --workspace @agenomics/action-runtime
+
       - name: Build @agenomics/capability-manifest-validator
         run: npm run build --workspace @agenomics/capability-manifest-validator
 
@@ -210,9 +216,11 @@ jobs:
           cache: "npm"
       - name: Install workspace deps (npm ci)
         run: npm ci --no-audit --no-fund
-      # sas-resolver depends on capability-manifest-validator at runtime via
-      # @agenomics/* package; both build/test independently but resolver tests
-      # need the validator's compiled JS.
+      # sas-resolver depends on capability-manifest-validator (runtime) and
+      # @agenomics/action-runtime (PR-T / AUD-013 — re-exports Result/ok/err).
+      # Build both before typecheck/test.
+      - name: Build @agenomics/action-runtime
+        run: npm run build --workspace @agenomics/action-runtime
       - name: Build @agenomics/capability-manifest-validator
         run: npm run build --workspace @agenomics/capability-manifest-validator
       - name: Type check
@@ -247,7 +255,11 @@ jobs:
       - name: Install workspace deps (npm ci)
         run: npm ci --no-audit --no-fund
       # Build the @agenomics/* packages so the `file:` deps + tsx ESM loader
-      # can resolve their dist/*.js at test runtime.
+      # can resolve their dist/*.js at test runtime. action-runtime is built
+      # first so sas-resolver (which re-exports from it post PR-T / AUD-013)
+      # has its types resolvable.
+      - name: Build @agenomics/action-runtime
+        run: npm run build --workspace @agenomics/action-runtime
       - name: Build @agenomics/capability-manifest-validator
         run: npm run build --workspace @agenomics/capability-manifest-validator
       - name: Build @agenomics/sas-resolver
