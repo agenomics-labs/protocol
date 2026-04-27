@@ -35,6 +35,7 @@ import type { Pool, QueryResultRow } from "pg";
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const pgModule: typeof import("pg") = require("pg");
 import { logger } from "./logger.js";
+import { MIGRATIONS } from "./migrations.embedded.js";
 
 // ---------------------------------------------------------------------------
 // Public types — mirror the shapes already passed around in index.ts so a
@@ -182,18 +183,26 @@ export class LivePostgresStore implements PostgresStore {
   /**
    * Apply the embedded migration SQL. Idempotent — operators may call
    * this repeatedly during bring-up without harm. Test code can also
-   * call this before each fixture without dropping the DB. The migration
-   * file is shipped alongside this module so it is always at the same
-   * version as the dual-write code that depends on its schema.
+   * call this before each fixture without dropping the DB.
+   *
+   * OFF-202 (ADR-128 cycle-3 off-chain audit): the migration SQL is
+   * inlined via `migrations.embedded.ts` rather than read from disk.
+   * The previous `__dirname` + `fs.readFileSync` approach ENOENT'd at
+   * production boot because `tsc` resolved `__dirname` under `dist/`
+   * but the .sql files ship at `src/indexer/migrations/*.sql` and were
+   * not copied into the build output. Embedding the SQL string in
+   * TypeScript turns it into a build artifact of the source itself —
+   * no runtime filesystem dependency, no copy step, no drift surface.
+   *
+   * Each migration is applied in `MIGRATIONS` order. The SQL itself is
+   * authored idempotent (CREATE TABLE/INDEX IF NOT EXISTS) so re-runs
+   * are safe; a Phase 2 PR may add a `schema_migrations` tracking row
+   * and skip-if-applied without changing this method's contract.
    */
   async applyMigration(): Promise<void> {
-    const fs: typeof import("fs") = require("fs");
-    const path: typeof import("path") = require("path");
-    const sql = fs.readFileSync(
-      path.join(__dirname, "migrations", "001-initial-postgres.sql"),
-      "utf8",
-    );
-    await this.pool.query(sql);
+    for (const migration of MIGRATIONS) {
+      await this.pool.query(migration.sql);
+    }
   }
 
   /**
