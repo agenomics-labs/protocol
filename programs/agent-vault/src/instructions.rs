@@ -34,6 +34,55 @@ pub fn compute_window_elapsed(now: i64, window_start: i64) -> i64 {
     now.saturating_sub(window_start).max(0)
 }
 
+/// AUD-116 (cycle-2 threat-model decision, documented 2026-04-26):
+///
+/// **Threat**: `agent_identity` is bound at init from a caller-supplied
+/// `Pubkey` argument with NO proof-of-control. A vault initialized with
+/// a wrong/spoofed `agent_identity` carries that key permanently —
+/// every `execute_transfer` and `execute_token_transfer` accepts a
+/// signature from either the vault `authority` OR the bound
+/// `agent_identity` (see `instructions.rs:314, 435`), so a mis-bound
+/// hot key can drain the vault under spending policy until the
+/// authority rotates it via `update_agent_identity`.
+///
+/// **Mitigation in place** (PR-X / AUD-023):
+///   - The first call to `update_agent_identity` is unrestricted
+///     (`last_rotation_at == 0` in the rate-limit guard at
+///     `instructions.rs:155-158`). If the wrong key was bound, the
+///     authority can rotate to the right one immediately — bounded
+///     practical recovery.
+///   - Subsequent rotations are gated by a 24h sliding window per
+///     ADR-069. The 24h window protects against a compromised authority
+///     repeatedly rotating, but does not protect against the initial
+///     mis-bind.
+///   - Spending policies (per-tx, daily, rate-limit) cap blast radius
+///     even during the mis-bind window: a wrong-key holder cannot
+///     drain more than the configured policies allow per tx and per
+///     day.
+///
+/// **Residual surface accepted**:
+///   - The window between `initialize_vault` and the first
+///     `update_agent_identity` is bounded by spending policy, not by
+///     a key-control proof. An authority who initializes with a wrong
+///     `agent_identity` (operator error or spoof) absorbs at most one
+///     spending-policy-window of damage before the unrestricted first
+///     rotation closes the gap.
+///
+/// **Future-work close**:
+///   - The audit's recommended hardening is to require an Ed25519
+///     signature from `agent_identity` over a domain-separated
+///     message (e.g. `sha256("AEP_VAULT_IDENTITY_BIND_V1\x00" ||
+///     authority || agent_identity)`) verified via the Solana
+///     ed25519 precompile, mirroring the manifest pattern in
+///     `agent-registry/lib.rs::manifest::verify_ed25519_precompile`.
+///   - That change is non-trivial: it adds a new context field
+///     (`instructions_sysvar`), a new `agent_identity_signature`
+///     parameter, an in-program sig-verify-introspection helper, and
+///     would require updating every off-chain caller (mcp-server,
+///     SDK, tests) to construct + sign the precompile ix in the same
+///     transaction. Tracked as cycle-3 follow-up under a paired ADR
+///     coordinated with the SDK changes; until then the threat is
+///     accepted per this comment.
 pub fn initialize_vault(
     ctx: Context<InitializeVault>,
     agent_identity: Pubkey,
