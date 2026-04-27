@@ -112,19 +112,28 @@ Expected: ~10⁹ iterations, **0 crashes**. Save artifacts to
 |---|---|---|---|
 | `propose_reputation_delta` | AUD-108 + ADR-094 + AUD-100 + AUD-001/002 | 1 | Reputation-mutation gate + slash-count escalation + closed-state-machine post-state |
 | `update_status` | AUD-120 + AUD-004 | 2 | Exhaustive accept-list (11 of 16 (cur, new) pairs) + self-issued Suspended guard |
+| `clear_suspension` | AUD-004 + AUD-118 + AUD-001/002 | 2 | NotSuspended gate (status + slash_count>=3) + post-increment escalation ladder (1→halve, 2→zero, 3→terminal Retired) + saturating-add at u8::MAX + assert_valid_profile post-state cap |
 
-Operator-driven 30-second smoke for the new target:
+Operator-driven 30-second smoke for each Phase 2 target:
 
 ```bash
 cd fuzz
-cargo hfuzz run update_status -- --max_total_time=30
+cargo hfuzz run update_status     -- --max_total_time=30
+cargo hfuzz run clear_suspension  -- --max_total_time=30
 ```
 
-Expected: iteration counter into the millions, **0 crashes**. A crash
-means either the on-chain handler has drifted from the AUD-120 matrix
-encoded in `fuzz_targets/update_status.rs`, or a new `AgentStatus`
-variant has been added without updating the harness (the corresponding
-non-exhaustive-match compile error in lib.rs would also fire).
+Expected: iteration counter into the millions, **0 crashes**. A crash on
+`update_status` means either the on-chain handler has drifted from the
+AUD-120 matrix encoded in `fuzz_targets/update_status.rs`, or a new
+`AgentStatus` variant has been added without updating the harness (the
+corresponding non-exhaustive-match compile error in lib.rs would also
+fire). A crash on `clear_suspension` means either the AUD-004
+escalation ladder shifted (1 → halve / 2 → zero / 3 → Retired) or the
+AUD-118 saturating-add invariant on `cleared_count` was weakened — the
+on-chain ladder constants are pinned at four lockstep sites
+(lib.rs:507-521, state.rs:208 assert_valid_profile cap, errors.rs:81
+InvalidClearedCount message, and `AUD_004_TERMINAL_CLEARED_COUNT` in
+the harness).
 
 ---
 
@@ -139,9 +148,6 @@ The remaining seams to cover, in priority order:
    PDA derivation: feed adversarial `(authority, owner_nonce,
    agent_profile)` triples and assert Anchor's seeds constraint
    rejects every misdirection.
-3. **`clear_suspension` cleared_count escalation** (AUD-004) — fuzz
-   the cost-ladder boundaries (1 → halve, 2 → zero, 3 → terminal
-   Retired).
 
 Each Phase 2 target is a new `[[bin]]` entry under
 `fuzz/Cargo.toml` with its own file under `fuzz_targets/`. The
@@ -194,7 +200,8 @@ fuzz/
 ├── .gitignore                                      # ignore hfuzz_target/
 └── fuzz_targets/
     ├── propose_reputation_delta.rs                 # Phase 1 target
-    └── update_status.rs                            # Phase 2 target (AUD-120)
+    ├── update_status.rs                            # Phase 2 target (AUD-120)
+    └── clear_suspension.rs                         # Phase 2 target (AUD-004)
 ```
 
 Generated artifacts (gitignored):
