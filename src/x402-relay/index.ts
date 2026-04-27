@@ -98,17 +98,18 @@ function pruneRedeemedSignatures(): void {
       redeemedSignatures.delete(sig);
     }
   }
-  // Safety cap: if TTL eviction hasn't kept pace (which would require
-  // ~100k unique signatures per TTL window — i.e. ~30 signatures/second
-  // for the default 3600s token), drop the oldest entries in insertion
-  // order. Map iteration order IS insertion order. Critically, this does
-  // NOT wipe the set — at most it evicts entries that have been held
-  // far longer than normal usage requires.
-  while (redeemedSignatures.size > MAX_REDEEMED_SIGNATURES) {
-    const oldest = redeemedSignatures.keys().next().value;
-    if (oldest === undefined) break;
-    redeemedSignatures.delete(oldest);
-  }
+  // AUD-209 (cycle-2): the previous safety-cap path here drained the
+  // OLDEST `redeemedSignatures.size - MAX_REDEEMED_SIGNATURES` entries
+  // in insertion order — a fail-OPEN mode that, under sustained
+  // ~30 sigs/sec saturation, would silently drop unexpired signatures
+  // and re-open the replay window for them. The replacement is a
+  // fail-CLOSED gate at the /pay commit step (see
+  // `processPaymentRequest` and the `kind: "saturated"` PayResult
+  // variant): when the map is at cap and the incoming signature is not
+  // already present, the relay returns 503 Service Unavailable. The
+  // operator alert is then "the relay is at saturation; investigate
+  // the burst" rather than "an unexpired signature was silently
+  // evicted, allowing replay."
 }
 setInterval(pruneRedeemedSignatures, SIGNATURE_TTL_MS);
 
@@ -340,6 +341,7 @@ app.get("/health", (_req: Request, res: Response) => {
  *   - { kind: "invalid",  ... } -> 402
  *   - { kind: "bad-input" }     -> 400 (handled by caller, not here)
  *   - { kind: "no-config" }     -> 500
+ *   - { kind: "saturated" }     -> 503 (AUD-209)
  */
 type PayResult =
   | {
@@ -352,7 +354,8 @@ type PayResult =
     }
   | { kind: "redeemed" }
   | { kind: "invalid"; details?: string; verification: PaymentVerification }
-  | { kind: "no-config" };
+  | { kind: "no-config" }
+  | { kind: "saturated" };
 
 async function processPaymentRequest(
   txSignature: string,
@@ -408,6 +411,16 @@ async function processPaymentRequest(
   if (redeemedSignatures.has(txSignature)) {
     return { kind: "redeemed" };
   }
+  // AUD-209 (cycle-2): fail-closed saturation guard. The previous
+  // implementation evicted oldest entries to make room — a fail-open
+  // mode that re-enabled replay for the dropped signatures. Now: if
+  // the map is at MAX_REDEEMED_SIGNATURES and this signature is not
+  // already present (we just checked above), refuse the redemption.
+  // The caller retries; operators see 503s and investigate the burst
+  // rather than silently absorbing it as replay surface.
+  if (redeemedSignatures.size >= MAX_REDEEMED_SIGNATURES) {
+    return { kind: "saturated" };
+  }
   redeemedSignatures.set(txSignature, Date.now() + SIGNATURE_TTL_MS);
 
   const accessToken = issueAccessToken(
@@ -454,6 +467,15 @@ app.post("/pay", async (req: Request, res: Response) => {
         error: "Payment verification failed",
         details: result.details,
         verification: result.verification,
+      });
+      return;
+    case "saturated":
+      // AUD-209 (cycle-2): redeemed-signature map at capacity. Returning
+      // 503 here is the fail-closed response; operators should treat
+      // this as a saturation alarm and either scale horizontally
+      // (ADR-117) or investigate a burst attacker.
+      res.status(503).json({
+        error: "Relay redeemed-signature capacity exhausted; retry shortly",
       });
       return;
     case "ok":
