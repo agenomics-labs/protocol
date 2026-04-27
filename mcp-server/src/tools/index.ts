@@ -37,6 +37,9 @@ export {
   resolveDisputeTimeoutTool,
 } from "./settlement.js";
 
+// Re-export all governance tools
+export { verifyProtocolInvariantsTool } from "./governance.js";
+
 // Import for aggregation
 import {
   createVaultTool,
@@ -72,12 +75,15 @@ import {
   resolveDisputeTimeoutTool,
 } from "./settlement.js";
 
+import { verifyProtocolInvariantsTool } from "./governance.js";
+
 /**
- * All 25 Agenomics MCP tools organized by domain:
+ * All 26 Agenomics MCP tools organized by domain:
  * - Vault (9): Agent wallet management with spending policies
  *   (includes `rotate_agent_identity` per ADR-069 / AUD-015)
  * - Registry (5) + reputation snapshot (1): Agent discovery and reputation
  * - Settlement (10): Escrow lifecycle and milestone-based payments
+ * - Governance (1): Protocol-wide invariant sweep (AUD-206 / roadmap §3 B2)
  */
 export const allTools: Tool[] = [
   // Vault
@@ -108,6 +114,8 @@ export const allTools: Tool[] = [
   raiseDisputeTool,
   resolveDisputeTool,
   resolveDisputeTimeoutTool,
+  // Governance
+  verifyProtocolInvariantsTool,
 ];
 
 export type ToolName =
@@ -135,4 +143,5 @@ export type ToolName =
   | "cancel_escrow"
   | "raise_dispute"
   | "resolve_dispute"
-  | "resolve_dispute_timeout";
+  | "resolve_dispute_timeout"
+  | "verify_protocol_invariants";
