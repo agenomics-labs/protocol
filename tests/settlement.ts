@@ -2348,12 +2348,14 @@ describe("Settlement Protocol Tests", () => {
     });
 
     it("should reject accept_task when deadline has already passed", async () => {
-      // The on-chain check is `now <= escrow.deadline` where `now` is
-      // `Clock::get()?.unix_timestamp`. solana-test-validator's clock
-      // starts at the validator's boot time and lags Date.now() by
-      // seconds-to-tens-of-seconds on fresh boot — so a deadline
-      // computed from Date.now() + 3 plus a 4s wall-clock sleep is
-      // not guaranteed to land past the on-chain deadline.
+      // The on-chain check is `now < escrow.deadline` (AUD-105 cycle-2:
+      // tightened from inclusive `<=` to strict `<` so the provider always
+      // has at least one second of execution headroom for submit_milestone).
+      // `now` is `Clock::get()?.unix_timestamp`. solana-test-validator's
+      // clock starts at the validator's boot time and lags Date.now() by
+      // seconds-to-tens-of-seconds on fresh boot — so a deadline computed
+      // from Date.now() + 3 plus a 4s wall-clock sleep is not guaranteed
+      // to land past the on-chain deadline.
       //
       // Same fix-pattern as commit 702d4da (AUD-024 boundary): query
       // on-chain time via getBlockTime, set the deadline relative to
