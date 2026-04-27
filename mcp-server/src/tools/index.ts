@@ -21,6 +21,7 @@ export {
   discoverAgentsTool,
   stakeReputationTool,
   getAgentReputationTool,
+  findSimilarAgentsTool,
 } from "./registry.js";
 
 // Re-export all settlement tools
@@ -60,6 +61,7 @@ import {
   discoverAgentsTool,
   stakeReputationTool,
   getAgentReputationTool,
+  findSimilarAgentsTool,
 } from "./registry.js";
 
 import {
@@ -78,10 +80,11 @@ import {
 import { verifyProtocolInvariantsTool } from "./governance.js";
 
 /**
- * All 26 Agenomics MCP tools organized by domain:
+ * All 27 Agenomics MCP tools organized by domain:
  * - Vault (9): Agent wallet management with spending policies
  *   (includes `rotate_agent_identity` per ADR-069 / AUD-015)
- * - Registry (5) + reputation snapshot (1): Agent discovery and reputation
+ * - Registry (5) + reputation snapshot (1) + agent-memory (1): Agent
+ *   discovery, reputation, and ADR-129 Phase 1 manifest similarity
  * - Settlement (10): Escrow lifecycle and milestone-based payments
  * - Governance (1): Protocol-wide invariant sweep (AUD-206 / roadmap §3 B2)
  */
@@ -103,6 +106,7 @@ export const allTools: Tool[] = [
   discoverAgentsTool,
   stakeReputationTool,
   getAgentReputationTool,
+  findSimilarAgentsTool,
   // Settlement
   createEscrowTool,
   acceptTaskTool,
@@ -134,6 +138,7 @@ export type ToolName =
   | "discover_agents"
   | "stake_reputation"
   | "get_agent_reputation"
+  | "find_similar_agents"
   | "create_escrow"
   | "accept_task"
   | "submit_milestone"

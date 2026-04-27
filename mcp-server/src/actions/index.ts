@@ -1,4 +1,4 @@
-// All 26 MCP Actions registered through the ADR-058 Action<I, O> shape.
+// All 27 MCP Actions registered through the ADR-058 Action<I, O> shape.
 // Legacy switch-case dispatch in src/index.ts is retired.
 //
 // AUD-015 / PR-U: `rotate_agent_identity` wraps the on-chain
@@ -8,6 +8,10 @@
 // AUD-206 (cycle-3, roadmap §3 B2): `verify_protocol_invariants` wraps the
 // Registry batch-sweep ix so the upgrade-authority / governance multisig
 // can invoke it through the standard MCP surface. Tool count 25 → 26.
+//
+// ADR-129 Phase 1 (cycle-3): `find_similar_agents` adds an EVO L1 HNSW-
+// backed manifest-similarity primitive, gated by `read:agent-memory`.
+// Tool count 26 → 27.
 
 import type { Action } from "../types/action.js";
 import {
@@ -27,6 +31,7 @@ import {
   updateAgentProfileAction,
   discoverAgentsAction,
   stakeReputationAction,
+  findSimilarAgentsAction,
 } from "./registry.js";
 import { getAgentReputationAction } from "./reputation.js";
 import {
@@ -54,13 +59,14 @@ export const allActions: Action<any, any>[] = [
   pauseVaultAction,
   resumeVaultAction,
   manageAllowlistAction,
-  // Registry (5) + reputation snapshot (1)
+  // Registry (5) + reputation snapshot (1) + agent-memory (1, ADR-129 Phase 1)
   registerAgentAction,
   getAgentProfileAction,
   updateAgentProfileAction,
   discoverAgentsAction,
   stakeReputationAction,
   getAgentReputationAction,
+  findSimilarAgentsAction,
   // Settlement (10)
   createEscrowAction,
   acceptTaskAction,

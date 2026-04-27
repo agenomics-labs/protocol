@@ -36,6 +36,7 @@ import {
   formatAgentStatus,
 } from "./formatters.js";
 import { serverLogger } from "../util/logger.js";
+import { getAgentMemory } from "../adapters/agent-memory.js";
 
 const log = serverLogger.child({ handler: "registry" });
 
@@ -94,6 +95,35 @@ export async function handleRegisterAgent(args: Record<string, unknown>) {
     })
     .signers([wallet])
     .rpc();
+
+  // ADR-129 Phase 1: best-effort observe into EVO L1 so a subsequent
+  // `find_similar_agents` call can find this manifest by cosine similarity.
+  // CONTRACT: register success is the only thing that matters here. The
+  // try/catch swallows ANY failure mode — bridge down, EVO subprocess
+  // crashed, surprise gate rejected, schema mismatch, anything. The
+  // operator sees a WARN log at most. Failure is bounded to "future
+  // similarity lookups won't find this agent until the next register" —
+  // never to "register_agent reverted." This swallowing is asserted by
+  // the registry test suite (find-similar-agents.test.ts).
+  try {
+    await getAgentMemory().recordAgentRegistration({
+      authority: wallet.publicKey.toBase58(),
+      agentProfileAddress: agentProfilePDA.toBase58(),
+      name,
+      description,
+      category,
+      capabilities,
+    });
+  } catch (err) {
+    log.warn(
+      {
+        err: err instanceof Error ? err.message : String(err),
+        agent_profile_address: agentProfilePDA.toBase58(),
+        adr: "ADR-129",
+      },
+      "registerAgent: best-effort EVO observe failed; continuing (register success unaffected)",
+    );
+  }
 
   return {
     success: true,
@@ -444,5 +474,138 @@ export async function handleStakeReputation(args: Record<string, unknown>) {
     stakingPda: stakingPDA.toBase58(),
     amountSol: amount,
     transactionSignature: sig,
+  };
+}
+
+/**
+ * ADR-129 Phase 1: read-only manifest-similarity query.
+ *
+ * Resolves a seed agent's authority into its on-chain manifest, then asks
+ * EVO for the K agents whose cosine-similar L1 observations come closest.
+ * Each hit is hydrated against the on-chain `AgentProfile` PDA so callers
+ * get the same shape `discoverViaIndexer` returns plus the EVO-side
+ * `similarity_score` and `memory_id`.
+ *
+ * Failure modes are bounded:
+ *   - EVO disabled (kill-switch OFF) → returns `{ similar_agents: [],
+ *     skipped: true, reason: "evo-disabled" }`. Not an error.
+ *   - EVO bridge throws → returns a typed `Result.err` from the action
+ *     wrapper (PROGRAM_ERROR with the bridge's message — never the raw
+ *     EVO stack trace).
+ *   - Hit references a stale authority (account closed, deregistered) →
+ *     hydration drops it silently. The caller sees fewer than K results.
+ */
+export async function handleFindSimilarAgents(args: Record<string, unknown>) {
+  const seedAuthority = parsePublicKey(requireString(args, "agent_id"));
+  const topK = requirePositiveNumber(args, "top_k");
+  const minSimilarity =
+    typeof args.min_similarity === "number" ? args.min_similarity : 0.3;
+
+  const program = getRegistryProgram();
+
+  // 1. Resolve the seed agent's manifest. The query embedding is computed
+  //    over the same compact text shape we observe in
+  //    `agent-memory.ts#toEvoObservation`, so a register-then-self-query
+  //    pair produces the highest-possible cosine similarity for the seed.
+  const [seedProfilePDA] = deriveAgentProfilePDA(seedAuthority);
+  const seedProfile = await program.account.agentProfile.fetchNullable(
+    seedProfilePDA,
+  );
+  if (!seedProfile) {
+    return {
+      similar_agents: [],
+      skipped: false,
+      reason: "seed-agent-not-registered",
+      seed_authority: seedAuthority.toBase58(),
+    };
+  }
+  const queryText =
+    `category=${seedProfile.category}\n` +
+    `name=${seedProfile.name}\n` +
+    `capabilities=${seedProfile.capabilities.join(", ")}\n` +
+    `description=${seedProfile.description}`;
+
+  // 2. Ask EVO for the K nearest neighbours under the requested similarity
+  //    floor. Token budget is left at the adapter default (4096 per
+  //    AEP_EVO_DEFAULT_TOKEN_BUDGET) — operators tighten via env, not
+  //    per-call (Phase 1 keeps the wire surface minimal).
+  const memory = getAgentMemory();
+  const memoryResult = await memory.findSimilarAgents({
+    queryText,
+    topK,
+    minSimilarity,
+  });
+
+  if (memoryResult.skipped) {
+    return {
+      similar_agents: [],
+      skipped: true,
+      reason: "evo-disabled",
+      seed_authority: seedAuthority.toBase58(),
+    };
+  }
+
+  // 3. Hydrate each hit's on-chain profile so callers get the same shape
+  //    `discoverViaIndexer` returns. Missing metadata (legacy observations
+  //    pre-Phase-1) or stale PDAs are dropped silently — the caller sees
+  //    fewer than topK results, not an error.
+  const hitsWithAuthority = memoryResult.similarAgents.filter(
+    (hit) => hit.authority.length > 0,
+  );
+  // Self-hit suppression: the seed agent's own observation is, by
+  // construction, the highest-similarity match. Drop it so the caller
+  // gets K *other* agents, not K-1.
+  const peerHits = hitsWithAuthority.filter(
+    (hit) => hit.authority !== seedAuthority.toBase58(),
+  );
+
+  const profilePDAs = peerHits.map(
+    (hit) => deriveAgentProfilePDA(parsePublicKey(hit.authority))[0],
+  );
+  const accountsNs = program.account.agentProfile;
+  let fetched: Array<AgentProfileAccount | null>;
+  if (profilePDAs.length === 0) {
+    fetched = [];
+  } else if (typeof accountsNs.fetchMultiple === "function") {
+    fetched = (await accountsNs.fetchMultiple(profilePDAs)) as Array<
+      AgentProfileAccount | null
+    >;
+  } else {
+    fetched = await Promise.all(
+      profilePDAs.map((pda) =>
+        accountsNs.fetchNullable(pda).catch(() => null),
+      ),
+    );
+  }
+
+  const similarAgents = peerHits
+    .map((hit, i) => {
+      const profile = fetched[i];
+      if (!profile) return null;
+      const pda = profilePDAs[i];
+      if (!pda) return null;
+      return {
+        agent_id: hit.authority,
+        agent_profile_address: pda.toBase58(),
+        similarity_score: hit.similarityScore,
+        memory_id: hit.memoryId,
+        manifest_summary: hit.manifestSummary,
+        // Mirror the discoverViaIndexer hydration shape so dashboards can
+        // render either result set with the same projection logic.
+        name: profile.name,
+        category: profile.category,
+        capabilities: profile.capabilities,
+        reputation_score: profile.reputationScore.toNumber(),
+        status: formatAgentStatus(profile.status),
+      };
+    })
+    .filter((a): a is NonNullable<typeof a> => a !== null);
+
+  return {
+    similar_agents: similarAgents,
+    skipped: false,
+    seed_authority: seedAuthority.toBase58(),
+    requested_top_k: topK,
+    min_similarity: minSimilarity,
   };
 }

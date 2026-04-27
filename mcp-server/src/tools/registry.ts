@@ -164,3 +164,60 @@ export const getAgentReputationTool: Tool = {
     },
   },
 };
+
+/**
+ * ADR-129 Phase 1 — manifest-similarity discovery backed by EVO L1 HNSW.
+ *
+ * The JSON-schema bounds mirror the zod schema in
+ * `actions/registry.ts#findSimilarAgentsInput` so MCP clients see the
+ * limits in their tool-list response and can refuse out-of-range input
+ * before submission. Capability `read:agent-memory` is enforced at the
+ * router; that's not surfaced in the schema (capabilities are the
+ * router's concern, not the wire schema).
+ */
+export const findSimilarAgentsTool: Tool = {
+  name: "find_similar_agents",
+  description:
+    "ADR-129 Phase 1 — return the K agents whose manifest is cosine-similar " +
+    "to the seed agent's, ranked by similarity in EVO's 384-dim ONNX " +
+    "embedding space (all-MiniLM-L6-v2). Read-only; the seed manifest is " +
+    "resolved on-chain at call time and each hit is hydrated against the " +
+    "on-chain AgentProfile so the response shape mirrors `discover_agents` " +
+    "plus `similarity_score` and `memory_id`. Best-effort: returns an " +
+    "empty `similar_agents` array (`skipped: true`) when AEP_EVO_ENABLED " +
+    "is false (kill-switch default). Capability `read:agent-memory` is " +
+    "enforced at the router (ADR-058 §4).",
+  inputSchema: {
+    type: "object",
+    properties: {
+      agent_id: {
+        type: "string",
+        description:
+          "Base58-encoded authority pubkey of the seed agent. The seed's " +
+          "manifest (category, name, capabilities, description) is " +
+          "fetched from chain and embedded; results are the K agents " +
+          "whose observation embedding is closest by cosine distance.",
+        minLength: 32,
+      },
+      top_k: {
+        type: "integer",
+        description:
+          "Maximum number of similar agents to return (1-50). The seed " +
+          "agent is excluded from results, so a top_k of 10 returns up " +
+          "to 10 *peers* (not 10 including the seed).",
+        minimum: 1,
+        maximum: 50,
+      },
+      min_similarity: {
+        type: "number",
+        description:
+          "Cosine-similarity floor in [0, 1]. Default 0.3 (matches EVO's " +
+          "ADR-062 default). Hits below this threshold are dropped before " +
+          "hydration.",
+        minimum: 0,
+        maximum: 1,
+      },
+    },
+    required: ["agent_id", "top_k"],
+  },
+};

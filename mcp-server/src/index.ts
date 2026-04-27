@@ -17,6 +17,7 @@ import { createRpc } from "./solana-v2.js";
 import { createActionRouter } from "./adapters/mcp.js";
 import { allActions } from "./actions/index.js";
 import { activeIdempotencyBackend } from "./pipeline/idempotency.js";
+import { getEvoClient, resolveEvoBridgeConfig } from "./adapters/evo-bridge.js";
 import type { ActionContext } from "./types/action.js";
 import type { Capability } from "./types/capability.js";
 import {
@@ -78,6 +79,13 @@ const ALL_CAPABILITIES: Capability[] = [
   // on-chain ix is already gated by `ProtocolConfig.authority`; this
   // claim is the default-deny wall at the MCP boundary (ADR-058 §4).
   "gov:invariant:check",
+  // ADR-129 Phase 1 (cycle-3): agent-memory claims. `read:agent-memory`
+  // gates `find_similar_agents`. `write:agent-memory` is declared for
+  // forward-compatibility with Phase 2's learn-loop and is granted to
+  // the local-dev wallet so future enabling of Phase 2 in dev doesn't
+  // require a separate cap rotation.
+  "read:agent-memory",
+  "write:agent-memory",
 ];
 
 /**
@@ -154,6 +162,15 @@ async function main() {
   const posture = detectTransportPosture(process.env);
   logTransportPosture(posture);
 
+  // ADR-129 Phase 1: eagerly resolve the EVO client at boot so that a
+  // misconfigured `AEP_EVO_ENABLED=true` (missing AEP_EVO_MODEL_DIR,
+  // bogus AEP_EVO_BINARY) fails loudly here rather than on the first
+  // MCP call. When the kill-switch is OFF (default), this resolves to a
+  // no-op DisabledEvoClient — no subprocess is spawned and observe /
+  // retrieve return void / empty-results respectively.
+  const evoClient = getEvoClient();
+  const evoConfig = resolveEvoBridgeConfig(process.env);
+
   if (posture.mode === "stdio") {
     const transport = new StdioServerTransport();
     await server.connect(transport);
@@ -182,6 +199,12 @@ async function main() {
       // [REDACTED] in JSON output even though we pass it here.
       idempotency_redis_url:
         idemBackend === "redis" ? process.env.AEP_REDIS_URL : undefined,
+      // ADR-129 Phase 1: surface the EVO kill-switch state in the boot
+      // log so operators can confirm at a glance whether agent-memory
+      // is live. `evo_binary` / `evo_db` are only meaningful when enabled.
+      evo_enabled: evoClient.enabled,
+      evo_binary: evoClient.enabled ? evoConfig.binaryPath : undefined,
+      evo_db: evoClient.enabled ? evoConfig.dbPath : undefined,
     },
     "agenomics mcp server started",
   );

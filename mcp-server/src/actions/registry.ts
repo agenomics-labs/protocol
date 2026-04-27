@@ -1,14 +1,21 @@
-// All 5 registry Actions. Wraps existing handlers without logic change.
+// All 6 registry Actions. Wraps existing handlers without logic change.
+//
+// ADR-129 Phase 1 (cycle-3): `find_similar_agents` adds a manifest-similarity
+// retrieval primitive backed by the EVO L1 HNSW index. Read-only, gated by
+// `read:agent-memory`, no signer required. Falls back to an empty result
+// when `AEP_EVO_ENABLED=false` (kill-switch default; ADR-129 §"Migration").
 
 import { z } from "zod";
 import type { Action } from "../types/action.js";
 import { ok, err } from "../types/action.js";
+import { isValidPublicKey } from "../solana.js";
 import {
   handleRegisterAgent,
   handleGetAgentProfile,
   handleUpdateAgentProfile,
   handleDiscoverAgents,
   handleStakeReputation,
+  handleFindSimilarAgents,
 } from "../handlers/registry.js";
 
 function wrap<I>(fn: (args: Record<string, unknown>) => Promise<any>) {
@@ -158,4 +165,74 @@ export const stakeReputationAction: Action<
   preflight: ["cluster_health", "account_rent_exempt"],
   requiresSigner: true,
   handler: wrap(handleStakeReputation),
+};
+
+// ---------- find_similar_agents (ADR-129 Phase 1) ----------
+
+/**
+ * Phase 1 schema. `agent_id` is a base58-encoded Solana pubkey (the seed
+ * agent's authority). `top_k` is bounded to [1, 50] — EVO accepts up to
+ * 1024 by default but Phase 1's response shape is hydrated against on-
+ * chain accounts (one fetchMultiple per call), so 50 is a sane upper bound
+ * on the per-call work. `min_similarity` is the cosine floor in [0, 1];
+ * the default 0.3 matches EVO's `DEFAULT_MIN_SIMILARITY` (ADR-062 in EVO).
+ *
+ * The on-chain handler is read-only; this action is intentionally NOT
+ * marked `readOnly: true` because we want the capability gate to enforce
+ * `read:agent-memory` (the gate skips claims when `readOnly: true`). A
+ * read-only action with a non-empty `capabilities[]` would be
+ * registration-time invalid per `capability-gated-tool.ts:33-36` — but
+ * that check fires the OTHER way (non-readOnly + empty caps), so we just
+ * declare `readOnly: false` to make the gate fire on missing claims.
+ */
+const findSimilarAgentsInput = {
+  agent_id: z
+    .string()
+    .min(32, { message: "agent_id must be a base58-encoded Solana public key" })
+    .refine(isValidPublicKey, {
+      message: "agent_id must be a base58-encoded Solana public key",
+    }),
+  top_k: z.number().int().min(1).max(50),
+  min_similarity: z.number().min(0).max(1).optional(),
+} as const;
+
+export const findSimilarAgentsAction: Action<
+  z.infer<z.ZodObject<typeof findSimilarAgentsInput>>,
+  unknown
+> = {
+  name: "find_similar_agents",
+  title: "Find similar agents (manifest-similarity, EVO L1)",
+  description:
+    "ADR-129 Phase 1 — return the K agents whose manifest is cosine-similar " +
+    "to the seed agent's, ranked by similarity in EVO's 384-dim ONNX " +
+    "embedding space (all-MiniLM-L6-v2). The seed manifest is resolved on- " +
+    "chain at call time; each hit is hydrated against the on-chain " +
+    "AgentProfile so the response shape mirrors `discover_agents` plus " +
+    "`similarity_score` and `memory_id`. Read-only; `read:agent-memory` " +
+    "claim required. Returns an empty `similar_agents` array (with " +
+    "`skipped: true`) when AEP_EVO_ENABLED is false — the kill-switch " +
+    "default. Best-effort: EVO bridge errors surface as PROGRAM_ERROR; " +
+    "register_agent's contract is unaffected.",
+  inputSchema: findSimilarAgentsInput,
+  outputSchema: z.unknown(),
+  similes: [
+    "find similar manifests",
+    "agent manifest similarity",
+    "neighbours",
+    "k nearest agents",
+  ],
+  examples: [],
+  // NOT readOnly — the capability-gate skips claim enforcement on
+  // readOnly:true actions, and we want the `read:agent-memory` claim to
+  // gate access. The handler itself performs no on-chain writes.
+  readOnly: false,
+  capabilities: ["read:agent-memory"],
+  // No preflight gate: cluster_health is for on-chain submission paths,
+  // and the only on-chain calls here are read-side `fetchNullable` /
+  // `fetchMultiple` which fail-soft (drop the hit) without us needing a
+  // pre-flight RPC.
+  // No signer required — this is a read against EVO + the on-chain
+  // registry, no transaction is built.
+  requiresSigner: false,
+  handler: wrap(handleFindSimilarAgents),
 };
