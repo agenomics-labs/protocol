@@ -33,7 +33,9 @@ export default function StatsBar({ agents, settlementAccounts, stats, vaultBalan
         />
         <StatCard
           label="Vault Balance"
-          value={vaultBalance !== null ? `${vaultBalance.toFixed(2)} SOL` : "N/A"}
+          value={
+            loading ? "..." : vaultBalance !== null ? `${vaultBalance.toFixed(2)} SOL` : "—"
+          }
           icon={Lock}
           color="text-purple-400"
         />
