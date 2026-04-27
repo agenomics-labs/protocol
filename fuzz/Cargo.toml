@@ -75,12 +75,17 @@ features = ["no-entrypoint"]
 [dependencies.anchor-lang]
 version = "0.31.1"
 
-# Each fuzz target is its own bin. Phase 1 ships one; Phase 2 will add
-# `seeds_validating_contexts`, `update_provider_reputation_cpi`, and
-# `update_status_accept_list` (see README §Phase 2 plan).
+# Each fuzz target is its own bin. Phase 1 shipped `propose_reputation_delta`;
+# Phase 2 is incrementally adding the next-most-attack-surface-dense seams
+# from cycle-2 (see README §Phase 2 plan). `update_status` is the first
+# Phase 2 landing — it pins the AUD-120 accept-list matrix.
 [[bin]]
 name = "propose_reputation_delta"
 path = "fuzz_targets/propose_reputation_delta.rs"
+
+[[bin]]
+name = "update_status"
+path = "fuzz_targets/update_status.rs"
 
 # Release profile mirrors the on-chain workspace so the harness's
 # arithmetic semantics match the deployed program (overflow-checks ON

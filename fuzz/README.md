@@ -106,25 +106,40 @@ Expected: ~10⁹ iterations, **0 crashes**. Save artifacts to
 
 ---
 
-## Phase 2 plan
+## Targets shipped
 
-Add targets that cover the next-most-attack-surface-dense seams
-identified in cycle-2:
+| Target | AUD | Phase | Property contract |
+|---|---|---|---|
+| `propose_reputation_delta` | AUD-108 + ADR-094 + AUD-100 + AUD-001/002 | 1 | Reputation-mutation gate + slash-count escalation + closed-state-machine post-state |
+| `update_status` | AUD-120 + AUD-004 | 2 | Exhaustive accept-list (11 of 16 (cur, new) pairs) + self-issued Suspended guard |
 
-1. **`update_status` accept-list** (AUD-120) — fuzz the
-   `Active → {Active, Paused, Retired, Suspended}` /
-   `Paused → {Active, Paused, Retired, Suspended}` /
-   `Suspended → {Retired}` exhaustive transition matrix. The recent
-   PR-Q matchexpansion turned an open-ended range into a closed
-   accept-list; fuzz proves no path leaks past the new gate.
-2. **`update_provider_reputation` Settlement CPI seam** — fuzz the
+Operator-driven 30-second smoke for the new target:
+
+```bash
+cd fuzz
+cargo hfuzz run update_status -- --max_total_time=30
+```
+
+Expected: iteration counter into the millions, **0 crashes**. A crash
+means either the on-chain handler has drifted from the AUD-120 matrix
+encoded in `fuzz_targets/update_status.rs`, or a new `AgentStatus`
+variant has been added without updating the harness (the corresponding
+non-exhaustive-match compile error in lib.rs would also fire).
+
+---
+
+## Phase 2 plan (remaining)
+
+The remaining seams to cover, in priority order:
+
+1. **`update_provider_reputation` Settlement CPI seam** — fuzz the
    `(reason, delta)` pair *as Settlement would emit it*, including
    adversarial reasons that could trick the slash branch.
-3. **Seeds-validating contexts** (AUD-117) — fuzz the cross-account
+2. **Seeds-validating contexts** (AUD-117) — fuzz the cross-account
    PDA derivation: feed adversarial `(authority, owner_nonce,
    agent_profile)` triples and assert Anchor's seeds constraint
    rejects every misdirection.
-4. **`clear_suspension` cleared_count escalation** (AUD-004) — fuzz
+3. **`clear_suspension` cleared_count escalation** (AUD-004) — fuzz
    the cost-ladder boundaries (1 → halve, 2 → zero, 3 → terminal
    Retired).
 
@@ -178,7 +193,8 @@ fuzz/
 ├── README.md                                       # this file
 ├── .gitignore                                      # ignore hfuzz_target/
 └── fuzz_targets/
-    └── propose_reputation_delta.rs                 # Phase 1 target
+    ├── propose_reputation_delta.rs                 # Phase 1 target
+    └── update_status.rs                            # Phase 2 target (AUD-120)
 ```
 
 Generated artifacts (gitignored):
