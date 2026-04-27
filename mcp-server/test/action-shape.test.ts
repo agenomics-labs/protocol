@@ -29,9 +29,9 @@ function ctxWith(
 
 describe("ADR-058 Action pipeline", () => {
   describe("non-breaking tool set (ADR-058 §8)", () => {
-    it("exposes all 26 existing tool names", () => {
+    it("exposes all 27 existing tool names", () => {
       const names = allTools.map((t) => t.name).sort();
-      assert.equal(names.length, 26);
+      assert.equal(names.length, 27);
       assert.ok(names.includes("create_vault"));
       assert.ok(names.includes("register_agent"));
       assert.ok(names.includes("create_escrow"));
@@ -42,14 +42,17 @@ describe("ADR-058 Action pipeline", () => {
       // AUD-206 (cycle-3, roadmap §3 B2): verify_protocol_invariants
       // wraps the Registry batch-sweep ix; tool count 25 → 26.
       assert.ok(names.includes("verify_protocol_invariants"));
+      // ADR-129 Phase 1 (cycle-3): find_similar_agents wraps the EVO L1
+      // HNSW manifest-similarity primitive; tool count 26 → 27.
+      assert.ok(names.includes("find_similar_agents"));
     });
 
-    it("the ADR-058 router handles all 26 tools", () => {
+    it("the ADR-058 router handles all 27 tools", () => {
       const allNames = new Set(allTools.map((t) => t.name));
       for (const routed of actionRouter.names()) {
         assert.ok(allNames.has(routed), `routed action '${routed}' missing from allTools`);
       }
-      assert.equal(pilotActionNames.size, 26);
+      assert.equal(pilotActionNames.size, 27);
       assert.deepEqual(actionRouter.names().sort(), [...allNames].sort());
     });
   });

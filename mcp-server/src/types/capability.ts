@@ -20,12 +20,27 @@ export type ProgramSet = string;
  */
 export type GovernanceClaim = "gov:invariant:check";
 
+/**
+ * ADR-129 Phase 1: agent-memory claims. EVO is consulted via the MCP
+ * surface — `find_similar_agents` (Phase 1, read) needs `read:agent-memory`;
+ * the future Phase 2 `learn` loop will need `write:agent-memory`. These
+ * are NOT `<Domain>` because EVO is not a Solana program — it's the
+ * cross-session cognitive-memory layer behind mcp-server (see
+ * `docs/adr/ADR-129-evo-agent-memory-integration.md`). The post-register
+ * best-effort observe is a side effect of an already-authorized
+ * `register_agent` and intentionally does NOT consume `write:agent-memory`
+ * — it inherits authorization from the surrounding ix. Phase 2 declares
+ * the write claim explicitly when the learn-loop API surfaces.
+ */
+export type AgentMemoryClaim = "read:agent-memory" | "write:agent-memory";
+
 export type Capability =
   | `read:${Domain}`
   | `sign:${Domain}`
   | `sign:cross_program:${ProgramSet}`
   | `admin:${Domain}`
-  | GovernanceClaim;
+  | GovernanceClaim
+  | AgentMemoryClaim;
 
 export type PreflightGate =
   | "cluster_health"
