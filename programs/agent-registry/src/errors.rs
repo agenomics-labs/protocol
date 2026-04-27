@@ -105,4 +105,11 @@ pub enum AgentRegistryError {
     // keeps worst-case CU well under budget.
     #[msg("verify_protocol_invariants batch exceeds MAX_INVARIANT_BATCH (16); slice into smaller transactions (AUD-106)")]
     InvariantBatchTooLarge,
+
+    // AUD-108 (cycle-2): `propose_reputation_delta` rejects reason codes
+    // outside the documented set {0=task_completed, 1=dispute_loss,
+    // 2=expiry_undelivered}. Reserved codes 3-255 require an ADR-driven
+    // accept-list extension before they can be passed.
+    #[msg("Reputation delta `reason` must be 0 (task_completed), 1 (dispute_loss), or 2 (expiry_undelivered); codes 3-255 are reserved for future ADR-driven extensions (AUD-108)")]
+    InvalidReputationReason,
 }

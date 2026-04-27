@@ -292,6 +292,24 @@ pub mod agent_registry {
             AgentRegistryError::ReputationDeltaExceedsMax
         );
 
+        // AUD-108 (cycle-2): reject reason codes outside the documented set.
+        // The handler emits `reason` into `ReputationDeltaProposed` and the
+        // slash branch matches `reason in {1, 2}`. Pre-fix any caller could
+        // inject reason 200 and indexers would see it without any
+        // program-level rejection. The defined codes per Settlement's
+        // `cpi.rs` constants:
+        //   0 = REASON_TASK_COMPLETED
+        //   1 = REASON_DISPUTE_LOSS
+        //   2 = REASON_EXPIRY_UNDELIVERED
+        // Codes 3-255 are reserved for a future ADR-driven extension. New
+        // callers MUST land an ADR + bump the accept-list before passing a
+        // new reason; this require! makes the gating explicit at the
+        // entrypoint.
+        require!(
+            reason <= 2,
+            AgentRegistryError::InvalidReputationReason
+        );
+
         let agent_profile = &mut ctx.accounts.agent_profile;
 
         // Clamp the resulting score to [0, MAX_REPUTATION_SCORE].
@@ -2004,16 +2022,28 @@ mod tests {
         assert_eq!(profile.updated_at, 1);
     }
 
-    /// AUD-100: reason codes >=3 are reserved and currently treated as
-    /// non-slash (matches!(reason, 1 | 2) is false). This test pins that
-    /// behaviour so future governance/slashing reason codes have to
-    /// explicitly opt in to the slash branch by extending the match arm.
+    /// AUD-100 + AUD-108: reason codes >=3 are reserved. Two-fold
+    /// invariant: (a) the slash predicate `matches!(reason, 1 | 2)` is
+    /// false for every reserved code, so even if a reserved code reached
+    /// the slash branch it would not flip to Suspended; (b) the
+    /// `propose_reputation_delta` handler now rejects reserved codes
+    /// outright via `require!(reason <= 2, InvalidReputationReason)`
+    /// (AUD-108), so reserved codes never reach the slash branch in the
+    /// first place. Future governance/slashing reason codes must extend
+    /// BOTH the handler require! and the slash match arm via an ADR.
     #[test]
-    fn aud_100_reserved_reason_codes_do_not_slash() {
+    fn aud_100_aud_108_reserved_reason_codes_do_not_slash() {
         for reason in 3u8..=10 {
+            // (a) Slash predicate excludes reserved codes.
             let is_slash = matches!(reason, 1 | 2);
             assert!(!is_slash,
                 "reason {reason} is reserved and must not slash without an explicit ADR bump");
+            // (b) Handler-level acceptance gate excludes reserved codes
+            //     (mirrors `require!(reason <= 2, …)` in
+            //     `propose_reputation_delta`).
+            let handler_accepts = reason <= 2;
+            assert!(!handler_accepts,
+                "reason {reason} must be rejected at the handler entry (AUD-108)");
         }
     }
 

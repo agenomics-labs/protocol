@@ -1926,6 +1926,11 @@
       "code": 6027,
       "name": "InvariantBatchTooLarge",
       "msg": "verify_protocol_invariants batch exceeds MAX_INVARIANT_BATCH (16); slice into smaller transactions (AUD-106)"
+    },
+    {
+      "code": 6028,
+      "name": "InvalidReputationReason",
+      "msg": "Reputation delta `reason` must be 0 (task_completed), 1 (dispute_loss), or 2 (expiry_undelivered); codes 3-255 are reserved for future ADR-driven extensions (AUD-108)"
     }
   ],
   "types": [
