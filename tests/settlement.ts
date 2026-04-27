@@ -2491,6 +2491,187 @@ describe("Settlement Protocol Tests", () => {
       const escrow = await program.account.taskEscrow.fetch(escrowPDA);
       expect(escrow.status.active).to.be.ok;
     });
+
+    // ------------------------------------------------------------------
+    // AUD-105 (cycle-2 follow-up to AUD-009)
+    //
+    // Roadmap §3 B7. Cycle-2 closure: commit 2a4d3c6 tightened the
+    // accept_task guard from inclusive `now <= deadline` to strict
+    // `now < deadline`, forcing the provider to retain at least one
+    // second of execution headroom before submit_milestone's own
+    // deadline check can trip.
+    //
+    // The pre-existing "should reject accept_task when deadline has
+    // already passed" test above polls until `now > deadline`; under
+    // the strict-< guard it still rejects, but it does NOT exercise
+    // the literal `now == deadline` equality case that AUD-105 closed.
+    // The Rust unit test `aud105_accept_task_rejects_at_deadline_boundary`
+    // pins the predicate; this integration test pins the on-chain
+    // behavior end-to-end.
+    //
+    // EQUALITY-POLLING STRATEGY:
+    //   Solana's `Clock::get()?.unix_timestamp` is in seconds, but
+    //   slots tick every ~400ms — so each integer second is
+    //   typically observed across 2-3 consecutive slots. That gives
+    //   a ~800-1200ms window during which `now == deadline` holds.
+    //   We pick a deadline `T = onchainNow + 3` (large enough to
+    //   absorb tx-build/sign latency, small enough that the
+    //   surrounding wall-clock window is short), poll
+    //   getBlockTime() until we see `t == T`, and submit
+    //   `accept_task` immediately. We then sample getBlockTime()
+    //   again post-tx and assert the on-chain time was still `>= T`
+    //   when the rejection happened — i.e. we did NOT land
+    //   pre-deadline (which would have ACCEPTED, not rejected).
+    //
+    //   We do not use anchor-bankrun's `warp_to_slot`: the test
+    //   harness here is solana-test-validator (see grep for
+    //   "anchor-bankrun" in this file — TODO at L2224, not adopted).
+    //   Adding bankrun purely for this test would expand harness
+    //   surface beyond what the AUD-105 boundary needs.
+    //
+    // If the tx happens to land in the same slot-second as `T`, we
+    // have exercised the literal equality boundary. If it slips one
+    // second to `T + 1`, we have exercised the AUD-009 strict-after
+    // case (also rejected). Both outcomes prove the post-AUD-105
+    // guard rejects at-or-after deadline; the polling discipline
+    // maximizes the probability of equality. The post-tx blocktime
+    // assertion records which case was exercised so flakiness is
+    // observable, not silent.
+    it("should reject accept_task at exact deadline equality (AUD-105)", async () => {
+      const taskId = new BN(952);
+      const startSlot = await connection.getSlot("confirmed");
+      const onchainNow = await connection.getBlockTime(startSlot);
+      if (onchainNow === null) {
+        throw new Error(
+          "getBlockTime returned null; cannot compute equality-boundary deadline"
+        );
+      }
+      // T = onchainNow + 3 leaves room to (a) submit createEscrow, (b)
+      // confirm Created, (c) start the equality poll loop with a few
+      // hundred ms of slack before T arrives.
+      const equalityDeadline = new BN(onchainNow + 3);
+
+      const [escrowPDA] = await deriveEscrowPDA(
+        audClient.publicKey,
+        audProvider.publicKey,
+        taskId
+      );
+      const escrowTA = deriveEscrowTokenAccount(escrowPDA);
+
+      await program.methods
+        .createEscrow(
+          taskId,
+          new BN(1000000),
+          Buffer.alloc(32),
+          equalityDeadline,
+          [createMilestoneData(1000000n, Buffer.alloc(32, 1))],
+          null
+        )
+        .accounts({
+          client: audClient.publicKey,
+          clientVault: vaultFor(audClient.publicKey),
+          providerVault: vaultFor(audProvider.publicKey),
+          protocolConfig: PROTOCOL_CONFIG_PDA,
+          provider: audProvider.publicKey,
+          tokenMint: tokenMint,
+          clientTokenAccount: audClientTA,
+          escrow: escrowPDA,
+          escrowTokenAccount: escrowTA,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        })
+        .signers([audClient])
+        .rpc();
+
+      // Prove the deadline guard is the relevant gate: state must be
+      // Created (otherwise we'd be testing a different rejection path).
+      const created = await program.account.taskEscrow.fetch(escrowPDA);
+      expect(created.status.created).to.be.ok;
+
+      // Poll on-chain time until it has reached `equalityDeadline`
+      // exactly. Bounded by 30s vs the ~3s expected wait. We intentionally
+      // do NOT wait for `t > equalityDeadline` (that's the AUD-009 case);
+      // we want the first slot where `t == equalityDeadline` so the
+      // immediately-following accept_task tx has the highest chance of
+      // landing in the same slot-second.
+      const deadlineSecs = equalityDeadline.toNumber();
+      const maxWaitMs = 30_000;
+      const pollStart = Date.now();
+      let preTxTime: number | null = null;
+      while (Date.now() - pollStart < maxWaitMs) {
+        const s = await connection.getSlot("confirmed");
+        const t = await connection.getBlockTime(s);
+        if (t !== null && t >= deadlineSecs) {
+          preTxTime = t;
+          break;
+        }
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      if (preTxTime === null) {
+        throw new Error(
+          `On-chain time never reached deadline ${deadlineSecs} within ${maxWaitMs}ms`
+        );
+      }
+
+      // Submit accept_task. Under AUD-105's strict `<` guard this MUST
+      // reject regardless of whether the tx lands at `now == deadline`
+      // (the equality case AUD-105 closed) or `now > deadline` (the
+      // AUD-009 case the inclusive guard already covered).
+      try {
+        await program.methods
+          .acceptTask()
+          .accounts({
+            provider: audProvider.publicKey,
+            escrow: escrowPDA,
+          })
+          .signers([audProvider])
+          .rpc();
+        expect.fail(
+          "accept_task at-or-after deadline must reject with DeadlinePassed"
+        );
+      } catch (error: any) {
+        expect(error).to.exist;
+        expect(error.toString()).to.include("DeadlinePassed");
+      }
+
+      // Post-tx sanity: capture on-chain time again and record which
+      // case the run actually exercised. `postTxTime == deadlineSecs`
+      // means the literal equality boundary was hit; `> deadlineSecs`
+      // means the strict-after case was hit (still a valid rejection
+      // under the strict-< guard, just not the AUD-105-specific
+      // equality the test targets). Either way the rejection is
+      // correct — but the assertion below makes the boundary case
+      // observable rather than silent.
+      const postSlot = await connection.getSlot("confirmed");
+      const postTxTime = await connection.getBlockTime(postSlot);
+      if (postTxTime === null) {
+        throw new Error("getBlockTime returned null post-accept_task");
+      }
+      expect(postTxTime).to.be.at.least(
+        deadlineSecs,
+        "on-chain time at rejection must be >= deadline (else accept_task " +
+          "would have succeeded under the strict-< guard, contradicting " +
+          "the DeadlinePassed assertion above)"
+      );
+      // Diagnostic — surfaces equality-vs-strict-after to the test log
+      // so reviewers / CI can see which case landed without parsing
+      // mocha output for variance.
+      // eslint-disable-next-line no-console
+      console.log(
+        `[AUD-105] deadline=${deadlineSecs}, pre-tx=${preTxTime}, ` +
+          `post-tx=${postTxTime}, equality-case=${
+            preTxTime === deadlineSecs && postTxTime === deadlineSecs
+          }`
+      );
+
+      // Escrow must still be Created — failed accept_task must not
+      // transition the state machine, leaving cancel_escrow available
+      // to the client (the AUD-009 invariant AUD-105 reinforces).
+      const post = await program.account.taskEscrow.fetch(escrowPDA);
+      expect(post.status.created).to.be.ok;
+    });
   });
 
   // ============================================================================
