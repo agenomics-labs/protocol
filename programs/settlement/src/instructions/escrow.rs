@@ -135,8 +135,18 @@ pub fn accept_task(ctx: Context<AcceptTask>) -> Result<()> {
     // provider has done zero work. This is a pure grief vector: it lets a
     // provider strand client funds for the deadline window and forces the
     // expire path to do the cleanup. Refuse the transition here.
+    //
+    // AUD-105 (cycle-2): use strict-less-than (`now < deadline`) rather than
+    // inclusive (`now <= deadline`). At exactly `now == deadline` the
+    // provider has zero seconds of execution headroom — the very next slot
+    // has `now > deadline` and `submit_milestone` would reject with
+    // `DeadlinePassed`. Strict comparison forces at least one second of
+    // headroom and closes the residual grief vector at the boundary.
+    // `submit_milestone` retains `<=` so a provider who accepted strictly
+    // before the deadline can still land submissions in the deadline-block
+    // itself.
     let now = Clock::get()?.unix_timestamp;
-    require!(now <= escrow.deadline, SettlementError::DeadlinePassed);
+    require!(now < escrow.deadline, SettlementError::DeadlinePassed);
 
     escrow.status = EscrowStatus::Active;
 

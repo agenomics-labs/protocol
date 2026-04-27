@@ -540,7 +540,9 @@ mod tests {
     fn aud009_accept_task_rejects_post_deadline() {
         let now: i64 = 2_000;
         let deadline: i64 = 1_000;
-        let within_deadline = now <= deadline;
+        // AUD-105: production guard is `now < deadline`; the predicate here
+        // mirrors that. Both `<` and `<=` reject post-deadline `now`.
+        let within_deadline = now < deadline;
         assert!(!within_deadline, "post-deadline accept_task must fail");
     }
 
@@ -551,19 +553,35 @@ mod tests {
     fn aud009_accept_task_accepts_pre_deadline() {
         let now: i64 = 500;
         let deadline: i64 = 1_000;
-        let within_deadline = now <= deadline;
+        // AUD-105: matches production `now < deadline`.
+        let within_deadline = now < deadline;
         assert!(within_deadline);
     }
 
-    /// AUD-009: Edge case — accepting at exactly the deadline boundary
-    /// is allowed. The guard is `now <= deadline` (inclusive), matching
-    /// the convention used by submit_milestone and approve_milestone.
+    /// AUD-105 (cycle-2 follow-up): Edge case — accepting at exactly the
+    /// deadline boundary is now REJECTED. The guard tightened from
+    /// `now <= deadline` to `now < deadline` so the provider always has
+    /// at least one second of execution headroom for `submit_milestone`.
+    /// `submit_milestone` and `approve_milestone` retain `<=` (a provider
+    /// who accepted strictly before the deadline can still submit at the
+    /// deadline-block itself).
     #[test]
-    fn aud009_accept_task_accepts_at_deadline_boundary() {
+    fn aud105_accept_task_rejects_at_deadline_boundary() {
         let now: i64 = 1_000;
         let deadline: i64 = 1_000;
-        let within_deadline = now <= deadline;
-        assert!(within_deadline, "now == deadline must be accepted (inclusive)");
+        let within_deadline = now < deadline;
+        assert!(!within_deadline, "now == deadline must be rejected (AUD-105 strict)");
+    }
+
+    /// AUD-105: One-second-before-deadline must still be accepted (the
+    /// strict-less-than guard's intent is "at least one second of
+    /// headroom", not "blanket rejection of late acceptances").
+    #[test]
+    fn aud105_accept_task_accepts_one_second_before_deadline() {
+        let now: i64 = 999;
+        let deadline: i64 = 1_000;
+        let within_deadline = now < deadline;
+        assert!(within_deadline, "now == deadline - 1 must be accepted");
     }
 
     /// C3: A dispute_resolver equal to the client is rejected. Without
