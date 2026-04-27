@@ -10,6 +10,34 @@ alternative)
 
 2026-04-27
 
+> ⚠️  **Production Status — Phase 1 (do not flip)**
+>
+> Phase 1 is **scaffolded and tested as shadow only — production
+> cutover is blocked on the cycle-3 off-chain audit findings below.**
+> Operators MUST leave `INDEXER_PG_URL` **unset** in production until
+> these findings close; leaving it unset keeps the legacy SQLite-only
+> path live and is the supported production posture today.
+>
+> Cutover is gated on (cycle-3 off-chain audit, 2026-04-27):
+>
+> - **OFF-200** — indexer dual-write is non-transactional; PG cursor
+>   advances past failed events, which silently corrupts replay state.
+> - **OFF-202** — `__dirname`-based migration path resolution ENOENTs
+>   after `tsc` build, so migrations cannot run in the shipped
+>   artifact.
+> - **OFF-204** — `pg.Pool` has no connection / statement timeouts and
+>   no `error` handler; a PG outage hangs as leaked microtasks rather
+>   than failing fast.
+> - **OFF-207** — schema-parity gate compares PG against itself, not
+>   against the SQLite source-of-truth, so it cannot detect drift.
+>
+> Source: `docs/audits/ARCHITECTURE-AUDIT-2026-04-27-cycle3-offchain.md`.
+> In-repo punchlist:
+> `docs/audits/CYCLE-3-OFFCHAIN-PUNCHLIST.md` (cutover gates section).
+> Cutover sequence: close OFF-200 / OFF-202 / OFF-204 / OFF-207 + ship
+> the ADR-127 reconciler, then flip `INDEXER_PG_URL` per the operator
+> runbook.
+
 ## Context
 
 ADR-127 (`docs/adr/ADR-127-indexer-redundancy-backfill.md`, Status:

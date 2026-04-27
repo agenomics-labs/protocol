@@ -8,6 +8,34 @@ Proposed
 
 2026-04-27
 
+> ⚠️  **Production Status — Phase 1 (do not flip)**
+>
+> Phase 1 is **scaffolded and tested as shadow only — production
+> cutover is blocked on the cycle-3 off-chain audit findings below.**
+> Operators MUST leave `RELAY_REDIS_URL` **unset** in production until
+> these findings close; leaving it unset keeps the legacy
+> single-instance in-memory dedup path live and is the supported
+> production posture today.
+>
+> Cutover is gated on (cycle-3 off-chain audit, 2026-04-27):
+>
+> - **OFF-201** — Redis counter drifts unbounded, producing false-
+>   positive 503 saturation responses within ~1h of steady traffic.
+> - **OFF-203** — multi-instance race issues two JWTs for one payment
+>   when concurrent `/pay` calls land on different relay processes.
+> - **OFF-205** — `releaseRedeemed` performs an unauthenticated cross-
+>   instance `DEL` against the shared lock keyspace.
+> - **OFF-206** — Redis client has no `commandTimeout` configured, so
+>   a Redis outage stalls every `/pay` request indefinitely instead
+>   of failing fast.
+>
+> Source: `docs/audits/ARCHITECTURE-AUDIT-2026-04-27-cycle3-offchain.md`.
+> In-repo punchlist:
+> `docs/audits/CYCLE-3-OFFCHAIN-PUNCHLIST.md` (cutover gates section).
+> Cutover sequence: close OFF-201 / OFF-203 / OFF-205 / OFF-206 + ship
+> the ADR-127 reconciler, then flip `RELAY_REDIS_URL` per the operator
+> runbook.
+
 ## Context
 
 The x402-relay (`src/x402-relay/index.ts`) is single-instance by
