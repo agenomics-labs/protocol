@@ -4,6 +4,10 @@ import jwt from "jsonwebtoken";
 import * as crypto from "node:crypto";
 import { Connection, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { logger } from "./logger.js";
+import {
+  createRedisDedup,
+  type RedisDedup,
+} from "./redis-dedup.js";
 
 const RPC_URL = process.env.SOLANA_RPC_URL || "http://127.0.0.1:8899";
 const PORT = parseInt(process.env.RELAY_PORT || "3200", 10);
@@ -124,6 +128,68 @@ const connection = new Connection(RPC_URL, "finalized");
 const redeemedSignatures = new Map<string, number>();
 const SIGNATURE_TTL_MS = (TOKEN_EXPIRY_SECONDS + 300) * 1000;
 const MAX_REDEEMED_SIGNATURES = 100_000;
+
+// ---------------------------------------------------------------------------
+// ADR-126 Phase 1 — Redis-backed cross-instance dedup (scaffolding).
+//
+// PHASE 1 SCOPE (this PR):
+//   - When `RELAY_REDIS_URL` is UNSET (default), `createRedisDedup`
+//     returns a no-op `DisabledRedisDedup`. Behavior is BYTE-IDENTICAL
+//     to the pre-ADR-126 in-memory-only path: the no-op `tryRedeem`
+//     returns `{ kind: "ok" }`, the call falls through to the existing
+//     in-memory `redeemedSignatures` check, and `redeemedSignatures` /
+//     `inFlightVerify` remain authoritative. Existing operators see no
+//     change.
+//   - When `RELAY_REDIS_URL` IS SET, the live `LiveRedisDedup` client
+//     is instantiated and Redis becomes the AUTHORITATIVE cross-instance
+//     dedup store. The in-memory map is dual-written (still consulted
+//     first for AUD-208 in-flight-verify collapsing semantics). The
+//     in-memory map is now a local cache; Redis is truth.
+//
+// PHASE 2 (separate future PR — DO NOT do here):
+//   - Remove the in-memory `redeemedSignatures` Map.
+//   - Remove the AUD-208 `inFlightVerify` cache (or keep as a single-
+//     instance perf optimization — TBD when Phase 2 lands).
+//   - Remove `__fillRedemptionStateForTests` and rewrite the AUD-209
+//     test against the redis path directly.
+//   - Promote `RELAY_REDIS_URL` to REQUIRED-or-fatal at module load
+//     (matching ADR-126 §"Surface impact" — the relay refuses to start
+//     without it). The Phase 1 opt-in default is preserved here so
+//     today's deploys do not need a same-PR redis provisioning.
+//   - Update `docs/INCIDENT_RESPONSE.md` §4 saturation runbook.
+//
+// AUD-027 fail-closed: if `RELAY_REDIS_URL` is SET but malformed (not
+// a valid redis:// or rediss:// URL), `createRedisDedup` throws at
+// module load. Misconfigurations surface at boot, not mid-incident.
+//
+// `instanceId` is the value embedded in each Redis lock for operator
+// observability (`redis.GET aep:redeemed:<sig>` returns which instance
+// issued the JWT). It is NOT a security primitive (per ADR-126
+// §"Trust-boundary placement"); it is a debugging aid. We derive it
+// from `os.hostname() + pid` so a multi-process deployment on the same
+// host (PM2 cluster, k8s pod with multiple replicas) still distinguishes
+// instances. The optional `RELAY_INSTANCE_ID` override lets operators
+// pin a stable name (e.g. the k8s pod name) without rebuilding.
+// ---------------------------------------------------------------------------
+const RELAY_REDIS_URL = process.env.RELAY_REDIS_URL;
+const RELAY_INSTANCE_ID =
+  process.env.RELAY_INSTANCE_ID ||
+  `${require("node:os").hostname()}#${process.pid}`;
+const redisDedup: RedisDedup = createRedisDedup({
+  url: RELAY_REDIS_URL,
+  maxRedeemed: MAX_REDEEMED_SIGNATURES,
+  logger,
+});
+if (redisDedup.enabled) {
+  logger.info(
+    {
+      event: "redis_dedup_enabled",
+      instance_id: RELAY_INSTANCE_ID,
+      max_redeemed: MAX_REDEEMED_SIGNATURES,
+    },
+    "ADR-126 Phase 1: Redis-backed dedup ENABLED (dual-write; in-memory map remains as local cache)",
+  );
+}
 
 // AUD-208: TOCTOU race fix. The previous get-then-set pattern allowed two
 // concurrent POST /pay calls with the same txSignature to both pass the
@@ -474,15 +540,69 @@ async function processPaymentRequest(
   verifier: (sig: string) => Promise<PaymentVerification>,
   recipient: string,
 ): Promise<PayResult> {
+  // ADR-126 Phase 1 dual-write site (1/3) — cross-instance dedup gate.
+  //
+  // BEFORE the in-memory `redeemedSignatures.has` check, attempt the
+  // SET-NX in Redis. With `RELAY_REDIS_URL` UNSET this is a no-op that
+  // returns `kind: "ok"` and falls through to today's in-memory path
+  // (zero behavior change). With `RELAY_REDIS_URL` SET, Redis is the
+  // authoritative cross-instance dedup store:
+  //
+  //   - `kind: "redeemed"`  -> another instance (or a previous /pay
+  //                            on this instance whose in-memory entry
+  //                            already TTL-expired) holds the slot;
+  //                            return immediately. Cross-instance
+  //                            replay protection — the whole point of
+  //                            ADR-126.
+  //   - `kind: "saturated"` -> cluster-wide cap hit. Mirrors the
+  //                            AUD-209 503 wire shape — the route
+  //                            handler maps both saturated paths
+  //                            (in-memory and redis) to the same
+  //                            response body, so SDK clients with
+  //                            retry-on-503 do not need a special case.
+  //   - `kind: "ok"`        -> we own the redis lock (or redis is
+  //                            disabled and this is a no-op). Continue
+  //                            through the existing in-memory path.
+  //
+  // PHASE 2 REMOVAL: when the in-memory map goes away, this block
+  // becomes the SOLE dedup gate; the in-memory `.has` checks below
+  // delete with it. The verify-failed `releaseRedeemed` calls remain.
+  const redisGate = await redisDedup.tryRedeem(
+    txSignature,
+    SIGNATURE_TTL_MS,
+    RELAY_INSTANCE_ID,
+  );
+  if (redisGate.kind === "redeemed") {
+    return { kind: "redeemed" };
+  }
+  if (redisGate.kind === "saturated") {
+    return { kind: "saturated" };
+  }
+
   // Fast-reject: prior commit short-circuits before paying for an RPC
   // roundtrip. The check is repeated post-verify below to close the
   // TOCTOU window.
+  //
+  // ADR-126 Phase 1 nuance: when redis is ENABLED and we got `ok`
+  // above, an in-memory hit here means our local cache disagrees with
+  // redis (e.g. our redis lock TTL'd out but the in-memory entry is
+  // still live, or a concurrent racer on this same instance committed
+  // in-memory while our SET-NX was in-flight). The in-memory map is
+  // the more conservative answer (already-issued JWT here means a
+  // duplicate would be a bug); we honor it AND release the just-
+  // acquired redis lock so the counter does not drift.
   const existingExpiry = redeemedSignatures.get(txSignature);
   if (existingExpiry !== undefined && Date.now() < existingExpiry) {
+    if (redisDedup.enabled) {
+      await redisDedup.releaseRedeemed(txSignature);
+    }
     return { kind: "redeemed" };
   }
 
   if (!recipient) {
+    if (redisDedup.enabled) {
+      await redisDedup.releaseRedeemed(txSignature);
+    }
     return { kind: "no-config" };
   }
 
@@ -508,6 +628,17 @@ async function processPaymentRequest(
   const verification = await verifyPromise;
 
   if (!verification.valid) {
+    // ADR-126 Phase 1 dual-write site (2/3) — verify-failed release.
+    //
+    // ADR-126 §"Decision" step 3: on verify-failure, DEL the lock so
+    // the slot is reclaimable. Without this, a single bad signature
+    // would burn its slot for the full SIGNATURE_TTL_MS window across
+    // ALL instances. The disabled client is a no-op here.
+    //
+    // PHASE 2: this call stays as-is.
+    if (redisDedup.enabled) {
+      await redisDedup.releaseRedeemed(txSignature);
+    }
     return { kind: "invalid", details: verification.error, verification };
   }
 
@@ -520,7 +651,15 @@ async function processPaymentRequest(
   // rest get "redeemed". `Map.has` and `Map.set` are synchronous; no
   // `await` may appear between them, otherwise the atomicity guarantee
   // is lost.
+  //
+  // ADR-126 Phase 1 nuance: same as the pre-verify check above — if
+  // redis is enabled and we got `ok` from tryRedeem but in-memory now
+  // says redeemed (an in-flight-collapsed sibling awaiter beat us to
+  // the commit), release the redis lock so it does not leak.
   if (redeemedSignatures.has(txSignature)) {
+    if (redisDedup.enabled) {
+      await redisDedup.releaseRedeemed(txSignature);
+    }
     return { kind: "redeemed" };
   }
   // AUD-209 (cycle-2): fail-closed saturation guard. The previous
@@ -530,9 +669,23 @@ async function processPaymentRequest(
   // already present (we just checked above), refuse the redemption.
   // The caller retries; operators see 503s and investigate the burst
   // rather than silently absorbing it as replay surface.
+  //
+  // ADR-126 Phase 1: the redis-side saturation gate (counter key) ran
+  // at the top of this function. If we reach here with `redeemedSignatures.size
+  // >= MAX_REDEEMED_SIGNATURES` it means the in-memory map is at cap
+  // independently — release the redis lock since we will not commit.
   if (redeemedSignatures.size >= MAX_REDEEMED_SIGNATURES) {
+    if (redisDedup.enabled) {
+      await redisDedup.releaseRedeemed(txSignature);
+    }
     return { kind: "saturated" };
   }
+  // ADR-126 Phase 1 dual-write site (3/3) — happy-path commit.
+  //
+  // The redis lock is already held (acquired at the top). We dual-write
+  // the in-memory entry below. Phase 2 will REMOVE this `Map.set` line
+  // (and the surrounding `redeemedSignatures` declaration); the redis
+  // lock will be the sole record of redemption.
   redeemedSignatures.set(txSignature, Date.now() + SIGNATURE_TTL_MS);
 
   const accessToken = issueAccessToken(
@@ -751,6 +904,8 @@ export {
   verifyPaymentOnChain,
   verifyAccessToken,
   processPaymentRequest,
+  redisDedup,
+  RELAY_INSTANCE_ID,
   __resetRedemptionStateForTests,
   __fillRedemptionStateForTests,
   __resetDrainStateForTests,
