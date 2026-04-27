@@ -28,6 +28,10 @@ import {
   type TransportPosture,
 } from "./transport/auth-gate.js";
 import {
+  makeRateLimiter,
+  readRateLimitConfig,
+} from "./transport/rate-limit.js";
+import {
   serverLogger as log,
   newCorrelationId,
   withRequestContext,
@@ -231,10 +235,30 @@ async function startHttpTransport(posture: TransportPosture): Promise<void> {
     void transport.handleRequest(req, res);
   };
 
-  const middleware = makeBearerAuthMiddleware({
+  // MCP-320: Per-bucket rate limit in front of the auth gate. Bucketing is
+  // bearer-token-first, IP-fallback (see `transport/rate-limit.ts` header
+  // for full rationale). The limiter runs BEFORE auth so unauthenticated
+  // probes also hit the IP bucket — this closes the token-guessing axis.
+  // Mirrors the relay pattern at `src/x402-relay/index.ts:390-432`.
+  const rateLimitConfig = readRateLimitConfig(process.env);
+  const rateLimiter = makeRateLimiter(rateLimitConfig);
+
+  const authMiddleware = makeBearerAuthMiddleware({
     expectedToken: posture.httpToken!,
   });
-  const httpServer = http.createServer(middleware(downstream));
+  const wrapped = rateLimiter.middleware(authMiddleware(downstream));
+  const httpServer = http.createServer(wrapped);
+
+  // Best-effort graceful shutdown: drop the pruner interval and clear the
+  // bucket map. The interval is already `.unref()`d so process exit isn't
+  // blocked, but releasing it on SIGTERM keeps tests (and tools that watch
+  // the active-handle table) clean. Listeners are deduplicated implicitly
+  // by node — re-binding under nodemon won't pile them up.
+  const onShutdown = (): void => {
+    rateLimiter.shutdown();
+  };
+  process.once("SIGTERM", onShutdown);
+  process.once("SIGINT", onShutdown);
 
   await new Promise<void>((resolve, reject) => {
     httpServer.once("error", reject);
@@ -253,9 +277,13 @@ async function startHttpTransport(posture: TransportPosture): Promise<void> {
       host: posture.httpHost,
       port: posture.httpPort,
       auth: "bearer-token",
+      rate_limit_window_ms: rateLimitConfig.windowMs,
+      rate_limit_max_requests: rateLimitConfig.maxRequests,
+      rate_limit_trust_proxy: rateLimitConfig.trustProxy,
       adr: "ADR-083",
+      audit: "MCP-320",
     },
-    "MCP server bound (HTTP + bearer-token auth enforced)",
+    "MCP server bound (HTTP + bearer-token auth + rate limit enforced)",
   );
 }
 
