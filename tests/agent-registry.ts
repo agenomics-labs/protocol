@@ -2155,4 +2155,307 @@ describe("Agent Registry Program Tests", () => {
       }
     });
   });
+
+  // ================================================================
+  // AUD-108 (cycle-2): reason-code rejection at the Registry boundary
+  //
+  // Roadmap §3 B5. Cycle-2 closure `21c01ba` added
+  // `require!(reason <= 2, InvalidReputationReason)` at the top of
+  // `propose_reputation_delta` (lib.rs:322-325). The Rust unit test
+  // `aud_100_aud_108_reserved_reason_codes_do_not_slash` pins both
+  // the slash-predicate exclusion and the handler-level rejection
+  // for reason codes 3..=10. This block adds the integration-side
+  // contract: pin the typed error variant on the IDL surface and
+  // exercise the rejection from the TS client.
+  //
+  // ATTACK-VECTOR ANALYSIS — why "direct call" is the only TS-
+  // reachable AUD-108 surface:
+  //
+  //   The Registry's `ProposeReputationDelta` context constrains
+  //   `settlement_authority` as a `signer` PDA derived under
+  //   `seeds::program = SETTLEMENT_PROGRAM_ID` (contexts.rs:318-324).
+  //   `invoke_signed` from a TS client is cryptographically
+  //   infeasible — the runtime rejects unsigned-PDA tx slots before
+  //   any program logic runs. The Settlement-side production CPI
+  //   helper hardcodes `reason ∈ {0, 1, 2}` via the AUD-109/113
+  //   constants `REASON_TASK_COMPLETED=0`, `REASON_DISPUTE_LOSS=1`,
+  //   `REASON_EXPIRY_UNDELIVERED=2` (`programs/settlement/src/
+  //   instructions/cpi.rs:54-56`), with all five call sites pinned
+  //   to those constants — so no Settlement-driven attack vector
+  //   exists either.
+  //
+  //   AUD-108's defense-in-depth is for the hypothetical future bug
+  //   where (a) a new Settlement code path adds a CPI call site
+  //   that forwards an attacker-controlled reason byte, OR (b) a
+  //   future helper Solana program manages to forge a
+  //   settlement_authority signature (out of scope for this
+  //   harness — the AUD-017 case 4 in `tests/cpi-failures.test.ts`
+  //   documents the same forgery-test infeasibility). In both
+  //   futures the Registry-side `require!` is the catch-all.
+  //
+  //   What this block CAN test from TS without a helper program:
+  //
+  //     1. The IDL declares `InvalidReputationReason` with code 6028
+  //        and the AUD-108 message — the wire-level contract that
+  //        downstream SDK consumers (mcp-server, indexer) parse
+  //        against. Drift in the variant name, code, or message
+  //        breaks every consumer that string-matches the rejection.
+  //
+  //     2. A direct invocation of `propose_reputation_delta` with
+  //        `reason=200` from a TS client fails — proves the Registry
+  //        boundary refuses any unauthorized direct call regardless
+  //        of the reason byte. The rejection mode is the runtime's
+  //        missing-signature check on `settlement_authority` (since
+  //        TS cannot satisfy the `invoke_signed`-only signer
+  //        constraint), NOT InvalidReputationReason. We confirm this
+  //        by elimination: the same call shape with `reason=0` also
+  //        fails identically — proving it's the signer constraint,
+  //        not the AUD-108 reason gate, that fires from TS direct
+  //        calls. The handler-level reason gate stays defended by
+  //        the Rust unit test.
+  //
+  //     3. The production happy path (Settlement → Registry CPI via
+  //        `approve_milestone` with `reason=0`) succeeds end-to-end
+  //        — already covered exhaustively by the AUD-017 suite at
+  //        `tests/cpi-failures.test.ts:594` ("handles a Suspended
+  //        provider (verify behavior)"); cross-referenced here for
+  //        the closure-status review.
+  //
+  //   When a helper Solana program lands (cycle-3+) that can forge
+  //   a `settlement_authority` signature, the cleanest E2E
+  //   `InvalidReputationReason` integration assertion becomes
+  //   reachable: forge the signer, pass `reason=200`, assert error
+  //   code 6028 surfaces in the tx logs.
+  // ================================================================
+
+  describe("AUD-108: reputation reason-code rejection", () => {
+    // The IDL-level error code for InvalidReputationReason. Pinning
+    // this constant in the test forces a future ADR-driven extension
+    // that renumbers errors (or adds variants ahead of this one) to
+    // update the test alongside the change — making any silent drift
+    // visible at PR time.
+    const INVALID_REPUTATION_REASON_CODE = 6028;
+
+    // Local copy of the registerFreshAgent helper so this describe
+    // block stays self-contained — independent from the AUD-101
+    // block above (separate commit ownership: AUD-101 = roadmap B3,
+    // AUD-108 = roadmap B5; bisect-friendly).
+    async function registerFreshAgent(nameSuffix: string): Promise<{
+      authority: web3.Keypair;
+      profilePDA: web3.PublicKey;
+      noncePDA: web3.PublicKey;
+    }> {
+      const authority = web3.Keypair.generate();
+      const airdrop = await provider.connection.requestAirdrop(
+        authority.publicKey,
+        2 * web3.LAMPORTS_PER_SOL
+      );
+      await provider.connection.confirmTransaction(airdrop);
+
+      const [profilePDA] = deriveAgentProfilePDA(authority.publicKey);
+      const [noncePDA] = deriveOwnerNoncePDA(authority.publicKey);
+      const vault = vaultFor(authority.publicKey);
+
+      await program.methods
+        .registerAgent(
+          `AUD-108 ${nameSuffix}`,
+          "Profile registered for AUD-108 reason-code-rejection coverage",
+          "test",
+          ["aud108-coverage"],
+          { perTask: {} },
+          new BN(web3.LAMPORTS_PER_SOL),
+          [new web3.PublicKey("11111111111111111111111111111112")]
+        )
+        .accounts({
+          authority: authority.publicKey,
+          ownerNonce: noncePDA,
+          agentProfile: profilePDA,
+          vault,
+          systemProgram: web3.SystemProgram.programId,
+        })
+        .signers([authority])
+        .rpc();
+
+      return { authority, profilePDA, noncePDA };
+    }
+
+    it("declares the InvalidReputationReason error variant on the IDL with the AUD-108 contract", () => {
+      const idl: any = (program as any).idl;
+      const errs: Array<{ code: number; name: string; msg?: string }> = idl.errors ?? [];
+      // Anchor's runtime IDL camelCases names (see the AUD-001/002
+      // "ProposeReputationDelta context shape" suite above for the
+      // same convention applied to instructions). The error variant
+      // surfaces as either PascalCase (raw IDL JSON) or camelCase
+      // (post-Anchor rewrite); accept either so this test survives
+      // an Anchor coder upgrade.
+      const variant = errs.find(
+        (e) => e.name === "InvalidReputationReason" || e.name === "invalidReputationReason"
+      );
+
+      expect(variant, "InvalidReputationReason must be declared on the IDL").to.exist;
+      // Code: load-bearing for downstream SDK consumers that
+      // string-match the rejection out of program logs.
+      expect(variant!.code).to.equal(
+        INVALID_REPUTATION_REASON_CODE,
+        "AUD-108 error code must equal 6028 — drift breaks every SDK consumer"
+      );
+      // Message: the canonical wording from
+      // `programs/agent-registry/src/errors.rs` AUD-108 block. We
+      // assert on substrings (not the full string) so a future
+      // copy-edit is allowed without test churn, but the policy
+      // semantics — the {0,1,2} accept set and the 3-255 reservation
+      // — must remain visible.
+      expect(variant!.msg).to.include("0 (task_completed)");
+      expect(variant!.msg).to.include("1 (dispute_loss)");
+      expect(variant!.msg).to.include("2 (expiry_undelivered)");
+      expect(variant!.msg).to.include("3-255 are reserved");
+      expect(variant!.msg).to.include("AUD-108");
+    });
+
+    it("rejects a direct propose_reputation_delta call with reason=200 at the Registry boundary", async () => {
+      // Setup: a fresh registered agent so the agent_profile +
+      // owner_nonce PDAs both exist. (Without them, Anchor would
+      // reject earlier with AccountNotInitialized, masking the
+      // signer rejection we want to surface.)
+      const target = await registerFreshAgent("aud108-direct-200");
+
+      // The settlement_authority PDA address. Derivable from
+      // `[b"settlement_authority"]` under the Settlement program ID
+      // — but a TS client cannot make it sign (signing requires
+      // `invoke_signed` from inside Settlement). We pass the
+      // canonical address; the runtime rejection on the unsigned
+      // signer slot is what proves the boundary refuses the call.
+      const SETTLEMENT_PROGRAM_ID = new web3.PublicKey(
+        "GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3"
+      );
+      const [settlementAuthorityPDA] = web3.PublicKey.findProgramAddressSync(
+        [Buffer.from("settlement_authority")],
+        SETTLEMENT_PROGRAM_ID
+      );
+
+      // Independent fee-payer signer (the test's wallet) so the
+      // failure is the Registry boundary's, not a fee-payer issue.
+      // We use the registered agent's own keypair as the fee payer
+      // — they're already funded, and they're NOT the
+      // settlement_authority signer the constraint requires.
+      let caught: any = null;
+      try {
+        await program.methods
+          .proposeReputationDelta(-1, 200) // delta=-1 (in MAX_DELTA_PER_CALL window), reason=200
+          .accounts({
+            ownerNonce: target.noncePDA,
+            agentProfile: target.profilePDA,
+            settlementAuthority: settlementAuthorityPDA,
+            authority: target.authority.publicKey,
+          })
+          .signers([target.authority])
+          .rpc();
+      } catch (err: any) {
+        caught = err;
+      }
+      expect(caught, "direct propose_reputation_delta with reason=200 must reject").to.exist;
+
+      const msg = String(caught?.message ?? caught) + JSON.stringify(caught?.logs ?? "");
+
+      // Rejection mode: from a TS client, Anchor's web3.js client
+      // throws synchronously with "unknown signer: <pubkey>" because
+      // it cannot identify a keypair for the `settlement_authority`
+      // slot the IDL marks as `signer`. This is the AUD-108
+      // rejection AT THE CLIENT LAYER — the tx never reaches the
+      // wire, never reaches the validator, and never reaches the
+      // handler. If the client check were ever loosened or the
+      // settlement_authority were demoted from `signer`, the runtime
+      // signature-verify would catch it; if BOTH were ever bypassed
+      // (e.g. via a malicious helper Solana program forging
+      // invoke_signed), the handler-level `require!(reason <= 2)`
+      // would catch it (defense-in-depth). All three layers are
+      // explicitly enumerated in the regex so a future bypass of
+      // any one layer surfaces the next as the rejection mode
+      // without breaking this test.
+      //
+      // Accept any of:
+      //   - "unknown signer" — Anchor TS client refuses to build
+      //     the tx (current TS-direct-call path)
+      //   - "Signature verification failed" / "missing required
+      //     signature" — runtime layer (fallback if client check
+      //     is bypassed)
+      //   - "ConstraintSigner" / Anchor error 2002 — Anchor's
+      //     #[account(signer, ...)] on settlement_authority
+      //     (fallback if both above are bypassed)
+      //   - "InvalidReputationReason" / 6028 — the AUD-108 gate
+      //     itself (would only fire if all signer constraints are
+      //     somehow bypassed — true defense-in-depth path,
+      //     reachable today only by a bankrun + helper-program
+      //     forgery test)
+      expect(msg).to.match(
+        /unknown signer|Signature verification|missing.*signature|ConstraintSigner|2002|InvalidReputationReason|6028|Privilege escalation/i,
+        `expected a Registry-boundary rejection (signer constraint or AUD-108 reason gate); got: ${msg}`
+      );
+    });
+
+    it("the boundary rejects on ANY reason byte from a TS direct call (signer-constraint elimination test)", async () => {
+      // Companion to the previous test: the SAME call shape with the
+      // valid `reason=0` MUST also fail with the same rejection mode
+      // — proving by elimination that what fires from a TS direct
+      // call is the signer / boundary constraint, NOT the AUD-108
+      // reason gate. This rules out the false-positive interpretation
+      // "the previous test passed because reason=200 was rejected by
+      // AUD-108 specifically" — which would be misleading evidence
+      // since the actual rejection happens before the handler body.
+      //
+      // The implication: AUD-108's handler-level reason gate is
+      // strictly defense-in-depth from the perspective of TS-only
+      // attackers. The closure-status review can rely on this test +
+      // the Rust unit test (`aud_100_aud_108_reserved_reason_codes_do
+      // _not_slash`, lib.rs:2050) for full AUD-108 coverage. Cycle-3
+      // anchor-bankrun work that adds a Settlement-program forgery
+      // helper unlocks the missing TS surface.
+      const target = await registerFreshAgent("aud108-direct-0");
+
+      const SETTLEMENT_PROGRAM_ID = new web3.PublicKey(
+        "GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3"
+      );
+      const [settlementAuthorityPDA] = web3.PublicKey.findProgramAddressSync(
+        [Buffer.from("settlement_authority")],
+        SETTLEMENT_PROGRAM_ID
+      );
+
+      let caught: any = null;
+      try {
+        await program.methods
+          .proposeReputationDelta(1, 0) // valid reason — must STILL fail
+          .accounts({
+            ownerNonce: target.noncePDA,
+            agentProfile: target.profilePDA,
+            settlementAuthority: settlementAuthorityPDA,
+            authority: target.authority.publicKey,
+          })
+          .signers([target.authority])
+          .rpc();
+      } catch (err: any) {
+        caught = err;
+      }
+      expect(
+        caught,
+        "direct propose_reputation_delta with reason=0 must ALSO reject — boundary refuses regardless of reason"
+      ).to.exist;
+
+      const msg = String(caught?.message ?? caught) + JSON.stringify(caught?.logs ?? "");
+
+      // Same rejection family as the reason=200 case. Crucially: it
+      // must NOT be InvalidReputationReason / 6028, since reason=0
+      // is in the valid set. If this test ever sees 6028, AUD-108's
+      // require! has accidentally tightened to reject the valid
+      // codes too — which would silently break every Settlement
+      // CPI in production.
+      expect(msg).to.not.match(
+        /InvalidReputationReason|6028/i,
+        `reason=0 must NOT trip the AUD-108 gate; got: ${msg}`
+      );
+      expect(msg).to.match(
+        /unknown signer|Signature verification|missing.*signature|ConstraintSigner|2002|Privilege escalation/i,
+        `expected a signer-boundary rejection (proving the AUD-108 gate is not what fires from TS); got: ${msg}`
+      );
+    });
+  });
 });
