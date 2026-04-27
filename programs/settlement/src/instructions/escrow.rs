@@ -5,7 +5,7 @@ use crate::state::*;
 use crate::errors::*;
 use crate::events::*;
 use crate::contexts::*;
-use super::update_provider_reputation;
+use super::{update_provider_reputation, REASON_EXPIRY_UNDELIVERED, REASON_TASK_COMPLETED};
 
 pub fn create_escrow(
     ctx: Context<CreateEscrow>,
@@ -294,12 +294,14 @@ pub fn approve_milestone(
         // SEC-1: pass `provider_authority` (= escrow.provider, address-
         // constrained) so the Registry's new external-seed anchor is satisfied.
         // ADR-097: pass `provider_owner_nonce` for the Registry's nonce-based PDA seed.
+        // AUD-109/113 (cycle-2): explicit reason code, no derived bool.
+        // The helper no longer takes `provider`, `earnings`, `rating`, or
+        // `task_completed`; the public `approve_milestone(_, rating)` still
+        // accepts `rating` (it is validated at the top of the handler) so
+        // the off-chain wire format is unchanged.
         update_provider_reputation(
-            provider_key,
-            escrow.released_amount,
             reputation_delta_task_completed,
-            true,
-            rating,
+            REASON_TASK_COMPLETED,
             ctx.accounts.registry_program.to_account_info(),
             ctx.accounts.provider_profile.to_account_info(),
             ctx.accounts.provider_authority.to_account_info(),
@@ -574,12 +576,11 @@ pub fn expire_escrow(ctx: Context<ExpireEscrow>) -> Result<()> {
         // on-chain profile so this is informational only. `task_completed
         // = true` selects reason code 0 (= task_completed) inside
         // `update_provider_reputation`.
+        // AUD-109/113 (cycle-2): explicit reason code; expire_escrow's
+        // all-Approved branch is the success path → REASON_TASK_COMPLETED.
         update_provider_reputation(
-            provider_key,
-            escrow.released_amount,
             reputation_delta_task_completed,
-            true,
-            0,
+            REASON_TASK_COMPLETED,
             ctx.accounts.registry_program.to_account_info(),
             ctx.accounts.provider_profile.to_account_info(),
             ctx.accounts.provider_authority.to_account_info(),
@@ -598,12 +599,12 @@ pub fn expire_escrow(ctx: Context<ExpireEscrow>) -> Result<()> {
         // Finding #19: governance-owned delta; rating=0 — expiry is an auto-slash.
         // SEC-1: pass `provider_authority` (= escrow.provider) — see cpi.rs.
         // ADR-097: pass `provider_owner_nonce` for the Registry's nonce-based PDA seed.
+        // AUD-109 (cycle-2): expiry-undelivered now uses its own reason
+        // code (was conflated with dispute_loss as reason 1 pre-fix).
+        // Indexers can now distinguish the two slash sources.
         update_provider_reputation(
-            provider_key,
-            0,
             reputation_delta_expiry_undelivered,
-            false,
-            0,
+            REASON_EXPIRY_UNDELIVERED,
             ctx.accounts.registry_program.to_account_info(),
             ctx.accounts.provider_profile.to_account_info(),
             ctx.accounts.provider_authority.to_account_info(),

@@ -37,18 +37,27 @@ use anchor_lang::prelude::*;
 /// turns that runtime revert into a config-time reject. The i16 clamp
 /// here remains as a safety net for any future signature mismatch.
 ///
-/// `_earnings`, `_task_completed`, and `_rating` are retained in the
-/// signature so existing callers in `escrow.rs` and `dispute.rs` keep
-/// compiling without churn during this PR. A follow-up will trim them.
-/// They are unused in the new CPI (Registry no longer folds rating into
-/// `avg_rating` here — that side-effect was removed alongside the legacy
-/// instruction; AUD-007 / PR-Q subsequently removed the field itself).
+/// AUD-109 + AUD-113 (cycle-2): explicit `reason` parameter replaces the
+/// `task_completed: bool` derivation, and the three unused parameters
+/// (`_provider`, `_earnings`, `_rating`) are dropped. Each call site now
+/// passes its own reason code:
+///   * `escrow.rs::approve_milestone`            → `REASON_TASK_COMPLETED` (0)
+///   * `escrow.rs::expire_escrow` (all-approved) → `REASON_TASK_COMPLETED` (0)
+///   * `escrow.rs::expire_escrow` (undelivered)  → `REASON_EXPIRY_UNDELIVERED` (2)
+///   * `dispute.rs::resolve_dispute`             → `REASON_DISPUTE_LOSS` (1)
+///   * `dispute.rs::resolve_dispute_timeout`     → `REASON_DISPUTE_LOSS` (1)
+///
+/// Pre-fix the helper conflated `dispute_loss` and `expiry_undelivered`
+/// into reason 1 because the boolean signal didn't carry enough
+/// information; downstream indexers couldn't distinguish the two. The
+/// constants below are the canonical reason codes.
+pub const REASON_TASK_COMPLETED: u8 = 0;
+pub const REASON_DISPUTE_LOSS: u8 = 1;
+pub const REASON_EXPIRY_UNDELIVERED: u8 = 2;
+
 pub fn update_provider_reputation<'info>(
-    _provider: Pubkey,
-    _earnings: u64,
     reputation_delta: i64,
-    task_completed: bool,
-    _rating: u8,
+    reason: u8,
     registry_program: AccountInfo<'info>,
     provider_profile: AccountInfo<'info>,
     provider_authority: AccountInfo<'info>,
@@ -74,17 +83,6 @@ pub fn update_provider_reputation<'info>(
     // visibly rather than silently truncating.
     let delta_i16: i16 = reputation_delta
         .clamp(i16::MIN as i64, i16::MAX as i64) as i16;
-
-    // Reason code: positive task-completed deltas map to reason 0, negative
-    // task-completed deltas would be a logic bug, and !task_completed
-    // (dispute / expiry) maps to reason 1 or 2. Without a third bit of
-    // information here we encode the two callers we have:
-    //   - approve_milestone → task_completed=true → reason 0
-    //   - resolve_dispute / resolve_dispute_timeout → !task_completed → reason 1
-    //   - expire_escrow → !task_completed → reason 2 (currently shares
-    //     reason 1 because the call site does not differentiate; a follow-up
-    //     PR will plumb explicit reason codes through the call sites).
-    let reason: u8 = if task_completed { 0 } else { 1 };
 
     agent_registry::cpi::propose_reputation_delta(cpi_ctx, delta_i16, reason)?;
 
