@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::hash::hashv;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 
 declare_id!("4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN");
@@ -13,6 +14,49 @@ use state::*;
 use errors::*;
 use events::*;
 use contexts::*;
+
+// ADR-124 (AUD-116 path-a): Domain tag for the `initialize_vault`
+// proof-of-control signature. The agent_identity holder must produce an
+// Ed25519 signature over `vault_identity_bind_message(authority,
+// agent_identity)`; the on-chain handler introspects the paired ed25519
+// precompile instruction to assert the verified pubkey / message / signature
+// match the supplied values.
+//
+// **Domain separation rationale**: this tag MUST differ from
+// `agent_registry::MANIFEST_HASH_DOMAIN` (= `b"AEP_CAPABILITY_MANIFEST_V1\x00"`)
+// so a captured manifest signature cannot be replayed against a vault init
+// (and vice-versa). The two protocols sign distinct domain-tagged hashes,
+// so each signature is bound to its originating handler. This mirrors the
+// settlement / registry reason-code constants pattern: vendored locally,
+// independent of the registry crate, kept distinct on purpose.
+pub const VAULT_IDENTITY_BIND_DOMAIN: &[u8] = b"AEP_VAULT_IDENTITY_BIND_V1\x00";
+
+/// ADR-124 (AUD-116 path-a): Compute the domain-separated message that the
+/// `agent_identity` private-key holder must sign for `initialize_vault` to
+/// succeed.
+///
+/// The message binds **both** the vault `authority` and the candidate
+/// `agent_identity` so a single captured signature cannot be replayed:
+///   - against a different authority's vault init (binding to `authority`
+///     rules out cross-vault replay), or
+///   - to bind a different `agent_identity` to the same vault (binding to
+///     `agent_identity` rules out swap-the-key replay against the same
+///     authority).
+///
+/// Returns a 32-byte SHA-256 digest. The `verify_ed25519_precompile` call
+/// in `instructions::initialize_vault` asserts the precompile's
+/// inline-message bytes equal this digest.
+pub fn vault_identity_bind_message(
+    authority: &Pubkey,
+    agent_identity: &Pubkey,
+) -> [u8; 32] {
+    hashv(&[
+        VAULT_IDENTITY_BIND_DOMAIN,
+        authority.as_ref(),
+        agent_identity.as_ref(),
+    ])
+    .to_bytes()
+}
 
 #[program]
 pub mod agent_vault {
@@ -31,12 +75,26 @@ pub mod agent_vault {
     /// for the suspension check without requiring the client to supply it.
     /// The pre-PR-J `profile_nonce: u64` argument has been removed; passing
     /// a stale or wrong scalar previously bricked transfers (AUD-008).
+    ///
+    /// ADR-124 / AUD-116 (path-a, cycle-3): `agent_identity_signature` is a
+    /// 64-byte Ed25519 signature from the holder of `agent_identity`'s
+    /// private key over `vault_identity_bind_message(authority,
+    /// agent_identity)`. The caller MUST prepend an `Ed25519Program`
+    /// sig-verify instruction in the same transaction (see
+    /// `identity_bind::verify_ed25519_precompile`); the runtime verifies
+    /// the signature for free, and the on-chain handler introspects that
+    /// sibling instruction via the Instructions sysvar to assert the
+    /// verified pubkey / message / signature match the values being
+    /// persisted. This closes the AUD-116 init-mis-bind seam: a wrong
+    /// `agent_identity` cannot be bound because the authority cannot
+    /// produce a valid signature from a key it does not control.
     pub fn initialize_vault(
         ctx: Context<InitializeVault>,
         agent_identity: Pubkey,
         daily_limit_lamports: u64,
         per_tx_limit_lamports: u64,
         max_txs_per_hour: u32,
+        agent_identity_signature: [u8; 64],
     ) -> Result<()> {
         instructions::initialize_vault(
             ctx,
@@ -44,6 +102,7 @@ pub mod agent_vault {
             daily_limit_lamports,
             per_tx_limit_lamports,
             max_txs_per_hour,
+            agent_identity_signature,
         )
     }
 
@@ -152,6 +211,154 @@ pub mod agent_vault {
     /// Only the vault authority can resume.
     pub fn resume_vault(ctx: Context<ResumeVault>) -> Result<()> {
         instructions::resume_vault(ctx)
+    }
+}
+
+/// ADR-124 (AUD-116 path-a): Ed25519 precompile introspection for the
+/// vault `initialize_vault` proof-of-control flow.
+///
+/// **Vendored from `agent-registry::manifest::verify_ed25519_precompile`**
+/// rather than imported. The two helpers are byte-for-byte equivalent in
+/// their introspection of the ed25519-program instruction layout, but they
+/// raise distinct vault-side error variants (`AgentIdentityBindSignatureMismatch`
+/// / `MissingAgentIdentityBindSignature`) and read independently from the
+/// vault's own bind-domain. Vendoring keeps `agent-vault` from acquiring a
+/// non-CPI dependency on registry internals — same pattern used for the
+/// settlement / registry reason-code constants and PROTOCOL_CONFIG_DISCRIMINATOR.
+///
+/// Layout of the ed25519-program instruction data (little-endian):
+/// ```text
+/// offset  size  field
+/// 0       1     num_signatures      (N, must be 1 here)
+/// 1       1     padding
+/// 2       2     signature_offset
+/// 4       2     signature_instruction_index   (u16, 0xFFFF = this ix)
+/// 6       2     public_key_offset
+/// 8       2     public_key_instruction_index  (u16, 0xFFFF = this ix)
+/// 10      2     message_data_offset
+/// 12      2     message_data_size
+/// 14      2     message_instruction_index     (u16, 0xFFFF = this ix)
+/// ```
+/// Signature (64), pubkey (32), and message bytes follow inline at the
+/// declared offsets when `*_instruction_index == 0xFFFF`.
+pub mod identity_bind {
+    use super::VaultError;
+    use anchor_lang::prelude::*;
+    use anchor_lang::solana_program::{
+        ed25519_program,
+        sysvar::instructions::{load_current_index_checked, load_instruction_at_checked},
+    };
+
+    /// Offsets within the per-signature block, relative to the start of the
+    /// `Ed25519SignatureOffsets` entry (which itself starts at data[2]).
+    const SIG_OFFSET: usize = 2; // signature_offset
+    const SIG_IX_INDEX: usize = 4; // signature_instruction_index
+    const PK_OFFSET: usize = 6; // public_key_offset
+    const PK_IX_INDEX: usize = 8; // public_key_instruction_index
+    const MSG_OFFSET: usize = 10; // message_data_offset
+    const MSG_SIZE: usize = 12; // message_data_size
+    const MSG_IX_INDEX: usize = 14; // message_instruction_index
+
+    const EXPECTED_NUM_SIGS: u8 = 1;
+    const SELF_REFERENCED: u16 = u16::MAX; // 0xFFFF sentinel = same instruction
+    const ED25519_HEADER_LEN: usize = 16; // 2 (header) + 14 (one offsets block)
+    const ED25519_MIN_LEN: usize = ED25519_HEADER_LEN + 64 + 32 + 32;
+
+    /// Verify that the transaction containing the current `initialize_vault`
+    /// instruction also contains an `Ed25519Program::verify` instruction whose
+    /// inline pubkey / signature / 32-byte message exactly match the supplied
+    /// `expected_pubkey`, `expected_signature`, and `expected_message`.
+    ///
+    /// Mirrors `agent-registry::manifest::verify_ed25519_precompile` in the
+    /// search-neighbouring-indices logic and the inline-only enforcement; only
+    /// the error variants and call site differ.
+    ///
+    /// The runtime has already verified the precompile signature itself by the
+    /// time this function runs — reaching the `return Ok(())` branch means the
+    /// precompile passed AND its inputs match what `initialize_vault` is about
+    /// to persist.
+    pub fn verify_ed25519_precompile(
+        instructions_sysvar: &AccountInfo,
+        expected_pubkey: &Pubkey,
+        expected_message: &[u8; 32],
+        expected_signature: &[u8; 64],
+    ) -> Result<()> {
+        // Search neighbouring instructions for an ed25519-program call. The
+        // sig-verify ix may be placed before or after the program ix; we try
+        // both sides of `current_index` so callers are free to prepend or
+        // append the precompile ix.
+        let current = load_current_index_checked(instructions_sysvar)? as i32;
+        let candidates = [current - 1, current + 1];
+
+        for &ix_index in candidates.iter() {
+            if ix_index < 0 {
+                continue;
+            }
+            let loaded = match load_instruction_at_checked(ix_index as usize, instructions_sysvar) {
+                Ok(ix) => ix,
+                Err(_) => continue,
+            };
+            if loaded.program_id != ed25519_program::ID {
+                continue;
+            }
+
+            let data = loaded.data.as_slice();
+            if data.len() < ED25519_MIN_LEN {
+                continue;
+            }
+            if data[0] != EXPECTED_NUM_SIGS {
+                continue;
+            }
+
+            let read_u16 = |at: usize| -> u16 { u16::from_le_bytes([data[at], data[at + 1]]) };
+
+            // All three components must be inline in the ed25519 ix itself.
+            // A cross-instruction reference (e.g. pubkey in another ix) would
+            // break the tight coupling we want.
+            if read_u16(SIG_IX_INDEX) != SELF_REFERENCED
+                || read_u16(PK_IX_INDEX) != SELF_REFERENCED
+                || read_u16(MSG_IX_INDEX) != SELF_REFERENCED
+            {
+                return Err(error!(VaultError::AgentIdentityBindSignatureMismatch));
+            }
+
+            let sig_off = read_u16(SIG_OFFSET) as usize;
+            let pk_off = read_u16(PK_OFFSET) as usize;
+            let msg_off = read_u16(MSG_OFFSET) as usize;
+            let msg_len = read_u16(MSG_SIZE) as usize;
+
+            if msg_len != 32 {
+                return Err(error!(VaultError::AgentIdentityBindSignatureMismatch));
+            }
+            if sig_off + 64 > data.len()
+                || pk_off + 32 > data.len()
+                || msg_off + msg_len > data.len()
+            {
+                return Err(error!(VaultError::AgentIdentityBindSignatureMismatch));
+            }
+
+            let sig_slice = &data[sig_off..sig_off + 64];
+            let pk_slice = &data[pk_off..pk_off + 32];
+            let msg_slice = &data[msg_off..msg_off + 32];
+
+            if sig_slice != expected_signature.as_ref() {
+                return Err(error!(VaultError::AgentIdentityBindSignatureMismatch));
+            }
+            if pk_slice != expected_pubkey.to_bytes().as_ref() {
+                return Err(error!(VaultError::AgentIdentityBindSignatureMismatch));
+            }
+            if msg_slice != expected_message.as_ref() {
+                return Err(error!(VaultError::AgentIdentityBindSignatureMismatch));
+            }
+
+            // The runtime already rejected the transaction if the ed25519
+            // precompile call itself failed verification. Reaching this point
+            // means: precompile passed, and its inputs match what this
+            // instruction is about to persist. QED.
+            return Ok(());
+        }
+
+        Err(error!(VaultError::MissingAgentIdentityBindSignature))
     }
 }
 
@@ -755,5 +962,84 @@ mod tests {
         let now_recovered: i64 = start + 3601;
         let elapsed_recovered = compute_window_elapsed(now_recovered, start);
         assert!(elapsed_recovered > 3600);
+    }
+
+    // ================================================================
+    // ADR-124 (AUD-116 path-a): vault_identity_bind_message domain-
+    // separation tests. Mirrors the registry's
+    // `adr_092_tagged_manifest_hash_*` test pattern.
+    // ================================================================
+
+    use crate::{vault_identity_bind_message, VAULT_IDENTITY_BIND_DOMAIN};
+    use anchor_lang::solana_program::hash::hashv as test_hashv;
+
+    /// ADR-124: bind message must equal sha256(VAULT_IDENTITY_BIND_DOMAIN
+    /// || authority || agent_identity).
+    #[test]
+    fn adr_124_bind_message_applies_domain_separator() {
+        let authority = sample_pubkey();
+        let agent_identity = sample_pubkey();
+        let result = vault_identity_bind_message(&authority, &agent_identity);
+
+        let expected = test_hashv(&[
+            VAULT_IDENTITY_BIND_DOMAIN,
+            authority.as_ref(),
+            agent_identity.as_ref(),
+        ])
+        .to_bytes();
+        assert_eq!(result, expected);
+    }
+
+    /// ADR-124: differing inputs MUST produce differing digests — at minimum
+    /// for both the authority and agent_identity legs of the bind tuple.
+    #[test]
+    fn adr_124_bind_message_is_injective_per_leg() {
+        let authority_a = sample_pubkey();
+        let authority_b = sample_pubkey();
+        let agent_identity = sample_pubkey();
+        // Different authority, same agent_identity → different digest.
+        assert_ne!(
+            vault_identity_bind_message(&authority_a, &agent_identity),
+            vault_identity_bind_message(&authority_b, &agent_identity),
+        );
+
+        let agent_identity_b = sample_pubkey();
+        // Same authority, different agent_identity → different digest.
+        assert_ne!(
+            vault_identity_bind_message(&authority_a, &agent_identity),
+            vault_identity_bind_message(&authority_a, &agent_identity_b),
+        );
+    }
+
+    /// ADR-124: VAULT_IDENTITY_BIND_DOMAIN must differ from the registry's
+    /// MANIFEST_HASH_DOMAIN. The two protocols sign distinct domain-tagged
+    /// hashes so a captured manifest signature cannot be replayed against a
+    /// vault init (and vice-versa). This is the cross-protocol replay defense.
+    #[test]
+    fn adr_124_domain_differs_from_registry_manifest_domain() {
+        // Hardcoded copy of `agent_registry::MANIFEST_HASH_DOMAIN`. We do not
+        // import the registry crate constant because the design point of
+        // domain separation is that the two values are independent and must
+        // be inspected side-by-side here to make the divergence obvious in
+        // code review.
+        let registry_manifest_domain: &[u8] = b"AEP_CAPABILITY_MANIFEST_V1\x00";
+        assert_ne!(
+            VAULT_IDENTITY_BIND_DOMAIN, registry_manifest_domain,
+            "vault bind domain MUST differ from registry manifest domain to \
+             prevent cross-protocol signature replay (ADR-124)"
+        );
+    }
+
+    /// ADR-124: domain tag is exactly `b"AEP_VAULT_IDENTITY_BIND_V1\x00"`
+    /// (27 bytes: 26 ASCII + null terminator). Pinned so a typo in the
+    /// constant surfaces here rather than as a runtime mismatch in tests.
+    #[test]
+    fn adr_124_domain_tag_shape_pinned() {
+        assert_eq!(VAULT_IDENTITY_BIND_DOMAIN.len(), 27);
+        assert_eq!(VAULT_IDENTITY_BIND_DOMAIN.last(), Some(&0u8));
+        assert_eq!(
+            &VAULT_IDENTITY_BIND_DOMAIN[..26],
+            b"AEP_VAULT_IDENTITY_BIND_V1"
+        );
     }
 }

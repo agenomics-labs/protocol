@@ -18,12 +18,91 @@ import {
   PublicKey,
   TOKEN_PROGRAM_ID,
 } from "../solana.js";
-import { SystemProgram } from "@solana/web3.js";
+import {
+  Ed25519Program,
+  Keypair,
+  SYSVAR_INSTRUCTIONS_PUBKEY,
+  SystemProgram,
+} from "@solana/web3.js";
+import { ed25519 } from "@noble/curves/ed25519";
+import * as crypto from "node:crypto";
+// `bs58` is already a transitive dep of `@solana/web3.js`; we import it
+// directly via the package.json declaration so the agent_identity secret-key
+// decode path doesn't reach into web3.js internals. The dep is pinned in
+// `mcp-server/package.json`.
+import bs58 from "bs58";
 import {
   requireString,
   requireNumber,
   requirePositiveNumber,
 } from "./validation.js";
+
+/**
+ * ADR-124 (AUD-116 path-a): vault-side domain tag for the proof-of-control
+ * signature. MUST stay in lockstep with `VAULT_IDENTITY_BIND_DOMAIN` in
+ * `programs/agent-vault/src/lib.rs` (= `b"AEP_VAULT_IDENTITY_BIND_V1\x00"`,
+ * 26 ASCII chars + a trailing NUL terminator, 27 bytes total).
+ */
+const VAULT_IDENTITY_BIND_DOMAIN = Buffer.concat([
+  Buffer.from("AEP_VAULT_IDENTITY_BIND_V1", "utf8"),
+  Buffer.from([0]),
+]);
+
+/**
+ * ADR-124 (AUD-116 path-a): Compute the 32-byte bind message that the
+ * `agent_identity` private-key holder must sign for `initialize_vault` to
+ * succeed. Mirrors `vault_identity_bind_message(authority, agent_identity)`
+ * in `programs/agent-vault/src/lib.rs`.
+ */
+function vaultIdentityBindMessage(
+  authority: PublicKey,
+  agentIdentity: PublicKey,
+): Buffer {
+  return crypto
+    .createHash("sha256")
+    .update(VAULT_IDENTITY_BIND_DOMAIN)
+    .update(authority.toBuffer())
+    .update(agentIdentity.toBuffer())
+    .digest();
+}
+
+/**
+ * Decode an `agent_identity` secret-key argument supplied by the caller.
+ * Accepts either a base58-encoded 64-byte Solana secret key or a JSON-style
+ * `number[]` of length 64. Validates length and surfaces a clear error so
+ * caller mistakes (wrong format, truncated key) fail loudly rather than
+ * silently producing an invalid signature.
+ */
+function decodeAgentIdentitySecret(raw: unknown): Keypair {
+  if (Array.isArray(raw)) {
+    if (raw.length !== 64 || !raw.every((n) => typeof n === "number")) {
+      throw new Error(
+        "agentIdentitySecretKey: expected an array of 64 numbers (Solana secret-key bytes)",
+      );
+    }
+    return Keypair.fromSecretKey(Uint8Array.from(raw as number[]));
+  }
+  if (typeof raw === "string") {
+    let decoded: Uint8Array;
+    try {
+      decoded = bs58.decode(raw);
+    } catch {
+      throw new Error(
+        "agentIdentitySecretKey: expected a base58-encoded 64-byte Solana secret key or a number[64]",
+      );
+    }
+    if (decoded.length !== 64) {
+      throw new Error(
+        `agentIdentitySecretKey: decoded length ${decoded.length}, expected 64`,
+      );
+    }
+    return Keypair.fromSecretKey(decoded);
+  }
+  throw new Error(
+    "agentIdentitySecretKey: expected a base58 string or a number[64]; received " +
+      typeof raw,
+  );
+}
 
 /**
  * Initialize a new vault for this agent.
@@ -38,6 +117,36 @@ import {
  * constraint. The SDK's `ensureAgentRegistered(authority)` helper (PR-JJ)
  * will paper over the UX for first-time users; for now the MCP surface
  * surfaces the on-chain failure directly.
+ *
+ * ADR-124 / AUD-116 (path-a, cycle-3): proof-of-control. The on-chain
+ * `initialize_vault` now requires a 64-byte Ed25519 signature from the
+ * holder of `agent_identity`'s private key over
+ * `vault_identity_bind_message(authority, agent_identity)`, paired with an
+ * `Ed25519Program::verify` instruction in the same transaction.
+ *
+ * Two operator flows are supported:
+ *
+ *   1. **Self-bind** (default) — if the caller does NOT supply
+ *      `agentIdentitySecretKey`, the handler treats the loaded wallet as
+ *      both the vault `authority` AND the `agent_identity`, and uses the
+ *      wallet's secret key to sign the bind message. The `agentIdentity`
+ *      argument MUST equal `wallet.publicKey` in this mode (it's checked,
+ *      not silently overridden, so an operator typo still surfaces).
+ *
+ *   2. **Operator-managed** — caller supplies `agentIdentitySecretKey`
+ *      (base58 64-byte secret key OR `number[64]`) for a distinct
+ *      `agent_identity` keypair held off-chain by the operator. The
+ *      handler decodes it, verifies the derived pubkey matches the
+ *      supplied `agentIdentity` arg, and signs the bind message locally.
+ *      Secret material does NOT leave this process — only the resulting
+ *      64-byte signature is sent on-chain.
+ *
+ * The handler does NOT support a "signature-only" mode (where the caller
+ * pre-signs the bind message and sends the signature without the secret)
+ * because the precompile pubkey/message bytes must match the on-chain
+ * handler args exactly; mismatches between caller-pre-signed bytes and the
+ * derived bind message are a common source of bugs. The two supported
+ * flows construct the bind message and precompile ix server-side.
  */
 export async function handleCreateVault(args: Record<string, unknown>) {
   const agentIdentity = parsePublicKey(requireString(args, "agentIdentity"));
@@ -54,6 +163,45 @@ export async function handleCreateVault(args: Record<string, unknown>) {
   // register-first invariant.
   const [ownerNoncePDA] = deriveOwnerNoncePDA(wallet.publicKey);
 
+  // ADR-124 (AUD-116 path-a): resolve the agent_identity signer.
+  let agentIdentitySigner: Keypair;
+  if (args.agentIdentitySecretKey !== undefined) {
+    // Operator-managed flow: caller supplied the agent_identity secret.
+    agentIdentitySigner = decodeAgentIdentitySecret(args.agentIdentitySecretKey);
+    if (!agentIdentitySigner.publicKey.equals(agentIdentity)) {
+      throw new Error(
+        `agentIdentitySecretKey decodes to pubkey ${agentIdentitySigner.publicKey.toBase58()}, ` +
+          `which does not match the supplied agentIdentity ${agentIdentity.toBase58()}. ` +
+          "Either pass a matching secret key or omit it to fall back to the wallet self-bind path.",
+      );
+    }
+  } else {
+    // Self-bind flow: agent_identity == wallet (the typical dev/test case).
+    if (!wallet.publicKey.equals(agentIdentity)) {
+      throw new Error(
+        `agentIdentity ${agentIdentity.toBase58()} does not match the wallet pubkey ` +
+          `${wallet.publicKey.toBase58()}, but agentIdentitySecretKey was not supplied. ` +
+          "Either supply the agent_identity secret key (base58 or number[64]) or pass " +
+          "the wallet pubkey as agentIdentity for the self-bind flow.",
+      );
+    }
+    agentIdentitySigner = wallet;
+  }
+
+  const bindMessage = vaultIdentityBindMessage(wallet.publicKey, agentIdentity);
+  // Sign with noble (matches the Rust ed25519 precompile's expected signature
+  // shape exactly; the `KeypairSigner` adapter in `handlers-v2/keypair-signer.ts`
+  // uses the same path). Solana `Keypair.secretKey` is `[seed(32) || pubkey(32)]`;
+  // EdDSA wants the 32-byte seed.
+  const signature = Buffer.from(
+    ed25519.sign(bindMessage, agentIdentitySigner.secretKey.slice(0, 32)),
+  );
+  const precompileIx = Ed25519Program.createInstructionWithPublicKey({
+    publicKey: agentIdentity.toBuffer(),
+    message: bindMessage,
+    signature,
+  });
+
   // ADR-088: see registry handler — `.accountsPartial()` accepts
   // PDA-resolvable accounts (e.g. `vault` here is `pda: ["vault", authority]`).
   const sig = await program.methods
@@ -61,14 +209,17 @@ export async function handleCreateVault(args: Record<string, unknown>) {
       agentIdentity,
       new BN(solToLamports(dailyLimitSol)),
       new BN(solToLamports(perTxLimitSol)),
-      maxTxsPerHour
+      maxTxsPerHour,
+      Array.from(signature),
     )
     .accountsPartial({
       vault: vaultPDA,
       authority: wallet.publicKey,
       ownerNonce: ownerNoncePDA,
+      instructionsSysvar: SYSVAR_INSTRUCTIONS_PUBKEY,
       systemProgram: SystemProgram.programId,
     })
+    .preInstructions([precompileIx])
     .signers([wallet])
     .rpc();
 

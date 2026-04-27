@@ -59,6 +59,19 @@ pub struct InitializeVault<'info> {
     )]
     pub owner_nonce: Account<'info, OwnerNonce>,
 
+    /// ADR-124 / AUD-116 (path-a): Instructions sysvar — read-only,
+    /// address-pinned to the canonical sysvar pubkey. Used by
+    /// `identity_bind::verify_ed25519_precompile` to introspect the paired
+    /// `Ed25519Program::verify` instruction in the same transaction. The
+    /// caller MUST include an ed25519-program sig-verify instruction
+    /// covering `vault_identity_bind_message(authority, agent_identity)`
+    /// signed by `agent_identity` — this proves control of the candidate
+    /// hot key at init time, closing the AUD-116 init-mis-bind seam.
+    /// CHECK: address-pinned to `sysvar::instructions::ID`; only the
+    /// canonical sysvar account satisfies the constraint.
+    #[account(address = anchor_lang::solana_program::sysvar::instructions::ID)]
+    pub instructions_sysvar: UncheckedAccount<'info>,
+
     pub system_program: Program<'info, System>,
 }
 

@@ -7,14 +7,34 @@ import { Tool } from "@modelcontextprotocol/sdk/types";
 export const createVaultTool: Tool = {
   name: "create_vault",
   description:
-    "Create a new agent vault with spending policies. The vault is a programmable wallet that enforces daily limits, per-transaction limits, and rate limits. Returns the vault address.",
+    "Create a new agent vault with spending policies. The vault is a programmable wallet that enforces daily limits, per-transaction limits, and rate limits. Returns the vault address. " +
+    "ADR-124 (AUD-116 path-a): the on-chain handler requires an Ed25519 proof-of-control signature from the holder of `agentIdentity`'s private key over a domain-tagged message; the wrapper builds the precompile ix automatically. Pass `agentIdentitySecretKey` (base58 64-byte secret OR number[64]) to bind a distinct hot key; omit it to self-bind (agentIdentity == wallet pubkey).",
   inputSchema: {
     type: "object",
     properties: {
       agentIdentity: {
         type: "string",
         description:
-          "Public key of the agent identity linked to this vault (usually the agent's own address)",
+          "Public key of the agent identity linked to this vault (usually the agent's own address). Must match either `wallet.publicKey` (self-bind mode) or the pubkey derived from `agentIdentitySecretKey` (operator-managed mode).",
+      },
+      agentIdentitySecretKey: {
+        oneOf: [
+          {
+            type: "string",
+            description:
+              "Base58-encoded 64-byte Solana secret key for the agent_identity hot key. Required if agentIdentity != wallet.publicKey.",
+          },
+          {
+            type: "array",
+            items: { type: "integer", minimum: 0, maximum: 255 },
+            minItems: 64,
+            maxItems: 64,
+            description:
+              "JSON-style 64-byte secret key array for the agent_identity hot key.",
+          },
+        ],
+        description:
+          "ADR-124 (AUD-116 path-a) — OPTIONAL. The agent_identity's secret key, used locally to produce the proof-of-control signature. Never leaves the process. Omit for self-bind (wallet == agent_identity).",
       },
       dailyLimitSol: {
         type: "number",
