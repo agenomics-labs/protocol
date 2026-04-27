@@ -185,15 +185,51 @@ pub mod agent_registry {
             AgentRegistryError::InvalidStatusTransition
         );
 
-        match (&agent_profile.status, &new_status) {
-            (AgentStatus::Retired, AgentStatus::Active) | (AgentStatus::Retired, AgentStatus::Paused) | (AgentStatus::Retired, AgentStatus::Suspended) => {
-                return Err(error!(AgentRegistryError::InvalidStatusTransition));
-            }
-            (AgentStatus::Suspended, AgentStatus::Active) | (AgentStatus::Suspended, AgentStatus::Paused) => {
-                return Err(error!(AgentRegistryError::InvalidStatusTransition));
-            }
-            _ => { agent_profile.status = new_status; }
-        }
+        // AUD-120 (cycle-2): explicit accept-list of allowed transitions
+        // via a fully-exhaustive nested match. Replaces the prior
+        // deny-list catch-all (`_ => agent_profile.status = new_status;`)
+        // that silently accepted any future status combination not listed
+        // in the deny arms — a code-shape hazard for any future variant
+        // added to `AgentStatus`. With this nested match, adding a new
+        // variant produces non-exhaustive-match compile errors at every
+        // arm that doesn't enumerate it, forcing an explicit decision per
+        // state-machine edge.
+        //
+        // Allowed edges (current → new):
+        //   Active    → {Active (noop), Paused, Retired, Suspended*}
+        //   Paused    → {Active, Paused (noop), Retired, Suspended*}
+        //   Suspended → {Retired, Suspended (noop)}
+        //   Retired   → {Retired (noop)}  (closed/terminal state)
+        //
+        // *Suspended-as-target is gated above by the AUD-004 self-suspend
+        //  guard; the only legal writer of `Suspended` is the slash path
+        //  in `propose_reputation_delta`. The match below keeps the edge
+        //  legal at the state-machine level so the slash path does not
+        //  require a code-path-specific bypass.
+        let allowed = match agent_profile.status {
+            AgentStatus::Active => match new_status {
+                AgentStatus::Active
+                | AgentStatus::Paused
+                | AgentStatus::Retired
+                | AgentStatus::Suspended => true,
+            },
+            AgentStatus::Paused => match new_status {
+                AgentStatus::Active
+                | AgentStatus::Paused
+                | AgentStatus::Retired
+                | AgentStatus::Suspended => true,
+            },
+            AgentStatus::Suspended => match new_status {
+                AgentStatus::Retired | AgentStatus::Suspended => true,
+                AgentStatus::Active | AgentStatus::Paused => false,
+            },
+            AgentStatus::Retired => match new_status {
+                AgentStatus::Retired => true,
+                AgentStatus::Active | AgentStatus::Paused | AgentStatus::Suspended => false,
+            },
+        };
+        require!(allowed, AgentRegistryError::InvalidStatusTransition);
+        agent_profile.status = new_status;
         agent_profile.updated_at = Clock::get()?.unix_timestamp;
 
         // AUD-103 (cycle-2): closed-state-machine invariant per
