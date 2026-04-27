@@ -34,6 +34,60 @@ import {
   formatEscrowStatus,
   formatMilestoneStatus,
 } from "./formatters.js";
+import { serverLogger } from "../util/logger.js";
+import {
+  getAgentMemory,
+  type MilestoneOutcomeKind,
+} from "../adapters/agent-memory.js";
+
+const log = serverLogger.child({ handler: "settlement" });
+
+/**
+ * ADR-129 Phase 2 — best-effort EVO learn loop on milestone outcomes.
+ *
+ * Called AFTER an on-chain settlement ix succeeds (return shape built).
+ * Wraps the learn call in try/catch so a bridge failure NEVER mutates
+ * the parent ix's success contract — matches the Phase 1 observe posture
+ * in `handlers/registry.ts:handleRegisterAgent`.
+ *
+ * Failure mode is bounded to "this outcome silently dropped from L2
+ * strategy formation"; never to "approve_milestone fails" or
+ * "resolve_dispute fails." Tests pin this contract in
+ * `test/record-outcome.test.ts`.
+ *
+ * `taskKey` is the EVO-side task identifier (≤64 chars per
+ * EVO_MAX_TASK_ID_LEN). For per-milestone outcomes we use
+ * `<escrow_b58>:m<idx>`; for full-escrow outcomes (dispute resolution
+ * payouts cover the whole escrow), we use `<escrow_b58>:dispute`. The
+ * key is what makes a Phase-3 retrieval able to join `learn` and
+ * `observe` for the same outcome.
+ */
+async function recordMilestoneOutcomeBestEffort(params: {
+  taskKey: string;
+  kind: MilestoneOutcomeKind;
+  providerAuthority: string;
+  metadata: Record<string, string>;
+}): Promise<void> {
+  try {
+    await getAgentMemory().recordOutcome({
+      taskId: params.taskKey,
+      kind: params.kind,
+      providerAuthority: params.providerAuthority,
+      metadata: params.metadata,
+    });
+  } catch (err) {
+    log.warn(
+      {
+        err: err instanceof Error ? err.message : String(err),
+        task_id: params.taskKey,
+        kind: params.kind,
+        provider_authority: params.providerAuthority,
+        adr: "ADR-129",
+      },
+      "settlement: best-effort EVO learn failed; continuing (on-chain ix success unaffected)",
+    );
+  }
+}
 
 /**
  * Create a new escrow for a task.
@@ -265,6 +319,25 @@ export async function handleApproveMilestone(args: Record<string, unknown>) {
     .signers([wallet])
     .rpc();
 
+  // ADR-129 Phase 2: best-effort EVO learn for the task_completed outcome.
+  // Mirrors the on-chain CPI's REASON_TASK_COMPLETED (0) per AUD-109/113
+  // (programs/settlement/src/instructions/cpi.rs:54). Provider's reputation
+  // moved positive on chain; EVO records the strategy that led here as a
+  // success for the provider agent. Failure is swallowed; the on-chain
+  // approve succeeded and that is the contract.
+  await recordMilestoneOutcomeBestEffort({
+    taskKey: `${escrowAddress.toBase58()}:m${milestoneIndex}`,
+    kind: "task_completed",
+    providerAuthority: provider.toBase58(),
+    metadata: {
+      escrow_address: escrowAddress.toBase58(),
+      milestone_index: String(milestoneIndex),
+      rating: String(rating),
+      task_id: escrow.taskId.toString(),
+      transaction_signature: sig,
+    },
+  });
+
   return {
     success: true,
     escrowAddress: escrowAddress.toBase58(),
@@ -470,6 +543,29 @@ export async function handleResolveDispute(args: Record<string, unknown>) {
     .signers([wallet])
     .rpc();
 
+  // ADR-129 Phase 2: best-effort EVO learn for the dispute outcome.
+  // The on-chain CPI emits REASON_DISPUTE_LOSS (1) for both branches per
+  // AUD-109/113 (programs/settlement/src/instructions/cpi.rs:55) — the
+  // protocol does not distinguish "provider got partial payout" from
+  // "provider got nothing" at the reputation-delta layer. EVO's L2
+  // strategy formation does benefit from the split: a provider that
+  // *won* a dispute (received non-zero payout) ran a strategy
+  // qualitatively different from one that lost, even though the
+  // reputation hit is the same.
+  const providerWon = providerRefund.gtn(0);
+  await recordMilestoneOutcomeBestEffort({
+    taskKey: `${escrowAddress.toBase58()}:dispute`,
+    kind: providerWon ? "dispute_won" : "dispute_lost",
+    providerAuthority: provider.toBase58(),
+    metadata: {
+      escrow_address: escrowAddress.toBase58(),
+      task_id: escrow.taskId.toString(),
+      client_refund: clientRefund.toString(),
+      provider_payment: providerRefund.toString(),
+      transaction_signature: sig,
+    },
+  });
+
   return {
     success: true,
     escrowAddress: escrowAddress.toBase58(),
@@ -530,6 +626,24 @@ export async function handleResolveDisputeTimeout(args: Record<string, unknown>)
     })
     .signers([wallet])
     .rpc();
+
+  // ADR-129 Phase 2: best-effort EVO learn for the timeout outcome.
+  // resolve_dispute_timeout unconditionally refunds the client and slashes
+  // the provider via the settlement→registry CPI (REASON_DISPUTE_LOSS = 1
+  // per AUD-109/113, programs/settlement/src/instructions/cpi.rs:48). EVO
+  // records this as `dispute_lost` from the provider's perspective — the
+  // strategy that led to a timed-out dispute is the strategy that failed.
+  await recordMilestoneOutcomeBestEffort({
+    taskKey: `${escrowAddress.toBase58()}:dispute`,
+    kind: "dispute_lost",
+    providerAuthority: provider.toBase58(),
+    metadata: {
+      escrow_address: escrowAddress.toBase58(),
+      task_id: escrow.taskId.toString(),
+      resolution: "timeout",
+      transaction_signature: sig,
+    },
+  });
 
   return {
     success: true,
