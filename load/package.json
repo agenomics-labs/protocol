@@ -1,0 +1,18 @@
+{
+  "name": "@agenomics/load-harness",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Operator-driven devnet load-test harness for AEP. Phase 1 of B9 (PRE_MAINNET_ROADMAP §3).",
+  "scripts": {
+    "scenario:full-lifecycle": "tsx scenarios/full-lifecycle.ts"
+  },
+  "_comments": [
+    "This package intentionally has NO `dependencies` block. The harness",
+    "uses the root workspace's @coral-xyz/anchor + @solana/web3.js +",
+    "@solana/spl-token + better-sqlite3 + tsx via Node's normal module",
+    "resolution walking up to the repo root. Keeping it dependency-free",
+    "matches the fuzz/ Phase 1 pattern (standalone but minimal-install).",
+    "Add deps here only if a load-only library (e.g. percentile-tdigest)",
+    "is needed beyond the lifecycle ix surface."
+  ]
+}
