@@ -26,7 +26,7 @@ green and the only remaining gate is the GPG-signed tag itself.
 | Track | Theme | Blocks tag? | Status as of 2026-04-27 | Owner |
 |-------|-------|-------------|------------------------|-------|
 | **A. Hard gates** | What `mainnet-readiness.yml` rejects without | YES | A4 + A5 done; A1/A2/A3 external/operational | Lead Dev + Security |
-| **B. Code/test gaps** | Cycle-3 follow-ups identified in cycle-2 audit | NO (but recommended) | **10/11 done** — only B9 (load tests) open; B11 added mid-cycle | Core eng |
+| **B. Code/test gaps** | Cycle-3 follow-ups identified in cycle-2 audit | NO (but recommended) | **11/11 launch-blocker items done**; B12 EVO design landed (post-launch impl); B9 + B12 are Phase-1-shipped with Phase-2/3 plans | Core eng |
 | **C. Operational readiness** | What you'll regret skipping in week 1 | NO (procedural) | C1 + C2 + C4 done (with ADR-126 + ADR-127); C3 gated on A2; C5 in flight (ADR-127/128); C6 design landed (ADR-126) | DevOps + Lead Dev |
 | **D. Soak** | Devnet evidence the cycle-2 changes hold under load | NO (but checklist row) | Open — runs continuously when started | DevOps |
 
@@ -721,6 +721,33 @@ Target: 4-hour fuzz run pre-tag.
 
 ### B9. Load tests (MAINNET_CHECKLIST.md ADR-022 row)
 
+**Status**: **Phase 1 Done** (2026-04-27, commit `4b7f2b2`). New `load/`
+crate at repo root (standalone tsx harness, no heavy external deps —
+no k6/artillery/autocannon). Phase 1 ships:
+- 9-ix full-lifecycle scenario: register × 2 → vault init × 2 (with
+  ADR-124 ed25519 precompile sibling ix consumed from B1) → SPL mint
+  setup → create_escrow → accept_task → submit_milestone →
+  approve_milestone (CPI Registry::update_provider_reputation)
+- Per-ix latency (p50/p95/p99) + CU samples + 7-class RPC error
+  taxonomy + indexer-lag query against `src/indexer/`'s cursor table
+- JSON results schema documented in `load/README.md`
+- Smoke validation: 4/4 flows green in 12.5s on local validator,
+  all 7 error buckets at 0
+
+`propose_reputation_delta` not exercised directly — its
+`settlement_authority` slot is `invoke_signed`-gated, so direct TS
+calls fail at the web3.js client layer (cycle-2 AUD-108 boundary;
+same finding as B5). Settlement CPI path gives the more representative
+load shape anyway.
+
+Phase 2: more scenarios (settlement-only, dispute-flow, expiry-flow,
+vault-spending, reputation-only) + library expansion
+(hdr-histogram-js for streaming percentile compression at long-campaign
+scale, prom-client for live export). Phase 3: `.github/workflows/load-pre-tag.yml`
+self-hosted-runner workflow with baseline-comparison; flips
+MAINNET_CHECKLIST ADR-022 row Pending → Done. Operator-triggered,
+not per-PR.
+
 **Why**: Currently `Pending`. Discovery + settlement under expected
 launch throughput.
 
@@ -743,35 +770,49 @@ clamp helper — is doc-only today; turn it into a real export from
 
 **Scope**: ~10 LoC. `export function clampReputationScore(raw: bigint): number`.
 
-### B12. EVO as agent-memory backbone (post-launch design exploration)
+### B12. EVO as agent-memory backbone (post-launch design landed)
 
-**Status**: Open. Future-cycle design exploration — not a launch
-prerequisite.
+**Status**: **Design landed** (2026-04-27, commit `ef6c7b9`).
+ADR-129 (`docs/adr/ADR-129-evo-agent-memory-integration.md`,
+634 lines, Status: Proposed) scopes the integration concretely:
 
-Surfaced by ADR-128's research (commit `7886554`). The team's
-internal `EVO` system (`/home/neo/dev/projects/EVO`, MIT OR
-Apache-2.0; 4-layer cognitive memory with HNSW-indexed L1 vectors,
-L2 procedural strategy extraction with Bayesian reliability, L3
-append-only Merkle-chained raw memory) was honestly evaluated as a
-candidate for the indexer primary in ADR-128 and correctly placed
-elsewhere — EVO has no leader-election / WAL-streaming primitives
-today, and the indexer's "store every finalized event, query by
-program/slot/signature" use case wastes EVO's surprise-gates and
-economics-scored retrieval. **The right slot for EVO is the AI side
-of the protocol** — mcp-server agent memory, reasoning-bank pattern
-storage, agent-side learning loops. A future ADR (numbered when
-scoped) should evaluate adopting EVO as the agent-memory backbone
-behind mcp-server, with L1 vector retrieval powering manifest /
-reputation / capability similarity search. Separately, a companion
-ADR could evaluate EVO as a *semantic-search layer over* the
-PostgreSQL indexer — system-of-record stays in PG; EVO ingests a
-derived embedding projection for "find similar disputes" /
-"rank reputation trajectories by similarity" queries.
+- **Phase 1 first integration** (post-launch implementation): new
+  read-only `find_similar_agents` MCP action backed by EVO L1 HNSW
+  retrieval + fire-and-forget `observe` post-`handleRegisterAgent`
+  success. Single-handler scope; no cold-start data dependency
+  (works from N>1 registrations onward); operator value visible
+  day-1 via semantic similarity ranking that today's filter-based
+  `discover_agents` cannot do. Failure modes bounded to "no
+  similarity results returned," NEVER "register_agent fails" —
+  intentional best-effort posture since the protocol is the first
+  production consumer of EVO at scale.
+- **Phase 2** (after EVO sustained-load observation): write-path
+  `learn` loop on milestone outcomes; reputation-trajectory recall.
+- **Phase 3**: operator-query MCP tools for cross-session agent
+  history.
+- **EVO maturity**: Phase 1 viable now per EVO's `CLAUDE.md`
+  §"EVO Development Status" — 657 tests green, built release binary,
+  8 production MCP tools at `EVO/src/mcp/tools.ts`. No EVO changes
+  required.
+- **Runner-up**: pgvector on ADR-128's PG instance. Loses on
+  three counts (no surprise-gate / economics / L2 Bayesian
+  reliability — would re-implement everything; load co-location
+  with OLTP that ADR-128 §C5 explicitly avoided; no L2 strategy
+  layer for Phase 2's reasoning-bank value). Documented as the
+  degraded fallback if EVO adoption is later judged operationally
+  untenable.
 
 **Why deferred from launch**: not a tag-blocker. The indexer's
 queryable-state contract is satisfied by ADR-128. EVO adoption is
 about expanding agent-side capability, not closing a security or
-correctness gap.
+correctness gap. Implementation PR is a post-launch cycle-3+ task.
+
+**Companion ADR (future)**: EVO as a *semantic-search layer over*
+the PostgreSQL indexer — PG stays as system-of-record; EVO ingests
+a derived embedding projection for "find similar disputes" / "rank
+reputation trajectories by similarity" queries. Out of scope for
+ADR-129 (which is agent-memory, not indexer companion); separate
+future ADR.
 
 ### B11. x402-relay `/admin/drain` endpoint (cycle-3 follow-up surfaced by C2)
 
