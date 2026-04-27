@@ -77,8 +77,10 @@ version = "0.31.1"
 
 # Each fuzz target is its own bin. Phase 1 shipped `propose_reputation_delta`;
 # Phase 2 is incrementally adding the next-most-attack-surface-dense seams
-# from cycle-2 (see README §Phase 2 plan). `update_status` is the first
-# Phase 2 landing — it pins the AUD-120 accept-list matrix.
+# from cycle-2 (see README §Phase 2 plan). `update_status` was the first
+# Phase 2 landing — it pins the AUD-120 accept-list matrix. `clear_suspension`
+# is the second Phase 2 landing — it pins the AUD-004 cleared_count
+# escalation ladder + AUD-118 saturating-add invariant.
 [[bin]]
 name = "propose_reputation_delta"
 path = "fuzz_targets/propose_reputation_delta.rs"
@@ -86,6 +88,10 @@ path = "fuzz_targets/propose_reputation_delta.rs"
 [[bin]]
 name = "update_status"
 path = "fuzz_targets/update_status.rs"
+
+[[bin]]
+name = "clear_suspension"
+path = "fuzz_targets/clear_suspension.rs"
 
 # Release profile mirrors the on-chain workspace so the harness's
 # arithmetic semantics match the deployed program (overflow-checks ON
