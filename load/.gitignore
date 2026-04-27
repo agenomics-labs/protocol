@@ -1,0 +1,13 @@
+# Operator-driven campaign output. Per-run JSON + per-run console log; can
+# grow to MBs over a multi-hour soak. Never committed.
+results/
+
+# Standalone install footprint (the harness uses the root workspace's deps,
+# but if an operator runs `npm install` inside this directory the per-dir
+# tree should not be tracked).
+node_modules/
+package-lock.json
+
+# Editor scratch.
+*.swp
+.DS_Store
