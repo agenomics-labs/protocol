@@ -687,7 +687,7 @@ mandates, ADR-122 mainnet-readiness CI gate.
   vs operator runbook step).
 - Multisig emergency rotation.
 - Indexer DB recovery from cold backup.
-- x402-relay saturation response (manual scale-out, ADR-117).
+- x402-relay saturation response (manual scale-out, ADR-126).
 
 ### C3. AUD-207 — split program IDs across clusters
 
@@ -720,11 +720,12 @@ reference this doc rather than duplicating it.
 - Backup cadence for the indexer DB.
 - Drill: kill primary, confirm secondary catches up from slot N.
 
-### C6. x402-relay scale plan (ADR-117)
+### C6. x402-relay scale plan (ADR-126)
 
 The current single-instance design tops out at ~30 sigs/sec sustained
 (per AUD-209's bound). If launch throughput could exceed that, ship
-the Redis-backed dedup BEFORE first paying customer.
+the Redis-backed dedup BEFORE first paying customer. Design captured
+in `docs/adr/ADR-126-x402-relay-horizontal-scale.md` (Status: Proposed).
 
 ---
 

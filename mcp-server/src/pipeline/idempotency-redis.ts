@@ -348,12 +348,12 @@ function deserializeResult<T>(raw: string): Result<T> {
   // and explicitly deferred. Rationale: tampering requires Redis-write
   // access, which already implies the Redis trust boundary has been
   // breached. The threat model treats Redis as inside the trust
-  // boundary (operator-controlled, network-isolated). ADR-117 governs
+  // boundary (operator-controlled, network-isolated). ADR-126 governs
   // the Redis-isolation strategy; if a future deployment moves Redis
   // outside that boundary (shared cluster, multi-tenant), this
   // function becomes the right enforcement point and an HMAC wrapper
   // around the JSON payload (keyed by `IDEMPOTENCY_HMAC_SECRET`) is
-  // the documented add. Tracked alongside ADR-117.
+  // the documented add. Tracked alongside ADR-126.
   try {
     return JSON.parse(raw) as Result<T>;
   } catch (e) {
