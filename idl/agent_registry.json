@@ -1921,6 +1921,11 @@
       "code": 6026,
       "name": "InvalidProtocolConfigAccount",
       "msg": "ProtocolConfig discriminator mismatch — account is not a Settlement ProtocolConfig (AUD-104)"
+    },
+    {
+      "code": 6027,
+      "name": "InvariantBatchTooLarge",
+      "msg": "verify_protocol_invariants batch exceeds MAX_INVARIANT_BATCH (16); slice into smaller transactions (AUD-106)"
     }
   ],
   "types": [

@@ -96,4 +96,13 @@ pub enum AgentRegistryError {
     // garbage; reject with this typed error rather than trusting the bytes.
     #[msg("ProtocolConfig discriminator mismatch — account is not a Settlement ProtocolConfig (AUD-104)")]
     InvalidProtocolConfigAccount,
+
+    // AUD-106 (cycle-2): cap on `verify_protocol_invariants` batch size.
+    // Each remaining_account triggers a full Borsh deserialize of a
+    // ~1.4KB AgentProfile + the invariant helper; ~64 accounts can
+    // exhaust the 200k CU budget and a single failure aborts the whole
+    // tx with no partial-progress visibility. MAX_INVARIANT_BATCH (16)
+    // keeps worst-case CU well under budget.
+    #[msg("verify_protocol_invariants batch exceeds MAX_INVARIANT_BATCH (16); slice into smaller transactions (AUD-106)")]
+    InvariantBatchTooLarge,
 }

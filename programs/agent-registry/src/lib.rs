@@ -20,6 +20,16 @@ pub const MAX_REPUTATION_SCORE: u8 = 100;
 /// multiple transactions.
 pub const MAX_DELTA_PER_CALL: i16 = 10;
 
+/// AUD-106 (cycle-2): per-call batch size cap for
+/// `verify_protocol_invariants`. Each entry triggers a full Borsh
+/// deserialize of an `AgentProfile` (~1.4KB account with `Vec<String>`
+/// capabilities) plus the invariant helper. 16 keeps the worst-case
+/// CU usage well under Solana's 200k budget and forces operators to
+/// slice large sweeps into smaller, individually-recoverable
+/// transactions instead of risking a single 64-account abort with no
+/// partial-progress visibility.
+pub const MAX_INVARIANT_BATCH: usize = 16;
+
 /// AUD-104 (cycle-2): Anchor account discriminator for Settlement's
 /// `ProtocolConfig` (= `sha256("account:ProtocolConfig")[..8]`). Hardcoded
 /// here so Registry doesn't need a Settlement crate dependency.
@@ -715,6 +725,21 @@ pub mod agent_registry {
         require!(
             config_authority == ctx.accounts.authority.key(),
             AgentRegistryError::Unauthorized
+        );
+
+        // AUD-106 (cycle-2): cap the per-call batch size. Each iteration
+        // does a full Borsh deserialize of an `AgentProfile` (a 1414-byte
+        // account with `Vec<String>` capabilities) and runs the invariant
+        // helper. Solana's tx-level account cap is 64, but ~64 profiles
+        // worth of work can exhaust the 200k CU budget *and* a single
+        // failed account aborts the whole transaction with no
+        // partial-progress visibility. Capping at `MAX_INVARIANT_BATCH = 16`
+        // keeps the worst-case CU usage well under budget and forces
+        // operators to slice large sweeps into smaller, individually
+        // recoverable transactions.
+        require!(
+            ctx.remaining_accounts.len() <= MAX_INVARIANT_BATCH,
+            AgentRegistryError::InvariantBatchTooLarge
         );
 
         // Each remaining account must deserialize as a valid `AgentProfile`
