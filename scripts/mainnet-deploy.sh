@@ -56,6 +56,11 @@ COMPUTE_UNIT_PRICE=50000
 # Audit-report hash file (committed; populated by the auditor per ADR-080 §2).
 AUDIT_HASH_FILE="$PROJECT_ROOT/config/AUDIT_REPORT_HASHES"
 
+# Source-controlled SSH allowed-signers file consumed by `git tag -v`
+# (Pre-Mainnet Roadmap §2 A5, closing A4). Replaces the implicit
+# runner-host keyring with a reviewable in-repo allowlist.
+ALLOWED_SIGNERS_FILE="$PROJECT_ROOT/.github/allowed-signers"
+
 # Binary paths (must match the relative paths inside AUDIT_REPORT_HASHES).
 VAULT_SO="$PROJECT_ROOT/target/deploy/agent_vault.so"
 REGISTRY_SO="$PROJECT_ROOT/target/deploy/agent_registry.so"
@@ -141,6 +146,33 @@ preflight_tagged_head() {
     return 0
 }
 
+preflight_allowed_signers() {
+    # Per Pre-Mainnet Roadmap §2 A5 (closing A4): the in-repo
+    # `.github/allowed-signers` file is the source-controlled allowlist
+    # consumed by `git tag -v` in preflight_signed_tag. It ships with
+    # `TODO_PLACEHOLDER_*` principals so this gate fails closed until
+    # the A2 multisig provisioning ceremony populates real keys.
+    # Mirrors preflight_audit_hashes' placeholder-rejection semantics.
+    if [[ ! -f "$ALLOWED_SIGNERS_FILE" ]]; then
+        log_error "Allowed-signers file not found: $ALLOWED_SIGNERS_FILE"
+        log_error "Per Pre-Mainnet Roadmap §2 A5, the source-controlled allowlist must be committed before deploy."
+        return 1
+    fi
+    local stripped
+    stripped=$(grep -Ev '^\s*(#|$)' "$ALLOWED_SIGNERS_FILE")
+    if [[ -z "$stripped" ]]; then
+        log_error "Allowed-signers file is empty after stripping comments: $ALLOWED_SIGNERS_FILE"
+        return 1
+    fi
+    if printf '%s\n' "$stripped" | grep -qE '^TODO_PLACEHOLDER_'; then
+        log_error "$ALLOWED_SIGNERS_FILE still contains TODO_PLACEHOLDER_ sentinel principals."
+        log_error "Populate with real maintainer SSH signing keys via the lifecycle in the file header (Pre-Mainnet Roadmap §2 A5) before deploying."
+        return 1
+    fi
+    log_info "Allowed-signers file populated with non-placeholder maintainer keys."
+    return 0
+}
+
 preflight_signed_tag() {
     if [[ "$AEP_DEPLOY_DRY_RUN" == "1" ]]; then
         log_warn "AEP_DEPLOY_DRY_RUN=1: skipping signed-tag verification."
@@ -150,11 +182,20 @@ preflight_signed_tag() {
     local any_verified=0
     while IFS= read -r tag; do
         [[ -z "$tag" ]] && continue
-        if (cd "$PROJECT_ROOT" && git tag -v "$tag" >/dev/null 2>&1); then
+        # Per Pre-Mainnet Roadmap §2 A5: bind `git tag -v` to the
+        # in-repo allowlist, NOT the runner-host keyring. The
+        # `gpg.format=ssh` + `gpg.ssh.allowedSignersFile=…` pair makes
+        # the committed file the authoritative source for which keys
+        # may sign a `v*-mainnet` tag.
+        if (cd "$PROJECT_ROOT" && \
+            git -c gpg.format=ssh \
+                -c gpg.ssh.allowedSignersFile="$ALLOWED_SIGNERS_FILE" \
+                tag -v "$tag" >/dev/null 2>&1); then
             any_verified=1
-            log_info "Signed tag verified: $tag"
+            log_info "Signed tag verified against $ALLOWED_SIGNERS_FILE: $tag"
         else
-            log_error "Tag $tag at HEAD is not a valid signed tag."
+            log_error "Tag $tag at HEAD is not signed by a key in $ALLOWED_SIGNERS_FILE."
+            log_error "Either the tag is unsigned, the signature is invalid, or the signing key is not on the in-repo allowlist (Pre-Mainnet Roadmap §2 A5)."
             return 1
         fi
     done < <(cd "$PROJECT_ROOT" && git tag --points-at HEAD | grep -E '^v.*-mainnet$' || true)
@@ -307,6 +348,7 @@ run_preflight() {
         preflight_tooling
         preflight_clean_tree
         preflight_tagged_head
+        preflight_allowed_signers
         preflight_signed_tag
         preflight_multisig_set
         preflight_multisig_format
@@ -450,7 +492,8 @@ self_test() {
         confirm verify_program_id verify_authority transfer_authority_to_multisig
         deploy_program write_deploy_log_header write_deploy_log_footer
         preflight_tooling preflight_clean_tree preflight_tagged_head
-        preflight_signed_tag preflight_multisig_set preflight_multisig_format
+        preflight_allowed_signers preflight_signed_tag
+        preflight_multisig_set preflight_multisig_format
         preflight_multisig_exists preflight_cluster_mainnet preflight_balance
         preflight_binaries_present preflight_program_ids preflight_audit_hashes
         run_preflight self_test
@@ -496,6 +539,40 @@ self_test() {
         if ! printf '%s\n' "$body" | grep -Eq '^[0-9a-f]{64}  target/deploy/settlement\.so$'; then
             log_error "self-test: AUDIT_REPORT_HASHES missing well-formed settlement.so entry"
             failures=$((failures + 1))
+        fi
+    fi
+
+    # ALLOWED_SIGNERS_FILE present and well-formed (Pre-Mainnet
+    # Roadmap §2 A5). Mirrors the AUDIT_HASH_FILE shape check above:
+    # we assert the file exists, has at least one non-comment line,
+    # and that every non-comment line parses as the SSH allowed-signers
+    # format (`<principal> [namespaces=...] <key-type> <base64-blob> ...`).
+    # We do NOT require non-placeholder content here — the placeholder
+    # rejection lives in preflight_allowed_signers, exactly mirroring
+    # the AUDIT_REPORT_HASHES placeholder/preflight split.
+    if [[ ! -f "$ALLOWED_SIGNERS_FILE" ]]; then
+        log_error "self-test: $ALLOWED_SIGNERS_FILE missing"
+        failures=$((failures + 1))
+    else
+        local signers_body
+        signers_body=$(grep -Ev '^\s*(#|$)' "$ALLOWED_SIGNERS_FILE")
+        if [[ -z "$signers_body" ]]; then
+            log_error "self-test: $ALLOWED_SIGNERS_FILE has no non-comment signer lines"
+            failures=$((failures + 1))
+        else
+            # Each non-comment line must be: <principal> [namespaces="..."]
+            # <ssh-key-type> <base64-blob> [comment]. The base64 blob has no
+            # whitespace; allowed key types per `ssh-keygen` are sk-ssh-ed25519,
+            # ssh-ed25519, ssh-rsa, ecdsa-sha2-*, ssh-dss. Match permissively
+            # but require at least principal + key-type + blob.
+            local bad_line
+            bad_line=$(printf '%s\n' "$signers_body" | \
+                grep -Ev '^\S+( +namespaces="[^"]+")? +(sk-)?(ssh-(ed25519|rsa|dss)|ecdsa-sha2-\S+) +[A-Za-z0-9+/=]+( +.*)?$' || true)
+            if [[ -n "$bad_line" ]]; then
+                log_error "self-test: $ALLOWED_SIGNERS_FILE has malformed signer line(s):"
+                log_error "$bad_line"
+                failures=$((failures + 1))
+            fi
         fi
     fi
 

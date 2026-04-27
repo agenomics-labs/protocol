@@ -8,12 +8,20 @@ name: Mainnet Readiness Gate
 # Closes audit finding: AUD-059.
 #
 # What this gate enforces (all blocking, no `continue-on-error`):
-#   1. The pushed tag is GPG-signed (`git tag -v`).
-#   2. `docs/MAINNET_CHECKLIST.md` has zero unresolved rows — no
+#   1. `.github/allowed-signers` is present, non-empty, and free of the
+#      `TODO_PLACEHOLDER_` sentinel principals (Pre-Mainnet Roadmap §2
+#      A5, closing A4). The file is the source-controlled allowlist
+#      `git tag -v` is bound to in step 2.
+#   2. The pushed tag is signed by a key in the in-repo allowlist
+#      (`git tag -v` invoked with `gpg.format=ssh` +
+#      `gpg.ssh.allowedSignersFile=.github/allowed-signers` so the
+#      allowlist is the committed file, not whichever keys happen to
+#      live in the runner-host keyring at job-runtime).
+#   3. `docs/MAINNET_CHECKLIST.md` has zero unresolved rows — no
 #      `| Pending |` table cells and no unchecked `- [ ]` task items.
-#   3. `config/AUDIT_REPORT_HASHES` is populated with real auditor
+#   4. `config/AUDIT_REPORT_HASHES` is populated with real auditor
 #      values (not the all-zero placeholder shipped per ADR-080 §2).
-#   4. `scripts/mainnet-deploy.sh --self-test` exits 0.
+#   5. `scripts/mainnet-deploy.sh --self-test` exits 0.
 #
 # A failure on any step prevents downstream publish jobs from firing.
 
@@ -38,16 +46,58 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Verify tag is GPG-signed
-        # Per ADR-080 §1: every mainnet-bound tag must be signed by a
-        # maintainer key in the project's allowlist. `git tag -v`
-        # exits non-zero if the signature is missing or invalid.
+      - name: Verify allowed-signers file is populated
+        # Per Pre-Mainnet Roadmap §2 A5 (closing A4): the in-repo
+        # `.github/allowed-signers` file is the source-controlled
+        # allowlist `git tag -v` consults in the next step. It ships
+        # with `TODO_PLACEHOLDER_*` principals so the gate fails closed
+        # until real maintainer keys are populated through the A2
+        # multisig provisioning ceremony. This step mirrors the
+        # `AUDIT_REPORT_HASHES` placeholder-rejection gate below.
+        run: |
+          set -euo pipefail
+          SIGNERS=.github/allowed-signers
+          if [ ! -f "$SIGNERS" ]; then
+            echo "::error::$SIGNERS not found. Source-controlled allowlist required by Pre-Mainnet Roadmap §2 A5."
+            exit 1
+          fi
+          if [ ! -s "$SIGNERS" ]; then
+            echo "::error::$SIGNERS is empty"
+            exit 1
+          fi
+          # Strip comments + blank lines, then refuse any line whose
+          # principal begins with TODO_PLACEHOLDER_ (the placeholder
+          # shape shipped with the file).
+          PAYLOAD=$(grep -vE '^\s*(#|$)' "$SIGNERS" || true)
+          if [ -z "$PAYLOAD" ]; then
+            echo "::error::$SIGNERS has no non-comment signer lines"
+            exit 1
+          fi
+          if echo "$PAYLOAD" | grep -qE '^TODO_PLACEHOLDER_'; then
+            echo "::error::$SIGNERS still contains TODO_PLACEHOLDER_ sentinel principals. Populate with real maintainer SSH signing keys before mainnet (Pre-Mainnet Roadmap §2 A5)."
+            echo "--- offending lines ---"
+            echo "$PAYLOAD" | grep -nE '^TODO_PLACEHOLDER_' || true
+            exit 1
+          fi
+          echo "::notice::$SIGNERS populated with non-placeholder maintainer keys."
+
+      - name: Verify tag signature against in-repo allowlist
+        # Per ADR-080 §1 + Pre-Mainnet Roadmap §2 A5: every
+        # mainnet-bound tag must be signed by a key in the in-repo
+        # allowlist `.github/allowed-signers` (NOT whichever keys
+        # happen to live in the runner-host keyring). The
+        # `gpg.format=ssh` + `gpg.ssh.allowedSignersFile=…` pair binds
+        # `git tag -v` to the committed file. `git tag -v` exits
+        # non-zero if the signature is missing, invalid, or signed by
+        # a key not in the allowlist.
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF#refs/tags/}"
-          echo "Verifying tag: $TAG"
-          if ! git tag -v "$TAG" 2>&1; then
-            echo "::error::Tag $TAG is not GPG-signed (or signature invalid). ADR-080 requires signed tags for mainnet."
+          echo "Verifying tag: $TAG (allowlist: .github/allowed-signers)"
+          if ! git -c gpg.format=ssh \
+                   -c gpg.ssh.allowedSignersFile="$GITHUB_WORKSPACE/.github/allowed-signers" \
+                   tag -v "$TAG" 2>&1; then
+            echo "::error::Tag $TAG is not signed by a key in .github/allowed-signers. ADR-080 + Pre-Mainnet Roadmap §2 A5 require signed tags from an allowlisted maintainer key."
             exit 1
           fi
 

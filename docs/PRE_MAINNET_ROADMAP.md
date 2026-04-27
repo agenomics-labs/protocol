@@ -352,12 +352,177 @@ is undesirable**:
   pubkey is uploaded to GitHub and committed to the in-repo
   allowed-signers.
 
-**Status as of 2026-04-26**: Not started. Workflow gate exists and
-fires; the allowlist it consults is implicit runner-host state. The
-A4 closure deliverable is (a) a chosen Option α/β, (b) the in-repo
-allowlist file populated with the agreed maintainer keys, (c) a
-PR amending `mainnet-readiness.yml` to consult it, (d) a successful
-dry-run on a fork per the procedure above.
+**Status as of 2026-04-26**: Schema-level gap closed by A5 (this
+section). Workflow gate exists and fires; the allowlist it consults
+is now the source-controlled `.github/allowed-signers` file, not
+runner-host state. Deliverables (a) Option α chosen, (c) workflow +
+script consult the in-repo file are landed; (b) populating the file
+with real maintainer keys is gated on the A2 multisig provisioning
+ceremony, and (d) the fork dry-run can run against the post-A5
+workflow once a maintainer key is on the allowlist (the post-A5
+gate now fails closed against the placeholder lines, so the
+dry-run with a sentinel allowlist exercises the rejection path —
+exactly the test ADR-080 §H Alt-D advocates for the hash gate).
+
+### A5. Source-controlled SSH allowed-signers (closes A4 schema gap)
+
+**Why it matters**: A4 surfaced that the `git tag -v` step at
+`.github/workflows/mainnet-readiness.yml:41-52` consulted the
+self-hosted runner's GPG keyring rather than any source-controlled
+allowlist — the de-facto allowlist was operator state, not a
+reviewable PR diff. Same gap script-side at
+`scripts/mainnet-deploy.sh`'s `preflight_signed_tag`. A5 turns the
+allowlist into a real file in the repo so adding or removing a
+maintainer signing key is a reviewable PR change.
+
+**Mechanism (Option α from A4)**: SSH-signed tags via git's native
+`gpg.format=ssh` + `gpg.ssh.allowedSignersFile=…` pair. Chosen over
+Option β (committed GPG `*.asc` keyrings) because (i) A4 explicitly
+recommends α, (ii) the SSH allowed-signers format is plain text,
+diff-reviewable, and human-auditable in PR; (iii) git ≥ 2.34
+verifies SSH-signed tags natively — no extra `gpg --import` step,
+no transient `$GNUPGHOME`, no runner-keyring side effects;
+(iv) ADR-080 §H Alternative E confirms `git tag -v` works with
+either signing flavor, so the choice is operational rather than
+mandate-altering. ADR-080 §1's signed-tag mandate is unchanged.
+
+**Where the file lives**: `.github/allowed-signers`. Path matches
+A4's literal recommendation, colocates the allowlist with the
+workflow that consumes it (per the `.github/` convention for
+repo-policy/CI metadata), and parallels `config/AUDIT_REPORT_HASHES`'s
+role-based location: machine-consumed `sha256sum --check` payload
+lives under `config/`, machine-consumed CI/policy artifacts live
+under `.github/`.
+
+**File format**: Standard `ssh-keygen` allowed-signers format
+(`man 1 ssh-keygen`, "ALLOWED SIGNERS" section). One entry per line:
+
+```
+<principal> [namespaces="git"] <ssh-key-type> <base64-pubkey> [comment]
+```
+
+Lines beginning with `#` and blank lines are ignored. The
+`namespaces="git"` qualifier is recommended (least-privilege —
+restricts the key to git signatures only).
+
+**Workflow change** (`.github/workflows/mainnet-readiness.yml`): two
+sequential steps replace the pre-A5 single "Verify tag is GPG-signed"
+step.
+
+1. **Verify allowed-signers file is populated** — mirrors the
+   `AUDIT_REPORT_HASHES` placeholder-rejection gate. The file is
+   refused if absent, empty, or carrying any line whose principal
+   begins with `TODO_PLACEHOLDER_`.
+2. **Verify tag signature against in-repo allowlist** — runs
+   `git -c gpg.format=ssh -c gpg.ssh.allowedSignersFile="$GITHUB_WORKSPACE/.github/allowed-signers" tag -v "$TAG"`.
+   Tags signed by a key not on the in-repo allowlist fail this gate
+   even if the runner happens to have the key in its keyring.
+
+**Script change** (`scripts/mainnet-deploy.sh`): a new
+`preflight_allowed_signers` gate (placeholder-rejection, identical
+semantics to `preflight_audit_hashes`) runs before the existing
+`preflight_signed_tag` gate, which now invokes
+`git -c gpg.format=ssh -c gpg.ssh.allowedSignersFile=…` so the
+script and the workflow consult the same file via the same
+mechanism. The `--self-test` surface is extended to assert the
+allowlist file exists and that every non-comment line parses as a
+well-formed SSH allowed-signers entry; non-placeholder content is
+NOT required at self-test time, exactly as `AUDIT_REPORT_HASHES`
+shape-vs-content is split between self-test and preflight.
+
+**Lifecycle (mirrors `AUDIT_REPORT_HASHES`)**:
+
+1. The file ships with two `TODO_PLACEHOLDER_maintainer_*` sentinel
+   lines using an all-zeros base64 SSH-Ed25519 blob (the SSH-key
+   analogue of the all-zero SHA-256 sentinel in
+   `AUDIT_REPORT_HASHES`). Workflow + script both fail closed
+   against any line whose principal begins with `TODO_PLACEHOLDER_`,
+   so the `v*-mainnet` gate is unsatisfiable until real keys are
+   populated. Devnet rehearsals (`AEP_DEPLOY_DRY_RUN=1`) skip
+   `preflight_signed_tag` itself but still run
+   `preflight_allowed_signers`, so the placeholder-rejection path is
+   exercised on every rehearsal — exactly the property ADR-080 §H
+   Alt-D defends for the hash gate.
+2. The A2 multisig provisioning ceremony decides which maintainers
+   are entitled to sign mainnet tags (note A4 Q2: the maintainer
+   set entitled to *sign code* need not be identical to the multisig
+   membership entitled to *hold upgrade authority* — they are two
+   separate authorization surfaces).
+3. Each entitled maintainer generates an Ed25519 SSH signing key
+   locally:
+
+   ```bash
+   ssh-keygen -t ed25519 -C "<principal>" -f ~/.ssh/<name>_signing_ed25519
+   git config --global gpg.format ssh
+   git config --global user.signingkey ~/.ssh/<name>_signing_ed25519.pub
+   ```
+
+   …and uploads the public key to GitHub at
+   Settings → SSH and GPG keys → "New SSH key" with key type
+   "Signing Key" so the github.com `Verified` badge surface stays in
+   lockstep with the workflow gate (closes A4 Q4).
+4. A maintainer opens a PR adding one line per new key to
+   `.github/allowed-signers`, removing the corresponding
+   `TODO_PLACEHOLDER_` line in the same PR. PR title format:
+   `feat(security): A5 enroll <key-holder> SSH signing key`. One
+   key per PR, never amended after merge.
+5. Rotation/revocation is a PR that removes the matching line. The
+   next `v*-mainnet` tag push verifies against the post-removal
+   allowlist; tags signed by the removed key fail closed at the
+   workflow gate even if previously valid.
+
+**Operator runbook for adding a maintainer key**:
+
+```bash
+# 1. Maintainer generates the SSH signing key locally.
+ssh-keygen -t ed25519 -C "alice@agenomics-labs.maintainer" \
+  -f ~/.ssh/alice_signing_ed25519
+
+# 2. Maintainer configures git to sign with it (per-machine; do NOT
+#    commit ~/.gitconfig).
+git config --global gpg.format ssh
+git config --global user.signingkey ~/.ssh/alice_signing_ed25519.pub
+
+# 3. Maintainer uploads the .pub to GitHub as a Signing Key
+#    (Settings → SSH and GPG keys → New SSH key → key type = Signing Key).
+#    Required so the github.com `Verified` badge matches the workflow gate.
+
+# 4. Maintainer (or designate) opens a PR adding the public-key line to
+#    .github/allowed-signers and removing one TODO_PLACEHOLDER_ line:
+#       alice@agenomics-labs.maintainer namespaces="git" ssh-ed25519 AAAAC3...real-blob... alice
+#    PR is reviewed by another maintainer (two-eyes principle).
+
+# 5. Local sanity check before pushing the next v*-mainnet tag:
+git -c gpg.format=ssh \
+    -c gpg.ssh.allowedSignersFile=.github/allowed-signers \
+    tag -v <some-test-tag-signed-by-alice>
+```
+
+**Operator runbook for revoking a key**: open a PR removing the
+matching line from `.github/allowed-signers`. The next
+`v*-mainnet` tag push is verified against the post-removal file;
+tags signed under the revoked key fail closed at the workflow gate
+even if the github.com `Verified` badge still appears for older
+historical tags.
+
+**Status**: Schema + enforcement landed. Real-key population is
+gated on A2 (multisig provisioning + maintainer-set decision per
+A4 Q2). Once A2 names the entitled signers and they each generate
+their key per the runbook above, the `TODO_PLACEHOLDER_*` lines
+are replaced by a sequence of one-key-per-PR enrollments and the
+gate begins passing for tags signed by enrolled maintainers.
+
+**Files touched**:
+
+- `.github/allowed-signers` (new) — the source-controlled allowlist
+  itself, shipped with `TODO_PLACEHOLDER_*` sentinels and a
+  lifecycle header comment.
+- `.github/workflows/mainnet-readiness.yml` — replaces the single
+  `git tag -v` step with the two-step allowlist-then-verify pair
+  described above.
+- `scripts/mainnet-deploy.sh` — new `preflight_allowed_signers`
+  gate; `preflight_signed_tag` rebound to the in-repo allowlist;
+  self-test extended to verify the allowlist file's shape.
 
 ---
 
