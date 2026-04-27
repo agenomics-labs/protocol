@@ -748,6 +748,14 @@ self-hosted-runner workflow with baseline-comparison; flips
 MAINNET_CHECKLIST ADR-022 row Pending → Done. Operator-triggered,
 not per-PR.
 
+**B8 sibling note**: B8 fuzz harness is on the same Phase-2-incremental
+path. As of 2026-04-27 (commit `1cfe779`), the second fuzz target
+landed: `update_status` AUD-120 accept-list (131,072-iteration
+exhaustive sweep over `(u8, u8, bool)` preimage; 0 crashes; AUD-120
+property contract holds). Three remaining Phase 2 targets:
+`update_provider_reputation` Settlement CPI seam, AUD-117 seeds,
+AUD-004 `clear_suspension`.
+
 **Why**: Currently `Pending`. Discovery + settlement under expected
 launch throughput.
 
@@ -770,22 +778,31 @@ clamp helper — is doc-only today; turn it into a real export from
 
 **Scope**: ~10 LoC. `export function clampReputationScore(raw: bigint): number`.
 
-### B12. EVO as agent-memory backbone (post-launch design landed)
+### B12. EVO as agent-memory backbone (Phase 1 shipped)
 
-**Status**: **Design landed** (2026-04-27, commit `ef6c7b9`).
+**Status**: **Phase 1 shipped** (2026-04-27, commit `db52117` —
+implementation; commit `ef6c7b9` — design ADR).
 ADR-129 (`docs/adr/ADR-129-evo-agent-memory-integration.md`,
 634 lines, Status: Proposed) scopes the integration concretely:
 
-- **Phase 1 first integration** (post-launch implementation): new
-  read-only `find_similar_agents` MCP action backed by EVO L1 HNSW
-  retrieval + fire-and-forget `observe` post-`handleRegisterAgent`
-  success. Single-handler scope; no cold-start data dependency
-  (works from N>1 registrations onward); operator value visible
-  day-1 via semantic similarity ranking that today's filter-based
-  `discover_agents` cannot do. Failure modes bounded to "no
-  similarity results returned," NEVER "register_agent fails" —
-  intentional best-effort posture since the protocol is the first
-  production consumer of EVO at scale.
+- **Phase 1 first integration** (shipped 2026-04-27, commit `db52117`):
+  new read-only `find_similar_agents` MCP action backed by EVO L1
+  HNSW retrieval (capability-gated by `read:agent-memory`) +
+  fire-and-forget `observe` post-`handleRegisterAgent` success.
+  Subprocess transport via `child_process.spawn(binary, ['--json',
+  '--db', dbPath])` — no NAPI surface in EVO's package.json today;
+  lazy spawn on first call. `AEP_EVO_ENABLED` kill-switch defaults
+  to OFF (`DisabledEvoClient` no-op); when ON, misconfig throws
+  `EvoBridgeMisconfigError` at module load (AUD-027 fail-fast
+  precedent). `find_similar_agents` returns `{ skipped: true,
+  reason: "evo-disabled" }` when bridge disabled — degraded-feature,
+  not error. 35 new tests in 9 suites; full mcp-server suite 266/0.
+  Failure modes bounded to "no similarity results returned," NEVER
+  "register_agent fails" — observe is wrapped in try/catch, errors
+  swallowed at WARN level. The retrieval-result parser is
+  intentionally tolerant (accepts `result.results | result.hits |
+  bare array`; tolerates `score|similarity` and `content|text`)
+  so future EVO schema reconciliation doesn't break the bridge.
 - **Phase 2** (after EVO sustained-load observation): write-path
   `learn` loop on milestone outcomes; reputation-trajectory recall.
 - **Phase 3**: operator-query MCP tools for cross-session agent
