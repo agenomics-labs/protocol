@@ -601,12 +601,15 @@ failure mode the audit did not surface.
       is the signal `docs/INCIDENT_RESPONSE.md` §3 was written for.
       Lag SLO: `<TODO: operator team to fill in>`.
 
-      ADR-127 (Proposed; indexer redundancy + cursor-anchored
-      backfill) is the architectural target for the secondary-instance
-      design. **Until the ADR-127 implementation ships**, the single
-      indexer instance is the only ingest path; treat any health-check
-      failure as P1. Once the cold-spare lands, this section will be
-      updated to reference the secondary's health endpoint.
+      ADR-128 (Proposed; PostgreSQL with streaming replication +
+      WAL archiving for PITR) is the architectural target for the
+      secondary-instance design (supersedes ADR-127's cold-spare
+      analysis). **Until the ADR-128 implementation ships**, the
+      single indexer instance is the only ingest path; treat any
+      health-check failure as P1. Once Postgres streaming replication
+      lands, this section will be updated to reference the standby's
+      `pg_stat_replication.write_lag` + the operator-facing failover
+      ceremony.
 - [ ] **`verify_protocol_invariants` smoke at T+6h.** Same procedure
       as T+1h, ideally including any agent that was the target of a
       Settlement-side reputation update in the first 6 hours.
@@ -622,10 +625,14 @@ failure mode the audit did not surface.
       operational and they have not had a signing-device incident. A
       3-of-5 that loses 3 keys in 24h is unrecoverable; surface
       partial-loss early.
-- [ ] **Indexer DB backed up.** Per the C5 redundancy plan (ADR-127
-      Proposed), cadence is `<TODO: operator team to fill in>`. The
-      first 24h of mainnet data is precious; take an explicit cold
-      backup at T+24h regardless of whether the cron has fired.
+- [ ] **Indexer DB backed up.** Per the C5 redundancy plan (ADR-128
+      Proposed; supersedes ADR-127), cadence is `<TODO: operator team
+      to fill in>`. Once Postgres streaming replication ships per
+      ADR-128, this becomes `pg_basebackup` + WAL-archive verification;
+      until then, the SQLite file copy + checksum is the operator's
+      contract. The first 24h of mainnet data is precious; take an
+      explicit cold backup at T+24h regardless of whether the cron has
+      fired.
 - [ ] **Audit hash file integrity at T+24h.** Re-run the §2.3 step-3
       binary diff:
       ```bash
@@ -667,8 +674,14 @@ records. Steady-state monitoring continues per
   why §5.4 is the only recovery from an authority mis-bind.
 - `docs/adr/ADR-126-x402-relay-horizontal-scale.md` (Proposed) —
   saturation behavior referenced in §6.2.
-- `docs/adr/ADR-127-indexer-redundancy-backfill.md` (Proposed) —
-  indexer cold-spare design referenced in §6.2 + §6.3.
+- `docs/adr/ADR-128-indexer-storage-engine-selection.md` (Proposed)
+  — PostgreSQL with streaming replication + PITR; supersedes ADR-127.
+  Referenced in §6.2 + §6.3 as the architectural target for indexer
+  redundancy. Until the implementation lands, the single SQLite
+  instance is authoritative.
+- `docs/adr/ADR-127-indexer-redundancy-backfill.md` (Superseded by
+  ADR-128) — preserved as the constrained-scope cold-spare fallback
+  if Postgres adoption is later judged too operationally expensive.
 - Pre-Mainnet Roadmap §A5 + `.github/allowed-signers` —
   source-controlled signing allowlist consumed by §1.2.
 - `mcp-server/src/actions/governance.ts` (commit `e9de93e`,

@@ -743,6 +743,36 @@ clamp helper — is doc-only today; turn it into a real export from
 
 **Scope**: ~10 LoC. `export function clampReputationScore(raw: bigint): number`.
 
+### B12. EVO as agent-memory backbone (post-launch design exploration)
+
+**Status**: Open. Future-cycle design exploration — not a launch
+prerequisite.
+
+Surfaced by ADR-128's research (commit `7886554`). The team's
+internal `EVO` system (`/home/neo/dev/projects/EVO`, MIT OR
+Apache-2.0; 4-layer cognitive memory with HNSW-indexed L1 vectors,
+L2 procedural strategy extraction with Bayesian reliability, L3
+append-only Merkle-chained raw memory) was honestly evaluated as a
+candidate for the indexer primary in ADR-128 and correctly placed
+elsewhere — EVO has no leader-election / WAL-streaming primitives
+today, and the indexer's "store every finalized event, query by
+program/slot/signature" use case wastes EVO's surprise-gates and
+economics-scored retrieval. **The right slot for EVO is the AI side
+of the protocol** — mcp-server agent memory, reasoning-bank pattern
+storage, agent-side learning loops. A future ADR (numbered when
+scoped) should evaluate adopting EVO as the agent-memory backbone
+behind mcp-server, with L1 vector retrieval powering manifest /
+reputation / capability similarity search. Separately, a companion
+ADR could evaluate EVO as a *semantic-search layer over* the
+PostgreSQL indexer — system-of-record stays in PG; EVO ingests a
+derived embedding projection for "find similar disputes" /
+"rank reputation trajectories by similarity" queries.
+
+**Why deferred from launch**: not a tag-blocker. The indexer's
+queryable-state contract is satisfied by ADR-128. EVO adoption is
+about expanding agent-side capability, not closing a security or
+correctness gap.
+
 ### B11. x402-relay `/admin/drain` endpoint (cycle-3 follow-up surfaced by C2)
 
 **Status**: **Done** (2026-04-27, commit `bdfceea`). Bearer-auth admin
@@ -847,6 +877,30 @@ because C1 has not started (no commit history for
 reference this doc rather than duplicating it.
 
 ### C5. Indexer redundancy + backfill plan
+
+**Status**: **Design landed** (2026-04-27, commits `7de9253` + `7886554`).
+Two ADRs:
+
+- **ADR-128** (Proposed; **current target**) — PostgreSQL with
+  streaming replication to a hot standby + WAL archiving for
+  transaction-granular PITR. Sub-2-minute RTO. License: PostgreSQL
+  License (BSD/MIT-style permissive, OSI-approved). Selected after
+  the user lifted the "what's already in stack" constraint that
+  bounded ADR-127 — wider option space made Postgres the clear
+  winner on R4 (replication maturity), R5 (real PITR), R3 (native
+  SQL fit), and R6 (mature polyglot drivers). Cycle-3 implementation
+  cost ≈ 5-8 single-engineer days.
+- **ADR-127** (Superseded by ADR-128) — original constrained-scope
+  cold-spare design with SQLite snapshot + cursor-anchored replay.
+  Preserved as fallback if Postgres adoption is later judged too
+  operationally expensive (10-25 minute RTO; no real PITR).
+
+Implementation PR not yet started; the two ADRs are the design
+substrate. The runner-up (SQLite + Litestream, Apache-2.0) is also
+documented in ADR-128 as the lowest-delta-from-current alternative
+with the tradeoff of no automatic failover.
+
+Original spec retained for reference:
 
 - Two-instance indexer with leader election OR cold-spare.
 - Backup cadence for the indexer DB.
