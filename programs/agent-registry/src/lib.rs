@@ -359,14 +359,16 @@ pub mod agent_registry {
                 agent_profile.status = AgentStatus::Suspended;
                 emit!(AgentSlashed {
                     authority: agent_profile.authority,
-                    slash_count: agent_profile.reputation_stake.slash_count,
+                    // AUD-111 (cycle-2): widened to u32 per
+                    // DESIGN-DECISIONS-2026-04-25.md § AUD-004 step 4.
+                    total_slashes: u32::from(agent_profile.reputation_stake.slash_count),
                     suspended: true,
                     timestamp: now,
                 });
             } else {
                 emit!(AgentSlashed {
                     authority: agent_profile.authority,
-                    slash_count: agent_profile.reputation_stake.slash_count,
+                    total_slashes: u32::from(agent_profile.reputation_stake.slash_count),
                     suspended: false,
                     timestamp: now,
                 });

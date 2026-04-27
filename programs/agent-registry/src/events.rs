@@ -41,10 +41,18 @@ pub struct ReputationStaked {
     pub timestamp: i64,
 }
 
+/// AUD-111 (cycle-2): event field renamed `slash_count: u8` →
+/// `total_slashes: u32`. Per DESIGN-DECISIONS-2026-04-25.md § AUD-004
+/// step 4, the field-of-record for cumulative slashes was specced as
+/// `u32` (the on-disk profile carries a `u8` `reputation_stake.slash_count`
+/// for now, but the event surface is the place where indexers project
+/// the cumulative count outward — and `u32` provides headroom against
+/// any future expansion of the slash mechanic). The cast at emit-time
+/// is `as u32`; widening is lossless.
 #[event]
 pub struct AgentSlashed {
     pub authority: Pubkey,
-    pub slash_count: u8,
+    pub total_slashes: u32,
     pub suspended: bool,
     pub timestamp: i64,
 }
