@@ -86,7 +86,7 @@ const MAX_REDEEMED_SIGNATURES = 100_000;
 //
 // Scope: SINGLE-INSTANCE ONLY. Two relay processes behind a load balancer
 // can still issue duplicate JWTs because they don't share `inFlightVerify`
-// or `redeemedSignatures`. ADR-117 / AUD-028 tracks the horizontal-scale
+// or `redeemedSignatures`. ADR-126 / AUD-028 tracks the horizontal-scale
 // fix (replace these in-memory maps with a Redis SET-IF-NOT-EXISTS or
 // Postgres unique-constraint-backed reservation table).
 const inFlightVerify = new Map<string, Promise<PaymentVerification>>();
@@ -478,7 +478,7 @@ app.post("/pay", async (req: Request, res: Response) => {
       // AUD-209 (cycle-2): redeemed-signature map at capacity. Returning
       // 503 here is the fail-closed response; operators should treat
       // this as a saturation alarm and either scale horizontally
-      // (ADR-117) or investigate a burst attacker.
+      // (ADR-126) or investigate a burst attacker.
       res.status(503).json({
         error: "Relay redeemed-signature capacity exhausted; retry shortly",
       });

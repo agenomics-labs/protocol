@@ -422,12 +422,12 @@ Q1. Organic or adversarial?
     → organic      → §4.4 (manual scale-out)
     → adversarial  → §4.5 (block + scale)
 
-Q2. Has horizontal-scale (ADR-117 / AUD-028) shipped?
+Q2. Has horizontal-scale (ADR-126 / AUD-028) shipped?
     The single-instance design tops out at AUD-209's cap; the
     Redis-backed dedup that lifts it is the future fix referenced at
     `src/x402-relay/index.ts:89-91`. Per Pre-Mainnet Roadmap C6, this
     had not shipped as of 2026-04-26.
-    → shipped      → ADR-117 runbook is authoritative.
+    → shipped      → ADR-126 runbook is authoritative.
     → not shipped  → §4.4 manual mitigation; §4.3 lists what NOT to do.
 ```
 
@@ -459,8 +459,8 @@ procedures are written so you do not need any of these.
 
 ### 4.4 Procedure: organic saturation, manual scale-out
 
-The proper fix is ADR-117 horizontal-scale (Redis-backed dedup). Until
-ADR-117 ships, the manual mitigation is to run multiple relay instances
+The proper fix is ADR-126 horizontal-scale (Redis-backed dedup). Until
+ADR-126 ships, the manual mitigation is to run multiple relay instances
 behind a load balancer with sticky-sessions on `txSignature`. This
 loses some dedup guarantees (a client retrying against a different
 instance can race a duplicate JWT issue — the AUD-208 in-flight cache
@@ -481,7 +481,7 @@ spans only a single process) — emergency mitigation, not permanent fix.
    count, NOT `true` — `true` re-introduces `X-Forwarded-For` spoofing.
 4. **Watch saturation drop.** Confirm 503 rate returns to baseline.
    Buys headroom but is **not** a closure; file a P1 to accelerate
-   ADR-117 if not already in flight.
+   ADR-126 if not already in flight.
 
 ### 4.5 Procedure: adversarial saturation
 
@@ -511,10 +511,10 @@ spans only a single process) — emergency mitigation, not permanent fix.
       duplicate-sender JWTs in the access log; report any to on-call
       lead. (Real duplicates are privilege-escalation bugs; the
       AUD-208 fix is per-process, so cross-process is a known
-      limitation pending ADR-117.)
+      limitation pending ADR-126.)
 - [ ] Post-mortem captures peak `redeemedSignatures.size`, peak 503
       rate, peak source-IP cardinality, time-to-mitigate.
-- [ ] If ADR-117 was not in flight before this incident, file a P0 to
+- [ ] If ADR-126 was not in flight before this incident, file a P0 to
       accelerate it. The single-instance ceiling will recur.
 
 ---
@@ -558,10 +558,8 @@ Filed under `<TODO: operator team to fill in>` post-mortem destination.
   mapper); `src/x402-relay/index.ts:101-113` (why fail-CLOSED is
   correct).
 - **x402-relay horizontal-scale forward reference**:
-  `src/x402-relay/index.ts:89-91` (in-code pointer to ADR-117 /
-  AUD-028 — note `docs/adr/ADR-117-x402-relay-error-redaction.md`
-  is a different ADR; "ADR-117" here follows the roadmap §4 C6
-  convention of referring to the in-flight horizontal-scale ADR).
+  `src/x402-relay/index.ts:89-91` (in-code pointer to ADR-126 /
+  AUD-028, the Redis-backed dedup design).
 - **Indexer schema**: `src/indexer/index.ts` `initDb()`.
 - **Settlement `update_protocol_config`**:
   `programs/settlement/src/instructions/protocol_config.rs:57-122`.
