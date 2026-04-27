@@ -1023,11 +1023,97 @@ function upsertCursor(
       last_signature = excluded.last_signature,
       updated_at = datetime('now')
   `).run(label, slot, signature);
-  // ADR-128 Phase 1 dual-write — eventually consistent (separate
-  // transactions). Cursor parity is load-bearing for Phase 2 cutover:
-  // when reads flip to Postgres, the cursor must already be there.
-  // Failure logged WARN, not propagated.
-  void getPostgresStore().upsertCursor({ program: label, slot, signature });
+  // OFF-200 / ADR-128 Phase 1 dual-write — wrap the cursor advance in
+  // a PG transaction even when there is no event payload alongside (eg.
+  // the cursor seed in `backfillProgram` when no prior cursor exists).
+  // The standalone-cursor case still benefits from the tx wrapper because
+  // it keeps the call shape uniform with `persistEventsToPgInTx` below
+  // and because future Phase-2 wiring (chained projection updates) can
+  // hang off the same `withTransaction` boundary without a re-plumb.
+  // Failure logged WARN, not propagated — SQLite remains authoritative.
+  persistCursorAdvanceToPgInTx(label, slot, signature);
+}
+
+/**
+ * OFF-200 — fire-and-forget at the call boundary, but the inner work is
+ * a single PG transaction wrapping zero-or-more event INSERTs and the
+ * cursor UPSERT. The invariant established here:
+ *
+ *   The PG cursor cannot advance unless every event INSERT for this
+ *   batch also committed in the same transaction. If any step fails,
+ *   ROLLBACK undoes both the INSERTs and the cursor advance, leaving
+ *   PG cleanly behind the last successful batch.
+ *
+ * SQLite remains authoritative — a PG outage logs WARN at the outer
+ * `.catch` and never blocks the SQLite write path. The shape mirrors
+ * the original fire-and-forget semantic so callers (running on the
+ * websocket / backfill hot path) do not pay for PG round-trips.
+ */
+function persistEventsToPgInTx(
+  label: string,
+  cursorSlot: number,
+  cursorSignature: string,
+  events: ReadonlyArray<{
+    eventName: string;
+    data: string;
+    signature: string;
+    slot: number;
+    eventOrdinal: number;
+  }>,
+): void {
+  const pgStore = getPostgresStore();
+  if (!pgStore.enabled) return;
+  pgStore
+    .withTransaction(async (client) => {
+      for (const ev of events) {
+        await pgStore.insertEventInTx(client, {
+          program: label,
+          eventName: ev.eventName,
+          data: ev.data,
+          signature: ev.signature,
+          slot: ev.slot,
+          eventOrdinal: ev.eventOrdinal,
+        });
+      }
+      await pgStore.upsertCursorInTx(client, {
+        program: label,
+        slot: cursorSlot,
+        signature: cursorSignature,
+      });
+    })
+    .catch((err) => {
+      logger.warn(
+        { err: String(err), op: "persistEventsToPgInTx", label, cursorSlot, adr: "ADR-128", off: "OFF-200" },
+        "pg dual-write tx failed; SQLite is authoritative",
+      );
+    });
+}
+
+/**
+ * OFF-200 — cursor-only variant of `persistEventsToPgInTx`. Used by the
+ * standalone `upsertCursor` call site (notably the seed in
+ * `backfillProgram` when no prior cursor exists). Still wraps the single
+ * statement in a transaction so the path is uniform; the cost is
+ * negligible and a future projection write at the same boundary can be
+ * added inside the same tx without re-plumbing the call site.
+ */
+function persistCursorAdvanceToPgInTx(
+  label: string,
+  slot: number,
+  signature: string,
+): void {
+  const pgStore = getPostgresStore();
+  if (!pgStore.enabled) return;
+  pgStore
+    .withTransaction(async (client) => {
+      await pgStore.upsertCursorInTx(client, { program: label, slot, signature });
+    })
+    .catch((err) => {
+      logger.warn(
+        { err: String(err), op: "persistCursorAdvanceToPgInTx", label, slot, adr: "ADR-128", off: "OFF-200" },
+        "pg cursor-only dual-write tx failed; SQLite is authoritative",
+      );
+    });
 }
 
 function sleep(ms: number): Promise<void> {
@@ -1056,6 +1142,18 @@ function persistEventsForTx(
   let inserted = 0;
   let skipped = 0;
   let ordinal = 0;
+  // OFF-200 — collect the rows that the SQLite path actually inserted
+  // so they can be replayed into PG inside a single transaction with
+  // the cursor advance. Per the original ADR-128 semantic, only rows
+  // that landed in SQLite (changes > 0) are propagated to the PG
+  // shadow — a SQLite-skip stays a PG-skip too.
+  const pgEventBatch: Array<{
+    eventName: string;
+    data: string;
+    signature: string;
+    slot: number;
+    eventOrdinal: number;
+  }> = [];
 
   for (const event of events) {
     try {
@@ -1072,15 +1170,11 @@ function persistEventsForTx(
         inserted++;
         metrics.eventsInserted++;
         updateAgentFromEvent(db, event, slot, signature);
-        // ADR-128 Phase 1 dual-write. Mirror the same row into the
-        // Postgres `events` table; ON CONFLICT (program, signature,
-        // event_ordinal) DO NOTHING preserves the SQLite
-        // INSERT OR IGNORE idempotency invariant. Fired only on a
-        // SQLite-side INSERT (changes > 0) so a SQLite-skip stays a
-        // PG-skip too — no shadow rows that don't exist in the
-        // authoritative store. Failure logged WARN, not propagated.
-        void getPostgresStore().insertEvent({
-          program: label,
+        // OFF-200 / ADR-128 Phase 1 — defer the PG INSERT; the batch is
+        // flushed inside a single PG transaction with the cursor
+        // advance below, so the cursor cannot move past an event that
+        // PG never received.
+        pgEventBatch.push({
           eventName: event.name,
           data: dataJson,
           signature,
@@ -1099,7 +1193,21 @@ function persistEventsForTx(
   }
 
   if (inserted > 0 || skipped > 0) {
-    upsertCursor(db, label, slot, signature);
+    // SQLite is authoritative — advance its cursor synchronously.
+    db.prepare(`
+      INSERT INTO cursor (program, last_processed_slot, last_signature, updated_at)
+      VALUES (?, ?, ?, datetime('now'))
+      ON CONFLICT(program) DO UPDATE SET
+        last_processed_slot = excluded.last_processed_slot,
+        last_signature = excluded.last_signature,
+        updated_at = datetime('now')
+    `).run(label, slot, signature);
+    // OFF-200 — single PG transaction wrapping every PG event INSERT
+    // for this batch and the cursor UPSERT. Fire-and-forget at the
+    // outer boundary preserves the SQLite-authoritative invariant; the
+    // tx ensures PG cannot end up in the broken intermediate state
+    // where the cursor advanced but the event row never landed.
+    persistEventsToPgInTx(label, slot, signature, pgEventBatch);
   }
 
   return { inserted, skipped };

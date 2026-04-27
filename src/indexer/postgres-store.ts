@@ -31,11 +31,30 @@
  * SQLite call site.
  */
 
-import type { Pool, QueryResultRow } from "pg";
+import type { Pool, PoolClient, QueryResultRow } from "pg";
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const pgModule: typeof import("pg") = require("pg");
 import { logger } from "./logger.js";
 import { MIGRATIONS } from "./migrations.embedded.js";
+
+// ---------------------------------------------------------------------------
+// Shared SQL — kept as module-level constants so the transactional
+// (`*InTx`) and pool-level methods cannot drift from each other. Both
+// must reference the same idempotency UNIQUE index columns because the
+// dual-write `ON CONFLICT` invariant depends on it (ADR-128 §"Decision"
+// item 5; see also OFF-200 transactional wrapper).
+// ---------------------------------------------------------------------------
+
+const INSERT_EVENT_SQL = `INSERT INTO events (program, event_name, data, signature, slot, event_ordinal)
+ VALUES ($1, $2, $3, $4, $5, $6)
+ ON CONFLICT (program, signature, event_ordinal) DO NOTHING`;
+
+const UPSERT_CURSOR_SQL = `INSERT INTO cursor (program, last_processed_slot, last_signature, updated_at)
+ VALUES ($1, $2, $3, now())
+ ON CONFLICT (program) DO UPDATE SET
+   last_processed_slot = excluded.last_processed_slot,
+   last_signature      = excluded.last_signature,
+   updated_at          = now()`;
 
 // ---------------------------------------------------------------------------
 // Public types — mirror the shapes already passed around in index.ts so a
@@ -130,6 +149,39 @@ export interface PostgresStore {
   countRows(table: string): Promise<number>;
   /** Graceful shutdown. */
   close(): Promise<void>;
+
+  // -------------------------------------------------------------------------
+  // OFF-200 transactional dual-write surface (ADR-128 follow-up)
+  //
+  // Phase 1 originally fired each PG write as an independent
+  // `pool.query(...)` so the cursor-advance and the corresponding event
+  // INSERT could land in any order — including the failure mode where
+  // the cursor advances past an event PG never received. To close that
+  // gap, the dual-write call sites in `index.ts` now wrap their
+  // cursor+event pair in a single PG transaction via `withTransaction`,
+  // and the `*InTx` variants run on the supplied client so BEGIN/COMMIT
+  // bind to the same connection. The non-`InTx` methods remain unchanged
+  // for the call sites (history projections, agent projections) that
+  // only need a single write — they keep their `runShadow` swallow-and-
+  // log behaviour.
+  // -------------------------------------------------------------------------
+  /**
+   * Run `fn` inside a single PG client transaction (BEGIN/COMMIT/
+   * ROLLBACK). On any throw inside `fn` the transaction is rolled back
+   * and the error is rethrown to the caller. The caller in `index.ts`
+   * wraps this in a `.catch(...)` so a PG outage logs WARN and the
+   * SQLite-authoritative path is unaffected — but inside the tx, the
+   * event INSERT and cursor UPSERT either both commit or both roll back.
+   *
+   * Disabled stores resolve `fn` with no client and never raise — the
+   * call site's `if (pgStore.enabled)` guard skips the call in that
+   * branch, so the disabled implementation is defensive only.
+   */
+  withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T>;
+  /** Same SQL as `insertEvent`, but executed on the supplied client. */
+  insertEventInTx(client: PoolClient, rec: EventRecord): Promise<void>;
+  /** Same SQL as `upsertCursor`, but executed on the supplied client. */
+  upsertCursorInTx(client: PoolClient, rec: CursorRecord): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -158,6 +210,15 @@ export class DisabledPostgresStore implements PostgresStore {
     return 0;
   }
   async close(): Promise<void> {}
+  // OFF-200: defensive no-ops. Call sites in `index.ts` guard with
+  // `if (pgStore.enabled)` so the disabled path never reaches these — the
+  // implementations exist only to satisfy the interface and to keep the
+  // disabled store a strict zero-side-effect double of the live one.
+  async withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
+    return fn(undefined as unknown as PoolClient);
+  }
+  async insertEventInTx(_client: PoolClient, _rec: EventRecord): Promise<void> {}
+  async upsertCursorInTx(_client: PoolClient, _rec: CursorRecord): Promise<void> {}
 }
 
 // ---------------------------------------------------------------------------
@@ -214,12 +275,14 @@ export class LivePostgresStore implements PostgresStore {
    */
   async insertEvent(rec: EventRecord): Promise<void> {
     await this.runShadow("insertEvent", async () => {
-      await this.pool.query(
-        `INSERT INTO events (program, event_name, data, signature, slot, event_ordinal)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         ON CONFLICT (program, signature, event_ordinal) DO NOTHING`,
-        [rec.program, rec.eventName, rec.data, rec.signature, rec.slot, rec.eventOrdinal],
-      );
+      await this.pool.query(INSERT_EVENT_SQL, [
+        rec.program,
+        rec.eventName,
+        rec.data,
+        rec.signature,
+        rec.slot,
+        rec.eventOrdinal,
+      ]);
     });
   }
 
@@ -230,16 +293,73 @@ export class LivePostgresStore implements PostgresStore {
    */
   async upsertCursor(rec: CursorRecord): Promise<void> {
     await this.runShadow("upsertCursor", async () => {
-      await this.pool.query(
-        `INSERT INTO cursor (program, last_processed_slot, last_signature, updated_at)
-         VALUES ($1, $2, $3, now())
-         ON CONFLICT (program) DO UPDATE SET
-           last_processed_slot = excluded.last_processed_slot,
-           last_signature      = excluded.last_signature,
-           updated_at          = now()`,
-        [rec.program, rec.slot, rec.signature],
-      );
+      await this.pool.query(UPSERT_CURSOR_SQL, [rec.program, rec.slot, rec.signature]);
     });
+  }
+
+  /**
+   * OFF-200 — run `fn` inside a single pg client transaction. The
+   * client is acquired from the pool (NOT taken via `pool.query`) so
+   * BEGIN/COMMIT/ROLLBACK bind to the same connection. On any throw
+   * inside `fn` the transaction is rolled back and the original error
+   * is rethrown so the caller's `.catch` can decide policy. The
+   * client is always released back to the pool, even on rollback.
+   *
+   * This is the load-bearing primitive for the transactional dual-
+   * write: the call site in `index.ts` issues the event INSERT and the
+   * cursor UPSERT inside one `withTransaction(...)`, which guarantees
+   * the PG cursor cannot advance past an event that PG never received.
+   */
+  async withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await fn(client);
+      await client.query("COMMIT");
+      return result;
+    } catch (err) {
+      // Best-effort rollback; if rollback itself raises (eg. broken
+      // socket) we still want to surface the original error to the
+      // caller, so the rollback failure is logged but not chained.
+      try {
+        await client.query("ROLLBACK");
+      } catch (rollbackErr) {
+        logger.warn(
+          { err: String(rollbackErr), op: "withTransaction.rollback", adr: "ADR-128", phase: 1 },
+          "postgres ROLLBACK failed after tx body threw",
+        );
+      }
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Same SQL as `insertEvent`, but executed on the caller-supplied
+   * client so it participates in the active transaction. NOT wrapped
+   * in `runShadow` — errors here MUST propagate so `withTransaction`
+   * can roll back. The caller's outer `.catch` (in `index.ts`)
+   * preserves the fail-closed-shadow semantic at the tx boundary.
+   */
+  async insertEventInTx(client: PoolClient, rec: EventRecord): Promise<void> {
+    await client.query(INSERT_EVENT_SQL, [
+      rec.program,
+      rec.eventName,
+      rec.data,
+      rec.signature,
+      rec.slot,
+      rec.eventOrdinal,
+    ]);
+  }
+
+  /**
+   * Same SQL as `upsertCursor`, but executed on the caller-supplied
+   * client so it participates in the active transaction. See
+   * `insertEventInTx` for the rationale on error propagation.
+   */
+  async upsertCursorInTx(client: PoolClient, rec: CursorRecord): Promise<void> {
+    await client.query(UPSERT_CURSOR_SQL, [rec.program, rec.slot, rec.signature]);
   }
 
   /**
