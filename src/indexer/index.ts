@@ -10,6 +10,67 @@ import {
   Finality,
 } from "@solana/web3.js";
 import { logger, programLogger } from "./logger.js";
+import {
+  createPostgresStore,
+  DisabledPostgresStore,
+  type PostgresStore,
+} from "./postgres-store.js";
+
+// ===========================================================================
+// ADR-128 Phase 1 — Postgres dual-write singleton.
+//
+// Phase 1 contract (re-stated at every dual-write call site below):
+//
+//   * SQLite (`better-sqlite3`) is authoritative for BOTH writes AND
+//     reads. Postgres is shadow-write-only; reads (the events query,
+//     the cursor read, the S-offchain-04 tombstone consultation) all
+//     stay against SQLite.
+//   * Every SQLite write below is followed by a fire-and-forget call
+//     into `pgStore`. The store's `LivePostgresStore.runShadow` wrapper
+//     catches and logs WARN; failures NEVER propagate. This is the
+//     load-bearing invariant — Postgres outages must not poison the
+//     indexer.
+//   * When `INDEXER_PG_URL` is unset, `pgStore` is a
+//     `DisabledPostgresStore` no-op. No `pg` client is constructed, no
+//     network is touched, and behaviour is byte-for-byte identical to
+//     the pre-ADR-128 SQLite-only path. Operators MUST opt in.
+//
+// What Phase 2 (separate future PR) will change:
+//
+//   1. Reads flip to Postgres (events, agents, cursors, tombstones,
+//      history projections — all five `app.get(...)` handlers and the
+//      tombstone consultation in `updateAgentFromEvent`).
+//   2. The dual-write loses its SQLite half — Postgres writes become
+//      authoritative, and the SQLite write path is removed.
+//   3. The cursor table cutover is the bridge: because Phase 1 keeps
+//      the Postgres cursor in lockstep on every advance, Phase 2's
+//      flip is a config change + a read-path swap, not a redesign or
+//      a backfill.
+// ===========================================================================
+let _pgStore: PostgresStore | null = null;
+
+/**
+ * Lazy accessor for the Phase 1 shadow store. Constructed at first call
+ * and cached for the process lifetime. Tests override via
+ * `setPostgresStoreForTest` so a `pg-mem`-backed store can be injected
+ * without touching real env vars.
+ */
+function getPostgresStore(): PostgresStore {
+  if (_pgStore === null) {
+    _pgStore = createPostgresStore();
+  }
+  return _pgStore;
+}
+
+/**
+ * Test-only injection point. Replaces the cached singleton so a fixture
+ * can hand in a `pg-mem`-backed `LivePostgresStore` (or a swap to a
+ * `DisabledPostgresStore` for parity tests). Pass `null` to reset the
+ * cache so the next `getPostgresStore()` call re-reads env.
+ */
+export function setPostgresStoreForTest(store: PostgresStore | null): void {
+  _pgStore = store;
+}
 
 const RPC_URL = process.env.SOLANA_RPC_URL || "http://127.0.0.1:8899";
 const PORT = parseInt(process.env.INDEXER_PORT || "3100", 10);
@@ -613,6 +674,14 @@ function updateAgentFromEvent(
         (vault, old_identity, new_identity, slot, signature, observed_at)
       VALUES (?, ?, ?, ?, ?, datetime('now'))
     `).run(vault, oldIdentity, newIdentity, slot, signature);
+    // ADR-128 Phase 1 dual-write — vault_identity_history projection.
+    void getPostgresStore().insertVaultIdentityHistory({
+      vault,
+      oldIdentity,
+      newIdentity,
+      slot,
+      signature,
+    });
     return;
   }
 
@@ -631,6 +700,16 @@ function updateAgentFromEvent(
          event_timestamp, slot, signature, observed_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
     `).run(authority, manifestCid, manifestHash, manifestVersion, eventTs, slot, signature);
+    // ADR-128 Phase 1 dual-write — manifest_history projection.
+    void getPostgresStore().insertManifestHistory({
+      authority,
+      manifestCid,
+      manifestHash,
+      manifestVersion,
+      eventTimestamp: eventTs,
+      slot,
+      signature,
+    });
     return;
   }
 
@@ -664,6 +743,18 @@ function updateAgentFromEvent(
       slot,
       signature
     );
+    // ADR-128 Phase 1 dual-write — protocol_config_history projection.
+    void getPostgresStore().insertProtocolConfigHistory({
+      kind,
+      authority,
+      minEscrowAmount: minEscrow,
+      disputeTimeoutSeconds: disputeTimeout,
+      reputationDeltaTaskCompleted: repTask,
+      reputationDeltaDisputeLoss: repDispute,
+      reputationDeltaExpiryUndelivered: repExpiry,
+      slot,
+      signature,
+    });
     return;
   }
 
@@ -688,14 +779,18 @@ function updateAgentFromEvent(
         category = excluded.category,
         last_updated = datetime('now')
     `);
-    stmt.run(
-      authority,
-      typeof data.name === "string" ? data.name : null,
-      typeof data.category === "string" ? data.category : null
-    );
+    const agentName = typeof data.name === "string" ? data.name : null;
+    const agentCategory = typeof data.category === "string" ? data.category : null;
+    stmt.run(authority, agentName, agentCategory);
     if (tombstone) {
       db.prepare("DELETE FROM agent_tombstones WHERE authority = ?").run(authority);
     }
+    // ADR-128 Phase 1 dual-write — agents projection (AgentRegistered).
+    // Tombstone-clear in PG is intentionally deferred to Phase 2: the
+    // tombstone consultation in this same function still reads SQLite,
+    // so a stale PG tombstone cannot mis-route Phase 1 logic. Phase 2
+    // will add a paired DELETE here when reads flip.
+    void getPostgresStore().upsertAgent(authority, agentName, agentCategory);
     return;
   }
 
@@ -707,7 +802,10 @@ function updateAgentFromEvent(
         last_updated = datetime('now')
       WHERE authority = ?
     `);
-    stmt.run(typeof data.name === "string" ? data.name : null, authority);
+    const newName = typeof data.name === "string" ? data.name : null;
+    stmt.run(newName, authority);
+    // ADR-128 Phase 1 dual-write — agents projection (profile update).
+    void getPostgresStore().updateAgentName(authority, newName);
     return;
   }
 
@@ -723,6 +821,8 @@ function updateAgentFromEvent(
       WHERE authority = ?
     `);
     stmt.run(score, taskCompleted, authority);
+    // ADR-128 Phase 1 dual-write — agents projection (reputation).
+    void getPostgresStore().updateAgentReputation(authority, score, taskCompleted);
     return;
   }
 
@@ -737,6 +837,8 @@ function updateAgentFromEvent(
         last_updated = datetime('now')
       WHERE authority = ?
     `).run(newScore, authority);
+    // ADR-128 Phase 1 dual-write — agents projection (ADR-094 path).
+    void getPostgresStore().setAgentReputation(authority, newScore);
     return;
   }
 
@@ -750,6 +852,8 @@ function updateAgentFromEvent(
       WHERE authority = ?
     `);
     stmt.run(score, authority);
+    // ADR-128 Phase 1 dual-write — agents projection (suspension cleared).
+    void getPostgresStore().setAgentReputation(authority, score);
     return;
   }
 
@@ -769,6 +873,15 @@ function updateAgentFromEvent(
         deregistered_at_slot = MAX(deregistered_at_slot, excluded.deregistered_at_slot),
         updated_at = datetime('now')
     `).run(authority, slot);
+    // ADR-128 Phase 1 dual-write — agents DELETE + tombstone UPSERT.
+    // Phase 1's tombstone consultation (in the AgentRegistered branch
+    // above) reads SQLite, so the PG tombstone is shadow-only. Phase 2
+    // will flip the consultation target.
+    void getPostgresStore().deleteAgent(authority);
+    void getPostgresStore().upsertAgentTombstone({
+      authority,
+      deregisteredAtSlot: slot,
+    });
     return;
   }
 }
@@ -910,6 +1023,11 @@ function upsertCursor(
       last_signature = excluded.last_signature,
       updated_at = datetime('now')
   `).run(label, slot, signature);
+  // ADR-128 Phase 1 dual-write — eventually consistent (separate
+  // transactions). Cursor parity is load-bearing for Phase 2 cutover:
+  // when reads flip to Postgres, the cursor must already be there.
+  // Failure logged WARN, not propagated.
+  void getPostgresStore().upsertCursor({ program: label, slot, signature });
 }
 
 function sleep(ms: number): Promise<void> {
@@ -941,10 +1059,11 @@ function persistEventsForTx(
 
   for (const event of events) {
     try {
+      const dataJson = JSON.stringify(event.data);
       const result = insertStmt.run(
         label,
         event.name,
-        JSON.stringify(event.data),
+        dataJson,
         signature,
         slot,
         ordinal
@@ -953,6 +1072,21 @@ function persistEventsForTx(
         inserted++;
         metrics.eventsInserted++;
         updateAgentFromEvent(db, event, slot, signature);
+        // ADR-128 Phase 1 dual-write. Mirror the same row into the
+        // Postgres `events` table; ON CONFLICT (program, signature,
+        // event_ordinal) DO NOTHING preserves the SQLite
+        // INSERT OR IGNORE idempotency invariant. Fired only on a
+        // SQLite-side INSERT (changes > 0) so a SQLite-skip stays a
+        // PG-skip too — no shadow rows that don't exist in the
+        // authoritative store. Failure logged WARN, not propagated.
+        void getPostgresStore().insertEvent({
+          program: label,
+          eventName: event.name,
+          data: dataJson,
+          signature,
+          slot,
+          eventOrdinal: ordinal,
+        });
       } else {
         skipped++;
         metrics.eventsDuplicateSkipped++;
@@ -1592,6 +1726,27 @@ async function main(): Promise<void> {
   const connection = new Connection(RPC_URL, COMMITMENT);
   const db = initDb(process.env.DB_PATH || "./aep-events.db");
 
+  // ADR-128 Phase 1: when INDEXER_PG_URL is set, apply the shadow
+  // migration eagerly so dual-write call sites have a schema to write
+  // into. Failures here surface in the boot log; the indexer continues
+  // because SQLite is authoritative. When the URL is unset, the no-op
+  // store's `applyMigration` returns immediately.
+  const pgStore = getPostgresStore();
+  if (pgStore.enabled) {
+    try {
+      await pgStore.applyMigration();
+      logger.info(
+        { adr: "ADR-128", phase: 1 },
+        "postgres shadow store enabled — migration applied",
+      );
+    } catch (err) {
+      logger.warn(
+        { err: String(err), adr: "ADR-128", phase: 1 },
+        "postgres migration failed (sqlite remains authoritative)",
+      );
+    }
+  }
+
   const { states, metrics, heartbeat } = subscribeToPrograms(connection, db);
   const app = createApi(db, states, metrics);
   // AUD-203: bind to INDEXER_HOST (loopback by default) so the /metrics
@@ -1618,6 +1773,11 @@ async function main(): Promise<void> {
   process.on("SIGINT", () => {
     logger.info("shutting down (SIGINT)");
     heartbeat.stop();
+    // ADR-128 Phase 1: close the shadow pool. `close()` is a no-op on
+    // DisabledPostgresStore, so this is safe regardless of opt-in.
+    void pgStore.close().catch((err) => {
+      logger.warn({ err: String(err) }, "postgres pool close failed");
+    });
     db.close();
     process.exit(0);
   });
