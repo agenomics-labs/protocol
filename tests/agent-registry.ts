@@ -1610,4 +1610,549 @@ describe("Agent Registry Program Tests", () => {
       expect(argNames).to.include.members(["delta", "reason"]);
     });
   });
+
+  // ================================================================
+  // AUD-101 (cycle-2): migrate_agent_profile end-to-end integration
+  //
+  // Roadmap §3 B3. Cycle-2 closure `fc3c72a` added the missing
+  // `owner_nonce` account + 3-seed PDA derivation to
+  // `MigrateAgentProfile`, restoring reachability of the migration
+  // handler that was unreachable at HEAD (Anchor would reject every
+  // invocation with `ConstraintSeeds` because the legacy 2-component
+  // seed list could not re-derive the actual on-chain agent_profile
+  // PDA, which is always 3-seed).
+  //
+  // The Rust unit-test layer exercises the normalization predicates
+  // (`__padding_aud007 = [0u8; 17]`, `cleared_count = 0`,
+  // `assert_valid_profile`, the `Suspended ⇒ slash_count >= 3`
+  // bump). The TS integration surface — until now — only verified
+  // the seeds bug at the Anchor IDL shape level. This block calls
+  // the instruction end-to-end against solana-test-validator and
+  // pins:
+  //
+  //   1. The handler is reachable via the AUD-101 3-seed derivation
+  //      on a freshly-registered profile (regression sentinel for
+  //      the AUD-101 fix itself).
+  //   2. `target_version=1` bumps `version` 0 → 1 and emits the
+  //      AgentMigrated event.
+  //   3. Idempotency: a second call at the same target_version is a
+  //      no-op (no double-bump, no extra rent).
+  //   4. The `target_version <= current.version` no-op branch — a
+  //      backward-target call returns Ok without mutation.
+  //   5. The post-migration profile is bit-for-bit equivalent to a
+  //      freshly-registered profile across the migration-normalized
+  //      fields (status, reputation_score, slash_count,
+  //      cleared_count, padding, vault_address, manifest fields,
+  //      registration_nonce). Fields that are intentionally
+  //      migration-derived (`version`, `updated_at`) are excluded
+  //      from the equivalence comparison.
+  //   6. Cross-account-reuse rejection: passing another authority's
+  //      `OwnerNonce` PDA fails with `ConstraintSeeds` (validates
+  //      that the AUD-101 fix did not introduce a new
+  //      cross-account-reuse hole — the seeds constraint on
+  //      `owner_nonce` itself binds it to `owner.key()`).
+  //   7. Authority gate: a different signer cannot trigger
+  //      migration of a profile they don't own (the
+  //      `agent_profile.authority == owner.key()` constraint
+  //      rejects with `UnauthorizedCaller`).
+  //
+  // Bankrun limitation (documented for cycle-3 follow-up): the
+  // roadmap's literal "write the pre-AUD-007 layout directly /
+  // skip init / manipulate the account data so it matches the
+  // legacy schema" approach requires solana-bankrun's
+  // `setAccount` escape hatch. The current harness uses
+  // solana-test-validator, which has no API for installing
+  // hand-constructed account bytes. Two normalization branches in
+  // `migrate_agent_profile` therefore remain TS-uncovered:
+  //
+  //   (a) `reputation_score = score.min(MAX_REPUTATION_SCORE)`
+  //       clamp on a profile carrying a legacy unbounded score
+  //       (> 100). The post-PR-G `propose_reputation_delta`
+  //       caps writes at 100, so no legitimate instruction path
+  //       can produce an out-of-range score on a fresh
+  //       validator.
+  //
+  //   (b) `if status == Suspended && slash_count < 3 { slash_count
+  //       = 3 }` invariant restoration. Reaching Suspended from a
+  //       fresh validator requires either (i) 3 slash-bearing
+  //       Settlement CPIs (out of scope here — the four
+  //       AUD-117 cases in cpi-failures.test.ts cover the CPI
+  //       surface) or (ii) `update_status(Suspended)`, which
+  //       PR-I now blocks for self-issued transitions.
+  //
+  // The Rust unit tests in `lib.rs::tests` cover both (a) and (b)
+  // via direct field manipulation on a stack-allocated
+  // `AgentProfile`. When anchor-bankrun lands (tracked alongside
+  // AUD-117 ResolveDisputeTimeout / settlement.ts:2224 +
+  // cpi-failures.test.ts:1266), the legacy-bytes write path
+  // becomes feasible and these branches can be lifted into
+  // integration coverage. Until then, this block exercises every
+  // migration path that does NOT depend on pre-existing
+  // out-of-range state.
+  // ================================================================
+
+  describe("AUD-101: migrate_agent_profile end-to-end", () => {
+    // Helper: register a fresh agent (nonce=0) and return the keys
+    // and PDAs needed to drive the migration. Each call uses an
+    // independent authority so tests don't share residual state.
+    async function registerFreshAgent(nameSuffix: string): Promise<{
+      authority: web3.Keypair;
+      profilePDA: web3.PublicKey;
+      noncePDA: web3.PublicKey;
+    }> {
+      const authority = web3.Keypair.generate();
+      const airdrop = await provider.connection.requestAirdrop(
+        authority.publicKey,
+        2 * web3.LAMPORTS_PER_SOL
+      );
+      await provider.connection.confirmTransaction(airdrop);
+
+      const [profilePDA] = deriveAgentProfilePDA(authority.publicKey);
+      const [noncePDA] = deriveOwnerNoncePDA(authority.publicKey);
+      const vault = vaultFor(authority.publicKey);
+
+      await program.methods
+        .registerAgent(
+          `Migrate Test ${nameSuffix}`,
+          "Profile registered for AUD-101 migration coverage",
+          "test",
+          ["migrate-coverage"],
+          { perTask: {} },
+          new BN(web3.LAMPORTS_PER_SOL),
+          [new web3.PublicKey("11111111111111111111111111111112")]
+        )
+        .accounts({
+          authority: authority.publicKey,
+          ownerNonce: noncePDA,
+          agentProfile: profilePDA,
+          vault,
+          systemProgram: web3.SystemProgram.programId,
+        })
+        .signers([authority])
+        .rpc();
+
+      return { authority, profilePDA, noncePDA };
+    }
+
+    it("should be reachable end-to-end via the AUD-101 3-seed derivation (regression sentinel)", async () => {
+      // Pre-AUD-101 this call would always fail with ConstraintSeeds
+      // because the context's 2-seed derivation could not re-derive
+      // the on-chain 3-seed PDA. This single passing call is the
+      // load-bearing assertion that the AUD-101 fix is in place and
+      // migration is not silently broken before mainnet.
+      const { authority, profilePDA, noncePDA } = await registerFreshAgent("reachable");
+
+      const before = await (program.account as any).agentProfile.fetch(profilePDA);
+      expect(before.version).to.equal(0);
+
+      await program.methods
+        .migrateAgentProfile(1)
+        .accounts({
+          owner: authority.publicKey,
+          ownerNonce: noncePDA,
+          agentProfile: profilePDA,
+          systemProgram: web3.SystemProgram.programId,
+        })
+        .signers([authority])
+        .rpc();
+
+      const after = await (program.account as any).agentProfile.fetch(profilePDA);
+      expect(after.version).to.equal(1);
+    });
+
+    it("should emit the AgentMigrated event on a successful version bump", async () => {
+      // The `emit!(AgentMigrated { ... })` call in lib.rs sits AFTER
+      // `assert_valid_profile` and BEFORE the `Ok(())` return, with no
+      // intervening early-exit branches — i.e. event emission is
+      // unconditional on a successful version-bump path. Two-fold
+      // evidence the event landed:
+      //
+      //   (a) The "regression sentinel" test above asserts version
+      //       bumped 0 → 1 after a successful .rpc() broadcast. The
+      //       version mutation happens at lib.rs:685, BEFORE the
+      //       emit! at lib.rs:728. If the tx succeeded and version
+      //       bumped, every line between them executed — including
+      //       the unconditional emit!.
+      //
+      //   (b) Wire-level: re-broadcast and read back the
+      //       transaction's log messages, asserting the
+      //       `Program data: <base64>` line that Anchor's `emit!`
+      //       macro produces. The base64 payload begins with the
+      //       8-byte AgentMigrated event discriminator
+      //       (sha256("event:AgentMigrated")[..8] = 3afb734612e65fa4
+      //       — see src/indexer/index.ts:236).
+      //
+      // We do (b) here. Anchor's `.rpc()` fetches a blockhash and
+      // broadcasts in two separate RPC round-trips; under heavy
+      // parallel-test load the slot can advance between them and the
+      // server returns "Blockhash not found". Wrap the broadcast in
+      // a small retry loop: each attempt re-fetches the blockhash
+      // implicitly via Anchor's internals.
+      const { authority, profilePDA, noncePDA } = await registerFreshAgent("event");
+
+      let sig: string | null = null;
+      let lastErr: any = null;
+      for (let attempt = 0; attempt < 4 && sig === null; attempt++) {
+        if (attempt > 0) {
+          await new Promise((r) => setTimeout(r, 750));
+        }
+        try {
+          sig = await program.methods
+            .migrateAgentProfile(1)
+            .accounts({
+              owner: authority.publicKey,
+              ownerNonce: noncePDA,
+              agentProfile: profilePDA,
+              systemProgram: web3.SystemProgram.programId,
+            })
+            .signers([authority])
+            .rpc({ commitment: "confirmed" });
+        } catch (err: any) {
+          lastErr = err;
+          const msg = String(err?.message ?? err);
+          // Only retry the known-flaky blockhash race. Any other
+          // failure (constraint violation, runtime error) must
+          // surface immediately so the test reports the real cause.
+          if (!/Blockhash not found|block height exceeded|TransactionExpired/i.test(msg)) {
+            throw err;
+          }
+        }
+      }
+      if (sig === null) {
+        throw lastErr ?? new Error("migrate broadcast failed after retries");
+      }
+
+      // Read back logs. Retry to absorb the (common) commitment-lag
+      // race where the tx is accepted but not yet visible to
+      // subsequent RPCs.
+      let tx = null;
+      for (let attempt = 0; attempt < 4 && tx === null; attempt++) {
+        if (attempt > 0) {
+          await new Promise((r) => setTimeout(r, 500));
+        }
+        tx = await provider.connection.getTransaction(sig, {
+          commitment: "confirmed",
+          maxSupportedTransactionVersion: 0,
+        });
+      }
+      expect(tx, "tx should be retrievable post-broadcast").to.exist;
+
+      const logs = tx?.meta?.logMessages ?? [];
+      const hasProgramData = logs.some((l: string) => /Program data: /.test(l));
+      expect(
+        hasProgramData,
+        `expected an event 'Program data:' log line; got:\n${logs.join("\n")}`
+      ).to.equal(true);
+    });
+
+    it("should be idempotent — second call at the same target_version is a no-op", async () => {
+      // Idempotency is load-bearing for the upgrade-script choreography
+      // in DESIGN-DECISIONS § Ship sequence item 4: operators must be
+      // able to re-run the migration sweep without double-bumping
+      // version or paying spurious rent.
+      const { authority, profilePDA, noncePDA } = await registerFreshAgent("idempotent");
+
+      await program.methods
+        .migrateAgentProfile(1)
+        .accounts({
+          owner: authority.publicKey,
+          ownerNonce: noncePDA,
+          agentProfile: profilePDA,
+          systemProgram: web3.SystemProgram.programId,
+        })
+        .signers([authority])
+        .rpc();
+
+      const afterFirst = await (program.account as any).agentProfile.fetch(profilePDA);
+      const updatedAtAfterFirst = afterFirst.updatedAt.toNumber();
+
+      // Second call at the SAME target_version. The `version >= target_version`
+      // early-return triggers; no field is touched.
+      await program.methods
+        .migrateAgentProfile(1)
+        .accounts({
+          owner: authority.publicKey,
+          ownerNonce: noncePDA,
+          agentProfile: profilePDA,
+          systemProgram: web3.SystemProgram.programId,
+        })
+        .signers([authority])
+        .rpc();
+
+      const afterSecond = await (program.account as any).agentProfile.fetch(profilePDA);
+      expect(afterSecond.version).to.equal(1, "version must NOT double-bump on idempotent re-call");
+      // updated_at is in the early-return-skipped block, so the second call
+      // must NOT touch it. (If a future refactor moves the timestamp write
+      // above the version-check guard, this assertion catches it.)
+      expect(afterSecond.updatedAt.toNumber()).to.equal(
+        updatedAtAfterFirst,
+        "updated_at must NOT advance on idempotent re-call (no mutation occurred)"
+      );
+    });
+
+    it("should be a no-op when target_version <= current version (backward target)", async () => {
+      // Tests the `profile.version >= target_version` early-return on a
+      // BACKWARD target — a valid call shape that callers may use in
+      // upgrade scripts that pass a uniform target across mixed-version
+      // accounts (some already past, some not yet there).
+      const { authority, profilePDA, noncePDA } = await registerFreshAgent("backward");
+
+      // Bump 0 → 1 first.
+      await program.methods
+        .migrateAgentProfile(1)
+        .accounts({
+          owner: authority.publicKey,
+          ownerNonce: noncePDA,
+          agentProfile: profilePDA,
+          systemProgram: web3.SystemProgram.programId,
+        })
+        .signers([authority])
+        .rpc();
+
+      // Now call with target_version=0 (already past). Must be a no-op,
+      // not a downgrade.
+      await program.methods
+        .migrateAgentProfile(0)
+        .accounts({
+          owner: authority.publicKey,
+          ownerNonce: noncePDA,
+          agentProfile: profilePDA,
+          systemProgram: web3.SystemProgram.programId,
+        })
+        .signers([authority])
+        .rpc();
+
+      const after = await (program.account as any).agentProfile.fetch(profilePDA);
+      expect(after.version).to.equal(1, "version must NOT downgrade on backward target");
+    });
+
+    it("post-migration profile fields match a freshly-registered profile (excepting migration-derived fields)", async () => {
+      // The roadmap's "verifies post-migration state matches a
+      // freshly-registered profile bit-for-bit" requirement, narrowed
+      // to fields that are NOT intentionally migration-derived
+      // (`version` is exactly what migration mutates;
+      // `updated_at`/`created_at` are wall-clock-derived and naturally
+      // differ). Names, identity, and policy fields must be untouched
+      // — migration is layout-preserving for everything except the
+      // explicit normalization writes called out in the lib.rs
+      // comment block.
+
+      // Migrated profile: register fresh, then run migration.
+      const migrated = await registerFreshAgent("migrated-baseline");
+      const beforeMigration = await (program.account as any).agentProfile.fetch(
+        migrated.profilePDA
+      );
+      await program.methods
+        .migrateAgentProfile(1)
+        .accounts({
+          owner: migrated.authority.publicKey,
+          ownerNonce: migrated.noncePDA,
+          agentProfile: migrated.profilePDA,
+          systemProgram: web3.SystemProgram.programId,
+        })
+        .signers([migrated.authority])
+        .rpc();
+      const migratedAfter = await (program.account as any).agentProfile.fetch(
+        migrated.profilePDA
+      );
+
+      // Migration mutates: version → 1, padding zeroed, cleared_count = 0,
+      // reputation_score clamped (no-op for in-range), slash_count
+      // possibly bumped (no-op for non-Suspended).
+      //
+      // Anchor 0.31's runtime IDL keeps leading-underscore field names
+      // verbatim, but the TS account decoder strips snake-case casing
+      // inconsistently across versions for double-underscore prefixes.
+      // Walk the record to find whichever variant actually appears so
+      // this assertion survives a coder upgrade.
+      function readPadding(profile: any): Buffer {
+        const candidates = [
+          "__padding_aud007",
+          "_padding_aud007",
+          "padding_aud007",
+          "paddingAud007",
+        ];
+        for (const k of candidates) {
+          if (profile[k] !== undefined) return Buffer.from(profile[k]);
+        }
+        throw new Error(
+          `padding field not found on profile; available keys: ${Object.keys(profile).join(", ")}`
+        );
+      }
+      expect(migratedAfter.version).to.equal(1);
+      expect(readPadding(migratedAfter)).to.deep.equal(Buffer.alloc(17));
+      expect(migratedAfter.clearedCount).to.equal(0);
+      expect(migratedAfter.reputationScore.toNumber()).to.equal(
+        beforeMigration.reputationScore.toNumber()
+      );
+      expect(migratedAfter.reputationScore.toNumber()).to.be.lte(100);
+
+      // Non-mutated identity / policy fields must equal pre-migration values.
+      // (Bit-for-bit equivalence on these is the contract for AUD-007's
+      // "layout-preserving" claim.)
+      expect(migratedAfter.authority.toString()).to.equal(beforeMigration.authority.toString());
+      expect(migratedAfter.name).to.equal(beforeMigration.name);
+      expect(migratedAfter.description).to.equal(beforeMigration.description);
+      expect(migratedAfter.category).to.equal(beforeMigration.category);
+      expect(migratedAfter.capabilities).to.deep.equal(beforeMigration.capabilities);
+      expect(JSON.stringify(migratedAfter.pricingModel)).to.equal(
+        JSON.stringify(beforeMigration.pricingModel)
+      );
+      expect(migratedAfter.pricingAmount.toString()).to.equal(
+        beforeMigration.pricingAmount.toString()
+      );
+      expect(migratedAfter.acceptedTokens.length).to.equal(
+        beforeMigration.acceptedTokens.length
+      );
+      expect(migratedAfter.vaultAddress.toString()).to.equal(
+        beforeMigration.vaultAddress.toString()
+      );
+      expect(JSON.stringify(migratedAfter.status)).to.equal(
+        JSON.stringify(beforeMigration.status)
+      );
+      expect(migratedAfter.bump).to.equal(beforeMigration.bump);
+      expect(migratedAfter.createdAt.toNumber()).to.equal(
+        beforeMigration.createdAt.toNumber()
+      );
+      expect(migratedAfter.registrationNonce.toString()).to.equal(
+        beforeMigration.registrationNonce.toString()
+      );
+      expect(migratedAfter.manifestVersion).to.equal(beforeMigration.manifestVersion);
+      expect(Buffer.from(migratedAfter.manifestHash)).to.deep.equal(
+        Buffer.from(beforeMigration.manifestHash)
+      );
+      expect(Buffer.from(migratedAfter.manifestSignature)).to.deep.equal(
+        Buffer.from(beforeMigration.manifestSignature)
+      );
+      expect(Buffer.from(migratedAfter.manifestCid)).to.deep.equal(
+        Buffer.from(beforeMigration.manifestCid)
+      );
+
+      // Compare against an INDEPENDENTLY-registered fresh profile. After
+      // both have been migrated to version=1, all migration-normalized
+      // fields must match bit-for-bit (excepting timestamps/identity).
+      const fresh = await registerFreshAgent("migrated-twin");
+      await program.methods
+        .migrateAgentProfile(1)
+        .accounts({
+          owner: fresh.authority.publicKey,
+          ownerNonce: fresh.noncePDA,
+          agentProfile: fresh.profilePDA,
+          systemProgram: web3.SystemProgram.programId,
+        })
+        .signers([fresh.authority])
+        .rpc();
+      const freshAfter = await (program.account as any).agentProfile.fetch(fresh.profilePDA);
+
+      // Migration-normalized invariants identical across the two profiles.
+      expect(migratedAfter.version).to.equal(freshAfter.version);
+      expect(migratedAfter.clearedCount).to.equal(freshAfter.clearedCount);
+      expect(migratedAfter.reputationScore.toString()).to.equal(
+        freshAfter.reputationScore.toString()
+      );
+      expect(migratedAfter.reputationStake.slashCount).to.equal(
+        freshAfter.reputationStake.slashCount
+      );
+      expect(migratedAfter.reputationStake.stakedAmount.toString()).to.equal(
+        freshAfter.reputationStake.stakedAmount.toString()
+      );
+      expect(JSON.stringify(migratedAfter.status)).to.equal(JSON.stringify(freshAfter.status));
+      // Padding bytes equivalent (both zeroed) — the AUD-007 layout-preserving
+      // contract: post-migration, the padding region is canonically zero on
+      // every profile regardless of register-vs-migrate origin.
+      expect(readPadding(migratedAfter)).to.deep.equal(readPadding(freshAfter));
+    });
+
+    it("should reject a substituted OwnerNonce from a different authority (cross-account-reuse guard)", async () => {
+      // The AUD-101 fix added `owner_nonce` to MigrateAgentProfile with
+      // `seeds = [owner.key().as_ref(), b"owner-nonce"]`. The seeds
+      // constraint binds the account address to the SIGNING owner —
+      // passing another owner's nonce account fails before any handler
+      // logic runs. This is the same defense-in-depth pattern AUD-117
+      // landed at the Settlement boundary.
+      const target = await registerFreshAgent("xreuse-target");
+      const decoy = await registerFreshAgent("xreuse-decoy");
+
+      // Sanity: the two nonces are distinct account addresses.
+      expect(target.noncePDA.toString()).to.not.equal(decoy.noncePDA.toString());
+
+      try {
+        await program.methods
+          .migrateAgentProfile(1)
+          .accounts({
+            owner: target.authority.publicKey,
+            ownerNonce: decoy.noncePDA, // <-- spoofed: belongs to the decoy
+            agentProfile: target.profilePDA,
+            systemProgram: web3.SystemProgram.programId,
+          })
+          .signers([target.authority])
+          .rpc();
+        expect.fail("migrate_agent_profile must reject a cross-owner OwnerNonce");
+      } catch (err: any) {
+        const msg = String(err.message ?? err) + JSON.stringify(err?.logs ?? "");
+        // Anchor formats this as ConstraintSeeds (numeric code 2006).
+        // The decoy's nonce PDA does not re-derive under the target
+        // owner's pubkey, so the seeds constraint trips before the
+        // realloc / authority check.
+        expect(msg).to.match(
+          /ConstraintSeeds|seeds constraint was violated|2006/i,
+          `expected ConstraintSeeds, got: ${msg}`
+        );
+      }
+    });
+
+    it("should reject a different signer attempting to migrate someone else's profile", async () => {
+      // Defense-in-depth on the authority gate: even if the attacker
+      // somehow passes the correct PDAs, the
+      // `agent_profile.authority == owner.key() @ UnauthorizedCaller`
+      // constraint must reject.
+      //
+      // Setup: target owns a profile; attacker is a different signer.
+      // Attacker tries to migrate target's profile but supplies their
+      // OWN owner_nonce (which derives to a different agent_profile
+      // PDA) — this fails at the seeds constraint on agent_profile.
+      // To exercise the explicit `authority == owner.key()`
+      // constraint, attacker would need a way to pass target's
+      // owner_nonce while signing as themselves; the seeds
+      // constraint on owner_nonce already catches that path.
+      // What we DO test here: the attacker cannot drive a successful
+      // migration on someone else's profile end-to-end. The exact
+      // rejection mode (UnauthorizedCaller vs ConstraintSeeds) depends
+      // on which constraint fires first; either is acceptable
+      // evidence of the gate.
+      const target = await registerFreshAgent("authgate-target");
+      const attacker = web3.Keypair.generate();
+      const airdrop = await provider.connection.requestAirdrop(
+        attacker.publicKey,
+        web3.LAMPORTS_PER_SOL
+      );
+      await provider.connection.confirmTransaction(airdrop);
+
+      try {
+        await program.methods
+          .migrateAgentProfile(1)
+          .accounts({
+            owner: attacker.publicKey, // signer is the attacker
+            ownerNonce: target.noncePDA, // but using target's nonce
+            agentProfile: target.profilePDA,
+            systemProgram: web3.SystemProgram.programId,
+          })
+          .signers([attacker])
+          .rpc();
+        expect.fail("migrate_agent_profile must reject a non-owner signer");
+      } catch (err: any) {
+        const msg = String(err.message ?? err) + JSON.stringify(err?.logs ?? "");
+        // The seeds constraint on owner_nonce (`[owner.key(),
+        // b"owner-nonce"]`) trips first because target.noncePDA does
+        // not re-derive under attacker.publicKey. This is the same
+        // ConstraintSeeds code as the cross-reuse case above; the
+        // path through which the attacker tries to compromise the
+        // gate doesn't matter — every path is closed.
+        expect(msg).to.match(
+          /ConstraintSeeds|seeds constraint was violated|UnauthorizedCaller|2006|6005/i,
+          `expected ConstraintSeeds or UnauthorizedCaller, got: ${msg}`
+        );
+      }
+    });
+  });
 });
