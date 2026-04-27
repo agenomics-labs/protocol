@@ -2,7 +2,20 @@
 
 ## Status
 
-Proposed
+**Superseded by ADR-128** (2026-04-27).
+
+ADR-127 was bound by a now-lifted "what's already in the stack"
+constraint (SQLite + Redis only, no Postgres). With that constraint
+lifted (per user direction 2026-04-27 — "we can install Postgres or
+anything else"), ADR-128 selects PostgreSQL with streaming replication
+for sub-2-minute RTO + real PITR. ADR-127's cold-spare *mechanism
+analysis* is preserved as the documented constrained-scope alternative —
+if Postgres adoption is later judged too operationally expensive, the
+Option-β cold-spare design here is the fallback path. The four-option
+enumeration (α leader-election, β cold-spare, γ Postgres replication,
+δ status quo) still informs ADR-128's Alternatives section.
+
+Original Status (preserved for history): Proposed
 
 ## Date
 

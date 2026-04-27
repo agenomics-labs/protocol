@@ -343,9 +343,14 @@ constants and the `cursor` table per finding #23).
 ### 3.5 Procedure: cold replay from backup
 
 SQLite file is gone or unreadable; you have a cold backup from slot N
-(per the C5 backup-cadence plan, which had not landed as of
-2026-04-26 — until C5 ships, cadence is `<TODO: operator team to fill
-in>`).
+(per the C5 backup-cadence plan landed as design in **ADR-128 —
+Postgres with streaming replication + WAL archiving for PITR; supersedes
+ADR-127 cold-spare**). Until the ADR-128 implementation ships, the
+indexer is still SQLite and the procedure below is authoritative; once
+Postgres replication lands, the standard recovery path becomes
+"promote standby" (sub-2-minute RTO) and this cold-replay procedure
+becomes the disaster-recovery fallback when both primary AND standby
+are lost. Operator backup cadence: `<TODO: operator team to fill in>`.
 
 1. **Restore the backup file** to the canonical indexer path
    (`<TODO: operator team to fill in>` — DB path).
@@ -390,9 +395,11 @@ in>`).
 - [ ] No resurrection rows in the agents table.
 - [ ] Backup of the now-recovered DB taken and pushed to cold storage.
       Recovery does not refresh backup cadence; do it explicitly.
-- [ ] If C5 was incomplete: file a P1 to accelerate it. One
-      cold-replay incident on a single-instance indexer is acceptable;
-      two is operational debt.
+- [ ] If C5 was incomplete: file a P1 to accelerate it (per
+      ADR-128's Postgres + streaming-replication design, which
+      supersedes ADR-127's cold-spare approach). One cold-replay
+      incident on a single-instance indexer is acceptable; two is
+      operational debt.
 
 ---
 
