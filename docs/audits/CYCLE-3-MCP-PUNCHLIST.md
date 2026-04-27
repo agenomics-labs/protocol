@@ -16,7 +16,9 @@ defense gap relative to the x402-relay layer.
 
 | ID | Title | File:Lines | Owner | Status |
 |---|---|---|---|---|
-| MCP-320 | No rate limiting at MCP transport layer. Authenticated caller (or leaked bearer token) can fire unbounded `vault_transfer` calls; only backpressure is wallet SOL balance. ADR-083 silent on rate limiting. x402-relay has rate-limit code; MCP server does not. | `mcp-server/src/index.ts:224-260, 271-332`; `mcp-server/src/transport/auth-gate.ts` | _unassigned_ | Open |
+| MCP-320 | No rate limiting at MCP transport layer. Authenticated caller (or leaked bearer token) can fire unbounded `vault_transfer` calls; only backpressure is wallet SOL balance. ADR-083 silent on rate limiting. x402-relay has rate-limit code; MCP server does not. | `mcp-server/src/index.ts:224-260, 271-332`; `mcp-server/src/transport/auth-gate.ts` | k2jac9 | **Closed — `47e859c`** [^mcp320] |
+
+[^mcp320]: New `mcp-server/src/transport/rate-limit.ts` (373 lines) — sha256-keyed bearer-token buckets with IP fallback, env-overridable window/max (`AEP_MCP_RATE_LIMIT_WINDOW_MS`, `AEP_MCP_RATE_LIMIT_MAX_REQUESTS`), `X-Forwarded-For` only honored when `AEP_MCP_TRUST_PROXY=1`. Pruner on `setInterval(...).unref()`, `MAX_RATE_LIMIT_ENTRIES = 100_000` cap, `Retry-After` header on 429. Wired BEFORE bearer-auth in `startHttpTransport` so token-guessing is also rate-limited. Stdio + unix transports intentionally skipped (parent-process / UID trust boundary). Factory pattern (vs. relay's module-level singleton) makes tests state-isolated. 24 new tests; mcp-server suite 311/311.
 
 ## High (block ship of EVO / HTTP transport)
 
@@ -63,6 +65,6 @@ Migration paused at ~4% (1/27 actions in v2). `handlers-v2/` contains only `vaul
 
 ## Ship gates
 
-- **HTTP transport unblock**: MCP-320 closed; MCP-321 documented or fixed
+- **HTTP transport unblock**: MCP-320 ✅ closed `47e859c`; MCP-321 documented or fixed
 - **EVO enablement (`AEP_EVO_ENABLED=true` in production)**: MCP-300, MCP-301, MCP-302, MCP-304 closed; MCP-305 version handshake shipped
 - **Pipeline drift hardening**: MCP-311 + MCP-313 + ADR-119 promoted from Proposed → Accepted + CI-blocking
