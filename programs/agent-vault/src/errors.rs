@@ -89,4 +89,26 @@ pub enum VaultError {
     /// `vault.last_rotation_at + 86_400` before retrying.
     #[msg("Rotation rate-limited: update_agent_identity may be called at most once per 24h")]
     RotationRateLimited,
+
+    /// ADR-124 / AUD-116 (path-a): `initialize_vault` requires a paired
+    /// `Ed25519Program` sig-verify instruction in the same transaction
+    /// covering `vault_identity_bind_message(authority, agent_identity)`
+    /// signed by the holder of `agent_identity`'s private key. The sysvar
+    /// scan found no neighbouring ed25519-program instruction; the caller
+    /// must prepend (or append) the precompile ix before re-trying.
+    #[msg("initialize_vault requires a paired Ed25519 precompile instruction proving control of agent_identity (ADR-124)")]
+    MissingAgentIdentityBindSignature,
+
+    /// ADR-124 / AUD-116 (path-a): a paired ed25519-program instruction was
+    /// present, but its inline pubkey / signature / message bytes do not
+    /// match the supplied `agent_identity` / `agent_identity_signature` /
+    /// `vault_identity_bind_message(authority, agent_identity)`. Either:
+    ///   - the signature was produced over the wrong domain-tagged message
+    ///     (e.g. wrong authority, wrong agent_identity, or no domain tag);
+    ///   - the precompile ix references a different pubkey or signature
+    ///     than the handler argument;
+    ///   - the precompile data is malformed (cross-instruction reference,
+    ///     non-32-byte message, or out-of-range offsets).
+    #[msg("The paired Ed25519 instruction does not match the supplied agent_identity / agent_identity_signature / vault_identity_bind_message (ADR-124)")]
+    AgentIdentityBindSignatureMismatch,
 }

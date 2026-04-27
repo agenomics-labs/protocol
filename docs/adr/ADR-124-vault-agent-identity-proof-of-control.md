@@ -2,11 +2,12 @@
 
 ## Status
 
-Proposed
+Accepted (cycle-3 implementation landed 2026-04-26).
 
 ## Date
 
-2026-04-26
+2026-04-26 (proposed); accepted same day on the cycle-3 implementation
+commit.
 
 ## Context
 
@@ -133,6 +134,77 @@ pattern in `agent-registry::lib.rs::manifest::verify_ed25519_precompile`:
     handlers-v2 vault path) needs the same ix-construction helper.
     Adding it there at the same time avoids a flag-day where mcp-server
     and SDK construct the bind ix differently.
+
+## Implementation Notes (cycle-3 closure)
+
+What landed verbatim from the Decision section:
+
+  - `VAULT_IDENTITY_BIND_DOMAIN = b"AEP_VAULT_IDENTITY_BIND_V1\x00"` and
+    `vault_identity_bind_message(authority, agent_identity)` in
+    `programs/agent-vault/src/lib.rs`. Domain separation pinned by
+    `adr_124_domain_differs_from_registry_manifest_domain` unit test.
+  - New `pub mod identity_bind` in the same file vendoring
+    `verify_ed25519_precompile` — byte-for-byte port of
+    `agent_registry::manifest::verify_ed25519_precompile` (no cross-program
+    dependency, matching the settlement / registry reason-code constants
+    pattern).
+  - `instructions_sysvar` field on `InitializeVault` (address-pinned to
+    `sysvar::instructions::ID`) and `agent_identity_signature: [u8; 64]`
+    parameter on `initialize_vault`.
+  - Two new error variants on `VaultError`:
+    `MissingAgentIdentityBindSignature` (no neighbouring ed25519 ix) and
+    `AgentIdentityBindSignatureMismatch` (precompile present but pubkey /
+    signature / message bytes mismatched, OR malformed precompile data).
+
+What landed off-chain to keep all callers in lockstep:
+
+  - `mcp-server/src/handlers/vault.ts::handleCreateVault` now resolves the
+    `agent_identity` signer via two branches: (1) self-bind (default) where
+    `agent_identity == wallet.publicKey` and the wallet's secret key signs
+    the bind message; (2) operator-managed where the caller supplies
+    `agentIdentitySecretKey` (base58 64-byte secret OR `number[64]`). The
+    handler builds the bind message + ed25519 precompile ix server-side
+    and prepends it to the `initialize_vault` tx. Secret key material
+    never leaves the process.
+  - `mcp-server/src/actions/vault.ts` adds the optional
+    `agentIdentitySecretKey` zod field with the union-of-shapes schema and
+    explicit length / charset rejection. `mcp-server/src/tools/vault.ts`
+    mirrors the same surface in the JSONSchema tool descriptor.
+  - `sdk/client/src/vault.ts` exports `VAULT_IDENTITY_BIND_DOMAIN`,
+    `vaultIdentityBindMessage(authority, agentIdentity)`, and
+    `buildVaultIdentityBindInstruction({agentIdentity, message,
+    signature})` — the typed off-chain mirror of the on-chain
+    constants/helpers.
+
+Test additions per surface:
+
+  - **Program (Rust unit)**: 4 new tests in
+    `programs/agent-vault/src/lib.rs` cover bind-message domain
+    application, per-leg injectivity, registry-domain divergence, and
+    domain-tag byte-shape pinning.
+  - **On-chain integration (TS)**: 4 new tests in
+    `tests/agent-vault.ts` under
+    `describe("ADR-124 / AUD-116 (path-a): agent_identity proof-of-control"`):
+    happy path, wrong-signer rejection, missing-precompile rejection, and
+    untagged-message replay rejection. The 11 pre-existing
+    `initializeVault` call-sites updated to use a new
+    `initVaultWithBindProof()` helper that encapsulates the four-step
+    coupling (message → signature → precompile ix → handler arg).
+  - **mcp-server (`node:test`)**: 17 new tests in
+    `mcp-server/test/create-vault-bind-proof.test.ts` cover action / tool
+    / router registration, schema acceptance of self-bind / base58 /
+    number[64] shapes, schema rejection of malformed shapes, and the
+    `sign:vault` capability gate.
+  - **SDK (`node:test`)**: 12 new tests in
+    `sdk/client/test/vault-identity-bind.test.ts` cover domain-tag
+    byte-shape pinning, message determinism + per-leg injectivity,
+    cross-protocol replay defense at both the domain and digest layers,
+    and instruction-builder length validation.
+
+All four packages built clean (`cargo test -p agent-vault`,
+`anchor build`, `npm test --prefix sdk/client`,
+`npm test --prefix mcp-server`); the full `anchor test` suite passes
+156 tests, 3 pending (pre-existing skips).
 
 ## References
 

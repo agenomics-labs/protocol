@@ -34,62 +34,78 @@ pub fn compute_window_elapsed(now: i64, window_start: i64) -> i64 {
     now.saturating_sub(window_start).max(0)
 }
 
-/// AUD-116 (cycle-2 threat-model decision, documented 2026-04-26):
+/// ADR-124 / AUD-116 (path-a, cycle-3 closure):
 ///
-/// **Threat**: `agent_identity` is bound at init from a caller-supplied
-/// `Pubkey` argument with NO proof-of-control. A vault initialized with
-/// a wrong/spoofed `agent_identity` carries that key permanently —
-/// every `execute_transfer` and `execute_token_transfer` accepts a
-/// signature from either the vault `authority` OR the bound
-/// `agent_identity` (see `instructions.rs:314, 435`), so a mis-bound
-/// hot key can drain the vault under spending policy until the
-/// authority rotates it via `update_agent_identity`.
+/// **Threat closed at the protocol level**: pre-ADR-124, `agent_identity`
+/// was bound at init from a caller-supplied `Pubkey` argument with NO
+/// proof-of-control. A vault initialized with a wrong/spoofed
+/// `agent_identity` carried that key permanently; every `execute_transfer`
+/// and `execute_token_transfer` accepts a signature from either the vault
+/// `authority` OR the bound `agent_identity`, so a mis-bound hot key
+/// could drain the vault under spending policy until the authority
+/// rotated it via `update_agent_identity`.
 ///
-/// **Mitigation in place** (PR-X / AUD-023):
-///   - The first call to `update_agent_identity` is unrestricted
-///     (`last_rotation_at == 0` in the rate-limit guard at
-///     `instructions.rs:155-158`). If the wrong key was bound, the
-///     authority can rotate to the right one immediately — bounded
-///     practical recovery.
-///   - Subsequent rotations are gated by a 24h sliding window per
-///     ADR-069. The 24h window protects against a compromised authority
-///     repeatedly rotating, but does not protect against the initial
-///     mis-bind.
-///   - Spending policies (per-tx, daily, rate-limit) cap blast radius
-///     even during the mis-bind window: a wrong-key holder cannot
-///     drain more than the configured policies allow per tx and per
-///     day.
+/// The cycle-2 audit allowed two paths to closure: (a) require an Ed25519
+/// signature at init time, or (b) accept the threat in the SECURITY model.
+/// Cycle-2 took path-(b) via inline doc; this cycle-3 implementation takes
+/// path-(a) per ADR-124.
 ///
-/// **Residual surface accepted**:
-///   - The window between `initialize_vault` and the first
-///     `update_agent_identity` is bounded by spending policy, not by
-///     a key-control proof. An authority who initializes with a wrong
-///     `agent_identity` (operator error or spoof) absorbs at most one
-///     spending-policy-window of damage before the unrestricted first
-///     rotation closes the gap.
+/// **Path-(a) mechanism**:
 ///
-/// **Future-work close**:
-///   - The audit's recommended hardening is to require an Ed25519
-///     signature from `agent_identity` over a domain-separated
-///     message (e.g. `sha256("AEP_VAULT_IDENTITY_BIND_V1\x00" ||
-///     authority || agent_identity)`) verified via the Solana
-///     ed25519 precompile, mirroring the manifest pattern in
-///     `agent-registry/lib.rs::manifest::verify_ed25519_precompile`.
-///   - That change is non-trivial: it adds a new context field
-///     (`instructions_sysvar`), a new `agent_identity_signature`
-///     parameter, an in-program sig-verify-introspection helper, and
-///     would require updating every off-chain caller (mcp-server,
-///     SDK, tests) to construct + sign the precompile ix in the same
-///     transaction. Tracked as cycle-3 follow-up under a paired ADR
-///     coordinated with the SDK changes; until then the threat is
-///     accepted per this comment.
+///   1. The caller computes `vault_identity_bind_message(authority,
+///      agent_identity)` (a 32-byte SHA-256 over a vault-specific domain
+///      tag concatenated with the two pubkeys — see `lib.rs`).
+///   2. The holder of `agent_identity`'s private key produces a 64-byte
+///      Ed25519 signature over that message.
+///   3. The caller prepends an `Ed25519Program::verify` instruction to the
+///      transaction with the inline pubkey / signature / message bytes.
+///   4. This handler calls `identity_bind::verify_ed25519_precompile`
+///      after recording state, which scans the Instructions sysvar for
+///      the neighbouring ed25519-program ix and asserts its inline values
+///      equal the supplied `agent_identity` / `agent_identity_signature`
+///      / `vault_identity_bind_message(authority, agent_identity)`.
+///
+/// The runtime verifies the precompile signature for free at pre-execution
+/// time; the on-chain handler only does the introspection comparison
+/// (cheap, no in-program ed25519 verification).
+///
+/// **Domain separation rationale**: `VAULT_IDENTITY_BIND_DOMAIN`
+/// (`b"AEP_VAULT_IDENTITY_BIND_V1\x00"`) MUST differ from the registry's
+/// `MANIFEST_HASH_DOMAIN` so a captured manifest signature cannot be
+/// replayed as a vault-bind signature. See the
+/// `adr_124_domain_differs_from_registry_manifest_domain` test in
+/// `lib.rs` for the cross-protocol replay defense pinning.
+///
+/// **Errors raised**:
+///   - `MissingAgentIdentityBindSignature` if no neighbouring ed25519
+///     precompile ix is found.
+///   - `AgentIdentityBindSignatureMismatch` if the precompile ix is
+///     present but its inline pubkey / signature / message bytes do not
+///     match the supplied values (or the precompile data is malformed).
 pub fn initialize_vault(
     ctx: Context<InitializeVault>,
     agent_identity: Pubkey,
     daily_limit_lamports: u64,
     per_tx_limit_lamports: u64,
     max_txs_per_hour: u32,
+    agent_identity_signature: [u8; 64],
 ) -> Result<()> {
+    // ADR-124: Verify proof-of-control over `agent_identity` BEFORE any
+    // state mutation. Checks-effects-interactions: a rejected proof must
+    // leave no vault PDA on-chain. We compute the expected bind message
+    // here (cheap pure hash) and delegate the precompile-introspection
+    // comparison to the vendored helper in `lib.rs`.
+    let expected_message = crate::vault_identity_bind_message(
+        &ctx.accounts.authority.key(),
+        &agent_identity,
+    );
+    crate::identity_bind::verify_ed25519_precompile(
+        &ctx.accounts.instructions_sysvar.to_account_info(),
+        &agent_identity,
+        &expected_message,
+        &agent_identity_signature,
+    )?;
+
     let vault = &mut ctx.accounts.vault;
     let clock = Clock::get()?;
 

@@ -49,7 +49,12 @@ export {
   MAX_REPUTATION_SCORE,
   clampReputationScore,
 } from "./registry.js";
-export { AgentVaultClient } from "./vault.js";
+export {
+  AgentVaultClient,
+  VAULT_IDENTITY_BIND_DOMAIN,
+  vaultIdentityBindMessage,
+  buildVaultIdentityBindInstruction,
+} from "./vault.js";
 export { SettlementClient } from "./settlement.js";
 
 // ---------------------------------------------------------------------------

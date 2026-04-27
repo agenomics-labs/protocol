@@ -1,13 +1,22 @@
 import BN from "bn.js";
+import * as crypto from "node:crypto";
 import * as anchor from "@coral-xyz/anchor";
 import { Program, AnchorError } from "@coral-xyz/anchor";
-import { PublicKey, Keypair, LAMPORTS_PER_SOL } from "@solana/web3.js";
+import {
+  PublicKey,
+  Keypair,
+  LAMPORTS_PER_SOL,
+  Ed25519Program,
+  SYSVAR_INSTRUCTIONS_PUBKEY,
+  TransactionInstruction,
+} from "@solana/web3.js";
 import {
   createMint,
   getOrCreateAssociatedTokenAccount,
   mintTo,
   TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
+import { ed25519 } from "@noble/curves/ed25519";
 import { expect } from "chai";
 
 describe("Agent Vault Tests", () => {
@@ -21,6 +30,135 @@ describe("Agent Vault Tests", () => {
   // ADR-095: agent_profile from the registry is required by execute_transfer /
   // execute_token_transfer for the cross-program suspension check.
   const registryProgram = anchor.workspace.AgentRegistry as Program;
+
+  // ADR-124 (AUD-116 path-a): vault-side domain tag for the proof-of-control
+  // signature. MUST stay in lockstep with `VAULT_IDENTITY_BIND_DOMAIN` in
+  // `programs/agent-vault/src/lib.rs` (= `b"AEP_VAULT_IDENTITY_BIND_V1\x00"`,
+  // 26 ASCII chars + a trailing NUL terminator, 27 bytes total). Using
+  // `Buffer.concat` rather than a literal escape so the bytes are explicit
+  // in plain text (no shell-quoting / editor-rendering ambiguity around a
+  // NUL byte inside a string literal). A typo on either side surfaces as a
+  // test failure rather than a runtime mismatch.
+  const VAULT_IDENTITY_BIND_DOMAIN = Buffer.concat([
+    Buffer.from("AEP_VAULT_IDENTITY_BIND_V1", "utf8"),
+    Buffer.from([0]),
+  ]);
+
+  /**
+   * ADR-124 (AUD-116 path-a): Compute the 32-byte domain-separated bind
+   * message that the `agent_identity` private-key holder must sign for
+   * `initialize_vault` to accept the binding. Mirrors
+   * `vault_identity_bind_message(authority, agent_identity)` in
+   * `programs/agent-vault/src/lib.rs`.
+   */
+  function vaultIdentityBindMessage(
+    authority: PublicKey,
+    agentIdentity: PublicKey
+  ): Buffer {
+    return crypto
+      .createHash("sha256")
+      .update(VAULT_IDENTITY_BIND_DOMAIN)
+      .update(authority.toBuffer())
+      .update(agentIdentity.toBuffer())
+      .digest();
+  }
+
+  /**
+   * ADR-124 (AUD-116 path-a): Sign the bind message with the agent_identity
+   * keypair. Returns the 64-byte signature suitable for both the precompile
+   * ix and the new `initialize_vault` parameter.
+   *
+   * Solana `Keypair.secretKey` is `[seed(32) || pubkey(32)]`; noble EdDSA
+   * takes the 32-byte seed as the secret key. Same slicing rule used by
+   * `mcp-server/src/handlers-v2/keypair-signer.ts`.
+   */
+  function signBindMessage(
+    message: Buffer,
+    agentIdentity: Keypair
+  ): Buffer {
+    const seed = agentIdentity.secretKey.slice(0, 32);
+    const sig = ed25519.sign(message, seed);
+    return Buffer.from(sig);
+  }
+
+  /**
+   * ADR-124 (AUD-116 path-a): Build the `Ed25519Program::verify` instruction
+   * that the runtime verifies for free at pre-execution time. The on-chain
+   * `identity_bind::verify_ed25519_precompile` helper introspects this
+   * sibling ix via the Instructions sysvar and asserts its inline pubkey /
+   * signature / message bytes match the supplied `initialize_vault`
+   * arguments.
+   */
+  function bindProofIx(
+    agentIdentity: PublicKey,
+    message: Buffer,
+    signature: Buffer
+  ): TransactionInstruction {
+    return Ed25519Program.createInstructionWithPublicKey({
+      publicKey: agentIdentity.toBuffer(),
+      message,
+      signature,
+    });
+  }
+
+  /**
+   * ADR-124 (AUD-116 path-a): One-shot helper that builds the bind message,
+   * signs it with the `agentIdentity` keypair, prepends the Ed25519 precompile
+   * ix, and calls `initialize_vault` with the new `agent_identity_signature`
+   * argument and `instructionsSysvar` account.
+   *
+   * Encapsulates the four-step coupling (message → signature → precompile ix
+   * → handler arg) so individual test sites stay focused on policy /
+   * authorization assertions instead of cryptographic plumbing. The vault
+   * authority always signs the on-chain transaction; the agent_identity
+   * signs the off-chain bind message.
+   */
+  async function initVaultWithBindProof(args: {
+    authority: Keypair;
+    agentIdentity: Keypair;
+    vaultPda: PublicKey;
+    dailyLimitLamports: BN | number;
+    perTxLimitLamports: BN | number;
+    maxTxsPerHour: BN | number;
+  }): Promise<string> {
+    const message = vaultIdentityBindMessage(
+      args.authority.publicKey,
+      args.agentIdentity.publicKey
+    );
+    const signature = signBindMessage(message, args.agentIdentity);
+    const precompileIx = bindProofIx(
+      args.agentIdentity.publicKey,
+      message,
+      signature
+    );
+    const dailyLimit = BN.isBN(args.dailyLimitLamports)
+      ? args.dailyLimitLamports
+      : new BN(args.dailyLimitLamports);
+    const perTxLimit = BN.isBN(args.perTxLimitLamports)
+      ? args.perTxLimitLamports
+      : new BN(args.perTxLimitLamports);
+    const maxTxs = BN.isBN(args.maxTxsPerHour)
+      ? args.maxTxsPerHour
+      : new BN(args.maxTxsPerHour);
+    return program.methods
+      .initializeVault(
+        args.agentIdentity.publicKey,
+        dailyLimit,
+        perTxLimit,
+        maxTxs,
+        Array.from(signature)
+      )
+      .accounts({
+        vault: args.vaultPda,
+        authority: args.authority.publicKey,
+        ownerNonce: deriveOwnerNoncePDA(args.authority.publicKey)[0],
+        instructionsSysvar: SYSVAR_INSTRUCTIONS_PUBKEY,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .preInstructions([precompileIx])
+      .signers([args.authority])
+      .rpc();
+  }
 
   // ADR-097: owner-nonce PDA `[authority, b"owner-nonce"]` in the registry
   // program. Needed for every `register_agent` call in test setup.
@@ -124,16 +262,18 @@ describe("Agent Vault Tests", () => {
       // Registry's `OwnerNonce` PDA to exist before init.
       await registerMinimalAgent(authority, vaultPda);
 
-      const tx = await program.methods
-        .initializeVault(agentIdentity.publicKey, new BN(DEFAULT_DAILY_LIMIT), new BN(DEFAULT_PER_TX_LIMIT), new BN(DEFAULT_MAX_TXS_PER_HOUR))
-        .accounts({
-          vault: vaultPda,
-          authority: authority.publicKey,
-          ownerNonce: deriveOwnerNoncePDA(authority.publicKey)[0],
-          systemProgram: anchor.web3.SystemProgram.programId,
-        })
-        .signers([authority])
-        .rpc();
+      // ADR-124 (AUD-116 path-a): proof-of-control flow encapsulated in
+      // `initVaultWithBindProof` — builds + signs the bind message,
+      // prepends the ed25519 precompile ix, and supplies the new
+      // `agent_identity_signature` parameter.
+      const tx = await initVaultWithBindProof({
+        authority,
+        agentIdentity,
+        vaultPda,
+        dailyLimitLamports: DEFAULT_DAILY_LIMIT,
+        perTxLimitLamports: DEFAULT_PER_TX_LIMIT,
+        maxTxsPerHour: DEFAULT_MAX_TXS_PER_HOUR,
+      });
 
       // Verify vault was created with correct data
       const vaultAccount = await program.account.vault.fetch(vaultPda);
@@ -535,16 +675,14 @@ describe("Agent Vault Tests", () => {
 
       // AUD-008 (PR-J): register-first.
       await registerMinimalAgent(dailyLimitAuthority, dailyLimitVaultPda);
-      await program.methods
-        .initializeVault(dailyLimitAgentId.publicKey, new BN(smallDailyLimit), new BN(smallPerTxLimit), new BN(10))
-        .accounts({
-          vault: dailyLimitVaultPda,
-          authority: dailyLimitAuthority.publicKey,
-          ownerNonce: deriveOwnerNoncePDA(dailyLimitAuthority.publicKey)[0],
-          systemProgram: anchor.web3.SystemProgram.programId,
-        })
-        .signers([dailyLimitAuthority])
-        .rpc();
+      await initVaultWithBindProof({
+        authority: dailyLimitAuthority,
+        agentIdentity: dailyLimitAgentId,
+        vaultPda: dailyLimitVaultPda,
+        dailyLimitLamports: smallDailyLimit,
+        perTxLimitLamports: smallPerTxLimit,
+        maxTxsPerHour: 10,
+      });
 
       // Fund the vault
       const vaultAirdropSig = await provider.connection.requestAirdrop(
@@ -621,16 +759,14 @@ describe("Agent Vault Tests", () => {
 
       // Initialize vault — AUD-008 (PR-J): register-first.
       await registerMinimalAgent(pauseAuthority, pauseVaultPda);
-      await program.methods
-        .initializeVault(pauseAgentId.publicKey, new BN(10 * LAMPORTS_PER_SOL), new BN(1 * LAMPORTS_PER_SOL), new BN(10))
-        .accounts({
-          vault: pauseVaultPda,
-          authority: pauseAuthority.publicKey,
-          ownerNonce: deriveOwnerNoncePDA(pauseAuthority.publicKey)[0],
-          systemProgram: anchor.web3.SystemProgram.programId,
-        })
-        .signers([pauseAuthority])
-        .rpc();
+      await initVaultWithBindProof({
+        authority: pauseAuthority,
+        agentIdentity: pauseAgentId,
+        vaultPda: pauseVaultPda,
+        dailyLimitLamports: 10 * LAMPORTS_PER_SOL,
+        perTxLimitLamports: 1 * LAMPORTS_PER_SOL,
+        maxTxsPerHour: 10,
+      });
 
       // Fund the vault
       const vaultAirdropSig = await provider.connection.requestAirdrop(
@@ -733,16 +869,14 @@ describe("Agent Vault Tests", () => {
 
       // AUD-008 (PR-J): register-first.
       await registerMinimalAgent(rateLimitAuthority, rateLimitVaultPda);
-      await program.methods
-        .initializeVault(rateLimitAgentId.publicKey, new BN(10 * LAMPORTS_PER_SOL), new BN(1 * LAMPORTS_PER_SOL), new BN(lowMaxTxsPerHour))
-        .accounts({
-          vault: rateLimitVaultPda,
-          authority: rateLimitAuthority.publicKey,
-          ownerNonce: deriveOwnerNoncePDA(rateLimitAuthority.publicKey)[0],
-          systemProgram: anchor.web3.SystemProgram.programId,
-        })
-        .signers([rateLimitAuthority])
-        .rpc();
+      await initVaultWithBindProof({
+        authority: rateLimitAuthority,
+        agentIdentity: rateLimitAgentId,
+        vaultPda: rateLimitVaultPda,
+        dailyLimitLamports: 10 * LAMPORTS_PER_SOL,
+        perTxLimitLamports: 1 * LAMPORTS_PER_SOL,
+        maxTxsPerHour: lowMaxTxsPerHour,
+      });
 
       // Fund the vault
       const vaultAirdropSig = await provider.connection.requestAirdrop(
@@ -840,16 +974,14 @@ describe("Agent Vault Tests", () => {
 
       // Initialize vault — AUD-008 (PR-J): register-first.
       await registerMinimalAgent(authVaultAuthority, authVaultPda);
-      await program.methods
-        .initializeVault(authVaultAgentId.publicKey, new BN(10 * LAMPORTS_PER_SOL), new BN(1 * LAMPORTS_PER_SOL), new BN(10))
-        .accounts({
-          vault: authVaultPda,
-          authority: authVaultAuthority.publicKey,
-          ownerNonce: deriveOwnerNoncePDA(authVaultAuthority.publicKey)[0],
-          systemProgram: anchor.web3.SystemProgram.programId,
-        })
-        .signers([authVaultAuthority])
-        .rpc();
+      await initVaultWithBindProof({
+        authority: authVaultAuthority,
+        agentIdentity: authVaultAgentId,
+        vaultPda: authVaultPda,
+        dailyLimitLamports: 10 * LAMPORTS_PER_SOL,
+        perTxLimitLamports: 1 * LAMPORTS_PER_SOL,
+        maxTxsPerHour: 10,
+      });
     });
 
     it("should reject policy update from non-authority", async () => {
@@ -923,16 +1055,14 @@ describe("Agent Vault Tests", () => {
 
       // Initialize vault — AUD-008 (PR-J): register-first.
       await registerMinimalAgent(pauseAuthVaultAuthority, pauseAuthVaultPda);
-      await program.methods
-        .initializeVault(pauseAuthVaultAgentId.publicKey, new BN(10 * LAMPORTS_PER_SOL), new BN(1 * LAMPORTS_PER_SOL), new BN(10))
-        .accounts({
-          vault: pauseAuthVaultPda,
-          authority: pauseAuthVaultAuthority.publicKey,
-          ownerNonce: deriveOwnerNoncePDA(pauseAuthVaultAuthority.publicKey)[0],
-          systemProgram: anchor.web3.SystemProgram.programId,
-        })
-        .signers([pauseAuthVaultAuthority])
-        .rpc();
+      await initVaultWithBindProof({
+        authority: pauseAuthVaultAuthority,
+        agentIdentity: pauseAuthVaultAgentId,
+        vaultPda: pauseAuthVaultPda,
+        dailyLimitLamports: 10 * LAMPORTS_PER_SOL,
+        perTxLimitLamports: 1 * LAMPORTS_PER_SOL,
+        maxTxsPerHour: 10,
+      });
     });
 
     it("should reject pause from non-authority", async () => {
@@ -1058,21 +1188,14 @@ describe("Agent Vault Tests", () => {
 
       // AUD-008 (PR-J): register-first.
       await registerMinimalAgent(sec5Authority, sec5VaultPda);
-      await program.methods
-        .initializeVault(
-          sec5AgentId.publicKey,
-          new BN(10 * LAMPORTS_PER_SOL),
-          new BN(1 * LAMPORTS_PER_SOL),
-          new BN(5)
-        )
-        .accounts({
-          vault: sec5VaultPda,
-          authority: sec5Authority.publicKey,
-          ownerNonce: deriveOwnerNoncePDA(sec5Authority.publicKey)[0],
-          systemProgram: anchor.web3.SystemProgram.programId,
-        })
-        .signers([sec5Authority])
-        .rpc();
+      await initVaultWithBindProof({
+        authority: sec5Authority,
+        agentIdentity: sec5AgentId,
+        vaultPda: sec5VaultPda,
+        dailyLimitLamports: 10 * LAMPORTS_PER_SOL,
+        perTxLimitLamports: 1 * LAMPORTS_PER_SOL,
+        maxTxsPerHour: 5,
+      });
 
       configuredMint = await createMint(
         provider.connection,
@@ -1147,21 +1270,14 @@ describe("Agent Vault Tests", () => {
 
       // AUD-008 (PR-J): register-first.
       await registerMinimalAgent(emptyAuth, emptyVaultPda);
-      await program.methods
-        .initializeVault(
-          emptyAgent.publicKey,
-          new BN(10 * LAMPORTS_PER_SOL),
-          new BN(1 * LAMPORTS_PER_SOL),
-          new BN(5)
-        )
-        .accounts({
-          vault: emptyVaultPda,
-          authority: emptyAuth.publicKey,
-          ownerNonce: deriveOwnerNoncePDA(emptyAuth.publicKey)[0],
-          systemProgram: anchor.web3.SystemProgram.programId,
-        })
-        .signers([emptyAuth])
-        .rpc();
+      await initVaultWithBindProof({
+        authority: emptyAuth,
+        agentIdentity: emptyAgent,
+        vaultPda: emptyVaultPda,
+        dailyLimitLamports: 10 * LAMPORTS_PER_SOL,
+        perTxLimitLamports: 1 * LAMPORTS_PER_SOL,
+        maxTxsPerHour: 5,
+      });
 
       const badMint = await createMint(
         provider.connection,
@@ -1282,21 +1398,14 @@ describe("Agent Vault Tests", () => {
 
       // AUD-008 (PR-J): register-first.
       await registerMinimalAgent(sec6Authority, sec6VaultPda);
-      await program.methods
-        .initializeVault(
-          sec6AgentId.publicKey,
-          new BN(10 * LAMPORTS_PER_SOL),
-          new BN(1 * LAMPORTS_PER_SOL),
-          new BN(10)
-        )
-        .accounts({
-          vault: sec6VaultPda,
-          authority: sec6Authority.publicKey,
-          ownerNonce: deriveOwnerNoncePDA(sec6Authority.publicKey)[0],
-          systemProgram: anchor.web3.SystemProgram.programId,
-        })
-        .signers([sec6Authority])
-        .rpc();
+      await initVaultWithBindProof({
+        authority: sec6Authority,
+        agentIdentity: sec6AgentId,
+        vaultPda: sec6VaultPda,
+        dailyLimitLamports: 10 * LAMPORTS_PER_SOL,
+        perTxLimitLamports: 1 * LAMPORTS_PER_SOL,
+        maxTxsPerHour: 10,
+      });
 
       sec6Mint = await createMint(
         provider.connection,
@@ -1443,21 +1552,14 @@ describe("Agent Vault Tests", () => {
 
       // AUD-008 (PR-J): register-first.
       await registerMinimalAgent(rotAuthority, rotVaultPda);
-      await program.methods
-        .initializeVault(
-          rotOldAgentId.publicKey,
-          new BN(10 * LAMPORTS_PER_SOL),
-          new BN(1 * LAMPORTS_PER_SOL),
-          new BN(10)
-        )
-        .accounts({
-          vault: rotVaultPda,
-          authority: rotAuthority.publicKey,
-          ownerNonce: deriveOwnerNoncePDA(rotAuthority.publicKey)[0],
-          systemProgram: anchor.web3.SystemProgram.programId,
-        })
-        .signers([rotAuthority])
-        .rpc();
+      await initVaultWithBindProof({
+        authority: rotAuthority,
+        agentIdentity: rotOldAgentId,
+        vaultPda: rotVaultPda,
+        dailyLimitLamports: 10 * LAMPORTS_PER_SOL,
+        perTxLimitLamports: 1 * LAMPORTS_PER_SOL,
+        maxTxsPerHour: 10,
+      });
 
       // Fund vault so execute_transfer can actually move lamports
       const vaultAirdrop = await provider.connection.requestAirdrop(
@@ -1653,16 +1755,14 @@ describe("Agent Vault Tests", () => {
 
       // Initialize vault — AUD-008 (PR-J): register-first.
       await registerMinimalAgent(allowlistAuthVaultAuthority, allowlistAuthVaultPda);
-      await program.methods
-        .initializeVault(allowlistAuthVaultAgentId.publicKey, new BN(10 * LAMPORTS_PER_SOL), new BN(1 * LAMPORTS_PER_SOL), new BN(10))
-        .accounts({
-          vault: allowlistAuthVaultPda,
-          authority: allowlistAuthVaultAuthority.publicKey,
-          ownerNonce: deriveOwnerNoncePDA(allowlistAuthVaultAuthority.publicKey)[0],
-          systemProgram: anchor.web3.SystemProgram.programId,
-        })
-        .signers([allowlistAuthVaultAuthority])
-        .rpc();
+      await initVaultWithBindProof({
+        authority: allowlistAuthVaultAuthority,
+        agentIdentity: allowlistAuthVaultAgentId,
+        vaultPda: allowlistAuthVaultPda,
+        dailyLimitLamports: 10 * LAMPORTS_PER_SOL,
+        perTxLimitLamports: 1 * LAMPORTS_PER_SOL,
+        maxTxsPerHour: 10,
+      });
     });
 
     it("should reject token allowlist add from non-authority", async () => {
@@ -1746,21 +1846,14 @@ describe("Agent Vault Tests", () => {
       const [aNoncePda] = deriveOwnerNoncePDA(a.publicKey);
       const beforeNonce: any = await (registryProgram.account as any).ownerNonce.fetch(aNoncePda);
 
-      await program.methods
-        .initializeVault(
-          aId.publicKey,
-          new BN(LAMPORTS_PER_SOL),
-          new BN(LAMPORTS_PER_SOL / 10),
-          new BN(10)
-        )
-        .accounts({
-          vault: aVaultPda,
-          authority: a.publicKey,
-          ownerNonce: aNoncePda,
-          systemProgram: anchor.web3.SystemProgram.programId,
-        })
-        .signers([a])
-        .rpc();
+      await initVaultWithBindProof({
+        authority: a,
+        agentIdentity: aId,
+        vaultPda: aVaultPda,
+        dailyLimitLamports: LAMPORTS_PER_SOL,
+        perTxLimitLamports: LAMPORTS_PER_SOL / 10,
+        maxTxsPerHour: 10,
+      });
 
       const vaultAccount = await program.account.vault.fetch(aVaultPda);
       expect(vaultAccount.profileNonce.toString()).to.equal(
@@ -1789,21 +1882,18 @@ describe("Agent Vault Tests", () => {
 
       let threw = false;
       try {
-        await program.methods
-          .initializeVault(
-            noRegId.publicKey,
-            new BN(LAMPORTS_PER_SOL),
-            new BN(LAMPORTS_PER_SOL / 10),
-            new BN(10)
-          )
-          .accounts({
-            vault: noRegVaultPda,
-            authority: noReg.publicKey,
-            ownerNonce: noRegNoncePda,
-            systemProgram: anchor.web3.SystemProgram.programId,
-          })
-          .signers([noReg])
-          .rpc();
+        // Bind proof is fully valid here so the AUD-008 OwnerNonce failure
+        // is the only reason the tx can revert. ADR-124 (the bind proof) and
+        // AUD-008 (the OwnerNonce gate) are independent guards; this test
+        // pins that AUD-008's failure mode is unaffected by the new ix.
+        await initVaultWithBindProof({
+          authority: noReg,
+          agentIdentity: noRegId,
+          vaultPda: noRegVaultPda,
+          dailyLimitLamports: LAMPORTS_PER_SOL,
+          perTxLimitLamports: LAMPORTS_PER_SOL / 10,
+          maxTxsPerHour: 10,
+        });
       } catch (error: any) {
         threw = true;
         // Anchor raises AccountNotInitialized (or similar) when the PDA
@@ -1850,19 +1940,38 @@ describe("Agent Vault Tests", () => {
 
       let threw = false;
       try {
+        // Bind proof is constructed from `(bob.publicKey, bobAgentId)` so
+        // ADR-124 alone would accept the call. The AUD-008 cross-authority
+        // OwnerNonce substitution is the rejection path under test; we go
+        // around `initVaultWithBindProof` here because the helper auto-
+        // derives the nonce PDA from the authority and so cannot reproduce
+        // the Alice-nonce-against-Bob-authority attack shape.
+        const message = vaultIdentityBindMessage(
+          bob.publicKey,
+          bobAgentId.publicKey
+        );
+        const signature = signBindMessage(message, bobAgentId);
+        const precompileIx = bindProofIx(
+          bobAgentId.publicKey,
+          message,
+          signature
+        );
         await program.methods
           .initializeVault(
             bobAgentId.publicKey,
             new BN(LAMPORTS_PER_SOL),
             new BN(LAMPORTS_PER_SOL / 10),
-            new BN(10)
+            new BN(10),
+            Array.from(signature)
           )
           .accounts({
             vault: bobVaultPda,
             authority: bob.publicKey,
             ownerNonce: aliceNoncePda, // <-- Alice's nonce account
+            instructionsSysvar: SYSVAR_INSTRUCTIONS_PUBKEY,
             systemProgram: anchor.web3.SystemProgram.programId,
           })
+          .preInstructions([precompileIx])
           .signers([bob])
           .rpc();
       } catch (error: any) {
@@ -1873,6 +1982,273 @@ describe("Agent Vault Tests", () => {
 
       const bobVaultAcc = await provider.connection.getAccountInfo(bobVaultPda);
       expect(bobVaultAcc).to.be.null;
+    });
+  });
+
+  // ============================================================================
+  // ADR-124 (AUD-116 path-a): agent_identity proof-of-control at init
+  // ============================================================================
+  //
+  // The cycle-2 audit AUD-116 surfaced an under-protected seam in
+  // `initialize_vault`: `agent_identity` was bound from a caller-supplied
+  // `Pubkey` argument with no proof that the caller controlled the
+  // corresponding private key. Cycle-2 closed via path-(b) (threat-model
+  // documentation); cycle-3 closes via path-(a): an Ed25519 signature over
+  // a domain-tagged message verified through the Solana ed25519 precompile.
+  //
+  // These tests pin the three failure modes the new flow MUST detect:
+  //   1. Happy path — correct signature → init succeeds.
+  //   2. Negative — signature for wrong agent_identity → rejects with
+  //      `AgentIdentityBindSignatureMismatch`.
+  //   3. Negative — missing precompile call → rejects with
+  //      `MissingAgentIdentityBindSignature`.
+  describe("ADR-124 / AUD-116 (path-a): agent_identity proof-of-control", () => {
+    it("happy path: correct agent_identity signature → init succeeds", async () => {
+      const auth = Keypair.generate();
+      const agentId = Keypair.generate();
+      const sig = await provider.connection.requestAirdrop(
+        auth.publicKey,
+        5 * LAMPORTS_PER_SOL
+      );
+      await provider.connection.confirmTransaction(sig);
+
+      const [vaultPda_] = await anchor.web3.PublicKey.findProgramAddress(
+        [Buffer.from("vault"), auth.publicKey.toBuffer()],
+        programId
+      );
+      await registerMinimalAgent(auth, vaultPda_);
+      await initVaultWithBindProof({
+        authority: auth,
+        agentIdentity: agentId,
+        vaultPda: vaultPda_,
+        dailyLimitLamports: LAMPORTS_PER_SOL,
+        perTxLimitLamports: LAMPORTS_PER_SOL / 10,
+        maxTxsPerHour: 10,
+      });
+
+      // Bind succeeded → vault.agent_identity matches the proven key.
+      const vault = await program.account.vault.fetch(vaultPda_);
+      expect(vault.agentIdentity.toString()).to.equal(
+        agentId.publicKey.toString()
+      );
+    });
+
+    it("negative: signature for the wrong agent_identity → AgentIdentityBindSignatureMismatch", async () => {
+      // Construct the precompile ix with one keypair (`wrongSigner`) but
+      // declare the on-chain `agent_identity` parameter as a DIFFERENT key
+      // (`claimedIdentity`). The runtime accepts the precompile (the
+      // signature is valid for `wrongSigner`), but the on-chain
+      // introspection comparison fails because the precompile's inline
+      // pubkey bytes do not match the handler argument.
+      const auth = Keypair.generate();
+      const claimedIdentity = Keypair.generate();
+      const wrongSigner = Keypair.generate();
+      const air = await provider.connection.requestAirdrop(
+        auth.publicKey,
+        5 * LAMPORTS_PER_SOL
+      );
+      await provider.connection.confirmTransaction(air);
+
+      const [vaultPda_] = await anchor.web3.PublicKey.findProgramAddress(
+        [Buffer.from("vault"), auth.publicKey.toBuffer()],
+        programId
+      );
+      await registerMinimalAgent(auth, vaultPda_);
+
+      // Sign the bind message for `claimedIdentity` using `wrongSigner`'s
+      // key. The precompile passes (sig is valid for `wrongSigner`'s pubkey
+      // over the same message bytes), but the on-chain helper rejects
+      // because the precompile's pubkey != claimedIdentity.
+      const message = vaultIdentityBindMessage(
+        auth.publicKey,
+        claimedIdentity.publicKey
+      );
+      const signature = signBindMessage(message, wrongSigner);
+      // Critical: the precompile is built with `wrongSigner.publicKey`, NOT
+      // `claimedIdentity.publicKey`. This is the "wrong-signer attack"
+      // shape: an attacker who controls `wrongSigner` tries to bind their
+      // key to a vault by claiming it as `claimedIdentity`. The on-chain
+      // pubkey-comparison closes this.
+      const badPrecompileIx = bindProofIx(
+        wrongSigner.publicKey,
+        message,
+        signature
+      );
+
+      let threw = false;
+      let errorName = "";
+      try {
+        await program.methods
+          .initializeVault(
+            claimedIdentity.publicKey,
+            new BN(LAMPORTS_PER_SOL),
+            new BN(LAMPORTS_PER_SOL / 10),
+            new BN(10),
+            Array.from(signature)
+          )
+          .accounts({
+            vault: vaultPda_,
+            authority: auth.publicKey,
+            ownerNonce: deriveOwnerNoncePDA(auth.publicKey)[0],
+            instructionsSysvar: SYSVAR_INSTRUCTIONS_PUBKEY,
+            systemProgram: anchor.web3.SystemProgram.programId,
+          })
+          .preInstructions([badPrecompileIx])
+          .signers([auth])
+          .rpc();
+      } catch (error: any) {
+        threw = true;
+        if (error instanceof AnchorError) {
+          errorName = error.error?.errorCode?.code ?? "";
+        } else {
+          // Fall back to message string — Anchor's surfacing of program
+          // errors that revert from cross-checking can land as a generic
+          // SendTransactionError when `.rpc()` packages the failure.
+          errorName = (error?.message || "").toString();
+        }
+      }
+      expect(threw, "wrong-signer bind must be rejected").to.equal(true);
+      expect(
+        errorName.includes("AgentIdentityBindSignatureMismatch") ||
+          errorName.includes("agent_identity_signature") ||
+          errorName.includes("ADR-124"),
+        `expected AgentIdentityBindSignatureMismatch, got: ${errorName}`
+      ).to.equal(true);
+
+      // No vault account was created.
+      const vaultAcc = await provider.connection.getAccountInfo(vaultPda_);
+      expect(vaultAcc).to.be.null;
+    });
+
+    it("negative: missing precompile ix → MissingAgentIdentityBindSignature", async () => {
+      // Construct a syntactically-valid `agent_identity_signature` but omit
+      // the paired `Ed25519Program` precompile ix from the transaction. The
+      // on-chain sysvar scan finds no neighbouring ed25519-program ix and
+      // raises `MissingAgentIdentityBindSignature`.
+      const auth = Keypair.generate();
+      const agentId = Keypair.generate();
+      const air = await provider.connection.requestAirdrop(
+        auth.publicKey,
+        5 * LAMPORTS_PER_SOL
+      );
+      await provider.connection.confirmTransaction(air);
+
+      const [vaultPda_] = await anchor.web3.PublicKey.findProgramAddress(
+        [Buffer.from("vault"), auth.publicKey.toBuffer()],
+        programId
+      );
+      await registerMinimalAgent(auth, vaultPda_);
+
+      const message = vaultIdentityBindMessage(
+        auth.publicKey,
+        agentId.publicKey
+      );
+      const signature = signBindMessage(message, agentId);
+
+      let threw = false;
+      let errorName = "";
+      try {
+        // Note: NO `.preInstructions([...])` call. The signature itself is
+        // valid; only the runtime-verifier ix is missing.
+        await program.methods
+          .initializeVault(
+            agentId.publicKey,
+            new BN(LAMPORTS_PER_SOL),
+            new BN(LAMPORTS_PER_SOL / 10),
+            new BN(10),
+            Array.from(signature)
+          )
+          .accounts({
+            vault: vaultPda_,
+            authority: auth.publicKey,
+            ownerNonce: deriveOwnerNoncePDA(auth.publicKey)[0],
+            instructionsSysvar: SYSVAR_INSTRUCTIONS_PUBKEY,
+            systemProgram: anchor.web3.SystemProgram.programId,
+          })
+          .signers([auth])
+          .rpc();
+      } catch (error: any) {
+        threw = true;
+        if (error instanceof AnchorError) {
+          errorName = error.error?.errorCode?.code ?? "";
+        } else {
+          errorName = (error?.message || "").toString();
+        }
+      }
+      expect(threw, "missing precompile must be rejected").to.equal(true);
+      expect(
+        errorName.includes("MissingAgentIdentityBindSignature") ||
+          errorName.includes("paired Ed25519") ||
+          errorName.includes("ADR-124"),
+        `expected MissingAgentIdentityBindSignature, got: ${errorName}`
+      ).to.equal(true);
+
+      // No vault account was created.
+      const vaultAcc = await provider.connection.getAccountInfo(vaultPda_);
+      expect(vaultAcc).to.be.null;
+    });
+
+    it("negative: signature over wrong domain (no domain tag) → AgentIdentityBindSignatureMismatch", async () => {
+      // Cross-protocol replay defense: a signature produced over the
+      // RAW `(authority || agent_identity)` bytes (i.e. without the
+      // VAULT_IDENTITY_BIND_DOMAIN tag) MUST be rejected. This is the
+      // shape a signature from a sibling protocol (or a naive caller
+      // who forgot the domain tag) would take.
+      const auth = Keypair.generate();
+      const agentId = Keypair.generate();
+      const air = await provider.connection.requestAirdrop(
+        auth.publicKey,
+        5 * LAMPORTS_PER_SOL
+      );
+      await provider.connection.confirmTransaction(air);
+
+      const [vaultPda_] = await anchor.web3.PublicKey.findProgramAddress(
+        [Buffer.from("vault"), auth.publicKey.toBuffer()],
+        programId
+      );
+      await registerMinimalAgent(auth, vaultPda_);
+
+      // Untagged message — same input bytes minus the domain tag.
+      const untaggedMessage = crypto
+        .createHash("sha256")
+        .update(auth.publicKey.toBuffer())
+        .update(agentId.publicKey.toBuffer())
+        .digest();
+      const sigOverUntagged = signBindMessage(untaggedMessage, agentId);
+      const precompileForUntagged = bindProofIx(
+        agentId.publicKey,
+        untaggedMessage,
+        sigOverUntagged
+      );
+
+      let threw = false;
+      try {
+        await program.methods
+          .initializeVault(
+            agentId.publicKey,
+            new BN(LAMPORTS_PER_SOL),
+            new BN(LAMPORTS_PER_SOL / 10),
+            new BN(10),
+            Array.from(sigOverUntagged)
+          )
+          .accounts({
+            vault: vaultPda_,
+            authority: auth.publicKey,
+            ownerNonce: deriveOwnerNoncePDA(auth.publicKey)[0],
+            instructionsSysvar: SYSVAR_INSTRUCTIONS_PUBKEY,
+            systemProgram: anchor.web3.SystemProgram.programId,
+          })
+          .preInstructions([precompileForUntagged])
+          .signers([auth])
+          .rpc();
+      } catch (error: any) {
+        threw = true;
+        expect(error).to.exist;
+      }
+      expect(threw, "untagged-message bind must be rejected").to.equal(true);
+
+      const vaultAcc = await provider.connection.getAccountInfo(vaultPda_);
+      expect(vaultAcc).to.be.null;
     });
   });
 });

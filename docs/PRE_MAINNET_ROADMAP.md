@@ -534,21 +534,41 @@ order — every B-item is independent.
 
 ### B1. ADR-124 implementation — vault `agent_identity` proof-of-control (AUD-116 path-a)
 
+**Status**: **Done** (2026-04-26). ADR-124 status moved to `Accepted`
+with the cycle-3 implementation note appended; on-chain helper +
+off-chain SDK / mcp-server callers + 37 new tests across 4 surfaces all
+landed in a single commit. `anchor test` 156 ✓ / 3 pending.
+
 **Why**: Cycle-2 closed AUD-116 via the audit's path-(b) (threat-model
 documentation). Path-(a) is an Ed25519 sig-at-init flow that closes the
 init-mis-bind seam at the protocol level. Concrete code-level design is
 already written in `docs/adr/ADR-124-vault-agent-identity-proof-of-control.md`.
 
-**Scope**: ~half-day focused work.
-- New `verify_ed25519_precompile` helper in `agent-vault/src/lib.rs`
-  (byte-for-byte mirror of `agent-registry::manifest`).
-- New `VAULT_IDENTITY_BIND_DOMAIN` constant + message-construction helper.
-- New `instructions_sysvar` field in `InitializeVault` context.
+**Scope** (as shipped):
+- New `identity_bind::verify_ed25519_precompile` module in
+  `programs/agent-vault/src/lib.rs` (byte-for-byte vendored from
+  `agent-registry::manifest::verify_ed25519_precompile`; raises vault-side
+  errors).
+- New `VAULT_IDENTITY_BIND_DOMAIN = b"AEP_VAULT_IDENTITY_BIND_V1\x00"`
+  constant + `vault_identity_bind_message(authority, agent_identity)`
+  helper. Domain explicitly differs from the registry's
+  `MANIFEST_HASH_DOMAIN` (cross-protocol replay defense pinned by unit
+  test).
+- New `instructions_sysvar` field on `InitializeVault` context
+  (address-pinned to `sysvar::instructions::ID`).
 - New `agent_identity_signature: [u8; 64]` parameter on
   `initialize_vault`.
-- 2 new error variants.
-- ~9 test call-site updates in `tests/agent-vault.ts` + mcp-server
-  handler updates + SDK helper.
+- 2 new error variants: `MissingAgentIdentityBindSignature`,
+  `AgentIdentityBindSignatureMismatch`.
+- 11 `initializeVault` call-sites in `tests/agent-vault.ts` updated via
+  a new `initVaultWithBindProof()` helper; 4 net-new on-chain tests
+  (happy + 3 negatives).
+- `mcp-server` handler / action / tool wiring (self-bind + operator-
+  managed flows) + 17 new schema/capability tests.
+- `sdk/client` `vaultIdentityBindMessage` /
+  `buildVaultIdentityBindInstruction` helpers + 12 new SDK tests.
+
+**Closing artifact**: see `docs/adr/ADR-124-vault-agent-identity-proof-of-control.md` §"Implementation Notes (cycle-3 closure)".
 
 **Why now**: If any launch agents will hold meaningful balances day-1,
 the init-mis-bind window is real. Ship while the audit context is fresh.

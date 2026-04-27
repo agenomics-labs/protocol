@@ -72,11 +72,42 @@ function wrap<I>(fn: (args: Record<string, unknown>) => Promise<any>) {
 
 // ---------- create_vault ----------
 
+// ADR-124 (AUD-116 path-a): `agentIdentitySecretKey` accepts EITHER a
+// base58-encoded 64-byte Solana secret key OR a JSON-style `number[64]`.
+// The handler decodes both shapes; the zod schema accepts both via a
+// union and rejects malformed inputs (wrong length, non-base58 string,
+// non-numeric array entries) at the boundary.
+const agentIdentitySecretKeySchema = z
+  .union([
+    z
+      .string()
+      .min(80, {
+        message:
+          "agentIdentitySecretKey base58 string is too short for a 64-byte secret",
+      })
+      .max(96, {
+        message:
+          "agentIdentitySecretKey base58 string is too long for a 64-byte secret",
+      }),
+    z
+      .array(z.number().int().min(0).max(255))
+      .length(64, {
+        message:
+          "agentIdentitySecretKey array must contain exactly 64 byte values (0..255)",
+      }),
+  ])
+  .optional();
+
 const createVaultInput = {
   agentIdentity: z.string(),
   dailyLimitSol: z.number().nonnegative(),
   perTxLimitSol: z.number().nonnegative(),
   maxTxsPerHour: z.number().int().nonnegative(),
+  // ADR-124 (AUD-116 path-a): optional. When omitted, the handler self-binds
+  // (agent_identity == wallet pubkey). When supplied, the handler uses the
+  // secret key to produce the bind signature locally; the secret never
+  // leaves the process. See `handleCreateVault` for the full flow.
+  agentIdentitySecretKey: agentIdentitySecretKeySchema,
 } as const;
 
 export const createVaultAction: Action<
@@ -86,7 +117,8 @@ export const createVaultAction: Action<
   name: "create_vault",
   title: "Create vault",
   description:
-    "Create a new agent vault with spending policies. The vault is a programmable wallet that enforces daily limits, per-transaction limits, and rate limits. Returns the vault address.",
+    "Create a new agent vault with spending policies. The vault is a programmable wallet that enforces daily limits, per-transaction limits, and rate limits. Returns the vault address. " +
+    "ADR-124 (AUD-116 path-a): the on-chain handler now requires an Ed25519 proof-of-control signature from the holder of `agentIdentity`'s private key. Pass `agentIdentitySecretKey` (base58 or number[64]) to bind a distinct hot key, or omit it to self-bind to the wallet pubkey (agentIdentity must equal wallet.publicKey in that mode).",
   inputSchema: createVaultInput,
   outputSchema: z.unknown(),
   similes: ["new vault", "create wallet"],
