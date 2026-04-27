@@ -1830,7 +1830,17 @@ describe("Settlement Protocol Tests", () => {
           providerTokenAccount: expProviderTA,
           registryProgram: REGISTRY_PROGRAM_ID,
           providerProfile: provProfilePDA,
-          providerOwnerNonce: deriveOwnerNoncePDA(provider_account.publicKey)[0],
+          // AUD-117 (cycle-2): owner_nonce PDA must be derived from the
+          // SAME authority key used in `providerAuthority` below — the
+          // Settlement boundary now enforces
+          //   seeds = [provider_authority.key(), b"owner-nonce"]
+          // (see programs/settlement/src/contexts.rs ApproveMilestone).
+          // The previous `provider_account.publicKey` derivation was a
+          // suite-level keypair leaked in from a sibling describe block;
+          // its OwnerNonce was uninitialized in this T-02 context, so
+          // Anchor failed with `AccountNotInitialized` before the seeds
+          // check even fired.
+          providerOwnerNonce: deriveOwnerNoncePDA(expProvider.publicKey)[0],
           // SEC-1: external authority anchor for Registry UpdateReputation CPI.
           providerAuthority: expProvider.publicKey,
           settlementAuthority: SETTLEMENT_AUTHORITY_PDA,
@@ -2206,7 +2216,15 @@ describe("Settlement Protocol Tests", () => {
             clientTokenAccount: toClientTA,
             registryProgram: REGISTRY_PROGRAM_ID,
             providerProfile: provProfilePDA,
-            providerOwnerNonce: deriveOwnerNoncePDA(provider_account.publicKey)[0],
+            // AUD-117 (cycle-2): owner_nonce PDA must be derived from the
+            // SAME authority used in `providerAuthority` below. The prior
+            // `provider_account.publicKey` derivation referenced a stale
+            // suite-level keypair from a sibling describe; the Settlement
+            // boundary's `seeds = [provider_authority.key(), b"owner-nonce"]`
+            // constraint rejected before the runtime
+            // `DisputeTimeoutNotReached` check could fire, masking this
+            // negative-path test.
+            providerOwnerNonce: deriveOwnerNoncePDA(toProvider.publicKey)[0],
             // SEC-1: external authority anchor for Registry UpdateReputation CPI.
             providerAuthority: toProvider.publicKey,
             settlementAuthority: SETTLEMENT_AUTHORITY_PDA,
@@ -2278,7 +2296,12 @@ describe("Settlement Protocol Tests", () => {
             clientTokenAccount: toClientTA,
             registryProgram: REGISTRY_PROGRAM_ID,
             providerProfile: provProfilePDA,
-            providerOwnerNonce: deriveOwnerNoncePDA(provider_account.publicKey)[0],
+            // AUD-117 (cycle-2): same fix as the sibling negative test —
+            // owner_nonce PDA must be derived from `toProvider`, not the
+            // suite-level `provider_account` keypair, so the Settlement
+            // seeds constraint can pass and the intended runtime guard
+            // (`InvalidStatus`) is the one that actually fires.
+            providerOwnerNonce: deriveOwnerNoncePDA(toProvider.publicKey)[0],
             // SEC-1: external authority anchor for Registry UpdateReputation CPI.
             providerAuthority: toProvider.publicKey,
             settlementAuthority: SETTLEMENT_AUTHORITY_PDA,
