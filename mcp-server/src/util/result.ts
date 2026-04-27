@@ -14,5 +14,17 @@
  * AEP-action-error binding.
  */
 
-export { ok, err, wrap, defineAction } from "@agenomics/action-runtime";
+// AUD-211 (cycle-2): `wrap` intentionally NOT re-exported. The
+// canonical action-runtime `wrap` returns `Result<T, Error>`, but
+// every mcp-server action that needs a try/catch wrapper
+// (`actions/{vault,reputation,settlement}.ts`) ships its OWN local
+// `wrap` that returns `Result<T, AepError>` with
+// `code: "PROGRAM_ERROR"` mapped from the thrown Error. The two
+// shapes are structurally incompatible — a contributor reaching for
+// the canonical `wrap` from this module would produce a
+// `Result<T, Error>` that the AepError-shaped action handlers cannot
+// consume. Removing the re-export prevents that drift. The DRY
+// consolidation (single shared AepError-shaped wrap across all
+// actions/*) is tracked as cycle-3 follow-up.
+export { ok, err, defineAction } from "@agenomics/action-runtime";
 export type { Result } from "@agenomics/action-runtime";
