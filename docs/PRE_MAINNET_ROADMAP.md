@@ -23,15 +23,17 @@ green and the only remaining gate is the GPG-signed tag itself.
 
 ## 1. Tracks at a glance
 
-| Track | Theme | Blocks tag? | Can start now? | Owner |
-|-------|-------|-------------|----------------|-------|
-| **A. Hard gates** | What `mainnet-readiness.yml` rejects without | YES | A1 yes; A2 yes; A3 needs A1 | Lead Dev + Security |
-| **B. Code/test gaps** | Cycle-3 follow-ups identified in cycle-2 audit | NO (but recommended) | All items yes | Core eng |
-| **C. Operational readiness** | What you'll regret skipping in week 1 | NO (procedural) | All items yes | DevOps + Lead Dev |
-| **D. Soak** | Devnet evidence the cycle-2 changes hold under load | NO (but checklist row) | Yes — runs continuously | DevOps |
+| Track | Theme | Blocks tag? | Status as of 2026-04-27 | Owner |
+|-------|-------|-------------|------------------------|-------|
+| **A. Hard gates** | What `mainnet-readiness.yml` rejects without | YES | A4 + A5 done; A1/A2/A3 external/operational | Lead Dev + Security |
+| **B. Code/test gaps** | Cycle-3 follow-ups identified in cycle-2 audit | NO (but recommended) | **10/11 done** — only B9 (load tests) open; B11 added mid-cycle | Core eng |
+| **C. Operational readiness** | What you'll regret skipping in week 1 | NO (procedural) | C1 + C2 + C4 done (with ADR-126 + ADR-127); C3 gated on A2; C5 in flight (ADR-127/128); C6 design landed (ADR-126) | DevOps + Lead Dev |
+| **D. Soak** | Devnet evidence the cycle-2 changes hold under load | NO (but checklist row) | Open — runs continuously when started | DevOps |
 
-A and D start immediately. B can run in parallel sessions / worktrees.
-C is mostly people-coordination and documentation.
+A1/A2/A3 + D start in operator hands. The B-track is essentially
+closed; the C-track is on its second pass with most documentation
+landed and the remaining items waiting on either operator decisions
+(C3) or implementation PRs against landed designs (C5/C6).
 
 ---
 
@@ -575,15 +577,33 @@ the init-mis-bind window is real. Ship while the audit context is fresh.
 
 ### B2. AUD-206 — `verify_protocol_invariants` MCP-tool wrapper
 
+**Status**: **Done** (2026-04-26, commit `e9de93e`). New
+`mcp-server/src/actions/governance.ts` + `tools/governance.ts` with
+`gov:invariant:check` capability gate; schema-level enforcement of the
+AUD-106 16-account batch cap. 18 unit tests, 202 → 203 mcp-server suite
+passing (later 214/0 after AUD-211 follow-up).
+
 **Why**: Cycle-2 closed it as a deferred governance-tooling gap. Today
 the only way to invoke `verify_protocol_invariants` is raw Anchor RPC
 by the upgrade-authority signer. Operators will want a typed tool.
 
-**Scope**: New `actions/governance.ts` action handler + tool definition
-+ capability gate (`gov:invariant:check` or similar). Bounded by the
-AUD-106 16-account batch cap.
+**Scope** (as shipped): new `actions/governance.ts` action handler +
+tool definition + capability gate (`gov:invariant:check`). Bounded by
+the AUD-106 16-account batch cap (enforced at the zod schema layer +
+mirrored on the JSON schema for MCP clients).
 
 ### B3. `migrate_agent_profile` end-to-end integration test
+
+**Status**: **Done** (2026-04-26, commit `7704fa7`). 7 reachable paths
+covered: regression sentinel, idempotency, backward-target no-op,
+post-mig ≡ fresh-register equivalence, cross-account-reuse rejection,
+authority gate, AgentMigrated event emission. Two normalization branches
+(reputation_score clamp on legacy out-of-range state; Suspended →
+slash_count = 3 invariant restoration) remain TS-uncovered — the
+`solana-test-validator` harness has no `setAccount` to seed legacy state;
+covered by Rust unit tests in `programs/agent-registry/src/lib.rs::tests`.
+Bankrun harness adoption tracked separately (scheduled investigation
+`trig_01NokXSDGAb7ECabM5n9ULR3` to fire 2026-05-10).
 
 **Why**: AUD-101 fixed the seeds bug (Critical) but the integration
 test surface is thin. The migration choreography in DESIGN-DECISIONS
@@ -595,6 +615,13 @@ profile (skip `init` and write the pre-AUD-007 layout directly), call
 profile.
 
 ### B4. AUD-117 seeds integration test
+
+**Status**: **Done** (2026-04-26, commit `e4b3213`). 4 active negative
+tests + 1 documented `it.skip` (ResolveDisputeTimeout — gated by 7-day
+governance-controlled `dispute_timeout_seconds`, no test override; same
+bankrun blocker as B3). Boundary discrimination via Anchor invoke-depth
+log scan (asserts depth-1 Settlement invoke present, depth-2 Registry
+invoke absent — pre-AUD-117 the failure was at depth 2).
 
 **Why**: AUD-117 layered seeds-program defense-in-depth at the
 Settlement boundary across 4 contexts. Today only the build verifies
@@ -608,6 +635,19 @@ Registry boundary).
 
 ### B5. AUD-108 reason-rejection end-to-end test
 
+**Status**: **Done** (2026-04-26, commit `738ae88`). Pivot during
+implementation: AUD-108's `require!(reason ≤ 2)` sits behind
+`settlement_authority`'s `signer + seeds::program = SETTLEMENT_PROGRAM_ID`
+constraint. From a TS direct call, `invoke_signed` is cryptographically
+infeasible, so calls fail at web3.js's "unknown signer" client layer
+before reaching the wire. Settlement's CPI helper hardcodes
+`reason ∈ {0,1,2}` (AUD-109/113), so no Settlement-driven attack vector
+either. Tests pin (a) IDL contract code 6028 + canonical message,
+(b) boundary refusal of `reason=200`, (c) signer-constraint elimination
+(same call shape with valid `reason=0` ALSO fails identically — proves
+AUD-108 isn't the firing gate from TS). Same shape as
+`tests/cpi-failures.test.ts` Case 4 (spoofed settlement_authority).
+
 **Why**: The Rust unit test pins the predicate, but no integration
 test sends `reason=200` through the full CPI to confirm the
 `InvalidReputationReason` revert lands at the Registry.
@@ -617,12 +657,34 @@ with reason 200, asserting the typed error.
 
 ### B6. AUD-209 saturation regression test
 
+**Status**: **Done** (2026-04-26, commit `b59ef6c`). One unit test pins
+`processPaymentRequest` returning `kind: "saturated"` at cap. HTTP-level
+test intentionally omitted: saturation is checked POST-RPC, and the
+relay does not expose a verifier-injection seam — adding one purely for
+test mocking would expand the production surface beyond AUD-209's
+contract. Three small production-code touches required for in-process
+testing (documented inline): `.unref()` on two cleanup intervals + new
+`__fillRedemptionStateForTests` hook mirroring the existing AUD-208
+`__resetRedemptionStateForTests` pattern. 7/7 suite green.
+
 **Why**: x402-relay now returns 503 on saturation; no test pins this.
 
 **Scope**: One node:test case in `src/x402-relay/test/`. Mock 100k
 unique signatures, attempt one more, assert 503.
 
 ### B7. AUD-105 deadline-boundary TS integration test
+
+**Status**: **Done** (2026-04-26, commit `81cb8f4`). `getBlockTime`
+polling strategy with 3s deadline headroom — `Clock::get()?.unix_timestamp`
+is in seconds while slots tick every ~400ms, so each integer second
+spans 2-3 slots (~800-1200ms window) of high-probability landing on
+literal `now == deadline`. Both validation runs hit literal equality
+(`pre-tx == post-tx == deadline`); test logs the equality-case
+diagnostic so future runs can detect "boundary still reachable" drift.
+Non-flaky by design: even on the slip case (`T+1`), the strict-`<`
+guard still rejects with `DeadlinePassed`. Bankrun adoption (with
+`warp_to_slot`) would yield a cleaner fixture; tracked as a separate
+investigation.
 
 **Why**: Rust unit test pins the boundary; existing TS test at
 `tests/settlement.ts:2350` polls until `now > deadline` and so still
@@ -633,6 +695,21 @@ triggers under the new strict guard, but doesn't exercise the
 `accept_task` rejects with `DeadlinePassed`.
 
 ### B8. Fuzz harness (MAINNET_CHECKLIST.md ADR-021 row)
+
+**Status**: **Phase 1 Done** (2026-04-27, commit `e084713`). New `fuzz/`
+crate with honggfuzz-rs harness + first target:
+`propose_reputation_delta`. Pivoted from trident (CLI requires
+`pkg-config + libssl-dev` system packages, not installable without
+root); Anchor-0.31.1 compat itself was fine. Smoke validation: 1M
+deterministic-sweep iterations through the handler model + full
+property contract, 0 crashes. fuzz/ is a standalone Cargo workspace
+excluded from the on-chain workspace so `anchor build` / `cargo test
+-p agent-registry` are unaffected. README documents Phase 2 (more
+targets — `update_status` accept-list AUD-120, Settlement CPI seam,
+seeds-validating contexts AUD-117, `clear_suspension` AUD-004) and
+Phase 3 (`.github/workflows/fuzz-pre-tag.yml` 4-hour campaigns on
+tag-creation events). Trident retry checklist captured for the
+operator-with-sudo flow.
 
 **Why**: Currently `Pending`. Solana program fuzzing via `trident` or
 `honggfuzz`. Cheap insurance against the seam classes cycle-2 surfaced
@@ -653,6 +730,12 @@ indexer event-ingest lag.
 
 ### B10. SDK-side reputation-score clamp helper (AUD-112 reciprocal)
 
+**Status**: **Done** (2026-04-26, commit `946d3bb`). Clamp range is
+`[0, 100]` (sourced from on-chain `MAX_REPUTATION_SCORE: u8 = 100`,
+not the `0..1000` originally guessed). 10 unit assertions including
+edge cases (`u64::MAX` precision-safety clamp, `Number.MAX_SAFE_INTEGER + 1`,
+exact-bound assertions). 21 → 29 SDK suite passing.
+
 **Why**: Cycle-2 AUD-112 documented the transitional read window
 inline at `propose_reputation_delta`. The reciprocal — an SDK-side
 clamp helper — is doc-only today; turn it into a real export from
@@ -660,11 +743,49 @@ clamp helper — is doc-only today; turn it into a real export from
 
 **Scope**: ~10 LoC. `export function clampReputationScore(raw: bigint): number`.
 
+### B11. x402-relay `/admin/drain` endpoint (cycle-3 follow-up surfaced by C2)
+
+**Status**: **Done** (2026-04-27, commit `bdfceea`). Bearer-auth admin
+surface (`POST /admin/drain`, `POST /admin/undrain`, `GET /admin/status`)
+with a new `RELAY_ADMIN_TOKEN` env var (32-byte floor, mirrors AUD-027
+`JWT_SECRET` pattern; throws at module load if set-but-too-short).
+`crypto.timingSafeEqual` for constant-time bearer compare. Fail-closed
+default: missing `RELAY_ADMIN_TOKEN` returns 503 `ADMIN_TOKEN_NOT_CONFIGURED`
+on drain/undrain (relay still serves /pay normally). Drain gate inserted
+BEFORE AUD-209 saturation check + RPC verify; in-flight /pay completes
+gracefully. 9 new node:test subtests covering auth, lifecycle,
+idempotency, in-flight-pay completion. Single-instance scope explicit;
+cross-instance drain orchestration tracked under ADR-126.
+
+**Why**: Surfaced by the C2 incident-response playbook agent (commit
+`bbeb240`): operators previously had no in-app way to gracefully stop
+accepting new /pay requests during incident response and had to fall
+back to coarse network-edge blocking that was asymmetric across
+instances.
+
+**Scope** (as shipped): `src/x402-relay/index.ts` admin surface +
+`test/admin-drain-endpoint.test.ts`; new env var + startup-log entry
+for `admin_token_configured` so operators see misconfig at boot.
+
 ---
 
 ## 4. Track C — Operational readiness
 
 ### C1. `MAINNET_DEPLOY_RUNBOOK.md`
+
+**Status**: **Done** (2026-04-27, commit `8aa0d37`). 685-line operator
+runbook covering all six required sections. Pulls in C4 (auth
+entanglement, 7 cross-refs), C2 (incident response, 7 cross-refs),
+ADR-080 (deploy mandates, 8 cross-refs), ADR-122 (CI gate), B2 MCP
+governance wrapper for the `verify_protocol_invariants` step. Surfaces
+6 operator-pre-conditions: AUD-207 program-ID split must land before
+deploy day; ADR-127 / ADR-126 implementations are not pre-deploy
+prerequisites but constrain Day-1 monitoring posture; ADR-125 deferral
+makes wrong-key-bound init a redeploy-only recovery; placeholder gates
+in `.github/allowed-signers` + `config/AUDIT_REPORT_HASHES` block the
+deploy until A1 + A2 land. 10 `<TODO: operator team to fill in>`
+placeholders for operator-specific config (signer rotation, comms
+channel, indexer SLO, etc).
 
 Single source-of-truth for the deploy ceremony. Sections:
 - Pre-deploy checks (lockfile clean, IDL diff clean, audit hashes
@@ -682,6 +803,17 @@ Single source-of-truth for the deploy ceremony. Sections:
 mandates, ADR-122 mainnet-readiness CI gate.
 
 ### C2. Incident response playbook
+
+**Status**: **Done** (2026-04-27, commit `bbeb240`). 567-line
+operator-focused playbook (`docs/INCIDENT_RESPONSE.md`) with 4 incident
+classes per spec + cross-cutting post-mortem section. Format: triggers
+→ decision tree → procedure → post-incident per the C4 precedent.
+Surfaced 5 real gaps (4 fixed in the same wave): no `/admin/drain`
+endpoint (closed by B11), no mainnet smoke harness (open follow-up),
+indexer backup cadence undefined until C5/ADR-127 land, ADR-117
+filename mismatch (closed by ADR-126 introduction + 6-reference
+disambiguation in commit `783a810`), and `rotate_protocol_config_authority`
+deferral correctly handled per ADR-125.
 
 - On-chain incident triage (program upgrade vs `update_protocol_config`
   vs operator runbook step).
