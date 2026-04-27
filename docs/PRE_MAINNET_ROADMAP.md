@@ -688,6 +688,12 @@ The inline doc-comment lives at `verify_protocol_invariants`'s body.
 Operators need it surfaced in a checked-by-them runbook before the
 first invariant-sweep call. Either fold into C1 or its own doc.
 
+**Status**: Done — landed as standalone doc
+`docs/PROTOCOL_AUTHORITY_OPERATIONS.md`. Chose the standalone path
+because C1 has not started (no commit history for
+`docs/MAINNET_DEPLOY_RUNBOOK.md`); the future C1 runbook should
+reference this doc rather than duplicating it.
+
 ### C5. Indexer redundancy + backfill plan
 
 - Two-instance indexer with leader election OR cold-spare.
