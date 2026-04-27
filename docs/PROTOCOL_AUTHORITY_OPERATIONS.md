@@ -227,5 +227,10 @@ Do not read about the future and assume it is current state:
   `docs/PRE_MAINNET_ROADMAP.md` §A2 (Squads multisig for the upgrade
   authority). The devnet rehearsal in step 4 is the right place to
   exercise the §3.1 checks before mainnet.
-- **Future rotation work**: tracked as a follow-up; see §6. No ADR
-  number assigned yet.
+- **Future rotation work**: `docs/adr/ADR-125-rotate-protocol-config-authority.md`
+  (Status: Proposed). The ADR records the launch-window deferral
+  decision (Option δ — no rotation ix shipped) on the basis that, post-A2,
+  the upgrade authority IS the Squads multisig PDA, so Squads-internal
+  membership/threshold mutation already covers normal-operation governance
+  changes without changing the on-chain PDA. If rotation eventually ships,
+  ADR-125 sketches Option β (2-step propose-then-accept) as the design.
