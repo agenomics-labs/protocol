@@ -749,12 +749,22 @@ MAINNET_CHECKLIST ADR-022 row Pending → Done. Operator-triggered,
 not per-PR.
 
 **B8 sibling note**: B8 fuzz harness is on the same Phase-2-incremental
-path. As of 2026-04-27 (commit `1cfe779`), the second fuzz target
-landed: `update_status` AUD-120 accept-list (131,072-iteration
-exhaustive sweep over `(u8, u8, bool)` preimage; 0 crashes; AUD-120
-property contract holds). Three remaining Phase 2 targets:
-`update_provider_reputation` Settlement CPI seam, AUD-117 seeds,
-AUD-004 `clear_suspension`.
+path. As of 2026-04-27, three Phase 2 targets shipped:
+- `update_status` AUD-120 accept-list (commit `1cfe779`) — 131,072-iter
+  exhaustive sweep, 0 crashes
+- `clear_suspension` AUD-004 escalation ladder (commit `9ea7385`) —
+  2,359,296-iter sweep across `(status × cleared × slash × score)`,
+  0 crashes; pinned the 4 lockstep ladder sites + AUD-118 saturating-
+  add at u8::MAX path
+Two remaining Phase 2 targets: `update_provider_reputation` Settlement
+CPI seam, AUD-117 seeds.
+
+**B9 sibling note**: B9 settlement-only steady-state scenario landed
+(commit `0b7a69f`). New `AgentPool` with single-writer-per-pair
+nonce tracking + just-in-time top-ups; pool-reuse density gain ~2.4x
+vs Phase 1 per-flow provisioning. Stresses post-AUD-117 seeds +
+AUD-209 saturation simultaneously. Four Phase 2 scenarios remaining:
+dispute-flow, expiry-flow, vault-spending, reputation-only.
 
 **Why**: Currently `Pending`. Discovery + settlement under expected
 launch throughput.
@@ -778,10 +788,28 @@ clamp helper — is doc-only today; turn it into a real export from
 
 **Scope**: ~10 LoC. `export function clampReputationScore(raw: bigint): number`.
 
-### B12. EVO as agent-memory backbone (Phase 1 shipped)
+### B12. EVO as agent-memory backbone (Phase 1 + Phase 2 shipped)
 
-**Status**: **Phase 1 shipped** (2026-04-27, commit `db52117` —
-implementation; commit `ef6c7b9` — design ADR).
+**Status**: **Phase 1 + Phase 2 shipped** (2026-04-27, commits
+`ef6c7b9` design + `db52117` Phase 1 read-path + `908bc58` Phase 2
+write-path learn loop).
+
+**Phase 2 (commit `908bc58`)**: write-path `learn` call wired into
+three settlement handlers — `handleApproveMilestone` (kind
+`task_completed`, score 1.0), `handleResolveDispute` (`dispute_won`
+or `dispute_lost` based on provider payout, score 0.7/0.0),
+`handleResolveDisputeTimeout` (`dispute_lost`, score 0.0). Each
+wrapped in best-effort try/catch so EVO failures NEVER mutate parent
+ix success — same posture as Phase 1's observe wiring.
+`AgentMemoryFacade.recordOutcome` does observe-then-learn (rich
+metadata via `evo_observe` + strict `{task_id, score, success}` via
+`evo_learn` matching EVO's `additionalProperties: false` schema).
+On-chain reason mapping mirrors AUD-109/113 (0/1/1/2). 21 new tests
+across 7 suites; full mcp-server suite 287/287 green. The
+`write:agent-memory` capability declared in Phase 1 is correctly NOT
+consumed directly — settlement actions inherit auth from existing
+`sign:settlement + sign:cross_program:settlement+registry` caps; EVO
+learn is a side effect of the parent ix.
 ADR-129 (`docs/adr/ADR-129-evo-agent-memory-integration.md`,
 634 lines, Status: Proposed) scopes the integration concretely:
 
@@ -936,7 +964,9 @@ reference this doc rather than duplicating it.
 
 ### C5. Indexer redundancy + backfill plan
 
-**Status**: **Design landed** (2026-04-27, commits `7de9253` + `7886554`).
+**Status**: **Phase 1 scaffolding shipped** (2026-04-27, commit
+`606a4f1`); design via ADR-128 (commit `7886554`) supersedes ADR-127
+(commit `7de9253`).
 Two ADRs:
 
 - **ADR-128** (Proposed; **current target**) — PostgreSQL with
@@ -953,10 +983,22 @@ Two ADRs:
   Preserved as fallback if Postgres adoption is later judged too
   operationally expensive (10-25 minute RTO; no real PITR).
 
-Implementation PR not yet started; the two ADRs are the design
-substrate. The runner-up (SQLite + Litestream, Apache-2.0) is also
-documented in ADR-128 as the lowest-delta-from-current alternative
-with the tradeoff of no automatic failover.
+**Phase 1 scaffolding (commit `606a4f1`)**: pg 8.20.0 (MIT) + pg-mem
+3.0.14 devDep (no testcontainers); idempotent SQL migration mirroring
+all 7 SQLite tables 1:1 (no schema-mismatch surfaced); 12 dual-write
+sites in `src/indexer/index.ts` (cursor + events + 5 history tables
++ agents + tombstones); `LivePostgresStore` with `pg.Pool` connection
+pooling; `DisabledPostgresStore` no-op when `INDEXER_PG_URL` unset;
+fail-closed at module load on malformed URL (AUD-027 precedent). 24
+new tests across 6 suites (schema parity, idempotency primitive,
+cursor upsert, disabled-store, fail-closed validation, dual-write
+integration); 51/51 indexer tests green. Reads stay SQLite-only;
+Postgres is shadow-write only. Phase 2 (separate PR): flip reads to
+PG + deprecate SQLite write + remove dual-write.
+
+The runner-up (SQLite + Litestream, Apache-2.0) is also documented
+in ADR-128 as the lowest-delta-from-current alternative with the
+tradeoff of no automatic failover.
 
 Original spec retained for reference:
 
@@ -966,10 +1008,28 @@ Original spec retained for reference:
 
 ### C6. x402-relay scale plan (ADR-126)
 
+**Status**: **Phase 1 scaffolding shipped** (2026-04-27, commit
+`4064b20`); design via ADR-126 (commit `7886554`).
+
 The current single-instance design tops out at ~30 sigs/sec sustained
 (per AUD-209's bound). If launch throughput could exceed that, ship
 the Redis-backed dedup BEFORE first paying customer. Design captured
 in `docs/adr/ADR-126-x402-relay-horizontal-scale.md` (Status: Proposed).
+
+**Phase 1 scaffolding (commit `4064b20`)**: ioredis 5.10.1 + ioredis-
+mock 8.9.0 (no testcontainers); new `redis-dedup.ts` module with
+`LiveRedisDedup` (`SET aep:redeemed:<sig> <instanceId> NX PX <ttl>`)
++ `DisabledRedisDedup` no-op + `createRedisDedup` factory; three
+dual-write sites in `processPaymentRequest` (top of function before
+in-memory check; verify-failed `releaseRedeemed`; happy-path commit);
+maintained counter key (`aep:redeemed:count`) for O(1) saturation
+check rather than O(N) SCAN MATCH; AUD-027 fail-closed on malformed
+`RELAY_REDIS_URL`; AUD-208 in-flight-verify collapsing semantics
+preserved. 22 new subtests; 38/38 x402-relay suite green. In-memory
+map remains authoritative when Redis disabled (byte-identical to
+pre-ADR-126 behavior). Phase 2 (separate PR): flip reads to Redis +
+remove in-memory map + close the counter-drift via Redis 7.4
+hash-field TTL or keyspace-notification subscriber.
 
 ---
 
