@@ -89,6 +89,9 @@ logs/
 # files are scratch artifacts and must not be committed accidentally.
 governance/attestation-log/
 
+# Vercel CLI link metadata (per-machine, contains org/project IDs)
+.vercel/
+
 # Local Claude Code session scaffolding (per-machine, not shared)
 .claude/agents/dual-mode/
 .claude/agents/hive-mind/
