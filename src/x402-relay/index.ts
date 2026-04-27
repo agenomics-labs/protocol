@@ -111,7 +111,12 @@ function pruneRedeemedSignatures(): void {
   // the burst" rather than "an unexpired signature was silently
   // evicted, allowing replay."
 }
-setInterval(pruneRedeemedSignatures, SIGNATURE_TTL_MS);
+// `.unref()` so the timer does not by itself keep the event loop alive.
+// In production the HTTP listener keeps the process up; this matters only
+// for in-process tests (AUD-209) that import the module, exercise it, and
+// then `server.close()` — without `unref` the orphaned interval would hang
+// the test runner past the last subtest.
+setInterval(pruneRedeemedSignatures, SIGNATURE_TTL_MS).unref();
 
 interface PaymentVerification {
   valid: boolean;
@@ -273,7 +278,7 @@ function pruneRateLimitMap(): void {
     rateLimitMap.delete(oldest);
   }
 }
-setInterval(pruneRateLimitMap, RATE_LIMIT_WINDOW_MS);
+setInterval(pruneRateLimitMap, RATE_LIMIT_WINDOW_MS).unref();
 
 function rateLimit(req: Request, res: Response, next: NextFunction): void {
   // S-offchain-01: `req.ip` is correct only when `trust proxy` is set
@@ -517,7 +522,12 @@ app.get("/protected", requirePayment, (req: Request, res: Response) => {
   });
 });
 
-app.listen(PORT, () => {
+// Captured so tests that import this module in-process can `.close()` the
+// listener in their teardown — otherwise the open server keeps the Node
+// event loop alive and the test runner hangs at exit. Production callers
+// continue to receive the same `app.listen` semantics; the only behavioral
+// change is that the returned `http.Server` is now reachable.
+const server = app.listen(PORT, () => {
   logger.info(
     {
       port: PORT,
@@ -539,11 +549,27 @@ function __resetRedemptionStateForTests(): void {
   inFlightVerify.clear();
 }
 
+// AUD-209 test hook: pre-populate the redemption map with `count` synthetic
+// entries so the saturation guard (`redeemedSignatures.size >=
+// MAX_REDEEMED_SIGNATURES`) can be exercised without driving 100k real
+// `processPaymentRequest` calls through the verifier path. Each entry's
+// expiry is set far in the future so the pruner does not race the test by
+// evicting them as TTL-expired. Not part of the public runtime contract —
+// production callers must never invoke this.
+function __fillRedemptionStateForTests(count: number): void {
+  const farFuture = Date.now() + SIGNATURE_TTL_MS * 10;
+  for (let i = 0; i < count; i++) {
+    redeemedSignatures.set(`__test-fill-${i}`, farFuture);
+  }
+}
+
 export {
   app,
+  server,
   requirePayment,
   verifyPaymentOnChain,
   verifyAccessToken,
   processPaymentRequest,
   __resetRedemptionStateForTests,
+  __fillRedemptionStateForTests,
 };
