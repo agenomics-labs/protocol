@@ -18,6 +18,30 @@ pub struct RegisterAgent<'info> {
     /// find it already initialized with an incremented `nonce` value.
     ///
     /// Space: 8 (discriminator) + 8 (nonce u64) = 16 bytes.
+    ///
+    /// AUD-122 (cycle-2 architectural note): `init_if_needed` carries an
+    /// inherent reinit-attack-surface concern, which AUD-036 (cycle-1)
+    /// originally flagged. With PR-J, `OwnerNonce.nonce` becomes a
+    /// load-bearing input to vault init (the vault stores it as
+    /// `vault.profile_nonce` and uses it to derive the `agent_profile`
+    /// PDA on every `execute_*` transfer). The mitigation today is
+    /// twofold:
+    ///   1. The `seeds` constraint binds the account address to
+    ///      `authority.key()` — no one can substitute a different
+    ///      authority's `OwnerNonce`.
+    ///   2. Solana's per-tx ordering guarantees prevent re-init within
+    ///      a single transaction. `register_agent` and `initialize_vault`
+    ///      both being in the same tx (the standard onboarding flow)
+    ///      removes the cross-tx race surface.
+    ///
+    /// A determined attacker who sequenced `register_agent` (creating
+    /// OwnerNonce), then somehow got `OwnerNonce` re-initialized
+    /// off-band, then called `initialize_vault` would observe a
+    /// stale nonce in the vault. Today this requires an account-replay
+    /// vector that does not exist in mainnet's tx-ordering model. If a
+    /// future change loosens the seeds constraint or the ordering
+    /// invariant, replace `init_if_needed` with explicit `init` +
+    /// version-tag-on-existing handling — tracked as cycle-3 follow-up.
     #[account(
         init_if_needed,
         payer = authority,

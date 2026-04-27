@@ -661,6 +661,18 @@ pub mod agent_registry {
     /// in the program log. Designed to be called once per migration window
     /// over a bounded batch (Solana's tx-level account cap is 64).
     ///
+    /// AUD-115 (cycle-2 operational note): in the post-PR-H/PR-G flow the
+    /// program deploys → upgrade-authority signer initializes
+    /// `ProtocolConfig` → `ProtocolConfig.authority` becomes the
+    /// upgrade-authority key. The architectural design (per AUD-005) keeps
+    /// the two formally independent so a future
+    /// `rotate_protocol_config_authority` ix can move governance off the
+    /// upgrade key. Until that ix ships, "the upgrade authority is the
+    /// protocol authority" in operational practice — every call to this
+    /// handler must be co-signed by whichever multisig holds the upgrade
+    /// authority. Document this in the mainnet-deploy runbook so the team
+    /// does not discover the coupling at first invariant-sweep call.
+    ///
     /// Authorization: signer must equal `ProtocolConfig.authority` (Settlement
     /// program). The context binds `protocol_config` via seeds; this handler
     /// reads the `authority: Pubkey` field at offset 8 (after the 8-byte
