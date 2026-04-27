@@ -96,23 +96,6 @@
           ]
         },
         {
-          "name": "provider_profile",
-          "docs": [
-            "Must match seeds [escrow.provider, \"agent-profile\"] under the Registry program.",
-            "ADR-097: The nonce component is not validated here (UncheckedAccount); the",
-            "Registry's `ProposeReputationDelta` context validates the PDA using `owner_nonce`."
-          ],
-          "writable": true
-        },
-        {
-          "name": "provider_owner_nonce",
-          "docs": [
-            "ADR-097: The provider's `OwnerNonce` account — required by the Registry's",
-            "`ProposeReputationDelta` context to re-derive the `agent_profile` PDA.",
-            "Seeded by `[escrow.provider, b\"owner-nonce\"]` under the Registry program."
-          ]
-        },
-        {
           "name": "provider_authority",
           "docs": [
             "SEC-1 (per ADR-068, Accepted 2026-04-23): external authority anchor for the",
@@ -120,10 +103,166 @@
             "`agent_profile` via `has_one = authority` + seeds derived from",
             "`authority.key()` instead of the self-referential",
             "`agent_profile.authority`. Feeding `escrow.provider` here is the",
-            "correct match: `provider_profile`'s seeds above are already pinned",
-            "to `escrow.provider`, so an attacker cannot substitute a different",
-            "profile."
+            "correct match: `provider_profile`'s seeds (declared after this",
+            "field, deliberately) are also pinned to `escrow.provider`.",
+            "",
+            "AUD-117 (cycle-2): hoisted ahead of `provider_owner_nonce` and",
+            "`provider_profile` so those fields can reference its key in their",
+            "seeds constraints. Anchor processes fields in declaration order."
           ]
+        },
+        {
+          "name": "provider_owner_nonce",
+          "docs": [
+            "AUD-117 (cycle-2): defense-in-depth seeds constraint. The Registry's",
+            "`ProposeReputationDelta` context already validates this PDA, but",
+            "re-deriving here at the Settlement boundary protects against any",
+            "future Registry refactor that loosens its seeds discipline. Typed",
+            "as `Account<'info, OwnerNonce>` so the `.nonce` field is accessible",
+            "to the `provider_profile` seeds below."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "provider_authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114,
+                  45,
+                  110,
+                  111,
+                  110,
+                  99,
+                  101
+                ]
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                111,
+                73,
+                24,
+                49,
+                52,
+                190,
+                122,
+                126,
+                199,
+                7,
+                50,
+                181,
+                32,
+                117,
+                156,
+                113,
+                255,
+                182,
+                22,
+                1,
+                161,
+                163,
+                9,
+                83,
+                218,
+                73,
+                82,
+                170,
+                121,
+                206,
+                92,
+                240
+              ]
+            }
+          }
+        },
+        {
+          "name": "provider_profile",
+          "docs": [
+            "Provider's AgentProfile PDA — re-derived at the Settlement boundary",
+            "using `[provider_authority, b\"agent-profile\", provider_owner_nonce.nonce]`",
+            "(mirrors the Registry's `ProposeReputationDelta` seeds with",
+            "`seeds::program = AGENT_REGISTRY_PROGRAM_ID`).",
+            "",
+            "AUD-117 (cycle-2): defense-in-depth — the same PDA derivation that",
+            "the Registry CPI's seeds constraint will perform on the callee side."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "provider_authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "provider_owner_nonce.nonce",
+                "account": "OwnerNonce"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                111,
+                73,
+                24,
+                49,
+                52,
+                190,
+                122,
+                126,
+                199,
+                7,
+                50,
+                181,
+                32,
+                117,
+                156,
+                113,
+                255,
+                182,
+                22,
+                1,
+                161,
+                163,
+                9,
+                83,
+                218,
+                73,
+                82,
+                170,
+                121,
+                206,
+                92,
+                240
+              ]
+            }
+          }
         },
         {
           "name": "settlement_authority",
@@ -764,24 +903,155 @@
           ]
         },
         {
-          "name": "provider_profile",
+          "name": "provider_authority",
           "docs": [
-            "ADR-097: Registry validates the PDA using owner_nonce."
-          ],
-          "writable": true
+            "SEC-1 (per ADR-068, Accepted 2026-04-23): external authority anchor for the",
+            "Registry `ProposeReputationDelta` CPI. See `ApproveMilestone` for rationale.",
+            "AUD-117 (cycle-2): hoisted ahead of provider_owner_nonce + provider_profile."
+          ]
         },
         {
           "name": "provider_owner_nonce",
           "docs": [
-            "ADR-097: Provider's OwnerNonce account. Passed to Registry CPI."
-          ]
+            "AUD-117 (cycle-2): defense-in-depth seeds constraint."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "provider_authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114,
+                  45,
+                  110,
+                  111,
+                  110,
+                  99,
+                  101
+                ]
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                111,
+                73,
+                24,
+                49,
+                52,
+                190,
+                122,
+                126,
+                199,
+                7,
+                50,
+                181,
+                32,
+                117,
+                156,
+                113,
+                255,
+                182,
+                22,
+                1,
+                161,
+                163,
+                9,
+                83,
+                218,
+                73,
+                82,
+                170,
+                121,
+                206,
+                92,
+                240
+              ]
+            }
+          }
         },
         {
-          "name": "provider_authority",
+          "name": "provider_profile",
           "docs": [
-            "SEC-1 (per ADR-068, Accepted 2026-04-23): external authority anchor for the",
-            "Registry `ProposeReputationDelta` CPI. See `ApproveMilestone` for rationale."
-          ]
+            "AUD-117 (cycle-2): re-derive provider_profile PDA at the Settlement",
+            "boundary; seeds mirror the Registry's ProposeReputationDelta context."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "provider_authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "provider_owner_nonce.nonce",
+                "account": "OwnerNonce"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                111,
+                73,
+                24,
+                49,
+                52,
+                190,
+                122,
+                126,
+                199,
+                7,
+                50,
+                181,
+                32,
+                117,
+                156,
+                113,
+                255,
+                182,
+                22,
+                1,
+                161,
+                163,
+                9,
+                83,
+                218,
+                73,
+                82,
+                170,
+                121,
+                206,
+                92,
+                240
+              ]
+            }
+          }
         },
         {
           "name": "settlement_authority",
@@ -1171,24 +1441,156 @@
           ]
         },
         {
-          "name": "provider_profile",
+          "name": "provider_authority",
           "docs": [
-            "ADR-097: Registry validates the PDA using owner_nonce."
-          ],
-          "writable": true
+            "SEC-1 (per ADR-068, Accepted 2026-04-23): external authority anchor for the",
+            "Registry `ProposeReputationDelta` CPI. See `ApproveMilestone` for rationale.",
+            "AUD-117 (cycle-2): hoisted ahead of provider_owner_nonce + provider_profile."
+          ]
         },
         {
           "name": "provider_owner_nonce",
           "docs": [
-            "ADR-097: Provider's OwnerNonce account. Passed to Registry CPI."
-          ]
+            "AUD-117 (cycle-2): defense-in-depth seeds constraint on",
+            "provider_owner_nonce. See ApproveMilestone for rationale."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "provider_authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114,
+                  45,
+                  110,
+                  111,
+                  110,
+                  99,
+                  101
+                ]
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                111,
+                73,
+                24,
+                49,
+                52,
+                190,
+                122,
+                126,
+                199,
+                7,
+                50,
+                181,
+                32,
+                117,
+                156,
+                113,
+                255,
+                182,
+                22,
+                1,
+                161,
+                163,
+                9,
+                83,
+                218,
+                73,
+                82,
+                170,
+                121,
+                206,
+                92,
+                240
+              ]
+            }
+          }
         },
         {
-          "name": "provider_authority",
+          "name": "provider_profile",
           "docs": [
-            "SEC-1 (per ADR-068, Accepted 2026-04-23): external authority anchor for the",
-            "Registry `ProposeReputationDelta` CPI. See `ApproveMilestone` for rationale."
-          ]
+            "AUD-117 (cycle-2): re-derive provider_profile PDA at the Settlement",
+            "boundary using `[provider_authority, b\"agent-profile\", nonce]`."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "provider_authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "provider_owner_nonce.nonce",
+                "account": "OwnerNonce"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                111,
+                73,
+                24,
+                49,
+                52,
+                190,
+                122,
+                126,
+                199,
+                7,
+                50,
+                181,
+                32,
+                117,
+                156,
+                113,
+                255,
+                182,
+                22,
+                1,
+                161,
+                163,
+                9,
+                83,
+                218,
+                73,
+                82,
+                170,
+                121,
+                206,
+                92,
+                240
+              ]
+            }
+          }
         },
         {
           "name": "settlement_authority",
@@ -1348,24 +1750,155 @@
           ]
         },
         {
-          "name": "provider_profile",
+          "name": "provider_authority",
           "docs": [
-            "ADR-097: Registry validates the PDA using owner_nonce."
-          ],
-          "writable": true
+            "SEC-1 (per ADR-068, Accepted 2026-04-23): external authority anchor for the",
+            "Registry `ProposeReputationDelta` CPI. See `ApproveMilestone` for rationale.",
+            "AUD-117 (cycle-2): hoisted ahead of provider_owner_nonce + provider_profile."
+          ]
         },
         {
           "name": "provider_owner_nonce",
           "docs": [
-            "ADR-097: Provider's OwnerNonce account. Passed to Registry CPI."
-          ]
+            "AUD-117 (cycle-2): defense-in-depth seeds constraint."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "provider_authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114,
+                  45,
+                  110,
+                  111,
+                  110,
+                  99,
+                  101
+                ]
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                111,
+                73,
+                24,
+                49,
+                52,
+                190,
+                122,
+                126,
+                199,
+                7,
+                50,
+                181,
+                32,
+                117,
+                156,
+                113,
+                255,
+                182,
+                22,
+                1,
+                161,
+                163,
+                9,
+                83,
+                218,
+                73,
+                82,
+                170,
+                121,
+                206,
+                92,
+                240
+              ]
+            }
+          }
         },
         {
-          "name": "provider_authority",
+          "name": "provider_profile",
           "docs": [
-            "SEC-1 (per ADR-068, Accepted 2026-04-23): external authority anchor for the",
-            "Registry `ProposeReputationDelta` CPI. See `ApproveMilestone` for rationale."
-          ]
+            "AUD-117 (cycle-2): re-derive provider_profile PDA at the Settlement",
+            "boundary; seeds mirror the Registry's ProposeReputationDelta context."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "provider_authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "provider_owner_nonce.nonce",
+                "account": "OwnerNonce"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                111,
+                73,
+                24,
+                49,
+                52,
+                190,
+                122,
+                126,
+                199,
+                7,
+                50,
+                181,
+                32,
+                117,
+                156,
+                113,
+                255,
+                182,
+                22,
+                1,
+                161,
+                163,
+                9,
+                83,
+                218,
+                73,
+                82,
+                170,
+                121,
+                206,
+                92,
+                240
+              ]
+            }
+          }
         },
         {
           "name": "settlement_authority",
@@ -1617,6 +2150,19 @@
     }
   ],
   "accounts": [
+    {
+      "name": "OwnerNonce",
+      "discriminator": [
+        44,
+        80,
+        115,
+        195,
+        32,
+        200,
+        29,
+        163
+      ]
+    },
     {
       "name": "ProtocolConfig",
       "discriminator": [
@@ -2286,6 +2832,30 @@
           },
           {
             "name": "task_id",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OwnerNonce",
+      "docs": [
+        "ADR-097: Per-owner monotonic nonce counter.",
+        "",
+        "Seeded by `[authority.key().as_ref(), b\"owner-nonce\"]`.",
+        "Initialized to 0 on first `register_agent` (via `init_if_needed`).",
+        "Incremented by `deregister_agent` so subsequent registrations derive a",
+        "different `agent_profile` PDA, preventing Sybil address reuse."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "nonce",
+            "docs": [
+              "The current nonce value. Used as part of the `agent_profile` PDA seed",
+              "on `register_agent`. Incremented on `deregister_agent`."
+            ],
             "type": "u64"
           }
         ]
