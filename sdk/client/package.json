@@ -21,7 +21,7 @@
   },
   "license": "UNLICENSED",
   "dependencies": {
-    "@agenomics/idl": "file:../idl",
+    "@agenomics/idl": "*",
     "@coral-xyz/anchor": "^0.31.0",
     "@solana/web3.js": "^1.95.0"
   },
