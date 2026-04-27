@@ -1,0 +1,78 @@
+# .github/allowed-signers
+#
+# SSH allowed-signers file consumed by `git tag -v` for `v*-mainnet`
+# tag verification. Bound at gate time via:
+#
+#     git -c gpg.format=ssh \
+#         -c gpg.ssh.allowedSignersFile=.github/allowed-signers \
+#         tag -v "$TAG"
+#
+# This is the source-controlled allowlist that closes the gap surfaced
+# by docs/PRE_MAINNET_ROADMAP.md §2 A4: prior to this file landing, the
+# de-facto allowlist was whichever SSH/GPG keys happened to live in the
+# self-hosted runner's keyring at job-runtime — operator state, not
+# source-controlled, not reviewable in PR. Per A5, the workflow + the
+# `preflight_signed_tag` gate in `scripts/mainnet-deploy.sh` both
+# consult this file and refuse to proceed when it is empty or carries
+# only the placeholder lines below. Adding or removing a maintainer
+# signing key is therefore a reviewable PR diff against this file, not
+# a runner-host shell mutation.
+#
+# Lifecycle (mirrors `config/AUDIT_REPORT_HASHES` per ADR-080 §2):
+#   1. This file ships with `TODO_PLACEHOLDER_*` principals and a
+#      sentinel SSH key blob. The placeholder lines are syntactically
+#      well-formed enough that `ssh-keygen -Y find-principals` will
+#      parse them, but the workflow + script gates explicitly refuse
+#      any line whose principal begins with `TODO_PLACEHOLDER_` so the
+#      `v*-mainnet` tag gate fails closed until real keys are in.
+#   2. The multisig provisioning ceremony (Pre-Mainnet Roadmap §2 A2)
+#      produces named maintainer keypairs. Each maintainer entitled to
+#      sign a `v*-mainnet` tag generates an SSH signing key locally
+#      (Ed25519 recommended; `ssh-keygen -t ed25519 -C "<principal>"`)
+#      and uploads the public key to GitHub under
+#      Settings → SSH and GPG keys → "New SSH key" with key type
+#      "Signing Key" so the `Verified` badge surface and the workflow
+#      gate stay in lockstep (A4 Q4).
+#   3. A maintainer commits the new key to this file in a dedicated PR
+#      (one PR per key, never amended after merge). The PR title
+#      references the key holder and the `Pre-Mainnet Roadmap` A5
+#      identifier.
+#   4. To rotate or revoke a key, open a PR that removes the matching
+#      line. The next `v*-mainnet` tag push verifies against the
+#      post-removal allowlist; tags signed under the removed key fail
+#      closed at the workflow gate even if previously valid.
+#
+# File format (per `man 1 ssh-keygen`, "ALLOWED SIGNERS" section):
+#
+#     <principal> [namespaces="<csv>"] <ssh-key-type> <base64-pubkey> [comment]
+#
+# The `<principal>` is the user identity bound to the signature — for
+# `git tag -v` purposes it is matched against the tag's signer email
+# (or, for SSH-signed tags, the principal recorded at sign time). Use
+# the maintainer's GitHub no-reply email or a project-scoped principal
+# (e.g. `<user>@agenomics-labs.maintainer`) — pick one convention per
+# project and stay consistent so tag-vs-allowlist matching is
+# deterministic.
+#
+# Optional `namespaces="git"` restricts a key to git signatures only
+# (not generic ssh-sign uses). Recommended for least-privilege.
+#
+# Lines beginning with `#` and blank lines are ignored by ssh-keygen.
+# The workflow + script preflight strip them before the placeholder
+# check so this header does not trip the gate.
+#
+# ---- PLACEHOLDER ENTRIES (refuse to deploy until replaced) ----------
+#
+# The two entries below are intentional sentinels. They demonstrate the
+# expected shape and let the parser exercise both the well-formed-line
+# path and the placeholder-rejection path, but the workflow + script
+# gates fail closed against any line whose principal begins with
+# `TODO_PLACEHOLDER_`. Replace these with real maintainer keys via the
+# lifecycle above before the first `v*-mainnet` tag push.
+#
+# The pubkey blob below is `AAAA…AAAA` (all-zeros-base64), the SSH-key
+# analogue of the all-zero SHA-256 sentinel used in
+# `config/AUDIT_REPORT_HASHES`. It will not validate any real signature
+# — that is the point.
+TODO_PLACEHOLDER_maintainer_1 namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA placeholder-key-replace-before-mainnet
+TODO_PLACEHOLDER_maintainer_2 namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA placeholder-key-replace-before-mainnet
