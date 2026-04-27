@@ -1,0 +1,17 @@
+# honggfuzz build artifacts (instrumented binaries + libhfuzz.a)
+hfuzz_target/
+
+# honggfuzz campaign workspace (corpus, crash reproducers, stats).
+# Crash reproducers SHOULD be committed under a curated regression
+# directory once triaged; the raw workspace is too noisy to track.
+hfuzz_workspace/
+
+# Cargo build artifacts (this dir is a standalone workspace, so cargo
+# drops a target/ here as well).
+target/
+
+# NOTE: Cargo.lock IS committed (not ignored). The fuzz crate is a
+# binary workspace, and reproducible fuzz runs require lockfile
+# pinning of honggfuzz, arbitrary, and the agent-registry path dep
+# transitive graph. Same convention as `programs/*/Cargo.lock` (root
+# `Cargo.lock` is the source of truth for those).

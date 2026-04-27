@@ -1,0 +1,93 @@
+# B8 Phase 1: fuzz harness for the protocol's highest-value seams.
+#
+# Framework: honggfuzz-rs (the spec's named fallback for trident).
+#
+# Why honggfuzz over trident for Phase 1:
+#   1. Trident 0.12.0 *is* Anchor-0.31.1-compatible (the cpi example
+#      under Ackee-Blockchain/trident pins anchor-lang = "0.31.1"), so
+#      the framework gap the roadmap hedges against does not exist.
+#   2. Installing `trident-cli` requires `pkg-config + libssl-dev` system
+#      packages (reqwest -> openssl-sys -> pkg-config). Neither is present
+#      on the dev host that landed Phase 1, and a sudo prompt is not
+#      available to install them.
+#   3. Trident's manually-guided model needs an auto-generated `types.rs`
+#      produced by `trident init`, which is a `trident-cli`-only operation.
+#      Hand-writing that boilerplate (~300 LoC of borsh codecs that mirror
+#      the IDL) is brittle and defeats the IDL-driven advantage.
+#   4. Honggfuzz-rs is a plain cargo crate. Its `build.rs` only invokes
+#      the C build (which needs `binutils-dev` for `bfd.h`) when the
+#      `CARGO_HONGGFUZZ_TARGET_DIR` env var is set, i.e. when the operator
+#      runs `cargo hfuzz build` / `cargo hfuzz run`. Plain `cargo check`
+#      and `cargo build` (no `hfuzz`) do *not* fire the C path, so the
+#      Rust harness can be smoke-validated in any env.
+#
+# Deferred to a later phase:
+#   - Trident-driven IDL fuzzing (Phase 2 candidate, gated on operator
+#     deciding the install cost is worth the IDL coverage upside).
+#   - Full Solana runtime fuzz of the on-chain handler (Phase 2/3).
+#
+# This Phase 1 target fuzzes the pure-state policy logic of
+# `propose_reputation_delta` — the (delta, reason) accept/reject gate
+# (AUD-108), the slash-count escalation path (AUD-100), and the
+# closed-state-machine invariant (AUD-001/002) — by reimplementing the
+# handler body in pure Rust and asserting equivalence on every iteration.
+# This is defense-in-depth: a divergence between the harness model and
+# the on-chain handler indicates a regression in either side.
+
+[package]
+name = "aep-fuzz"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "B8 Phase 1: honggfuzz-rs harness for AEP on-chain policy seams"
+
+# Standalone workspace — keep the fuzz crate out of the on-chain workspace
+# so `anchor build` and `cargo test -p agent-registry` are unaffected.
+# The path dependency below pulls in `agent-registry` for the SOLE purpose
+# of consuming its public constants and types (AgentStatus, MAX_DELTA_PER_CALL,
+# MAX_REPUTATION_SCORE, assert_valid_profile, ReputationStake). No
+# instructions are invoked.
+[workspace]
+
+[dependencies]
+# honggfuzz-rs: the harness runtime. The `fuzz!` macro injects the
+# libhfuzz instrumentation hook; the wrapper binary loops indefinitely
+# pulling random byte buffers from the honggfuzz mutation engine.
+honggfuzz = "0.5.60"
+
+# arbitrary: structured input synthesis. Lets the harness pull typed
+# (i16, u8, u8, u64, u8) tuples from a single byte stream rather than
+# manually parsing slices, which dramatically improves mutation locality
+# and crash reproducibility.
+arbitrary = { version = "1", features = ["derive"] }
+
+# agent-registry: for `AgentStatus`, `ReputationStake`, `assert_valid_profile`,
+# and the `MAX_*` policy constants. The `no-entrypoint` feature strips the
+# `entrypoint!` macro so we don't link a second BPF program entry; same
+# pattern Settlement uses to depend on registry as a CPI-only library.
+[dependencies.agent-registry]
+path = "../programs/agent-registry"
+features = ["no-entrypoint"]
+
+# anchor-lang: the registry's account/state types use Anchor derives.
+# Pulled transitively, but pinned explicitly so a registry version bump
+# doesn't silently shift the harness's API surface.
+[dependencies.anchor-lang]
+version = "0.31.1"
+
+# Each fuzz target is its own bin. Phase 1 ships one; Phase 2 will add
+# `seeds_validating_contexts`, `update_provider_reputation_cpi`, and
+# `update_status_accept_list` (see README §Phase 2 plan).
+[[bin]]
+name = "propose_reputation_delta"
+path = "fuzz_targets/propose_reputation_delta.rs"
+
+# Release profile mirrors the on-chain workspace so the harness's
+# arithmetic semantics match the deployed program (overflow-checks ON
+# is critical — a fuzz crash on debug-only overflow is the whole point).
+[profile.release]
+overflow-checks = true
+lto = false
+codegen-units = 1
+opt-level = 3
+debug = true  # honggfuzz needs debuginfo for crash reports
