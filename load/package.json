@@ -4,7 +4,8 @@
   "private": true,
   "description": "Operator-driven devnet load-test harness for AEP. Phase 1 of B9 (PRE_MAINNET_ROADMAP §3).",
   "scripts": {
-    "scenario:full-lifecycle": "tsx scenarios/full-lifecycle.ts"
+    "scenario:full-lifecycle": "tsx scenarios/full-lifecycle.ts",
+    "scenario:settlement-only": "tsx scenarios/settlement-only.ts"
   },
   "_comments": [
     "This package intentionally has NO `dependencies` block. The harness",

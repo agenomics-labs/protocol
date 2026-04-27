@@ -1,13 +1,21 @@
-# AEP load harness — Phase 1
+# AEP load harness
 
 Devnet (and localnet) load-test harness for the Agent Economy Protocol.
 Maps to **B9** of `docs/PRE_MAINNET_ROADMAP.md` §3 (MAINNET_CHECKLIST.md
 ADR-022 row).
 
-This directory ships the **Phase 1** scaffold: framework choice,
-directory layout, one validated end-to-end scenario, and the metrics
-schema operators consume. Phase 2 adds more scenarios; Phase 3 wires
-CI for operator-triggered (not per-PR) campaigns.
+Phase 1 (commit `4b7f2b2`) shipped the scaffold: framework choice,
+directory layout, the `full-lifecycle` end-to-end scenario, and the
+stable metrics schema operators consume. Phase 2 is in progress —
+adding scenarios that broaden the on-chain surface coverage. Phase 3
+wires CI for operator-triggered (not per-PR) campaigns.
+
+## Scenarios shipped
+
+| Scenario | Phase | Purpose |
+|---|---|---|
+| `full-lifecycle` | Phase 1 | End-to-end happy-path flow (register → vault init → escrow → settle). Per-flow agent provisioning. |
+| `settlement-only` | Phase 2 | Steady-state throughput on the settlement hot path against a pre-provisioned agent pool. Stresses post-AUD-117 Settlement-boundary seeds defense and post-AUD-209 indexer ingest pressure. |
 
 The harness mirrors the structure of `fuzz/` (B8 Phase 1, commit
 `e084713`): standalone subtree at the repo root, lightweight
@@ -16,7 +24,7 @@ explicitly framed as operator-driven events rather than CI gates.
 
 ---
 
-## Phase 1 scope (this PR)
+## Phase 1 scope (shipped, commit `4b7f2b2`)
 
 - **Framework**: TypeScript, executed via `tsx`. No new heavy
   dependencies — the harness reuses the root workspace's
@@ -131,6 +139,78 @@ Phase 2 adds scenarios that fire reason 1 (dispute_loss via
 
 ---
 
+## Scenario: `settlement-only`
+
+Phase 2's first scenario. Same four ix bucket shape as
+`full-lifecycle`'s settlement tail (`create_escrow`, `accept_task`,
+`submit_milestone`, `approve_milestone__includes_reputation_cpi`),
+but with two key differences:
+
+1. **Pre-provisioned pool**. `--pool-size=N` (client, provider) pairs
+   are registered + vault-initialised ONCE at startup. Pool
+   provisioning is NOT counted toward the per-ix metrics — it's
+   reported separately as setup wall time. The settlement-phase
+   buckets contain ONLY hot-path samples, so per-ix latency / CU
+   numbers are not polluted by `register_agent` / `initialize_vault`
+   overhead.
+2. **Same pair, many flows**. Workers acquire pairs round-robin from
+   the pool, run one settlement cycle, return the pair. The same
+   (client, provider) pair is reused across many flows with
+   monotonically increasing `task_id`s — the per-pair counter lives in
+   `lib/agent-pool.ts` and bumps on every `acquire()`. The escrow PDA
+   `["escrow", client, provider, task_id-le u64]` therefore lands on
+   distinct PDAs for every flow even when the (client, provider)
+   prefix is identical.
+
+### What it stresses
+
+- **Post-AUD-117 Settlement-boundary seeds defense**. Every
+  `approve_milestone` re-derives `provider_owner_nonce` and
+  `provider_profile` PDAs at the Settlement boundary (per the AUD-117
+  cross-program defense-in-depth in
+  `programs/settlement/src/contexts.rs`). Sustained concurrency
+  against a small pool of provider profiles is the closest
+  production-shape stress for that re-derivation path.
+- **Post-AUD-209 saturation guard**. High settlement throughput on
+  chain → high event-ingest pressure on the indexer / x402-relay
+  pipeline. The end-of-run `indexer-lag` field is the leading
+  indicator: bounded lag means ingest keeps up; unbounded lag is
+  exactly what AUD-209's saturation guard fails closed on. Operators
+  should track the lag number across rising `--concurrency` to find
+  the protocol's true headroom.
+
+### Operator-driven campaign
+
+```bash
+cd load
+SOLANA_RPC_URL=https://api.devnet.solana.com \
+  npx tsx scenarios/settlement-only.ts \
+    --rpc-url=https://api.devnet.solana.com \
+    --wallet=/path/to/funded-devnet-wallet.json \
+    --pool-size=20 \
+    --concurrency=20 \
+    --flows=100000 \
+    --duration=14400 \
+    --airdrop-sol=2 \
+    --indexer-db=/abs/path/to/aep-events.db
+```
+
+Notes:
+
+- `--concurrency` is capped at `--pool-size` at runtime (extra
+  workers would just block on `pool.acquire()`). Size them together.
+- `--pool-size=20` × `expected flows / pair = ceil(flows / pool)` =
+  the initial per-pair mint supply. The pool also performs JIT
+  top-ups when the per-pair client balance falls below 5 flows worth,
+  so the campaign survives accidental over-budgeting; top-ups are not
+  counted as ixes.
+- For a meaningful AUD-209 pressure test, also run the indexer
+  against the same RPC during the campaign — the end-of-run
+  `indexer-lag` field is the value that distinguishes "throughput
+  number is real" from "throughput number is bottlenecked by ingest".
+
+---
+
 ## File layout
 
 ```
@@ -142,10 +222,12 @@ load/
 ├── lib/
 │   ├── pdas.ts                                  # PDA derivations + program IDs
 │   ├── agent-factory.ts                         # provisionAgent + provisionFlowTokens
+│   ├── agent-pool.ts                            # Phase 2: pre-provisioned pool + per-pair nonce
 │   ├── metrics-collector.ts                     # latency / CU / RPC-error capture + JSON flush
 │   └── indexer-lag.ts                           # chain head ↔ cursor SQLite read
 └── scenarios/
-    └── full-lifecycle.ts                        # Phase 1 scenario driver
+    ├── full-lifecycle.ts                        # Phase 1 scenario driver
+    └── settlement-only.ts                       # Phase 2 steady-state driver
 ```
 
 Generated artifacts (gitignored):
@@ -302,35 +384,30 @@ Phase 3 can rely on the field paths above.
 
 ## Phase 2 plan
 
-Add scenarios that broaden the on-chain surface coverage:
+Add scenarios that broaden the on-chain surface coverage. The first
+of these — `settlement-only` — has shipped (see "Scenarios shipped"
+above and "Scenario: settlement-only" below). Remaining work:
 
-1. **`settlement-only.ts`** — assumes a pre-provisioned pool of
-   registered agents (created once by an init script), then runs
-   create_escrow / accept_task / submit_milestone / approve_milestone
-   in tight loops without re-registering. This is the realistic
-   throughput model for an established protocol; Phase 1's
-   per-flow registration dominates the wall clock and isn't
-   representative of steady-state.
-2. **`dispute-flow.ts`** — exercises the
+1. **`dispute-flow.ts`** — exercises the
    `resolve_dispute` path (CPI reason=1) against a population of
    already-active escrows. Latency-shape on dispute resolution is
    different from happy-path approve.
-3. **`expiry-flow.ts`** — exercises `expire_escrow` (CPI
+2. **`expiry-flow.ts`** — exercises `expire_escrow` (CPI
    reason=2) for escrows past their deadline. Validates the AUD-105
    deadline-boundary path holds under concurrent expiry pressure.
-4. **`vault-spending.ts`** — exercises `execute_transfer` (the
+3. **`vault-spending.ts`** — exercises `execute_transfer` (the
    ADR-095 vault hot-path) with the post-ADR-124 identity binding.
    Different rate-limit shape from the lifecycle ixes; needs its
    own SLO targets.
-5. **`reputation-only.ts`** — fires the three CPI reason codes
+4. **`reputation-only.ts`** — fires the three CPI reason codes
    (0/1/2) in a configurable mix and measures the per-CPI latency
    distribution against a stable agent-profile population.
 
 Each Phase 2 scenario is a new file under `scenarios/`. Shared
-helpers go in `lib/` — `agent-factory.ts` is already factored to
-support pre-provisioned agent pools (Phase 2 will add a
-`pool.ts` that loads / persists a population to a JSON file so
-multiple scenarios can run against the same population).
+helpers go in `lib/`. `settlement-only` introduced `lib/agent-pool.ts`
+(per-pair task-id tracking + JIT mint top-up); the remaining
+scenarios reuse that pool shape rather than each one re-implementing
+pre-provisioning.
 
 ### Phase 2 dependencies (likely additions)
 
