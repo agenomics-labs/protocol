@@ -73,6 +73,11 @@ const ALL_CAPABILITIES: Capability[] = [
   "admin:settlement",
   "admin:registry",
   "admin:vault",
+  // AUD-206 (cycle-3, roadmap §3 B2): protocol-governance claim required
+  // to invoke `verify_protocol_invariants` through the MCP surface. The
+  // on-chain ix is already gated by `ProtocolConfig.authority`; this
+  // claim is the default-deny wall at the MCP boundary (ADR-058 §4).
+  "gov:invariant:check",
 ];
 
 /**
