@@ -8,6 +8,12 @@ use anchor_lang::prelude::*;
 use anchor_lang::solana_program::bpf_loader_upgradeable;
 use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token::{Mint, Token, TokenAccount};
+// AUD-117 (cycle-2): cross-program defense-in-depth. Type-importing
+// OwnerNonce lets the Settlement contexts re-derive `provider_profile`'s
+// PDA *at the Settlement boundary* (using `provider_owner_nonce.nonce` as
+// the third seed component), instead of trusting the Registry's seeds
+// constraint as the sole validator. Same protection layered twice.
+use agent_registry::state::OwnerNonce;
 
 use crate::state::*;
 use crate::errors::*;
@@ -166,31 +172,53 @@ pub struct ApproveMilestone<'info> {
     )]
     pub registry_program: UncheckedAccount<'info>,
 
-    /// CHECK: Provider's AgentProfile PDA — validated via cross-program PDA derivation.
-    /// Must match seeds [escrow.provider, "agent-profile"] under the Registry program.
-    /// ADR-097: The nonce component is not validated here (UncheckedAccount); the
-    /// Registry's `ProposeReputationDelta` context validates the PDA using `owner_nonce`.
-    /// CHECK: Passed as-is to the Registry CPI; Registry re-derives the address.
-    #[account(mut)]
-    pub provider_profile: UncheckedAccount<'info>,
-
-    /// ADR-097: The provider's `OwnerNonce` account — required by the Registry's
-    /// `ProposeReputationDelta` context to re-derive the `agent_profile` PDA.
-    /// Seeded by `[escrow.provider, b"owner-nonce"]` under the Registry program.
-    /// CHECK: Passed as-is to the Registry CPI; Registry validates via seeds constraint.
-    pub provider_owner_nonce: UncheckedAccount<'info>,
-
     /// SEC-1 (per ADR-068, Accepted 2026-04-23): external authority anchor for the
     /// Registry's `ProposeReputationDelta` CPI. The Registry now pins
     /// `agent_profile` via `has_one = authority` + seeds derived from
     /// `authority.key()` instead of the self-referential
     /// `agent_profile.authority`. Feeding `escrow.provider` here is the
-    /// correct match: `provider_profile`'s seeds above are already pinned
-    /// to `escrow.provider`, so an attacker cannot substitute a different
-    /// profile.
+    /// correct match: `provider_profile`'s seeds (declared after this
+    /// field, deliberately) are also pinned to `escrow.provider`.
+    ///
+    /// AUD-117 (cycle-2): hoisted ahead of `provider_owner_nonce` and
+    /// `provider_profile` so those fields can reference its key in their
+    /// seeds constraints. Anchor processes fields in declaration order.
     /// CHECK: address-constrained to `escrow.provider`.
     #[account(address = escrow.provider)]
     pub provider_authority: UncheckedAccount<'info>,
+
+    /// AUD-117 (cycle-2): defense-in-depth seeds constraint. The Registry's
+    /// `ProposeReputationDelta` context already validates this PDA, but
+    /// re-deriving here at the Settlement boundary protects against any
+    /// future Registry refactor that loosens its seeds discipline. Typed
+    /// as `Account<'info, OwnerNonce>` so the `.nonce` field is accessible
+    /// to the `provider_profile` seeds below.
+    #[account(
+        seeds = [provider_authority.key().as_ref(), b"owner-nonce"],
+        bump,
+        seeds::program = AGENT_REGISTRY_PROGRAM_ID,
+    )]
+    pub provider_owner_nonce: Account<'info, OwnerNonce>,
+
+    /// Provider's AgentProfile PDA — re-derived at the Settlement boundary
+    /// using `[provider_authority, b"agent-profile", provider_owner_nonce.nonce]`
+    /// (mirrors the Registry's `ProposeReputationDelta` seeds with
+    /// `seeds::program = AGENT_REGISTRY_PROGRAM_ID`).
+    ///
+    /// AUD-117 (cycle-2): defense-in-depth — the same PDA derivation that
+    /// the Registry CPI's seeds constraint will perform on the callee side.
+    /// CHECK: validated by the seeds constraint above.
+    #[account(
+        mut,
+        seeds = [
+            provider_authority.key().as_ref(),
+            b"agent-profile",
+            &provider_owner_nonce.nonce.to_le_bytes(),
+        ],
+        bump,
+        seeds::program = AGENT_REGISTRY_PROGRAM_ID,
+    )]
+    pub provider_profile: UncheckedAccount<'info>,
 
     /// Settlement authority PDA — this program's signing authority for CPI calls.
     /// The Registry program verifies this PDA as a signer with seeds::program = SETTLEMENT_PROGRAM_ID.
@@ -303,20 +331,36 @@ pub struct ResolveDispute<'info> {
     )]
     pub registry_program: UncheckedAccount<'info>,
 
-    /// CHECK: Provider's AgentProfile PDA. Passed as-is to Registry CPI.
-    /// ADR-097: Registry validates the PDA using owner_nonce.
-    #[account(mut)]
-    pub provider_profile: UncheckedAccount<'info>,
-
-    /// ADR-097: Provider's OwnerNonce account. Passed to Registry CPI.
-    /// CHECK: Validated by Registry's ProposeReputationDelta seeds constraint.
-    pub provider_owner_nonce: UncheckedAccount<'info>,
-
     /// SEC-1 (per ADR-068, Accepted 2026-04-23): external authority anchor for the
     /// Registry `ProposeReputationDelta` CPI. See `ApproveMilestone` for rationale.
+    /// AUD-117 (cycle-2): hoisted ahead of provider_owner_nonce + provider_profile.
     /// CHECK: address-constrained to `escrow.provider`.
     #[account(address = escrow.provider)]
     pub provider_authority: UncheckedAccount<'info>,
+
+    /// AUD-117 (cycle-2): defense-in-depth seeds constraint on
+    /// provider_owner_nonce. See ApproveMilestone for rationale.
+    #[account(
+        seeds = [provider_authority.key().as_ref(), b"owner-nonce"],
+        bump,
+        seeds::program = AGENT_REGISTRY_PROGRAM_ID,
+    )]
+    pub provider_owner_nonce: Account<'info, OwnerNonce>,
+
+    /// AUD-117 (cycle-2): re-derive provider_profile PDA at the Settlement
+    /// boundary using `[provider_authority, b"agent-profile", nonce]`.
+    /// CHECK: validated by the seeds constraint above.
+    #[account(
+        mut,
+        seeds = [
+            provider_authority.key().as_ref(),
+            b"agent-profile",
+            &provider_owner_nonce.nonce.to_le_bytes(),
+        ],
+        bump,
+        seeds::program = AGENT_REGISTRY_PROGRAM_ID,
+    )]
+    pub provider_profile: UncheckedAccount<'info>,
 
     /// SEC-8 (per ADR-074, Accepted 2026-04-23): explicit `seeds::program = crate::ID`.
     /// CHECK: Settlement authority PDA for CPI signing.
@@ -369,20 +413,35 @@ pub struct ResolveDisputeTimeout<'info> {
     )]
     pub registry_program: UncheckedAccount<'info>,
 
-    /// CHECK: Provider's AgentProfile PDA. Passed as-is to Registry CPI.
-    /// ADR-097: Registry validates the PDA using owner_nonce.
-    #[account(mut)]
-    pub provider_profile: UncheckedAccount<'info>,
-
-    /// ADR-097: Provider's OwnerNonce account. Passed to Registry CPI.
-    /// CHECK: Validated by Registry's ProposeReputationDelta seeds constraint.
-    pub provider_owner_nonce: UncheckedAccount<'info>,
-
     /// SEC-1 (per ADR-068, Accepted 2026-04-23): external authority anchor for the
     /// Registry `ProposeReputationDelta` CPI. See `ApproveMilestone` for rationale.
+    /// AUD-117 (cycle-2): hoisted ahead of provider_owner_nonce + provider_profile.
     /// CHECK: address-constrained to `escrow.provider`.
     #[account(address = escrow.provider)]
     pub provider_authority: UncheckedAccount<'info>,
+
+    /// AUD-117 (cycle-2): defense-in-depth seeds constraint.
+    #[account(
+        seeds = [provider_authority.key().as_ref(), b"owner-nonce"],
+        bump,
+        seeds::program = AGENT_REGISTRY_PROGRAM_ID,
+    )]
+    pub provider_owner_nonce: Account<'info, OwnerNonce>,
+
+    /// AUD-117 (cycle-2): re-derive provider_profile PDA at the Settlement
+    /// boundary; seeds mirror the Registry's ProposeReputationDelta context.
+    /// CHECK: validated by the seeds constraint above.
+    #[account(
+        mut,
+        seeds = [
+            provider_authority.key().as_ref(),
+            b"agent-profile",
+            &provider_owner_nonce.nonce.to_le_bytes(),
+        ],
+        bump,
+        seeds::program = AGENT_REGISTRY_PROGRAM_ID,
+    )]
+    pub provider_profile: UncheckedAccount<'info>,
 
     /// SEC-8 (per ADR-074, Accepted 2026-04-23): explicit `seeds::program = crate::ID`.
     /// CHECK: Settlement authority PDA for CPI signing.
@@ -470,20 +529,35 @@ pub struct ExpireEscrow<'info> {
     )]
     pub registry_program: UncheckedAccount<'info>,
 
-    /// CHECK: Provider's AgentProfile PDA. Passed as-is to Registry CPI.
-    /// ADR-097: Registry validates the PDA using owner_nonce.
-    #[account(mut)]
-    pub provider_profile: UncheckedAccount<'info>,
-
-    /// ADR-097: Provider's OwnerNonce account. Passed to Registry CPI.
-    /// CHECK: Validated by Registry's ProposeReputationDelta seeds constraint.
-    pub provider_owner_nonce: UncheckedAccount<'info>,
-
     /// SEC-1 (per ADR-068, Accepted 2026-04-23): external authority anchor for the
     /// Registry `ProposeReputationDelta` CPI. See `ApproveMilestone` for rationale.
+    /// AUD-117 (cycle-2): hoisted ahead of provider_owner_nonce + provider_profile.
     /// CHECK: address-constrained to `escrow.provider`.
     #[account(address = escrow.provider)]
     pub provider_authority: UncheckedAccount<'info>,
+
+    /// AUD-117 (cycle-2): defense-in-depth seeds constraint.
+    #[account(
+        seeds = [provider_authority.key().as_ref(), b"owner-nonce"],
+        bump,
+        seeds::program = AGENT_REGISTRY_PROGRAM_ID,
+    )]
+    pub provider_owner_nonce: Account<'info, OwnerNonce>,
+
+    /// AUD-117 (cycle-2): re-derive provider_profile PDA at the Settlement
+    /// boundary; seeds mirror the Registry's ProposeReputationDelta context.
+    /// CHECK: validated by the seeds constraint above.
+    #[account(
+        mut,
+        seeds = [
+            provider_authority.key().as_ref(),
+            b"agent-profile",
+            &provider_owner_nonce.nonce.to_le_bytes(),
+        ],
+        bump,
+        seeds::program = AGENT_REGISTRY_PROGRAM_ID,
+    )]
+    pub provider_profile: UncheckedAccount<'info>,
 
     /// SEC-8 (per ADR-074, Accepted 2026-04-23): explicit `seeds::program = crate::ID`.
     /// CHECK: Settlement authority PDA for CPI signing.
