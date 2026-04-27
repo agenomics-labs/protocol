@@ -313,6 +313,23 @@ describe("ADR-058 Action pipeline", () => {
         if (!result.ok) assert.equal(result.error.code, "INVALID_INPUT");
       });
 
+      // AUD-210 (cycle-2): pin the `.refine(isValidPublicKey)` arm. The
+      // earlier "non-base58" and "too-short" cases above both fail
+      // `min(32)` first and never execute the refine. A 40-char string
+      // of all-`!` characters passes min(32) but is not valid base58
+      // and must fail at the refine. This test guards against a future
+      // change that drops the refine relying on min(32) alone.
+      it("rejects a 40-char non-base58 string at the .refine arm", async () => {
+        const ctx = ctxWith(["sign:vault"]);
+        const result = await actionRouter.dispatch(
+          "rotate_agent_identity",
+          { newAgentIdentity: "!".repeat(40) },
+          ctx,
+        );
+        assert.equal(result.ok, false);
+        if (!result.ok) assert.equal(result.error.code, "INVALID_INPUT");
+      });
+
       it("accepts a valid base58 pubkey and passes the input gate", async () => {
         // Schema-valid input must clear the input gate. The handler then
         // attempts an RPC call and fails because no wallet/RPC is wired in
