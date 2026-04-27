@@ -6,10 +6,17 @@ import * as assert from "node:assert/strict";
 import {
   ok,
   err,
-  wrap,
   defineAction,
 } from "../src/util/result.js";
 import type { Result } from "../src/util/result.js";
+// AUD-211 (cycle-2): `wrap` is intentionally NOT re-exported from
+// `../src/util/result.js` (the canonical action-runtime `wrap` returns
+// `Result<T, Error>`, which is structurally incompatible with the
+// AepError-shaped local wraps in `actions/{vault,reputation,settlement,registry}.ts`).
+// This test exercises the canonical `wrap` semantics directly against
+// its source-of-truth at `@agenomics/action-runtime`, preserving
+// coverage without re-introducing the discouraged re-export.
+import { wrap } from "@agenomics/action-runtime";
 
 describe("ADR-103 Result helpers (mcp-server/src/util/result.ts)", () => {
   describe("ok()", () => {
