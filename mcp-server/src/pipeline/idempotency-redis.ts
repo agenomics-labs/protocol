@@ -341,6 +341,19 @@ function deserializeResult<T>(raw: string): Result<T> {
   // Trust the payload — we wrote it ourselves. If parsing fails, surface
   // as an IDEMPOTENCY_VIOLATION rather than leaking a JSON error through
   // the Action<I, O> contract.
+  //
+  // AUD-212 (cycle-2 threat-model decision, documented 2026-04-26):
+  // payloads are stored unsigned. Tamper detection (HMAC of the
+  // serialized JSON, keyed by an env-supplied secret) was considered
+  // and explicitly deferred. Rationale: tampering requires Redis-write
+  // access, which already implies the Redis trust boundary has been
+  // breached. The threat model treats Redis as inside the trust
+  // boundary (operator-controlled, network-isolated). ADR-117 governs
+  // the Redis-isolation strategy; if a future deployment moves Redis
+  // outside that boundary (shared cluster, multi-tenant), this
+  // function becomes the right enforcement point and an HMAC wrapper
+  // around the JSON payload (keyed by `IDEMPOTENCY_HMAC_SECRET`) is
+  // the documented add. Tracked alongside ADR-117.
   try {
     return JSON.parse(raw) as Result<T>;
   } catch (e) {
