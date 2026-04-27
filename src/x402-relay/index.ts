@@ -1,6 +1,7 @@
 /** AEP x402 HTTP Payment Relay - verifies on-chain payments, issues JWT access tokens */
 import express, { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
+import * as crypto from "node:crypto";
 import { Connection, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { logger } from "./logger.js";
 
@@ -36,6 +37,61 @@ const JWT_ALGORITHM: jwt.Algorithm = "HS256";
 const TOKEN_EXPIRY_SECONDS = parseInt(process.env.TOKEN_EXPIRY || "3600", 10);
 const PAYMENT_RECIPIENT = process.env.PAYMENT_RECIPIENT || "";
 const REQUIRED_AMOUNT_SOL = parseFloat(process.env.REQUIRED_AMOUNT_SOL || "0.01");
+
+// ---------------------------------------------------------------------------
+// Admin / drain surface (POST /admin/drain, POST /admin/undrain,
+// GET /admin/status). See `docs/INCIDENT_RESPONSE.md` §4.4 / §4.5 for the
+// operator runbook context — gap #1 from the C2 incident playbook
+// (commit bbeb240): operators previously had no in-app way to stop
+// accepting new /pay requests during incident response and had to fall
+// back to coarse network-edge blocking that was asymmetric across
+// instances. Drain flips an internal flag so subsequent /pay calls
+// short-circuit with 503 BEFORE the saturation guard (AUD-209) and
+// BEFORE the RPC verify path. In-flight /pay requests already past the
+// gate run to completion — drain is graceful, not a circuit breaker.
+//
+// Auth model mirrors AUD-027:
+//   - `RELAY_ADMIN_TOKEN` MUST be set if drain/undrain are to be usable.
+//   - When set, the same 32-byte floor as JWT_SECRET applies (RFC 7518
+//     HS256 guidance; see AUD-027 comment above). The token is a static
+//     bearer secret protecting a privileged write surface, so the same
+//     entropy floor applies.
+//   - When UNSET, the relay still serves /pay normally — but
+//     POST /admin/drain and POST /admin/undrain return 503 with body
+//     `{ error: "ADMIN_TOKEN_NOT_CONFIGURED", ... }`. This is a
+//     deliberate divergence from JWT_SECRET's fatal-at-load behavior:
+//     drain is an opt-in operational capability, not a critical-path
+//     dependency. Failing closed (admin endpoints unreachable) is the
+//     security-correct default — silently leaving them unauthenticated
+//     would let any caller flip the relay into 503-everything mode.
+//   - `GET /admin/status` is always reachable (no auth) so dashboards
+//     and healthchecks can read the drain flag. When the admin token is
+//     unset, the response includes `adminTokenConfigured: false` so
+//     operators see the misconfiguration before they need to drain.
+// ---------------------------------------------------------------------------
+const RELAY_ADMIN_TOKEN_RAW = process.env.RELAY_ADMIN_TOKEN;
+const MIN_ADMIN_TOKEN_BYTES = 32;
+let RELAY_ADMIN_TOKEN: string | null = null;
+if (RELAY_ADMIN_TOKEN_RAW !== undefined && RELAY_ADMIN_TOKEN_RAW !== "") {
+  // Same length-floor + throw pattern as JWT_SECRET (AUD-027). Misconfig
+  // surfaces at module load, not on the first /admin/drain call mid-incident.
+  if (Buffer.byteLength(RELAY_ADMIN_TOKEN_RAW, "utf8") < MIN_ADMIN_TOKEN_BYTES) {
+    throw new Error(
+      `RELAY_ADMIN_TOKEN must be at least ${MIN_ADMIN_TOKEN_BYTES} bytes; got ${Buffer.byteLength(RELAY_ADMIN_TOKEN_RAW, "utf8")}.`,
+    );
+  }
+  RELAY_ADMIN_TOKEN = RELAY_ADMIN_TOKEN_RAW;
+}
+
+// Module state. Mutated only by POST /admin/drain and POST /admin/undrain.
+// Single-instance scope — same horizontal-scale caveat as
+// `redeemedSignatures` (see AUD-208 / ADR-126 comments below). Operators
+// running multiple relay instances behind a load balancer must drain
+// each instance individually (or front them with a coordinated drain
+// orchestrator). This matches the existing single-instance scope of
+// the AUD-208/AUD-209 dedup state and is deliberate: cross-instance
+// coordination is the ADR-126 horizontal-scale workstream.
+let draining = false;
 
 // S-offchain-01: Express's `req.ip` respects `X-Forwarded-For` only when
 // `trust proxy` is configured. With the default (off) and a real L7 proxy
@@ -304,6 +360,57 @@ function rateLimit(req: Request, res: Response, next: NextFunction): void {
   next();
 }
 
+/**
+ * Admin auth middleware. See the admin-surface header comment near the
+ * top of the file for full rationale.
+ *
+ * Three outcomes:
+ *   - RELAY_ADMIN_TOKEN unset           -> 503 ADMIN_TOKEN_NOT_CONFIGURED
+ *   - Bearer token missing or mismatch  -> 401 (uniform error to avoid
+ *                                          leaking whether the route
+ *                                          exists vs. token is wrong)
+ *   - Bearer token matches              -> next()
+ *
+ * Constant-time compare via `crypto.timingSafeEqual` to deny a timing
+ * oracle on the secret. Length-mismatch is checked before the compare
+ * (timingSafeEqual throws on unequal-length buffers).
+ */
+function requireAdmin(req: Request, res: Response, next: NextFunction): void {
+  if (RELAY_ADMIN_TOKEN === null) {
+    res.status(503).json({
+      error: "ADMIN_TOKEN_NOT_CONFIGURED",
+      details:
+        "RELAY_ADMIN_TOKEN env var is unset; admin endpoints are disabled. " +
+        "Set RELAY_ADMIN_TOKEN (>= 32 bytes) to enable drain/undrain.",
+    });
+    return;
+  }
+
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const presented = authHeader.substring(7);
+
+  // Length check before timingSafeEqual: the latter throws on unequal
+  // length, but the throw itself is fast — the timing leak is in the
+  // *comparison*. Returning early on length mismatch is fine because
+  // the secret length is fixed and known to the operator (the env var
+  // they configured); it is not secret-derived.
+  const presentedBuf = Buffer.from(presented, "utf8");
+  const expectedBuf = Buffer.from(RELAY_ADMIN_TOKEN, "utf8");
+  if (presentedBuf.length !== expectedBuf.length) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  if (!crypto.timingSafeEqual(presentedBuf, expectedBuf)) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  next();
+}
+
 const app = express();
 // S-offchain-01: Must be set BEFORE routes/middleware so `req.ip` resolves
 // consistently. Convert the env var through `parseTrustProxy` so integer
@@ -445,6 +552,20 @@ async function processPaymentRequest(
 }
 
 app.post("/pay", async (req: Request, res: Response) => {
+  // Drain gate (incident-response §4.4 / §4.5). Fires BEFORE input
+  // validation, BEFORE `processPaymentRequest`, and therefore BEFORE
+  // both the saturation check (AUD-209) and the on-chain RPC verify.
+  // The 503 body intentionally mirrors the saturation 503 shape (a
+  // single `error` field of `string`) so SDK clients with retry-on-503
+  // logic do not need a special case for drain. In-flight requests
+  // already past this line continue to completion — drain is graceful.
+  if (draining) {
+    res.status(503).json({
+      error: "Relay is draining; retry against another instance",
+    });
+    return;
+  }
+
   const { txSignature } = req.body;
 
   if (!txSignature || typeof txSignature !== "string") {
@@ -522,6 +643,49 @@ app.get("/protected", requirePayment, (req: Request, res: Response) => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Admin endpoints — see the admin-surface header comment near the top of
+// the file (and `docs/INCIDENT_RESPONSE.md` §4.4 / §4.5) for the operator
+// runbook context. Surface is intentionally minimal: drain, undrain,
+// status. Other admin facilities (key rotation, state dump, etc.) are
+// SEPARATE features and must not be added here.
+// ---------------------------------------------------------------------------
+
+app.post("/admin/drain", requireAdmin, (_req: Request, res: Response) => {
+  const wasAlready = draining;
+  draining = true;
+  // Structured log so the audit trail captures who drained when. The
+  // bearer token itself is NOT logged (it is the secret); we log only
+  // the transition. Operators correlate via the request log + their
+  // out-of-band record of which on-call ran the drain.
+  logger.warn(
+    { event: "admin_drain", was_already_draining: wasAlready },
+    "Relay drain ENABLED — new /pay requests will be 503'd",
+  );
+  res.json({ draining: true, wasAlreadyDraining: wasAlready });
+});
+
+app.post("/admin/undrain", requireAdmin, (_req: Request, res: Response) => {
+  const wasDraining = draining;
+  draining = false;
+  logger.warn(
+    { event: "admin_undrain", was_draining: wasDraining },
+    "Relay drain DISABLED — /pay requests will be served normally",
+  );
+  res.json({ draining: false, wasDraining });
+});
+
+app.get("/admin/status", (_req: Request, res: Response) => {
+  // Read-only. No auth required so dashboards and external healthchecks
+  // can poll without provisioning the admin token. The admin-token
+  // configured flag is exposed so operators see the misconfiguration
+  // (admin endpoints unusable) BEFORE they need to drain mid-incident.
+  res.json({
+    draining,
+    adminTokenConfigured: RELAY_ADMIN_TOKEN !== null,
+  });
+});
+
 // Captured so tests that import this module in-process can `.close()` the
 // listener in their teardown — otherwise the open server keeps the Node
 // event loop alive and the test runner hangs at exit. Production callers
@@ -534,7 +698,15 @@ const server = app.listen(PORT, () => {
       recipient: PAYMENT_RECIPIENT || "(not configured)",
       required_amount_sol: REQUIRED_AMOUNT_SOL,
       token_expiry_seconds: TOKEN_EXPIRY_SECONDS,
-      endpoints: ["POST /pay", "GET /verify", "GET /protected"],
+      endpoints: [
+        "POST /pay",
+        "GET /verify",
+        "GET /protected",
+        "POST /admin/drain",
+        "POST /admin/undrain",
+        "GET /admin/status",
+      ],
+      admin_token_configured: RELAY_ADMIN_TOKEN !== null,
     },
     "AEP x402 payment relay listening",
   );
@@ -563,13 +735,23 @@ function __fillRedemptionStateForTests(count: number): void {
   }
 }
 
+// Drain test hook: reset the drain flag so test subtests are isolated.
+// Not part of the public runtime contract — production callers must
+// never invoke this. Operators wanting to undrain go through
+// POST /admin/undrain (which is the auditable code path).
+function __resetDrainStateForTests(): void {
+  draining = false;
+}
+
 export {
   app,
   server,
   requirePayment,
+  requireAdmin,
   verifyPaymentOnChain,
   verifyAccessToken,
   processPaymentRequest,
   __resetRedemptionStateForTests,
   __fillRedemptionStateForTests,
+  __resetDrainStateForTests,
 };
