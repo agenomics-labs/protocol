@@ -370,6 +370,34 @@ export async function handleVaultTokenTransfer(args: Record<string, unknown>) {
  *
  * Rotation is a pure key-swap: balances, policies, daily-spend counters,
  * and rate-limit counters are intentionally preserved.
+ *
+ * AUD-200 / ADR-124 (cycle-3, symmetric closure of init): the on-chain
+ * `update_agent_identity` now requires a 64-byte Ed25519 signature from
+ * the holder of the new `agent_identity` private key over
+ * `vault_identity_bind_message(authority, new_agent_identity)`, paired
+ * with an `Ed25519Program::verify` instruction in the same transaction.
+ * Mirrors the init flow handled by `handleCreateVault` exactly.
+ *
+ * Two operator flows are supported (parallel to `handleCreateVault`):
+ *
+ *   1. **Self-bind** (default) — caller does NOT supply
+ *      `newAgentIdentitySecretKey`; the handler treats the loaded wallet as
+ *      both the vault `authority` AND the new `agent_identity`, and uses
+ *      the wallet's secret key to sign the bind message. The
+ *      `newAgentIdentity` argument MUST equal `wallet.publicKey` in this
+ *      mode (checked, not silently overridden, so an operator typo
+ *      surfaces immediately).
+ *
+ *   2. **Operator-managed** — caller supplies `newAgentIdentitySecretKey`
+ *      (base58 64-byte secret key OR `number[64]`) for a distinct new
+ *      hot keypair. The handler decodes it, verifies the derived pubkey
+ *      matches the supplied `newAgentIdentity` arg, and signs the bind
+ *      message locally. Secret material does NOT leave this process —
+ *      only the resulting 64-byte signature is sent on-chain.
+ *
+ * As with `handleCreateVault`, a "signature-only" mode (caller pre-signs)
+ * is intentionally unsupported because mismatches between caller-pre-signed
+ * bytes and the derived bind message are a common source of bugs.
  */
 export async function handleRotateAgentIdentity(args: Record<string, unknown>) {
   const newAgentIdentity = parsePublicKey(requireString(args, "newAgentIdentity"));
@@ -378,17 +406,61 @@ export async function handleRotateAgentIdentity(args: Record<string, unknown>) {
   const program = getVaultProgram();
   const [vaultPDA] = deriveVaultPDA(wallet.publicKey);
 
+  // AUD-200 / ADR-124: resolve the new agent_identity signer (mirrors
+  // `handleCreateVault`'s two-flow resolution exactly).
+  let newAgentIdentitySigner: Keypair;
+  if (args.newAgentIdentitySecretKey !== undefined) {
+    // Operator-managed flow.
+    newAgentIdentitySigner = decodeAgentIdentitySecret(
+      args.newAgentIdentitySecretKey,
+    );
+    if (!newAgentIdentitySigner.publicKey.equals(newAgentIdentity)) {
+      throw new Error(
+        `newAgentIdentitySecretKey decodes to pubkey ${newAgentIdentitySigner.publicKey.toBase58()}, ` +
+          `which does not match the supplied newAgentIdentity ${newAgentIdentity.toBase58()}. ` +
+          "Either pass a matching secret key or omit it to fall back to the wallet self-bind path.",
+      );
+    }
+  } else {
+    // Self-bind flow (typical dev/test case where the wallet is also the
+    // new agent_identity).
+    if (!wallet.publicKey.equals(newAgentIdentity)) {
+      throw new Error(
+        `newAgentIdentity ${newAgentIdentity.toBase58()} does not match the wallet pubkey ` +
+          `${wallet.publicKey.toBase58()}, but newAgentIdentitySecretKey was not supplied. ` +
+          "Either supply the new agent_identity secret key (base58 or number[64]) or pass " +
+          "the wallet pubkey as newAgentIdentity for the self-bind flow.",
+      );
+    }
+    newAgentIdentitySigner = wallet;
+  }
+
+  const bindMessage = vaultIdentityBindMessage(wallet.publicKey, newAgentIdentity);
+  // Sign with noble (matches the Rust ed25519 precompile's expected signature
+  // shape exactly). Solana `Keypair.secretKey` is `[seed(32) || pubkey(32)]`;
+  // EdDSA wants the 32-byte seed.
+  const signature = Buffer.from(
+    ed25519.sign(bindMessage, newAgentIdentitySigner.secretKey.slice(0, 32)),
+  );
+  const precompileIx = Ed25519Program.createInstructionWithPublicKey({
+    publicKey: newAgentIdentity.toBuffer(),
+    message: bindMessage,
+    signature,
+  });
+
   // Fetch current state so we can return the rotated-from key alongside the
   // rotated-to key — useful for operator audit logs.
   const vaultBefore = await program.account.vault.fetch(vaultPDA);
   const oldAgentIdentity = vaultBefore.agentIdentity.toBase58();
 
   const sig = await program.methods
-    .updateAgentIdentity(newAgentIdentity)
+    .updateAgentIdentity(newAgentIdentity, Array.from(signature))
     .accountsPartial({
       vault: vaultPDA,
       authority: wallet.publicKey,
+      instructionsSysvar: SYSVAR_INSTRUCTIONS_PUBKEY,
     })
+    .preInstructions([precompileIx])
     .signers([wallet])
     .rpc();
 

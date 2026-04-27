@@ -200,13 +200,82 @@ pub fn update_policy(
 /// (Anchor zero-fills new fields at the end of the account on first
 /// post-upgrade deserialize), so their first rotation post-upgrade is
 /// unrestricted; subsequent rotations are gated.
+///
+/// AUD-200 / ADR-124 (cycle-3, symmetric closure of the init-leg fix):
+///
+/// **Threat closed at the protocol level**: pre-AUD-200, the rotation
+/// handler bound `new_agent_identity` from a caller-supplied `Pubkey` with
+/// NO proof-of-control — the same threat ADR-124 closed at
+/// `initialize_vault` was wide open at rotation. A compromised authority
+/// could wait out the 24h cooldown, rotate to an attacker-controlled key
+/// (no key-control proof required), and drain the vault under spending
+/// policy via the freshly-bound hot key.
+///
+/// **Path-(a) mechanism** (mirrors `initialize_vault` exactly):
+///
+///   1. The caller computes `vault_identity_bind_message(authority,
+///      new_agent_identity)` (a 32-byte SHA-256 over the same
+///      vault-specific domain tag used at init — see `lib.rs`).
+///   2. The holder of `new_agent_identity`'s private key produces a
+///      64-byte Ed25519 signature over that message.
+///   3. The caller prepends an `Ed25519Program::verify` instruction to
+///      the transaction with the inline pubkey / signature / message bytes.
+///   4. This handler calls `identity_bind::verify_ed25519_precompile`
+///      BEFORE the rate-limit check, scanning the Instructions sysvar for
+///      the neighbouring ed25519-program ix and asserting its inline
+///      values equal the supplied `new_agent_identity` /
+///      `new_agent_identity_signature` /
+///      `vault_identity_bind_message(authority, new_agent_identity)`.
+///
+/// The verify call runs FIRST so a rejected proof-of-control leaves vault
+/// state (including `last_rotation_at`) untouched — checks-effects-
+/// interactions, and importantly: a failed verify does NOT consume the 24h
+/// rotation slot. The runtime verifies the precompile signature itself
+/// for free at pre-execution time; the on-chain handler only does the
+/// introspection comparison (cheap).
+///
+/// **Domain tag is identical to init's**: the same
+/// `VAULT_IDENTITY_BIND_DOMAIN` byte string covers both init and rotation
+/// because both surfaces are binding `(authority, agent_identity)` for
+/// the *same* vault. Replay across surfaces is not a concern: an init
+/// signature replayed against rotation would still require the original
+/// authority's tx-signing key, and rotation only changes
+/// `vault.agent_identity` (not authority), so the bound tuple matches the
+/// legitimate state transition the signature was produced for.
+///
+/// **Errors raised** (reused from the init flow — same surface, same
+/// failure modes, no new variants):
+///   - `MissingAgentIdentityBindSignature` if no neighbouring ed25519
+///     precompile ix is found.
+///   - `AgentIdentityBindSignatureMismatch` if the precompile ix is
+///     present but its inline pubkey / signature / message bytes do not
+///     match the supplied values (or the precompile data is malformed).
 pub fn update_agent_identity(
     ctx: Context<UpdateAgentIdentity>,
     new_agent_identity: Pubkey,
+    new_agent_identity_signature: [u8; 64],
 ) -> Result<()> {
     /// Minimum interval between two successive `update_agent_identity`
     /// calls on the same vault (24h, expressed in seconds).
     const MIN_ROTATION_INTERVAL_SECS: i64 = 24 * 60 * 60;
+
+    // AUD-200 / ADR-124 (symmetric): proof-of-control over the candidate
+    // `new_agent_identity` runs FIRST. A rejected proof leaves vault state
+    // untouched — including `last_rotation_at`, so a failed verify does
+    // not burn the 24h rotation slot. Cheap pure-hash bind-message
+    // construction; precompile-introspection comparison is delegated to
+    // the vendored helper in `lib.rs` (same call shape as
+    // `initialize_vault`).
+    let expected_message = crate::vault_identity_bind_message(
+        &ctx.accounts.authority.key(),
+        &new_agent_identity,
+    );
+    crate::identity_bind::verify_ed25519_precompile(
+        &ctx.accounts.instructions_sysvar.to_account_info(),
+        &new_agent_identity,
+        &expected_message,
+        &new_agent_identity_signature,
+    )?;
 
     let now = Clock::get()?.unix_timestamp;
     let vault = &mut ctx.accounts.vault;
