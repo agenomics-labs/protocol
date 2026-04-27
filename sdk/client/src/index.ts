@@ -44,7 +44,11 @@ import { getProgramIds } from "@agenomics/idl";
 // Re-export program clients
 // ---------------------------------------------------------------------------
 
-export { AgentRegistryClient } from "./registry.js";
+export {
+  AgentRegistryClient,
+  MAX_REPUTATION_SCORE,
+  clampReputationScore,
+} from "./registry.js";
 export { AgentVaultClient } from "./vault.js";
 export { SettlementClient } from "./settlement.js";
 
