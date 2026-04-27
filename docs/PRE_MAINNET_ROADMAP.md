@@ -812,7 +812,12 @@ ADRs landed during cycle-2 (referenced by tracks):
 
 ## 8. Open questions to resolve before Week 1
 
-These need owners before kicking off:
+These need owners before kicking off. As of 2026-04-26, A4's GPG
+signed-tag allowlist gap (originally surfaced as a sixth open question
+during the cycle-2 → cycle-3 hand-off) is **closed** by A5 above —
+`.github/allowed-signers` is the source-controlled allowlist and the
+workflow + script consult it via `gpg.ssh.allowedSignersFile`. The
+remaining open questions are:
 
 1. **Audit firm**: who, by when. Negotiate scope to include the cycle-2
    diffs (last ~30 commits to `programs/`).
@@ -821,6 +826,23 @@ These need owners before kicking off:
    is week-1 work or week-3 work.
 4. **Initial agents at launch**: drives whether B1 (ADR-124) is week-1
    work or week-3 work — high-balance launch agents make it week-1.
+   B1 itself is **Done** (2026-04-26); this question still drives the
+   answer to #6 below by quantifying the blast-radius cost of an
+   `initialize_protocol_config` mis-bind on launch day.
 5. **Indexer SLO**: drives C5 (single-instance vs HA pair).
+6. **Ship `rotate_protocol_config_authority` pre-mainnet?** —
+   **Resolved by ADR-125**: defer the on-chain rotation instruction
+   to the first post-launch governance cycle (Option δ for the launch
+   window). The C4 runbook (`docs/PROTOCOL_AUTHORITY_OPERATIONS.md`)
+   is the operator-facing closure of AUD-115; ADR-125 is the
+   architectural deferral record. When rotation eventually ships, the
+   ADR commits to Option β (2-step propose-then-accept). This question
+   stays in §8 as a status pointer, not as a live decision: the
+   resolution is in the ADR and the C4 runbook §6 will be updated to
+   reference ADR-125 in a separate small PR. **No new Track-B item is
+   added** — the deferral is the decision, not a code task.
 
-Resolve these in the Week-0 kickoff before spawning parallel sessions.
+Resolve questions 1-5 in the Week-0 kickoff before spawning parallel
+sessions. Question 6 is resolved; revisit only if A2's multisig
+membership decision (#2) materially changes the threat model the ADR
+rests on.
