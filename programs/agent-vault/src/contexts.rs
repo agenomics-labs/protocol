@@ -104,8 +104,8 @@ pub struct ManageAllowlist<'info> {
 
 /// ADR-069 (SEC-2): Context for rotating `vault.agent_identity`.
 ///
-/// `agent_identity` is a **hot key**: it is supplied by the authority at
-/// `initialize_vault` with no on-chain validation, and it is one of two keys
+/// `agent_identity` is a **hot key**: at init it is bound via an Ed25519
+/// proof-of-control (ADR-124 / AUD-116 path-a), and it is one of two keys
 /// (alongside `authority`) accepted as a signer for `execute_transfer` /
 /// `execute_token_transfer`. Compromise of the off-chain agent-runtime key
 /// bound to `agent_identity` means an attacker can drain up to the daily cap
@@ -116,6 +116,18 @@ pub struct ManageAllowlist<'info> {
 /// context with no multisig requirement. The threat model assumes `authority`
 /// is the human-custodied root of trust; forcing multisig would defeat the
 /// fast-rotation design goal (see ADR-069 Alternatives Considered).
+///
+/// AUD-200 (cycle-3, symmetric closure of ADR-124): the rotation surface
+/// previously accepted any caller-supplied `Pubkey` as the new
+/// `agent_identity` with no proof-of-control — exactly the threat ADR-124
+/// closed at `initialize_vault` was wide open here. A compromised authority
+/// could rotate to an attacker key after the 24h cooldown, then drain via
+/// the daily cap. The rotation handler now requires the same Ed25519
+/// precompile pattern as init (`verify_ed25519_precompile` over
+/// `vault_identity_bind_message(authority, new_agent_identity)`), so the
+/// `instructions_sysvar` is added to this context. The new account is
+/// appended AFTER `authority` to keep the on-wire account-order break at
+/// the end (lower migration friction for existing callers).
 #[derive(Accounts)]
 pub struct UpdateAgentIdentity<'info> {
     #[account(
@@ -127,6 +139,20 @@ pub struct UpdateAgentIdentity<'info> {
     pub vault: Account<'info, Vault>,
 
     pub authority: Signer<'info>,
+
+    /// AUD-200 / ADR-124 (path-a, symmetric): Instructions sysvar — read-only,
+    /// address-pinned to the canonical sysvar pubkey. Used by
+    /// `identity_bind::verify_ed25519_precompile` to introspect the paired
+    /// `Ed25519Program::verify` instruction in the same transaction. The
+    /// caller MUST include an ed25519-program sig-verify instruction
+    /// covering `vault_identity_bind_message(authority, new_agent_identity)`
+    /// signed by `new_agent_identity` — this proves control of the candidate
+    /// hot key at rotation time, closing the AUD-200 mis-bind seam at
+    /// rotation that mirrors AUD-116 at init.
+    /// CHECK: address-pinned to `sysvar::instructions::ID`; only the
+    /// canonical sysvar account satisfies the constraint.
+    #[account(address = anchor_lang::solana_program::sysvar::instructions::ID)]
+    pub instructions_sysvar: UncheckedAccount<'info>,
 }
 
 #[derive(Accounts)]

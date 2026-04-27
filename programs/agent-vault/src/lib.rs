@@ -133,11 +133,27 @@ pub mod agent_vault {
     /// Emits `AgentIdentityUpdated { vault, old_identity, new_identity }`.
     /// Does not touch balances, policies, daily-spend counters, or rate-limit
     /// counters — rotation is a pure key-swap.
+    ///
+    /// AUD-200 / ADR-124 (cycle-3, symmetric closure of init): the rotation
+    /// handler now requires the SAME Ed25519 proof-of-control pattern as
+    /// `initialize_vault`. The caller MUST prepend an `Ed25519Program::verify`
+    /// instruction in the same transaction covering
+    /// `vault_identity_bind_message(authority, new_agent_identity)` signed
+    /// by the holder of `new_agent_identity`'s private key, and pass the
+    /// resulting 64-byte signature as `new_agent_identity_signature`. This
+    /// closes the AUD-200 mis-bind seam at rotation that mirrors AUD-116
+    /// at init: a compromised authority can no longer rotate to an attacker
+    /// key it does not control after the 24h cooldown.
     pub fn update_agent_identity(
         ctx: Context<UpdateAgentIdentity>,
         new_agent_identity: Pubkey,
+        new_agent_identity_signature: [u8; 64],
     ) -> Result<()> {
-        instructions::update_agent_identity(ctx, new_agent_identity)
+        instructions::update_agent_identity(
+            ctx,
+            new_agent_identity,
+            new_agent_identity_signature,
+        )
     }
 
     /// Adds a token to the vault's allowlist with per-mint `per_tx_limit` and

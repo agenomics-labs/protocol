@@ -324,8 +324,40 @@ const zPubkey = z
     message: "expected base58-encoded Solana public key",
   });
 
+// AUD-200 / ADR-124 (path-a, symmetric closure of init): the on-chain
+// `update_agent_identity` now requires an Ed25519 proof-of-control over the
+// new `agent_identity`. The optional `newAgentIdentitySecretKey` field
+// accepts the same union-of-shapes the init flow accepts (base58 string or
+// number[64]); the schema reuses the validator the create-vault action uses
+// so the boundary contract stays in lockstep across the two surfaces.
+const newAgentIdentitySecretKeySchema = z
+  .union([
+    z
+      .string()
+      .min(80, {
+        message:
+          "newAgentIdentitySecretKey base58 string is too short for a 64-byte secret",
+      })
+      .max(96, {
+        message:
+          "newAgentIdentitySecretKey base58 string is too long for a 64-byte secret",
+      }),
+    z
+      .array(z.number().int().min(0).max(255))
+      .length(64, {
+        message:
+          "newAgentIdentitySecretKey array must contain exactly 64 byte values (0..255)",
+      }),
+  ])
+  .optional();
+
 const rotateAgentIdentityInput = {
   newAgentIdentity: zPubkey,
+  // AUD-200 / ADR-124: optional. When omitted, the handler self-binds (new
+  // agent_identity == wallet pubkey). When supplied, the handler uses the
+  // secret key to produce the bind signature locally; the secret never
+  // leaves the process. See `handleRotateAgentIdentity` for the full flow.
+  newAgentIdentitySecretKey: newAgentIdentitySecretKeySchema,
 } as const;
 
 export const rotateAgentIdentityAction: Action<
@@ -341,7 +373,12 @@ export const rotateAgentIdentityAction: Action<
     "runtime or on a routine cadence (suggested: 90 days). Rotation is a pure " +
     "key-swap — balances, policies, daily-spend counters, and rate-limit " +
     "counters are preserved. Only the vault `authority` (verified via `has_one` " +
-    "on the on-chain context) can rotate.",
+    "on the on-chain context) can rotate. " +
+    "AUD-200 / ADR-124 (cycle-3): the on-chain handler now requires an Ed25519 " +
+    "proof-of-control signature from the holder of `newAgentIdentity`'s private " +
+    "key (symmetric closure of the init-leg fix). Pass `newAgentIdentitySecretKey` " +
+    "(base58 or number[64]) to bind a distinct hot key, or omit it to self-bind " +
+    "to the wallet pubkey (newAgentIdentity must equal wallet.publicKey in that mode).",
   inputSchema: rotateAgentIdentityInput,
   outputSchema: z.unknown(),
   similes: ["rotate hot key", "rotate agent key", "rotate agent identity"],

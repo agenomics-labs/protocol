@@ -121,14 +121,33 @@ export const updateVaultPolicyTool: Tool = {
 export const rotateAgentIdentityTool: Tool = {
   name: "rotate_agent_identity",
   description:
-    "Rotate the vault's `agent_identity` hot key (ADR-069 / AUD-015). `agent_identity` is the off-chain agent runtime's signing key, distinct from the human-custodied `authority`; it should be rotated on suspected compromise of the agent runtime or on a routine cadence (suggested: 90 days). Rotation is a pure key-swap — balances, policies, daily-spend counters, and rate-limit counters are preserved. Only the vault `authority` (verified via `has_one` on the on-chain context) can rotate.",
+    "Rotate the vault's `agent_identity` hot key (ADR-069 / AUD-015). `agent_identity` is the off-chain agent runtime's signing key, distinct from the human-custodied `authority`; it should be rotated on suspected compromise of the agent runtime or on a routine cadence (suggested: 90 days). Rotation is a pure key-swap — balances, policies, daily-spend counters, and rate-limit counters are preserved. Only the vault `authority` (verified via `has_one` on the on-chain context) can rotate. AUD-200 / ADR-124 (cycle-3, symmetric closure of init): the on-chain handler now requires an Ed25519 proof-of-control signature from the holder of `newAgentIdentity`'s private key. Pass `newAgentIdentitySecretKey` (base58 or number[64]) to bind a distinct hot key, or omit it to self-bind to the wallet pubkey (newAgentIdentity must equal wallet.publicKey in that mode).",
   inputSchema: {
     type: "object",
     properties: {
       newAgentIdentity: {
         type: "string",
         description:
-          "Base58-encoded Solana public key of the new agent_identity hot key. Must be a valid pubkey; on-chain accepts any valid curve point (no further validation by design — see ADR-069).",
+          "Base58-encoded Solana public key of the new agent_identity hot key. Must be a valid pubkey; on-chain requires an Ed25519 proof-of-control signature over `vault_identity_bind_message(authority, newAgentIdentity)` (see `newAgentIdentitySecretKey`).",
+      },
+      newAgentIdentitySecretKey: {
+        oneOf: [
+          {
+            type: "string",
+            description:
+              "Base58-encoded 64-byte Solana secret key for the new agent_identity. Decoded server-side and used to sign the bind message; never sent on-chain.",
+          },
+          {
+            type: "array",
+            items: { type: "integer", minimum: 0, maximum: 255 },
+            minItems: 64,
+            maxItems: 64,
+            description:
+              "JSON-style number[64] secret key for the new agent_identity. Same usage as the base58 form.",
+          },
+        ],
+        description:
+          "AUD-200 / ADR-124: optional. Base58 string or number[64] secret key for the new agent_identity. Required when `newAgentIdentity` differs from the wallet pubkey (operator-managed flow). Omit for self-bind (wallet IS the new agent_identity).",
       },
     },
     required: ["newAgentIdentity"],

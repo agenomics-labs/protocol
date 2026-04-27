@@ -160,6 +160,69 @@ describe("Agent Vault Tests", () => {
       .rpc();
   }
 
+  /**
+   * AUD-200 / ADR-124 (cycle-3, symmetric closure of init): build the bind
+   * proof for `update_agent_identity` and call it. Mirrors
+   * `initVaultWithBindProof` exactly — the on-chain handler reuses the same
+   * `vault_identity_bind_message(authority, new_agent_identity)` shape and
+   * the same `verify_ed25519_precompile` introspection.
+   *
+   * `signer` defaults to `args.authority` but can be overridden so callers
+   * can exercise the non-authority rejection path while still building a
+   * well-formed precompile (so the failure isolates to `has_one`, not
+   * `MissingAgentIdentityBindSignature`).
+   */
+  async function rotateWithBindProof(args: {
+    authority: Keypair;
+    newAgentIdentity: Keypair;
+    vaultPda: PublicKey;
+    signer?: Keypair;
+    /** Override the message signed (for negative tests). */
+    overrideMessage?: Buffer;
+    /** Override the keypair that signs the bind message. */
+    overrideSigningKeypair?: Keypair;
+    /** Skip prepending the precompile ix (negative test). */
+    omitPrecompile?: boolean;
+  }): Promise<string> {
+    const message =
+      args.overrideMessage ??
+      vaultIdentityBindMessage(
+        args.authority.publicKey,
+        args.newAgentIdentity.publicKey
+      );
+    const signingKeypair = args.overrideSigningKeypair ?? args.newAgentIdentity;
+    const signature = signBindMessage(message, signingKeypair);
+    const precompileIx = bindProofIx(
+      // The precompile pubkey/message MUST match what the handler will
+      // compare against when overrides are not in play. When testing the
+      // wrong-signer path, the on-chain pubkey is the candidate
+      // (`newAgentIdentity`) but the bytes inside the precompile reflect
+      // the actually-signing keypair, so the runtime would reject the tx
+      // before the handler runs. To exercise the *handler-side*
+      // mismatch surface, callers should override `overrideMessage`
+      // (different domain / inputs) OR pass `overrideSigningKeypair` AND
+      // shift the precompile-pubkey to the actual signer (so the
+      // runtime verifies, but the handler sees a pubkey-mismatch).
+      (args.overrideSigningKeypair ?? args.newAgentIdentity).publicKey,
+      message,
+      signature
+    );
+    const builder = program.methods
+      .updateAgentIdentity(
+        args.newAgentIdentity.publicKey,
+        Array.from(signature)
+      )
+      .accounts({
+        vault: args.vaultPda,
+        authority: args.authority.publicKey,
+        instructionsSysvar: SYSVAR_INSTRUCTIONS_PUBKEY,
+      });
+    const txBuilder = args.omitPrecompile
+      ? builder
+      : builder.preInstructions([precompileIx]);
+    return txBuilder.signers([args.signer ?? args.authority]).rpc();
+  }
+
   // ADR-097: owner-nonce PDA `[authority, b"owner-nonce"]` in the registry
   // program. Needed for every `register_agent` call in test setup.
   function deriveOwnerNoncePDA(authority: PublicKey): [PublicKey, number] {
@@ -1570,15 +1633,16 @@ describe("Agent Vault Tests", () => {
     });
 
     it("should reject update_agent_identity from non-authority", async () => {
+      // AUD-200: well-formed bind proof so the failure isolates to `has_one`
+      // (not `MissingAgentIdentityBindSignature`). The runtime verifies the
+      // precompile, then the handler rejects on the authority mismatch.
       try {
-        await program.methods
-          .updateAgentIdentity(rotNewAgentId.publicKey)
-          .accounts({
-            vault: rotVaultPda,
-            authority: rotUnauthorized.publicKey,
-          })
-          .signers([rotUnauthorized])
-          .rpc();
+        await rotateWithBindProof({
+          authority: rotUnauthorized,
+          newAgentIdentity: rotNewAgentId,
+          vaultPda: rotVaultPda,
+          // signer defaults to the (wrong) authority — same as before.
+        });
         expect.fail("Expected non-authority rotation to fail");
       } catch (error: any) {
         expect(error).to.exist;
@@ -1610,15 +1674,13 @@ describe("Agent Vault Tests", () => {
         .signers([rotOldAgentId])
         .rpc();
 
-      // Rotate
-      await program.methods
-        .updateAgentIdentity(rotNewAgentId.publicKey)
-        .accounts({
-          vault: rotVaultPda,
-          authority: rotAuthority.publicKey,
-        })
-        .signers([rotAuthority])
-        .rpc();
+      // AUD-200: Rotate via the new bind-proof helper (Ed25519 precompile +
+      // signature over `vault_identity_bind_message(authority, new_agent_id)`).
+      await rotateWithBindProof({
+        authority: rotAuthority,
+        newAgentIdentity: rotNewAgentId,
+        vaultPda: rotVaultPda,
+      });
 
       const vaultAccount = await program.account.vault.fetch(rotVaultPda);
       expect(vaultAccount.agentIdentity.toString()).to.equal(
@@ -1680,15 +1742,17 @@ describe("Agent Vault Tests", () => {
       );
       expect((before.lastRotationAt as BN).toNumber()).to.be.greaterThan(0);
 
+      // AUD-200: bind proof is well-formed, so failure isolates to the
+      // 24h rate-limit gate (which runs AFTER proof-of-control verify in
+      // the handler — checks-effects-interactions guarantees a rejected
+      // proof never burns a rotation slot, but a passing proof against
+      // the gated window still surfaces RotationRateLimited).
       try {
-        await program.methods
-          .updateAgentIdentity(yetAnotherAgentId.publicKey)
-          .accounts({
-            vault: rotVaultPda,
-            authority: rotAuthority.publicKey,
-          })
-          .signers([rotAuthority])
-          .rpc();
+        await rotateWithBindProof({
+          authority: rotAuthority,
+          newAgentIdentity: yetAnotherAgentId,
+          vaultPda: rotVaultPda,
+        });
         expect.fail("Expected immediate re-rotation to be rate-limited");
       } catch (error: any) {
         // Anchor surfaces VaultError::RotationRateLimited as either
@@ -1717,6 +1781,201 @@ describe("Agent Vault Tests", () => {
       );
       expect((after.lastRotationAt as BN).toString()).to.equal(
         (before.lastRotationAt as BN).toString()
+      );
+    });
+  });
+
+  // ============================================================================
+  // AUD-200 / ADR-124 (cycle-3, symmetric closure of init): rotation
+  // proof-of-control. Mirrors the AUD-116 init-leg test pattern in this
+  // file (see the existing `initVaultWithBindProof` call sites). Each
+  // case uses a FRESH vault so the rotation slot isn't already consumed
+  // by SEC-2's happy-path test above — these cases all run on
+  // `last_rotation_at == 0` so the 24h gate short-circuits and the only
+  // surface left to exercise is the Ed25519 verify.
+  // ============================================================================
+
+  describe("AUD-200 / ADR-124 (path-a, symmetric): rotation proof-of-control", () => {
+    let aud200Authority: Keypair;
+    let aud200OldAgentId: Keypair;
+    let aud200NewAgentId: Keypair;
+    let aud200VaultPda: PublicKey;
+
+    beforeEach(async () => {
+      // Fresh vault per test so each case starts with `last_rotation_at == 0`
+      // (so the 24h gate is short-circuited and we isolate the verify
+      // surface). `beforeEach` is necessary because the happy-path test
+      // consumes the rotation slot just like SEC-2's existing test.
+      aud200Authority = Keypair.generate();
+      aud200OldAgentId = Keypair.generate();
+      aud200NewAgentId = Keypair.generate();
+
+      for (const kp of [aud200Authority, aud200OldAgentId, aud200NewAgentId]) {
+        const sig = await provider.connection.requestAirdrop(
+          kp.publicKey,
+          5 * LAMPORTS_PER_SOL
+        );
+        await provider.connection.confirmTransaction(sig);
+      }
+
+      const [pda] = await anchor.web3.PublicKey.findProgramAddress(
+        [Buffer.from("vault"), aud200Authority.publicKey.toBuffer()],
+        programId
+      );
+      aud200VaultPda = pda;
+
+      await registerMinimalAgent(aud200Authority, aud200VaultPda);
+      await initVaultWithBindProof({
+        authority: aud200Authority,
+        agentIdentity: aud200OldAgentId,
+        vaultPda: aud200VaultPda,
+        dailyLimitLamports: 10 * LAMPORTS_PER_SOL,
+        perTxLimitLamports: 1 * LAMPORTS_PER_SOL,
+        maxTxsPerHour: 10,
+      });
+    });
+
+    // Case 1: happy-path rotation with valid signature — passes.
+    it("accepts a rotation when the bind signature is valid", async () => {
+      await rotateWithBindProof({
+        authority: aud200Authority,
+        newAgentIdentity: aud200NewAgentId,
+        vaultPda: aud200VaultPda,
+      });
+
+      const vault = await program.account.vault.fetch(aud200VaultPda);
+      expect(vault.agentIdentity.toString()).to.equal(
+        aud200NewAgentId.publicKey.toString()
+      );
+      expect((vault.lastRotationAt as BN).toNumber()).to.be.greaterThan(0);
+    });
+
+    // Case 2: signature over the WRONG message (e.g. bound to an unrelated
+    // pubkey). The runtime still verifies the precompile (the inline
+    // pubkey/sig/msg are self-consistent), but the handler's
+    // `verify_ed25519_precompile` finds the precompile message-bytes
+    // disagree with `vault_identity_bind_message(authority, new_agent_id)`
+    // — surfaces `AgentIdentityBindSignatureMismatch`.
+    it("rejects a rotation when the signature is over the wrong message", async () => {
+      const unrelated = Keypair.generate();
+      const wrongMessage = vaultIdentityBindMessage(
+        // Bind to an unrelated pubkey instead of the actual `authority`.
+        unrelated.publicKey,
+        aud200NewAgentId.publicKey
+      );
+
+      try {
+        await rotateWithBindProof({
+          authority: aud200Authority,
+          newAgentIdentity: aud200NewAgentId,
+          vaultPda: aud200VaultPda,
+          overrideMessage: wrongMessage,
+        });
+        expect.fail("Expected wrong-message rotation to be rejected");
+      } catch (error: any) {
+        const msg = (error?.message || "").toString();
+        const isAnchorErr = error instanceof AnchorError;
+        const errorName: string = isAnchorErr
+          ? error.error?.errorCode?.code ?? ""
+          : "";
+        expect(
+          errorName === "AgentIdentityBindSignatureMismatch" ||
+            msg.includes("AgentIdentityBindSignatureMismatch") ||
+            msg.includes("ADR-124"),
+          `expected AgentIdentityBindSignatureMismatch, got: ${msg}`
+        ).to.equal(true);
+      }
+
+      // Vault state must be unchanged.
+      const vault = await program.account.vault.fetch(aud200VaultPda);
+      expect(vault.agentIdentity.toString()).to.equal(
+        aud200OldAgentId.publicKey.toString()
+      );
+    });
+
+    // Case 3: Ed25519 sig-verify ix is absent from the tx bundle. The
+    // handler scans the Instructions sysvar and finds no neighbouring
+    // ed25519-program ix — surfaces `MissingAgentIdentityBindSignature`.
+    it("rejects a rotation when the Ed25519 sig-verify ix is absent from the bundle", async () => {
+      try {
+        await rotateWithBindProof({
+          authority: aud200Authority,
+          newAgentIdentity: aud200NewAgentId,
+          vaultPda: aud200VaultPda,
+          omitPrecompile: true,
+        });
+        expect.fail("Expected missing-precompile rotation to be rejected");
+      } catch (error: any) {
+        const msg = (error?.message || "").toString();
+        const isAnchorErr = error instanceof AnchorError;
+        const errorName: string = isAnchorErr
+          ? error.error?.errorCode?.code ?? ""
+          : "";
+        expect(
+          errorName === "MissingAgentIdentityBindSignature" ||
+            msg.includes("MissingAgentIdentityBindSignature") ||
+            msg.includes("ADR-124"),
+          `expected MissingAgentIdentityBindSignature, got: ${msg}`
+        ).to.equal(true);
+      }
+
+      // Vault state must be unchanged.
+      const vault = await program.account.vault.fetch(aud200VaultPda);
+      expect(vault.agentIdentity.toString()).to.equal(
+        aud200OldAgentId.publicKey.toString()
+      );
+    });
+
+    // Case 4: signature is by the WRONG private key (different from the
+    // `new_agent_identity` arg's pubkey). The precompile pubkey is set to
+    // the actually-signing key (so the runtime accepts the precompile),
+    // but the handler then sees the precompile pubkey != the supplied
+    // `new_agent_identity` arg — surfaces
+    // `AgentIdentityBindSignatureMismatch`.
+    it("rejects a rotation when the signature is by the wrong private key", async () => {
+      const wrongKey = Keypair.generate();
+      // Airdrop just so the keypair exists in the cluster (precompile pubkey
+      // doesn't actually need a funded account, but we prepared the rest of
+      // the harness this way and it keeps the case symmetric).
+      const sig = await provider.connection.requestAirdrop(
+        wrongKey.publicKey,
+        1 * LAMPORTS_PER_SOL
+      );
+      await provider.connection.confirmTransaction(sig);
+
+      try {
+        await rotateWithBindProof({
+          authority: aud200Authority,
+          newAgentIdentity: aud200NewAgentId,
+          vaultPda: aud200VaultPda,
+          // The bind message is correctly computed for (authority, new_id),
+          // but it is signed by `wrongKey`'s private key. The helper's
+          // `bindProofIx` sets the precompile pubkey to the actually-signing
+          // pubkey (= `wrongKey.publicKey`), so the runtime verifies the
+          // precompile (matching pubkey/sig/msg) — but the on-chain handler
+          // compares the precompile pubkey against the
+          // `new_agent_identity` argument (= `aud200NewAgentId.publicKey`)
+          // and finds them mismatched.
+          overrideSigningKeypair: wrongKey,
+        });
+        expect.fail("Expected wrong-private-key rotation to be rejected");
+      } catch (error: any) {
+        const msg = (error?.message || "").toString();
+        const isAnchorErr = error instanceof AnchorError;
+        const errorName: string = isAnchorErr
+          ? error.error?.errorCode?.code ?? ""
+          : "";
+        expect(
+          errorName === "AgentIdentityBindSignatureMismatch" ||
+            msg.includes("AgentIdentityBindSignatureMismatch") ||
+            msg.includes("ADR-124"),
+          `expected AgentIdentityBindSignatureMismatch, got: ${msg}`
+        ).to.equal(true);
+      }
+
+      const vault = await program.account.vault.fetch(aud200VaultPda);
+      expect(vault.agentIdentity.toString()).to.equal(
+        aud200OldAgentId.publicKey.toString()
       );
     });
   });
