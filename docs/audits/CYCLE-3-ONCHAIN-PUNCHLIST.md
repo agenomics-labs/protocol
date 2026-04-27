@@ -24,7 +24,9 @@ supposed to close — **mainnet-promotion verdict from cycle 2 is REVOKED.**
 
 | ID | Title | File:Lines | Owner | Status |
 |---|---|---|---|---|
-| AUD-200 | `update_agent_identity` rotation has no proof-of-control over new `agent_identity` — same threat ADR-124 closed at init is wide open at rotation. Compromised authority rotates to attacker key after 24h cool-down, drains via daily cap. | `programs/agent-vault/src/instructions.rs:203-242`, `programs/agent-vault/src/contexts.rs:120-130` (no `instructions_sysvar`) | _unassigned_ | Open |
+| AUD-200 | `update_agent_identity` rotation has no proof-of-control over new `agent_identity` — same threat ADR-124 closed at init is wide open at rotation. Compromised authority rotates to attacker key after 24h cool-down, drains via daily cap. | `programs/agent-vault/src/instructions.rs:203-242`, `programs/agent-vault/src/contexts.rs:120-130` (no `instructions_sysvar`) | k2jac9 | **Closed — `4c2341c`** [^aud200] |
+
+[^aud200]: Symmetric closure of ADR-124's init-leg fix. `UpdateAgentIdentity` context now carries `instructions_sysvar`; `update_agent_identity` handler accepts `new_agent_identity_signature: [u8; 64]` and calls `identity_bind::verify_ed25519_precompile` over `vault_identity_bind_message(authority, new_agent_identity)` BEFORE the rotation rate-limit check. Mirrors `initialize_vault`'s call chain at `instructions.rs:98-102` exactly. 4 new test cases (happy path + 3 rejection paths: wrong-message, missing precompile ix, precompile-pubkey vs handler-arg mismatch). MCP `rotate_agent_identity` handler updated to bundle the Ed25519 precompile ix; SDK consumers get the new shape via IDL regen. Anchor full integration suite: 160 passing.
 
 ## High (block next release)
 
@@ -54,7 +56,7 @@ supposed to close — **mainnet-promotion verdict from cycle 2 is REVOKED.**
 
 ## Mainnet-promotion gates
 
-- **Critical**: AUD-200 closed (rotation proof-of-control mirrors ADR-124 init flow)
+- **Critical**: AUD-200 ✅ closed `4c2341c` (rotation proof-of-control mirrors ADR-124 init flow)
 - **High**: AUD-201, AUD-202 closed
 - **ADR-125 (AUD-204)**: ship the propose/accept rotation before mainnet (C4 runbook §4 lists 3 redeploy-only recovery scenarios without it)
 
