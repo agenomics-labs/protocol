@@ -52,6 +52,18 @@ pub const MAX_DISPUTE_TIMEOUT_SECONDS: i64 = 365 * 24 * 3600;
 /// days is long enough for any legitimate long-running task while
 /// keeping the lock bounded; together with `disputed_at` arithmetic
 /// elsewhere it leaves comfortable headroom against i64 overflow.
+///
+/// AUD-121 (cycle-2 worst-case lock window): both `MAX_ESCROW_DEADLINE_SECS`
+/// (above) and `MAX_DISPUTE_TIMEOUT_SECONDS` (the constant immediately
+/// preceding) are 365 days, but they apply to different time-axes —
+/// `escrow.deadline` is wall-clock; dispute timeout is
+/// `disputed_at + dispute_timeout_seconds`. Worst case: a milestone
+/// disputed on day 364 with a 365-day timeout has the dispute window
+/// extending to day 729. `expire_escrow` requires `Active || Created`
+/// status and rejects `Disputed`, so a `Disputed` escrow's funds can
+/// remain locked for up to ~730 days end-to-end. This is bounded and
+/// the audit accepted it as documented; if mainnet operations require
+/// a tighter cap, reduce one of the two constants.
 pub const MAX_ESCROW_DEADLINE_SECS: i64 = 365 * 24 * 3600;
 
 /// Reputation deltas for CPI updates to the Agent Registry.
