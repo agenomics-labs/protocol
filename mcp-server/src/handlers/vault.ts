@@ -36,6 +36,8 @@ import {
   requireNumber,
   requirePositiveNumber,
 } from "./validation.js";
+import { invalidateVaultStateCache } from "../pipeline/vault-layout.js";
+import type { Address } from "@solana/kit";
 
 /**
  * ADR-124 (AUD-116 path-a): vault-side domain tag for the proof-of-control
@@ -306,6 +308,10 @@ export async function handleVaultTransfer(args: Record<string, unknown>) {
     .signers([wallet])
     .rpc();
 
+  // MCP-314 (Batch D): invalidate the 5s vault-state cache so a follow-up
+  // cap check doesn't read pre-spend `spent_today_lamports`.
+  invalidateVaultStateCache(vaultPDA.toBase58() as Address);
+
   return {
     success: true,
     vaultAddress: vaultPDA.toBase58(),
@@ -349,6 +355,10 @@ export async function handleVaultTokenTransfer(args: Record<string, unknown>) {
     })
     .signers([wallet])
     .rpc();
+
+  // MCP-314 (Batch D): invalidate vault-state cache so the next cap check
+  // sees the post-spend per-mint `spent_today` value.
+  invalidateVaultStateCache(vaultPDA.toBase58() as Address);
 
   return {
     success: true,
