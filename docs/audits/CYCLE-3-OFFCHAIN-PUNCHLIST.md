@@ -26,10 +26,10 @@ remain unset in production.
 |---|---|---|---|---|
 | OFF-202 | Migration __dirname path ENOENT | src/indexer/postgres-store.ts (applyMigration) | k2jac9 | **Closed — `6f5c719`** |
 | OFF-203 | Multi-instance race issues 2 JWTs | src/x402-relay/index.ts:594-600,659-664 | k2jac9 | **Closed — `3c63f8e`** [^off203] |
-| OFF-204 | pg.Pool no timeouts/error handler | src/indexer/postgres-store.ts:473-475 | k2jac9 | **Closed — `<pending-sha>`** [^off204] |
+| OFF-204 | pg.Pool no timeouts/error handler | src/indexer/postgres-store.ts:473-475 | k2jac9 | **Closed — `233da92`** [^off204] |
 | OFF-205 | releaseRedeemed unauthenticated | src/x402-relay/redis-dedup.ts:348-373 | k2jac9 | **Closed — `3c63f8e`** [^off205] |
 | OFF-206 | Redis client no commandTimeout | src/x402-relay/redis-dedup.ts:269 | k2jac9 | **Closed — `3c63f8e`** [^off206] |
-| OFF-207 | Schema-parity gate self-referential | src/indexer/test/aud-128-postgres-store.test.ts:127-156 | k2jac9 | **Closed — `<pending-sha>`** [^off207] |
+| OFF-207 | Schema-parity gate self-referential | src/indexer/test/aud-128-postgres-store.test.ts:127-156 | k2jac9 | **Closed — `233da92`** [^off207] |
 | OFF-217 | OFF-200 transactional semantics tested only against pg-mem mock; pg-mem 3.x does not honour BEGIN/COMMIT/ROLLBACK, so `withTransaction` rollback path is verified via a hand-rolled mock Pool rather than a real engine. Required before flipping `INDEXER_PG_URL` in production. | src/indexer/test/aud-200-dual-write-tx.test.ts | k2jac9 | **Closed — `c0ba30a`** [^off217] |
 
 [^off217]: Closed via new test file `src/indexer/test/aud-200-dual-write-tx-real-pg.test.ts` (commit `c0ba30a`). Four describe-blocks gate on a new env var `INDEXER_PG_TEST_URL`; when unset the suite skips with a one-line notice and the workspace `npm test` stays green. When set, the suite runs against a real `pg.Pool`, drops + recreates the Phase 1 schema between blocks, and asserts ROW-LEVEL state after a real PG-engine ROLLBACK (the load-bearing assertion pg-mem 3.x cannot honour). Scenarios: (1) happy-path commit, (2) mid-tx invalid statement aborts the tx and the prior INSERT does NOT persist, (3) body throws before any write, pool stays healthy across 6 follow-up txs, (4) idempotent re-run via ON CONFLICT DO NOTHING. **Deferred to follow-up**: a CI workflow job that boots a `postgres:16` service container and sets `INDEXER_PG_TEST_URL`. Operators can already run the suite manually against a local Postgres; the Cutover-Gate § for `INDEXER_PG_URL` is unblocked by the existence of the test plus an operator-driven run.
