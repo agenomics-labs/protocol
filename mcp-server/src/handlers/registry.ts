@@ -529,12 +529,35 @@ export async function handleFindSimilarAgents(args: Record<string, unknown>) {
   //    floor. Token budget is left at the adapter default (4096 per
   //    AEP_EVO_DEFAULT_TOKEN_BUDGET) — operators tighten via env, not
   //    per-call (Phase 1 keeps the wire surface minimal).
+  // MCP-304: wrap in try/catch so a bridge-side failure (timeout, breaker
+  // open, subprocess crash) NEVER throws out of this handler. Mirrors the
+  // best-effort posture in handleRegisterAgent (`:108-126`) and the
+  // settlement learn loop (`settlement.ts:71-89`).
   const memory = getAgentMemory();
-  const memoryResult = await memory.findSimilarAgents({
-    queryText,
-    topK,
-    minSimilarity,
-  });
+  let memoryResult;
+  try {
+    memoryResult = await memory.findSimilarAgents({
+      queryText,
+      topK,
+      minSimilarity,
+    });
+  } catch (err) {
+    log.warn(
+      {
+        err: err instanceof Error ? err.message : String(err),
+        seed_authority: seedAuthority.toBase58(),
+        adr: "ADR-129",
+        audit: "MCP-304",
+      },
+      "find_similar_agents: best-effort EVO retrieve failed; returning empty result",
+    );
+    return {
+      similar_agents: [],
+      skipped: true,
+      reason: "evo-error",
+      seed_authority: seedAuthority.toBase58(),
+    };
+  }
 
   if (memoryResult.skipped) {
     return {
