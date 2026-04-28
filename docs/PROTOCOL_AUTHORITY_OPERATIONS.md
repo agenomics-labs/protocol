@@ -188,7 +188,14 @@ Do not read about the future and assume it is current state:
   exist** as of this runbook. The architectural design reserves the
   surface, but no code implements it. Until it ships, the protocol
   authority is what you bound it to at `initialize_protocol_config`,
-  for the lifetime of the deployment.
+  for the lifetime of the deployment. The launch-window deferral of
+  this instruction is the authoritative decision in
+  `docs/adr/ADR-125-rotate-protocol-config-authority.md` (Status:
+  Accepted): Option δ (no rotation ix) for mainnet launch, Option β
+  (2-step propose-then-accept) when the instruction eventually ships
+  in the first post-launch governance cycle. ADR-125 is the
+  authoritative deferral record; the operational guidance in this
+  runbook is unchanged by the ADR.
 - **A "lighter" governance key separate from the upgrade authority**:
   same — does not exist today.
 - **Any in-script warning that the wrong multisig signed
