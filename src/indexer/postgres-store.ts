@@ -31,11 +31,93 @@
  * SQLite call site.
  */
 
-import type { Pool, PoolClient, QueryResultRow } from "pg";
+import type { Pool, PoolClient, PoolConfig, QueryResultRow } from "pg";
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const pgModule: typeof import("pg") = require("pg");
 import { logger } from "./logger.js";
 import { MIGRATIONS } from "./migrations.embedded.js";
+
+// ---------------------------------------------------------------------------
+// OFF-204 (cycle-3 off-chain audit) — pg.Pool timeout defaults +
+// process-survivable error handler.
+//
+// Pre-fix the `pg.Pool` was constructed with only `connectionString` +
+// `max`. Two failure modes followed from that omission:
+//
+//   1. A Postgres brown-out (network partition, primary failover,
+//      connection-cap exhaustion) made the next `pool.connect()` /
+//      `pool.query()` hang indefinitely. The dual-write `runShadow`
+//      wrapper logs and swallows on rejection — but it never received a
+//      rejection, because there was no timeout. The shadow write call
+//      sites in `index.ts` (which fire-and-forget) leaked promises;
+//      worse, the transactional dual-write at OFF-200 stalled the
+//      authoritative SQLite path while it awaited the PG transaction.
+//
+//   2. An idle pool client whose socket dies (TCP reset, server
+//      restart) emits `error` on `pool.on('error', ...)`. With no
+//      handler registered, Node's EventEmitter rule kicks in and the
+//      indexer process crashes via unhandled error.
+//
+// Mirrors the OFF-206 fix for ioredis (`commandTimeout`, `connectTimeout`,
+// `maxRetriesPerRequest`) on the PG side: each timeout has an env-
+// overridable knob with a NaN / non-positive fallback to the default,
+// and the pool-level `error` event is logged at WARN without rethrow.
+// SQLite remains authoritative; PG outages must surface as logged
+// errors, never as a hung process or a crash.
+// ---------------------------------------------------------------------------
+
+/**
+ * Connection-acquire timeout. How long `pool.connect()` (or the
+ * implicit acquire on `pool.query`) will wait for a free / new client
+ * before rejecting. 5s is short enough that a brown-out surfaces as
+ * an error within a single dual-write tick; long enough that a busy
+ * pool under normal load doesn't false-alarm. ADR-128 Phase 1 leaves
+ * pool sizing to the operator (`INDEXER_PG_POOL_MAX`, default 10),
+ * so 5s also covers the worst-case "all 10 clients busy on a slow
+ * query" without forcing operators to retune.
+ */
+export const INDEXER_PG_CONNECTION_TIMEOUT_DEFAULT_MS = 5_000;
+
+/**
+ * Idle-client TTL. Clients that sit idle in the pool for longer than
+ * this are closed. 30s matches `pg`'s upstream default and lets a
+ * cold pool recover quickly after a Postgres restart (stale sockets
+ * get pruned without waiting for next-query failure).
+ */
+export const INDEXER_PG_IDLE_TIMEOUT_DEFAULT_MS = 30_000;
+
+/**
+ * Per-query timeout (driver-side). `query_timeout` aborts the client-
+ * side wait; `statement_timeout` (set as a session GUC by `pg`) aborts
+ * the server-side execution. Both are set so a query that hangs at
+ * the network layer AND a query that hangs at the server layer both
+ * surface within the bound. 15s is comfortably above the largest
+ * single statement Phase 1 dual-write issues (a single-row INSERT
+ * against an indexed table) and well below the OFF-206 ioredis
+ * `commandTimeout` (2s) on the relay side — we expect PG writes to be
+ * a small constant slower than Redis ops; 15s leaves plenty of
+ * headroom for cold-cache plans and replica catch-up.
+ */
+export const INDEXER_PG_QUERY_TIMEOUT_DEFAULT_MS = 15_000;
+export const INDEXER_PG_STATEMENT_TIMEOUT_DEFAULT_MS = 15_000;
+
+/**
+ * Parse a millisecond env var with NaN / non-positive fallback to
+ * `defaultMs`. Mirrors the OFF-206 contract: a typo'd env var must NOT
+ * silently disable the timeout — that is exactly the pre-fix failure
+ * mode (a missing knob = no timeout = indefinite hang). Returning the
+ * default also means an operator can tune per-deployment without ever
+ * losing the safety floor.
+ */
+export function parsePositiveMsEnv(
+  raw: string | undefined,
+  defaultMs: number,
+): number {
+  if (raw === undefined || raw === "") return defaultMs;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return defaultMs;
+  return Math.floor(n);
+}
 
 // ---------------------------------------------------------------------------
 // Shared SQL — kept as module-level constants so the transactional
@@ -600,8 +682,71 @@ export function createPostgresStore(env: NodeJS.ProcessEnv = process.env): Postg
     );
   }
   const poolMax = parseInt(env.INDEXER_PG_POOL_MAX || "10", 10);
-  const pool = new pgModule.Pool({ connectionString: url, max: poolMax });
+  // OFF-204: every timeout below is env-overridable with NaN / non-
+  // positive fallback to the documented default. The pool also wires
+  // a process-survivable `error` handler so an idle-client socket
+  // failure logs and is contained instead of crashing the indexer.
+  const poolConfig: PoolConfig = {
+    connectionString: url,
+    max: poolMax,
+    connectionTimeoutMillis: parsePositiveMsEnv(
+      env.INDEXER_PG_CONNECTION_TIMEOUT_MS,
+      INDEXER_PG_CONNECTION_TIMEOUT_DEFAULT_MS,
+    ),
+    idleTimeoutMillis: parsePositiveMsEnv(
+      env.INDEXER_PG_IDLE_TIMEOUT_MS,
+      INDEXER_PG_IDLE_TIMEOUT_DEFAULT_MS,
+    ),
+    query_timeout: parsePositiveMsEnv(
+      env.INDEXER_PG_QUERY_TIMEOUT_MS,
+      INDEXER_PG_QUERY_TIMEOUT_DEFAULT_MS,
+    ),
+    statement_timeout: parsePositiveMsEnv(
+      env.INDEXER_PG_STATEMENT_TIMEOUT_MS,
+      INDEXER_PG_STATEMENT_TIMEOUT_DEFAULT_MS,
+    ),
+  };
+  const pool = new pgModule.Pool(poolConfig);
+  attachPoolErrorHandler(pool);
   return new LivePostgresStore(pool);
+}
+
+/**
+ * OFF-204 — register a process-survivable `error` handler on the pool.
+ * `pg.Pool` re-emits errors from idle clients (e.g. a server-side
+ * disconnect, an OS TCP reset) on the pool itself; without a listener,
+ * Node's EventEmitter rule turns the next emission into an uncaught
+ * exception that crashes the indexer. The handler logs at WARN
+ * (matching the dual-write `runShadow` policy: "PG never breaks
+ * SQLite") and lets the pool reclaim the dead client itself — `pg`'s
+ * internal acquire path will already mark the client invalid before
+ * emitting the event, so the next caller transparently gets a fresh
+ * connection.
+ *
+ * Exported for `createPostgresStoreFromPool` so test fixtures get the
+ * same containment as the production path. Idempotent — re-registering
+ * is safe but the test fixture wires it once at construction.
+ */
+export function attachPoolErrorHandler(pool: Pool): void {
+  // Defensive: in-process mock pools used by the OFF-200 unit tests
+  // implement only the surface they exercise (`connect`, `query`, `end`)
+  // and intentionally omit the EventEmitter API. A missing `.on` here
+  // means the pool has no idle-client error stream to subscribe to —
+  // which is the correct semantic for an in-memory mock — so we skip
+  // wiring rather than throw. Production `pg.Pool` always extends
+  // EventEmitter so the production path always wires the listener.
+  const emitter = pool as unknown as {
+    on?: (event: string, listener: (err: Error) => void) => unknown;
+  };
+  if (typeof emitter.on !== "function") {
+    return;
+  }
+  emitter.on("error", (err: Error) => {
+    logger.warn(
+      { err: String(err), op: "pool.error", adr: "ADR-128", phase: 1 },
+      "postgres pool emitted error from idle client (sqlite remains authoritative)",
+    );
+  });
 }
 
 /**
@@ -610,8 +755,15 @@ export function createPostgresStore(env: NodeJS.ProcessEnv = process.env): Postg
  * the live code path without a real Postgres. The production code path
  * (`createPostgresStore`) does NOT call this; it is exported strictly
  * for fixture wiring.
+ *
+ * OFF-204: the same `error`-handler that `createPostgresStore` registers
+ * is wired here too, so a fixture's pool cannot crash the test process
+ * via an unhandled idle-client error. (pg-mem's pool does not emit
+ * `error` in normal operation, but the wiring is symmetric so the
+ * production and test code paths behave identically under fault.)
  */
 export function createPostgresStoreFromPool(pool: Pool): PostgresStore {
+  attachPoolErrorHandler(pool);
   return new LivePostgresStore(pool);
 }
 
