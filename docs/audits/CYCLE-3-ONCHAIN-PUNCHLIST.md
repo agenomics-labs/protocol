@@ -1,8 +1,8 @@
 # Cycle 3 — On-chain Punchlist (2026-04-27)
 
 Findings from the cycle-3 on-chain hostile re-audit. Five cycle-2 closures
-(AUD-100/101/102/104/117) verified held at HEAD; AUD-104 holds with the
-field-order caveat in AUD-202. AUD-200 reopens the threat ADR-124 was
+(AUD-100/101/102/104/117) verified held at HEAD; AUD-104's field-order
+caveat is now closed via AUD-202. AUD-200 reopens the threat ADR-124 was
 supposed to close — **mainnet-promotion verdict from cycle 2 is REVOKED.**
 
 ## Source
@@ -17,7 +17,7 @@ supposed to close — **mainnet-promotion verdict from cycle 2 is REVOKED.**
 | AUD-100 | **Held** | Slash path live: `programs/agent-registry/src/lib.rs:354-376` increments `slash_count` on `reason in {1,2}`; writes `Suspended` at `>= 3`. Self-suspend blocked at `lib.rs:182-186`. |
 | AUD-101 | **Held** | `MigrateAgentProfile` carries `owner_nonce: Account<OwnerNonce>` with full 3-component seeds — `programs/agent-registry/src/contexts.rs:417-458`. E2E covered at `tests/agent-registry.ts:1694+`. |
 | AUD-102 | **Held** | `MIN_REPUTATION_DELTA = -10`, `MAX_REPUTATION_DELTA = 10` at `programs/settlement/src/state.rs:101,109`; `update_protocol_config` enforces both. |
-| AUD-104 | **Held with caveat** | Discriminator gate at `programs/agent-registry/src/lib.rs:783-786`; tests pin discriminator name only (NOT field-order layout). See AUD-202. |
+| AUD-104 | **Held** | Discriminator gate at `programs/agent-registry/src/lib.rs:797-800`; field-order layout now also pinned via AUD-202 (`e59072a`). |
 | AUD-117 | **Held** | All 4 settlement contexts carry `provider_authority` + `provider_owner_nonce` PDA + `provider_profile` PDA with `seeds::program = AGENT_REGISTRY_PROGRAM_ID`. Test case E intentionally skipped — see AUD-203. |
 
 ## Critical (mainnet blockers)
@@ -33,7 +33,9 @@ supposed to close — **mainnet-promotion verdict from cycle 2 is REVOKED.**
 | ID | Title | File:Lines | Owner | Status |
 |---|---|---|---|---|
 | AUD-201 | Stuck-Active escrow refund gap — provider accepts then abandons; only refund path is `expire_escrow` after 365-day deadline. With dispute timeout the worst-case lock is up to 730 days. `cancel_escrow` is `Created`-only. | `programs/settlement/src/instructions/escrow.rs:360-410` | _unassigned_ | Open |
-| AUD-202 | AUD-104 closure pins discriminator name but NOT field-order layout. Settlement prepending a field to `ProtocolConfig` would leave the discriminator unchanged but shift `authority` past offset 8 → Registry reads garbage as `config_authority`, silently rejects every legitimate sweep. | `programs/agent-registry/src/lib.rs:773-798`; tests `lib.rs:2079-2135` | _unassigned_ | Open |
+| AUD-202 | AUD-104 closure pins discriminator name but NOT field-order layout. Settlement prepending a field to `ProtocolConfig` would leave the discriminator unchanged but shift `authority` past offset 8 → Registry reads garbage as `config_authority`, silently rejects every legitimate sweep. | `programs/agent-registry/src/lib.rs:773-798`; tests `lib.rs:2079-2135` | k2jac9 | **Closed — `e59072a`** [^aud202] |
+
+[^aud202]: Build-time pin in Settlement (option 1 over a Registry-side runtime check): `#[repr(C)]` on `ProtocolConfig` + `const _: () = assert!(core::mem::offset_of!(ProtocolConfig, authority) == 0, ...)` in `programs/settlement/src/state.rs`. `offset_of!` (stable Rust 1.77) and const `assert!` (1.79) are both well below the workspace's `stable` toolchain (1.95), so no new dependency was needed — `static_assertions` was deliberately not added. Registry's `verify_protocol_invariants` doc comment now references the upstream pin (`programs/agent-registry/src/lib.rs:766-781`). Belt-and-braces tests: 2 in `settlement::state::layout_pin` (Anchor `try_serialize` round-trip asserting `authority` lands at on-wire offset 8; simulated prepended-field scenario proves the gate's `[8..40]` read would surface garbage), 2 in `agent_registry::tests` (intact-layout buffer matches signer; drifted-layout buffer with discriminator-unchanged + prepended u64 + shifted authority fails the `config_authority == signer.key()` check). On-wire IDL surface unchanged (only doc-string additions + `repr: { kind: "c" }` annotation). `anchor build` clean; `cargo test`: settlement 65 passed (+2 new), agent-registry 88 passed (+2 new).
 
 ## Medium (next-cycle)
 
@@ -57,7 +59,7 @@ supposed to close — **mainnet-promotion verdict from cycle 2 is REVOKED.**
 ## Mainnet-promotion gates
 
 - **Critical**: AUD-200 ✅ closed `4c2341c` (rotation proof-of-control mirrors ADR-124 init flow)
-- **High**: AUD-201, AUD-202 closed
+- **High**: AUD-201 (open); AUD-202 ✅ closed `e59072a` (Settlement-side build-time field-order pin)
 - **ADR-125 (AUD-204)**: ship the propose/accept rotation before mainnet (C4 runbook §4 lists 3 redeploy-only recovery scenarios without it)
 
 Architecture themes (carry to ADR governance): require ADR closure to demonstrate *symmetric* coverage of init + mutation surfaces (the ADR-124 → AUD-200 lesson).
