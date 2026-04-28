@@ -51,7 +51,7 @@ remain unset in production.
 | OFF-208 | Prom counters never incremented | src/indexer/metrics-server.ts:17-35 | Open |
 | OFF-209 | Logger redaction misses INDEXER_PG_URL | src/indexer/logger.ts:20-31 | Open |
 | OFF-210 | Heartbeat resets failures before callback | src/indexer/index.ts:1481-1489 | Open |
-| OFF-211 | pruneRateLimitMap not LRU | src/x402-relay/index.ts:397-402 | **Closed — `<pending>`** [^off211] |
+| OFF-211 | pruneRateLimitMap not LRU | src/x402-relay/index.ts:397-402 | **Closed — `6833864`** [^off211] |
 | OFF-212 | Indexer single-writer guarantee unenforced | src/indexer/index.ts:1720 | Open |
 | OFF-213 | setPostgresStoreForTest in public surface | src/indexer/index.ts:71-73 | Open |
 
@@ -61,7 +61,7 @@ remain unset in production.
 |---|---|---|---|
 | OFF-214 | countRows allowed-list duplicates migration | src/indexer/postgres-store.ts:383-394 | Open |
 | OFF-215 | INDEXER_PG_POOL_MAX no NaN check | src/indexer/postgres-store.ts:473 | Open |
-| OFF-216 | RELAY_INSTANCE_ID not unique across restarts | src/x402-relay/index.ts:175-177 | **Closed — `<pending>`** [^off216] |
+| OFF-216 | RELAY_INSTANCE_ID not unique across restarts | src/x402-relay/index.ts:175-177 | **Closed — `6833864`** [^off216] |
 
 [^off211]: Closed by making the rate-limit `Map<ip, {count,resetAt}>` a true LRU. Pre-fix the eviction policy was insertion-order-only — `rateLimit` mutated `entry.count` in place and never re-inserted, so the bucket created at time T sat at the FRONT of `Map`'s iteration order regardless of how active it was. When the cap was hit (a scanner rotating cold IPs), `pruneRateLimitMap`'s `keys().next().value` cap-evict loop targeted the HOTTEST client first, freed its quota, and let it renew. The S-offchain-02 header comment's "safe because each entry already expires after RATE_LIMIT_WINDOW_MS" reasoning didn't hold for the cap-hit branch — that branch fires PRECISELY when TTL pruning hasn't caught up yet. Fix: every touch in `rateLimit` (fresh-window create, count-bump on a non-rejected hit, AND the rate-limited 429 rejection) does `delete(ip)` then `set(ip, entry)`, moving the entry to the END of `Map`'s insertion-ordered iteration. The pruner still pops from the FRONT — which is now the LEAST-recently-used end. Hand-rolled rather than introducing an `lru-cache` workspace dep: the data shape was already a `Map`, the eviction trigger was already insertion-order, and the only missing piece was recency-bump-on-touch (5 lines of behavior change inside an existing audit-comment block). Regression tests: `src/x402-relay/test/off-211-216.test.ts` covers (1) fresh IPs land at the END of iteration order, (2) touching an existing IP moves it to the END (not in-place update), (3) count-bump path bumps recency, (4) the 429 rejection path also bumps recency (a hot rejected client must not be evicted ahead of a cold one-shot), (5) the eviction-order observable — `keys().next().value` is the truly LRU IP, not the hottest one — and the negative assertion that pre-fix-shape ordering does NOT hold, (6) TTL eviction still works on unexpired entries (LRU change must not regress the TTL pruner).
 
