@@ -16,7 +16,7 @@ remain unset in production.
 | OFF-200 | Indexer dual-write non-transactional | src/indexer/index.ts:1030,1082-1089 | k2jac9 | **Partial — `cfe8e92`** [^off200] |
 | OFF-201 | Redis counter drifts unbounded | src/x402-relay/redis-dedup.ts:295,322 | _unassigned_ | Open |
 
-[^off200]: Closed for the canonical event-INSERT + cursor-UPSERT pair via `withTransaction` helper (`postgres-store.ts`) and rewire of the two authoritative dual-write sites in `index.ts`. **Scoped out**: 10 projection-only fire-and-forget sites in `updateAgentFromEvent` (lines 678, 704, 747, 793, 808, 825, 841, 856, 880, 881 of the pre-fix file) remain single-write; projection rows are derivable from the authoritative event log if they ever diverge. **Not closed**: real-PG transactional verification — see OFF-217.
+[^off200]: Closed for the canonical event-INSERT + cursor-UPSERT pair via `withTransaction` helper (`postgres-store.ts`) and rewire of the two authoritative dual-write sites in `index.ts`. **Scoped out**: 10 projection-only fire-and-forget sites in `updateAgentFromEvent` (lines 678, 704, 747, 793, 808, 825, 841, 856, 880, 881 of the pre-fix file) remain single-write; projection rows are derivable from the authoritative event log if they ever diverge. Real-PG transactional verification closed in OFF-217 (`c0ba30a`).
 
 ## High
 
@@ -28,7 +28,9 @@ remain unset in production.
 | OFF-205 | releaseRedeemed unauthenticated | src/x402-relay/redis-dedup.ts:348-373 | _unassigned_ | Open |
 | OFF-206 | Redis client no commandTimeout | src/x402-relay/redis-dedup.ts:269 | _unassigned_ | Open |
 | OFF-207 | Schema-parity gate self-referential | src/indexer/test/aud-128-postgres-store.test.ts:127-156 | _unassigned_ | Open |
-| OFF-217 | OFF-200 transactional semantics tested only against pg-mem mock; pg-mem 3.x does not honour BEGIN/COMMIT/ROLLBACK, so `withTransaction` rollback path is verified via a hand-rolled mock Pool rather than a real engine. Required before flipping `INDEXER_PG_URL` in production. | src/indexer/test/aud-200-dual-write-tx.test.ts | _unassigned_ | Open |
+| OFF-217 | OFF-200 transactional semantics tested only against pg-mem mock; pg-mem 3.x does not honour BEGIN/COMMIT/ROLLBACK, so `withTransaction` rollback path is verified via a hand-rolled mock Pool rather than a real engine. Required before flipping `INDEXER_PG_URL` in production. | src/indexer/test/aud-200-dual-write-tx.test.ts | k2jac9 | **Closed — `c0ba30a`** [^off217] |
+
+[^off217]: Closed via new test file `src/indexer/test/aud-200-dual-write-tx-real-pg.test.ts` (commit `c0ba30a`). Four describe-blocks gate on a new env var `INDEXER_PG_TEST_URL`; when unset the suite skips with a one-line notice and the workspace `npm test` stays green. When set, the suite runs against a real `pg.Pool`, drops + recreates the Phase 1 schema between blocks, and asserts ROW-LEVEL state after a real PG-engine ROLLBACK (the load-bearing assertion pg-mem 3.x cannot honour). Scenarios: (1) happy-path commit, (2) mid-tx invalid statement aborts the tx and the prior INSERT does NOT persist, (3) body throws before any write, pool stays healthy across 6 follow-up txs, (4) idempotent re-run via ON CONFLICT DO NOTHING. **Deferred to follow-up**: a CI workflow job that boots a `postgres:16` service container and sets `INDEXER_PG_TEST_URL`. Operators can already run the suite manually against a local Postgres; the Cutover-Gate § for `INDEXER_PG_URL` is unblocked by the existence of the test plus an operator-driven run.
 
 ## Medium
 
