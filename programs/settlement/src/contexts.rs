@@ -701,3 +701,243 @@ pub struct CloseEscrow<'info> {
     )]
     pub escrow: Account<'info, TaskEscrow>,
 }
+
+// ============================================================================
+// AUD-117 SEEDS PARITY — AUD-203 (cycle-3)
+// ============================================================================
+
+#[cfg(test)]
+mod aud_117_seeds_parity {
+    //! AUD-203 (cycle-3): mechanical-identity check that closes the
+    //! asymmetric-coverage gap left by `tests/cpi-failures.test.ts`'s
+    //! `it.skip` for case E (`ResolveDisputeTimeout`).
+    //!
+    //! AUD-117 layered defense-in-depth seeds constraints across four
+    //! Settlement contexts that CPI into Agent Registry's
+    //! `ProposeReputationDelta`:
+    //!
+    //!   1. `ApproveMilestone`        (covered by `cpi-failures.test.ts`)
+    //!   2. `ResolveDispute`          (covered by `cpi-failures.test.ts`)
+    //!   3. `ResolveDisputeTimeout`   (NOT covered — 7-day governance
+    //!                                 timeout makes a TS test infeasible
+    //!                                 without anchor-bankrun's clock-warp;
+    //!                                 the bankrun migration is scheduled
+    //!                                 for 2026-05-10, after the launch
+    //!                                 window — see `tests/cpi-failures.test.ts:1255`)
+    //!   4. `ExpireEscrow`            (covered by `cpi-failures.test.ts`)
+    //!
+    //! Cycle-3's reviewer flagged the asymmetry: the defense-in-depth
+    //! claim spans four contexts, but only three have negative-path proof.
+    //! Once anchor-bankrun lands, the TS skip flips to active and case 3
+    //! gets the same wrong-`provider_owner_nonce` substitution test the
+    //! other three already run. Until then, this module proves the gap is
+    //! purely "missing test coverage" and NOT "missing defense" — by
+    //! asserting the seeds-constraint text on case 3 is byte-identical to
+    //! the three already covered, so a regression in case 3's defensive
+    //! posture is a regression on the other three as well.
+    //!
+    //! Approach: read this file's own source via `include_str!`, locate
+    //! the four `provider_owner_nonce` and `provider_profile`
+    //! `#[account(...)]` attribute blocks, and assert all four are
+    //! textually identical. Anchor `#[derive(Accounts)]` is a proc-macro
+    //! that does not preserve runtime AST access (no `syn` reflection at
+    //! test time without rebuilding the macro pipeline), so source-text
+    //! comparison is the most reliable invariant. If any of the four
+    //! blocks ever drift, this test fails at `cargo test` time, BEFORE
+    //! any deploy.
+    //!
+    //! When the bankrun migration lands (trig_01NokXSDGAb7ECabM5n9ULR3,
+    //! scheduled 2026-05-10), the corresponding TS test in
+    //! `tests/cpi-failures.test.ts` becomes the runtime sentinel and this
+    //! mechanical-identity test becomes belt-and-braces (kept — the two
+    //! tests close different threats: the TS test proves the runtime path
+    //! rejects, this test proves the source-of-record didn't drift).
+    //!
+    //! See also: `state.rs::layout_pin` (AUD-202) and
+    //! `agent-registry/src/lib.rs::PROTOCOL_CONFIG_DISCRIMINATOR` (AUD-104).
+
+    /// Embed this file's source at compile time. The path is relative to
+    /// THIS file (Rust's `include_str!` resolves relative to the calling
+    /// source file), so it self-references `contexts.rs` — meaning the
+    /// test will track every future edit to this same file.
+    const CONTEXTS_RS: &str = include_str!("contexts.rs");
+
+    /// The four AUD-117-touched contexts. Order matches the audit
+    /// punchlist (cycle-3 § AUD-117 "Held"). All four MUST carry
+    /// byte-identical seeds constraints on `provider_owner_nonce` and
+    /// `provider_profile`.
+    const AUD_117_CONTEXTS: &[&str] = &[
+        "pub struct ApproveMilestone<'info> {",
+        "pub struct ResolveDispute<'info> {",
+        "pub struct ResolveDisputeTimeout<'info> {",
+        "pub struct ExpireEscrow<'info> {",
+    ];
+
+    /// Extract the `#[account(...)] ... pub <field>: ...,` block for the
+    /// given field within the given struct's body. Returns the substring
+    /// from the opening `#[account(` (exclusive of the leading whitespace
+    /// on that line, but inclusive of the `#`) through the field
+    /// declaration line's trailing comma.
+    ///
+    /// The extraction is deliberately whitespace-sensitive: any
+    /// re-indentation, attribute reorder, or comment insertion INSIDE the
+    /// `#[account(...)]` attribute will change the extracted text and
+    /// trip the parity assertion. Comments OUTSIDE the attribute (the
+    /// rustdoc above each field) are NOT part of the extracted slice and
+    /// are allowed to differ — only the constraint surface is pinned.
+    fn extract_account_block<'a>(
+        src: &'a str,
+        struct_marker: &str,
+        field_name: &str,
+    ) -> &'a str {
+        // 1. Find the start of the named struct.
+        let struct_start = src
+            .find(struct_marker)
+            .unwrap_or_else(|| panic!("AUD-203: struct marker {:?} not found in contexts.rs", struct_marker));
+
+        // 2. Find the field declaration *within that struct*. The field
+        //    name appears as `pub <field_name>: ` (note the trailing
+        //    colon-space; this disambiguates from any field whose name is
+        //    a substring of another).
+        let field_decl_marker = format!("    pub {}: ", field_name);
+        let rel_field_pos = src[struct_start..].find(&field_decl_marker).unwrap_or_else(|| {
+            panic!(
+                "AUD-203: field {:?} not found inside struct {:?}",
+                field_name, struct_marker
+            )
+        });
+        let field_pos = struct_start + rel_field_pos;
+
+        // 3. Walk forward from the field decl to the trailing newline —
+        //    that's the end of our slice.
+        let field_end = src[field_pos..]
+            .find('\n')
+            .map(|n| field_pos + n)
+            .unwrap_or(src.len());
+
+        // 4. Walk backwards from the field decl to the opening
+        //    `    #[account(` of the immediately-preceding attribute.
+        //    The convention in this file is that `#[account(...)]`
+        //    attributes are indented with exactly four spaces and end
+        //    with `)]` on a line by itself. We search backwards for the
+        //    closest `    #[account(` that precedes the field.
+        let attr_marker = "    #[account(";
+        let attr_pos = src[..field_pos].rfind(attr_marker).unwrap_or_else(|| {
+            panic!(
+                "AUD-203: no `#[account(` attribute found before field {:?} in struct {:?}",
+                field_name, struct_marker
+            )
+        });
+
+        &src[attr_pos..field_end]
+    }
+
+    #[test]
+    fn aud_203_provider_owner_nonce_constraint_is_byte_identical_across_four_contexts() {
+        let blocks: Vec<&str> = AUD_117_CONTEXTS
+            .iter()
+            .map(|s| extract_account_block(CONTEXTS_RS, s, "provider_owner_nonce"))
+            .collect();
+
+        // The reference is `ApproveMilestone` (the original AUD-117 site
+        // and the test fixture cited in `cpi-failures.test.ts`).
+        let reference = blocks[0];
+
+        for (i, block) in blocks.iter().enumerate().skip(1) {
+            assert_eq!(
+                *block, reference,
+                "AUD-203: `provider_owner_nonce` seeds constraint in {:?} differs from `ApproveMilestone`. \
+                 AUD-117's defense-in-depth claim requires byte-identical seeds blocks across all four \
+                 contexts; if this fails, the asymmetric-coverage gap (case E untested in TS pending \
+                 2026-05-10 anchor-bankrun migration) is no longer purely about missing tests — it now \
+                 represents missing defense.\n\n\
+                 Expected (from {:?}):\n{}\n\n\
+                 Actual (from {:?}):\n{}",
+                AUD_117_CONTEXTS[i],
+                AUD_117_CONTEXTS[0],
+                reference,
+                AUD_117_CONTEXTS[i],
+                block,
+            );
+        }
+    }
+
+    #[test]
+    fn aud_203_provider_profile_constraint_is_byte_identical_across_four_contexts() {
+        let blocks: Vec<&str> = AUD_117_CONTEXTS
+            .iter()
+            .map(|s| extract_account_block(CONTEXTS_RS, s, "provider_profile"))
+            .collect();
+
+        let reference = blocks[0];
+
+        for (i, block) in blocks.iter().enumerate().skip(1) {
+            assert_eq!(
+                *block, reference,
+                "AUD-203: `provider_profile` seeds constraint in {:?} differs from `ApproveMilestone`. \
+                 The PDA re-derivation `[provider_authority, b\"agent-profile\", \
+                 provider_owner_nonce.nonce]` with `seeds::program = AGENT_REGISTRY_PROGRAM_ID` is the \
+                 exact constraint AUD-117 layered at the Settlement boundary. Drift in any of the four \
+                 contexts breaks the symmetric-coverage proof that lets the case-E TS skip stay green \
+                 until anchor-bankrun lands.\n\n\
+                 Expected (from {:?}):\n{}\n\n\
+                 Actual (from {:?}):\n{}",
+                AUD_117_CONTEXTS[i],
+                AUD_117_CONTEXTS[0],
+                reference,
+                AUD_117_CONTEXTS[i],
+                block,
+            );
+        }
+    }
+
+    /// Defensive sanity-check: assert the reference `ApproveMilestone`
+    /// blocks contain the exact constraint text the audit punchlist
+    /// claims they contain. If `ApproveMilestone` itself were silently
+    /// edited to drop e.g. `seeds::program = AGENT_REGISTRY_PROGRAM_ID`,
+    /// the parity tests above would still pass (all four would share the
+    /// same regressed text). This third test pins the reference content
+    /// itself so a coordinated four-context regression also fails.
+    #[test]
+    fn aud_203_reference_blocks_contain_required_constraint_tokens() {
+        let nonce_block = extract_account_block(
+            CONTEXTS_RS,
+            "pub struct ApproveMilestone<'info> {",
+            "provider_owner_nonce",
+        );
+        let profile_block = extract_account_block(
+            CONTEXTS_RS,
+            "pub struct ApproveMilestone<'info> {",
+            "provider_profile",
+        );
+
+        // Tokens the AUD-117 design *must* include — drift in any of
+        // these is what AUD-203 wants to catch.
+        for tok in &[
+            "seeds = [provider_authority.key().as_ref(), b\"owner-nonce\"]",
+            "seeds::program = AGENT_REGISTRY_PROGRAM_ID",
+            "Account<'info, OwnerNonce>",
+        ] {
+            assert!(
+                nonce_block.contains(tok),
+                "AUD-203: ApproveMilestone's `provider_owner_nonce` block lost token {:?}.\nBlock:\n{}",
+                tok,
+                nonce_block,
+            );
+        }
+
+        for tok in &[
+            "provider_authority.key().as_ref()",
+            "b\"agent-profile\"",
+            "&provider_owner_nonce.nonce.to_le_bytes()",
+            "seeds::program = AGENT_REGISTRY_PROGRAM_ID",
+        ] {
+            assert!(
+                profile_block.contains(tok),
+                "AUD-203: ApproveMilestone's `provider_profile` block lost token {:?}.\nBlock:\n{}",
+                tok,
+                profile_block,
+            );
+        }
+    }
+}

@@ -1253,6 +1253,7 @@ describe("AUD-017: Settlement → Registry CPI failure paths", () => {
 
     // ------------------------------------------------------------------------
     // AUD-117 / Case E (skipped): ResolveDisputeTimeout coverage.
+    // Asymmetric-coverage gap closed by AUD-203 — see below.
     //
     // ResolveDisputeTimeout's trigger condition is
     //   `now > dispute_window_start + dispute_timeout_seconds`
@@ -1267,28 +1268,45 @@ describe("AUD-017: Settlement → Registry CPI failure paths", () => {
     //     same blocker noted in tests/settlement.ts:2224 for the
     //     positive-path test).
     //
-    // The four AUD-117-touched contexts are otherwise mechanically
-    // identical in their seeds constraints (verbatim copies of the
-    // ApproveMilestone block — see programs/settlement/src/contexts.rs
-    // lines 195-220 vs 343-363 vs 423-444 vs 539-560). Active coverage
-    // of ApproveMilestone, ResolveDispute, and ExpireEscrow above
-    // exercises the same constraint expansion three times; if any of
-    // those three started failing in isolation, ResolveDisputeTimeout's
-    // identical block would be the next regression to investigate.
+    // Bankrun migration is scheduled (routine
+    // `trig_01NokXSDGAb7ECabM5n9ULR3`, target 2026-05-10). When that
+    // lands, this `it.skip` flips to active and case E gains the same
+    // wrong-`provider_owner_nonce` substitution coverage cases A/B/D
+    // already have above.
+    //
+    // AUD-203 (cycle-3) interim coverage — closes the asymmetric gap:
+    //   The four AUD-117-touched contexts are mechanically identical in
+    //   their seeds constraints (verbatim copies of the ApproveMilestone
+    //   block — see programs/settlement/src/contexts.rs lines 196-221 vs
+    //   343-363 vs 424-444 vs 586-606). The Rust unit-test module
+    //   `aud_117_seeds_parity` at the bottom of `contexts.rs` reads its
+    //   own source via `include_str!` and asserts byte-identity of the
+    //   `provider_owner_nonce` and `provider_profile` `#[account(...)]`
+    //   blocks across all four contexts on every `cargo test` run
+    //   (3 tests, all green at HEAD). That mechanical-identity proof is
+    //   what lets this TS skip stay green during the launch window: if
+    //   any of cases A/B/D regress, their `it()` fails directly; if
+    //   case E regresses in source, the Rust parity test fails before
+    //   build. The only uncovered surface is "case E regresses
+    //   identically to A/B/D in lockstep at the source level", which the
+    //   third Rust test (`aud_203_reference_blocks_contain_required_constraint_tokens`)
+    //   pins by asserting the reference block contains the required
+    //   constraint tokens. After bankrun migration, this TS test becomes
+    //   the runtime sentinel and the parity tests become belt-and-braces
+    //   (kept — different threats).
     // ------------------------------------------------------------------------
     it.skip(
-      "ResolveDisputeTimeout: rejects wrong provider_owner_nonce at Settlement boundary (skipped — 7-day governance timeout, no test override)",
+      "ResolveDisputeTimeout: rejects wrong provider_owner_nonce at Settlement boundary (skipped — 7-day governance timeout; mechanical-identity coverage at programs/settlement/src/contexts.rs::aud_117_seeds_parity per AUD-203)",
       async () => {
-        // Re-enable when one of:
-        //   (a) a test-feature flag lets dispute_timeout_seconds be
-        //       overridden at compile-time without touching production
-        //       code, OR
-        //   (b) the suite migrates to anchor-bankrun and gains a
-        //       clock-warp helper.
-        // The seeds constraint block on ResolveDisputeTimeout is a
-        // verbatim copy of the ApproveMilestone block (see commit
-        // 10a58f9), so the active ApproveMilestone test above is the
-        // primary regression sentinel until then.
+        // BANKRUN-TODO(trig_01NokXSDGAb7ECabM5n9ULR3, 2026-05-10):
+        // Re-enable once the suite migrates to anchor-bankrun and gains
+        // a clock-warp helper. The seeds constraint block on
+        // ResolveDisputeTimeout is a verbatim copy of the
+        // ApproveMilestone block (see commit 10a58f9 + AUD-203's
+        // mechanical-identity unit tests in
+        // programs/settlement/src/contexts.rs::aud_117_seeds_parity),
+        // so the active ApproveMilestone test above plus the source-
+        // level parity tests are the regression sentinels until then.
       },
     );
   });
