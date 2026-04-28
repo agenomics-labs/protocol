@@ -337,7 +337,7 @@ class LiveEvoClient implements EvoClient {
  * carry various fields, but Phase 1 only consumes id/score/content/metadata.
  * Unknown fields are dropped, malformed entries are skipped (best-effort).
  */
-function parseRetrievalResult(result: unknown): EvoRetrievalResult {
+export function parseRetrievalResult(result: unknown): EvoRetrievalResult {
   if (!result || typeof result !== "object") {
     return { hits: [] };
   }
@@ -355,12 +355,22 @@ function parseRetrievalResult(result: unknown): EvoRetrievalResult {
     if (!raw || typeof raw !== "object") continue;
     const entry = raw as Record<string, unknown>;
     const id = typeof entry.id === "string" ? entry.id : String(entry.id ?? "");
-    const score =
-      typeof entry.score === "number"
-        ? entry.score
-        : typeof entry.similarity === "number"
-          ? entry.similarity
-          : 0;
+    // MCP-306: distinguish "missing score" from "genuine 0". Pre-fix code
+    // emitted score=0 when neither field was present, so malformed hits
+    // sorted indistinguishably from real zero-similarity hits. Now we drop
+    // entries lacking a numeric score outright.
+    let score: number;
+    if (typeof entry.score === "number") {
+      score = entry.score;
+    } else if (typeof entry.similarity === "number") {
+      score = entry.similarity;
+    } else {
+      log.debug(
+        { entry_id: id, audit: "MCP-306" },
+        "evo-bridge: dropping retrieval hit lacking numeric score/similarity",
+      );
+      continue;
+    }
     const content =
       typeof entry.content === "string"
         ? entry.content
@@ -439,6 +449,29 @@ export function createEvoClient(options: CreateEvoClientOptions = {}): EvoClient
       "binary-exists",
       `AEP_EVO_ENABLED=true but AEP_EVO_BINARY=${config.binaryPath} does not exist. ` +
         `Build the EVO release binary or point AEP_EVO_BINARY at one.`,
+    );
+  }
+
+  // MCP-303: AEP_EVO_DB defaults to a cwd-relative path
+  // (`.aep-evo/agent-memory.db`). Two MCP server instances launched from the
+  // same cwd silently corrupt each other's database. Require an absolute
+  // path when EVO is enabled — surfaces the silent-corruption risk at boot
+  // rather than after on-disk damage.
+  const dbPathRaw = env.AEP_EVO_DB?.trim();
+  if (!dbPathRaw) {
+    throw new EvoBridgeMisconfigError(
+      "db-path",
+      "AEP_EVO_ENABLED=true requires AEP_EVO_DB to be set to an absolute path. " +
+        "The cwd-relative default (`.aep-evo/agent-memory.db`) silently corrupts " +
+        "when two MCP instances launch from the same directory. " +
+        "See docs/audits/CYCLE-3-MCP-PUNCHLIST.md MCP-303.",
+    );
+  }
+  if (!isAbsolute(dbPathRaw)) {
+    throw new EvoBridgeMisconfigError(
+      "db-path-relative",
+      `AEP_EVO_DB=${dbPathRaw} must be absolute. Cwd-relative paths silently ` +
+        `corrupt across MCP instances. See docs/audits/CYCLE-3-MCP-PUNCHLIST.md MCP-303.`,
     );
   }
 
