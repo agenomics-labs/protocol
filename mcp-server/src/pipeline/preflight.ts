@@ -4,6 +4,37 @@
 // ADR-058 §2.1 / `src/types/capability.ts`). `executePreflight` runs the
 // declared gates sequentially and returns the first failure.
 //
+// Contract (MCP-312, Batch E close)
+// =================================
+// Preflight is NOT a chain oracle. It is a fast pre-filter that runs five
+// domain gates (`cluster_health`, `account_rent_exempt`,
+// `daily_cap_not_exhausted`, `token_daily_cap_not_exhausted`,
+// `dispute_window_open`) via direct `getAccountInfo` reads. The actual
+// `simulateTransaction` lives in `compute-budget.ts` and is invoked by
+// `handlers-v2/vault.ts` separately.
+//
+// The ONLY invariant the preflight contract guarantees is:
+//
+//   PREFLIGHT-FAIL ⇒ CHAIN-REJECT-FOR-THE-GATED-REASON
+//
+// The inverse — preflight-pass ⇒ chain-accept — is NOT guaranteed. Reasons:
+//   - Cache TTLs (cluster_health 10s, vault-state 5s) admit racy chain-side
+//     state changes between gate read and chain submit.
+//   - The chain enforces invariants beyond the five gates (signature
+//     authority, account ownership, rent at submit time, slippage on the
+//     payee account, etc.) that preflight does not duplicate.
+//   - Preflight runs against the latest confirmed slot; the tx submits
+//     against `processed`/`finalized` per the caller's commitment.
+//
+// Operationally this means: preflight is a UX optimization that cuts an
+// RPC round-trip when the gated reason would have failed anyway. It is
+// NOT a substitute for sound on-chain enforcement, and it does not
+// pre-clear all chain rejection paths.
+//
+// `mcp-server/test/preflight-contract.test.ts` pins the inverse-non-guarantee
+// with a representative scenario and the failure-direction guarantee with
+// each gate's failure case.
+//
 // All five gates from ADR-058 §2.1 are implemented:
 //   - `cluster_health`               — getRecentPerformanceSamples + slot lag
 //   - `account_rent_exempt`          — recipient account already rent-exempt
