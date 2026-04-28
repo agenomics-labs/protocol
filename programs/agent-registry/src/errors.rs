@@ -112,4 +112,16 @@ pub enum AgentRegistryError {
     // accept-list extension before they can be passed.
     #[msg("Reputation delta `reason` must be 0 (task_completed), 1 (dispute_loss), or 2 (expiry_undelivered); codes 3-255 are reserved for future ADR-driven extensions (AUD-108)")]
     InvalidReputationReason,
+
+    // AUD-206 (cycle-3): `propose_reputation_delta` rejects calls on a
+    // profile already in terminal `Retired` status. Pre-fix, the handler
+    // would still mutate `slash_count`, emit `ReputationDeltaProposed`
+    // (and `AgentSlashed` on slash reasons), and tick `updated_at` on a
+    // closed-state agent — filling indexer noise without breaking
+    // invariants (status stayed Retired since `Suspended` is only
+    // written when `slash_count >= 3` AND the prior status was not
+    // already terminal). The guard hoists the closed-state check to
+    // handler entry so terminal profiles cannot be mutated at all.
+    #[msg("AgentProfile is in terminal Retired status; reputation deltas are not accepted on closed-state profiles (AUD-206)")]
+    ProfileRetired,
 }
