@@ -23,12 +23,15 @@
 // Phase 1 / Phase 2 need plus a `health` stub so the adapter can be wired
 // into a future operator probe without another bridge round-trip.
 
-import { spawn, type ChildProcess } from "node:child_process";
-import { createInterface, type Interface as ReadlineInterface } from "node:readline";
 import { existsSync } from "node:fs";
 import { isAbsolute } from "node:path";
 
 import { serverLogger } from "../util/logger.js";
+import {
+  EvoSubprocessTransport,
+  type ResiliencePolicy,
+  DEFAULT_RESILIENCE_POLICY,
+} from "./evo-subprocess-transport.js";
 
 const log = serverLogger.child({ component: "evo-bridge" });
 
@@ -118,6 +121,8 @@ export interface EvoBridgeConfig {
   defaultTopK: number;
   defaultTokenBudget: number;
   defaultMinSimilarity: number;
+  /** ADR-129 §"Resilience primitives" — knobs for MCP-300/301/302/305. */
+  resilience: ResiliencePolicy;
 }
 
 function envFlag(env: NodeJS.ProcessEnv, name: string, fallback: boolean): boolean {
@@ -179,6 +184,38 @@ export function resolveEvoBridgeConfig(env: NodeJS.ProcessEnv = process.env): Ev
     defaultTopK: envInt(env, "AEP_EVO_DEFAULT_TOPK", 10),
     defaultTokenBudget: envInt(env, "AEP_EVO_DEFAULT_TOKEN_BUDGET", 4096),
     defaultMinSimilarity: envFloat01(env, "AEP_EVO_DEFAULT_MIN_SIMILARITY", 0.3),
+    resilience: {
+      callTimeoutMs: envInt(
+        env,
+        "AEP_EVO_CALL_TIMEOUT_MS",
+        DEFAULT_RESILIENCE_POLICY.callTimeoutMs,
+      ),
+      maxQueueDepth: envInt(
+        env,
+        "AEP_EVO_MAX_QUEUE_DEPTH",
+        DEFAULT_RESILIENCE_POLICY.maxQueueDepth,
+      ),
+      failureThreshold: envInt(
+        env,
+        "AEP_EVO_BREAKER_FAILURE_THRESHOLD",
+        DEFAULT_RESILIENCE_POLICY.failureThreshold,
+      ),
+      restartCooldownMs: envInt(
+        env,
+        "AEP_EVO_RESTART_COOLDOWN_MS",
+        DEFAULT_RESILIENCE_POLICY.restartCooldownMs,
+      ),
+      maxRestarts: envInt(
+        env,
+        "AEP_EVO_RESTART_MAX",
+        DEFAULT_RESILIENCE_POLICY.maxRestarts,
+      ),
+      protocolMajor: envInt(
+        env,
+        "AEP_EVO_PROTOCOL_MAJOR",
+        DEFAULT_RESILIENCE_POLICY.protocolMajor,
+      ),
+    },
   };
 }
 
@@ -201,195 +238,11 @@ export class EvoBridgeMisconfigError extends Error {
 }
 
 // ---------------------------------------------------------------------------
-// Internal: low-level subprocess transport. Single in-flight request at a
-// time — sufficient for Phase 1 since `evo --json` writes one response per
-// command in order. We serialize the queue ourselves so two concurrent
-// `observe`/`retrieve` callers don't interleave their JSONL frames.
-// ---------------------------------------------------------------------------
-
-interface PendingCommand {
-  resolve: (value: unknown) => void;
-  reject: (reason: Error) => void;
-  payload: string;
-}
-
-class EvoSubprocessTransport {
-  private process: ChildProcess | null = null;
-  private readline: ReadlineInterface | null = null;
-  private inflight: PendingCommand | null = null;
-  private readonly queue: PendingCommand[] = [];
-  private closed = false;
-  /**
-   * Captures a startup-time JSON error line emitted by `cmd_json_mode`
-   * before we sent any command (e.g. the binary refusing the DB path
-   * outright). Without this, the line gets dropped because `inflight` is
-   * empty, and operators see "process exited" with no context.
-   */
-  private startupError: string | null = null;
-
-  constructor(
-    private readonly binaryPath: string,
-    private readonly dbPath: string,
-  ) {}
-
-  private start(): void {
-    log.info(
-      { binary: this.binaryPath, db: this.dbPath },
-      "evo-bridge: spawning EVO subprocess",
-    );
-    this.process = spawn(this.binaryPath, ["--json", "--db", this.dbPath], {
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-
-    if (!this.process.stdout) {
-      throw new Error("evo-bridge: spawn returned no stdout pipe");
-    }
-
-    this.readline = createInterface({ input: this.process.stdout });
-    this.readline.on("line", (line: string) => this.onLine(line));
-
-    this.process.on("error", (err: Error) => {
-      this.failAll(new Error(`evo-bridge: subprocess error: ${err.message}`));
-    });
-
-    this.process.on("close", (code: number | null, signal: NodeJS.Signals | null) => {
-      this.closed = true;
-      const reason = this.startupError
-        ? `evo-bridge: subprocess exited at startup: ${this.startupError}`
-        : `evo-bridge: subprocess exited unexpectedly (code ${code}, signal ${signal})`;
-      this.failAll(new Error(reason));
-    });
-
-    this.process.stderr?.on("data", (chunk: Buffer) => {
-      // EVO writes startup banners + diagnostics to stderr. Surface them
-      // at debug so operators can opt in via LOG_LEVEL=debug without us
-      // spamming info-level logs on every spawn.
-      log.debug({ stderr: chunk.toString("utf8").trim() }, "evo-bridge: subprocess stderr");
-    });
-  }
-
-  private onLine(line: string): void {
-    const current = this.inflight;
-    if (!current) {
-      // Unsolicited line — almost always a startup-time write_json_error.
-      this.startupError = this.extractErrorMessage(line);
-      log.warn({ line }, "evo-bridge: unmatched response line");
-      return;
-    }
-    this.inflight = null;
-    try {
-      const parsed: unknown = JSON.parse(line);
-      current.resolve(parsed);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      current.reject(new Error(`evo-bridge: failed to parse response: ${msg}`));
-    }
-    this.pump();
-  }
-
-  private failAll(error: Error): void {
-    if (this.inflight) {
-      this.inflight.reject(error);
-      this.inflight = null;
-    }
-    while (this.queue.length > 0) {
-      const next = this.queue.shift()!;
-      next.reject(error);
-    }
-  }
-
-  private pump(): void {
-    if (this.inflight !== null) return;
-    const next = this.queue.shift();
-    if (!next) return;
-    if (!this.process?.stdin?.writable) {
-      next.reject(new Error("evo-bridge: subprocess stdin is not writable"));
-      this.pump();
-      return;
-    }
-    this.inflight = next;
-    this.process.stdin.write(next.payload, (err) => {
-      if (err && this.inflight === next) {
-        this.inflight = null;
-        next.reject(new Error(`evo-bridge: stdin write failed: ${err.message}`));
-        this.pump();
-      }
-    });
-  }
-
-  send(command: Record<string, unknown>): Promise<unknown> {
-    if (this.closed) {
-      return Promise.reject(
-        new Error(
-          this.startupError
-            ? `evo-bridge: subprocess exited at startup: ${this.startupError}`
-            : "evo-bridge: subprocess is not running",
-        ),
-      );
-    }
-    if (!this.process) {
-      try {
-        this.start();
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return Promise.reject(new Error(`evo-bridge: failed to start subprocess: ${msg}`));
-      }
-    }
-    const payload = JSON.stringify(command) + "\n";
-    return new Promise<unknown>((resolve, reject) => {
-      this.queue.push({ resolve, reject, payload });
-      this.pump();
-    });
-  }
-
-  async close(): Promise<void> {
-    if (!this.process) {
-      this.closed = true;
-      return;
-    }
-    this.closed = true;
-    const proc = this.process;
-    proc.stdin?.end();
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(() => {
-        try {
-          proc.kill("SIGKILL");
-        } catch {
-          /* already gone */
-        }
-        resolve();
-      }, 5000);
-      proc.once("close", () => {
-        clearTimeout(timer);
-        resolve();
-      });
-    });
-    this.process = null;
-    this.readline = null;
-  }
-
-  private extractErrorMessage(line: string): string {
-    try {
-      const parsed: unknown = JSON.parse(line);
-      if (
-        parsed &&
-        typeof parsed === "object" &&
-        "error" in parsed &&
-        typeof (parsed as { error: unknown }).error === "string"
-      ) {
-        return (parsed as { error: string }).error;
-      }
-    } catch {
-      // not JSON — fall through
-    }
-    return line;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Live client. Wraps the subprocess transport in the narrow `EvoClient`
-// surface, translates domain shapes into EVO's `cmd: 'observe_text'` etc.,
-// and parses responses back into our `EvoRetrievalResult` shape.
+// Live client. Wraps the subprocess transport (see
+// `evo-subprocess-transport.ts` for the resilience primitives — MCP-300/
+// 301/302/305/307) in the narrow `EvoClient` surface, translates domain
+// shapes into EVO's `cmd: 'observe_text'` etc., and parses responses back
+// into our `EvoRetrievalResult` shape.
 // ---------------------------------------------------------------------------
 
 class LiveEvoClient implements EvoClient {
@@ -611,7 +464,11 @@ export function createEvoClient(options: CreateEvoClientOptions = {}): EvoClient
     );
   }
 
-  const transport = new EvoSubprocessTransport(config.binaryPath, config.dbPath);
+  const transport = new EvoSubprocessTransport({
+    binaryPath: config.binaryPath,
+    dbPath: config.dbPath,
+    policy: config.resilience,
+  });
   const client = new LiveEvoClient(transport, {
     defaultTopK: config.defaultTopK,
     defaultTokenBudget: config.defaultTokenBudget,

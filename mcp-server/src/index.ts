@@ -209,6 +209,13 @@ async function main() {
       evo_enabled: evoClient.enabled,
       evo_binary: evoClient.enabled ? evoConfig.binaryPath : undefined,
       evo_db: evoClient.enabled ? evoConfig.dbPath : undefined,
+      // ADR-129 §"Resilience primitives" (MCP-300/301/302/305) — surface
+      // the live policy so operators see what they tuned.
+      evo_call_timeout_ms: evoClient.enabled ? evoConfig.resilience.callTimeoutMs : undefined,
+      evo_max_queue_depth: evoClient.enabled ? evoConfig.resilience.maxQueueDepth : undefined,
+      evo_breaker_threshold: evoClient.enabled ? evoConfig.resilience.failureThreshold : undefined,
+      evo_max_restarts: evoClient.enabled ? evoConfig.resilience.maxRestarts : undefined,
+      evo_protocol_major: evoClient.enabled ? evoConfig.resilience.protocolMajor : undefined,
     },
     "agenomics mcp server started",
   );
