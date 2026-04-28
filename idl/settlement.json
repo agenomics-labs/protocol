@@ -387,6 +387,65 @@
       ]
     },
     {
+      "name": "cancel_active_escrow",
+      "docs": [
+        "AUD-201: Mutual rescission of an `Active` escrow. Both client AND",
+        "provider must sign — closes the post-acceptance refund gap where",
+        "`expire_escrow`'s 365-day deadline (compounding to ~730 days when",
+        "stacked with the dispute timeout) was the only exit. See",
+        "`instructions::cancel_active_escrow` for the full justification."
+      ],
+      "discriminator": [
+        225,
+        248,
+        87,
+        84,
+        135,
+        32,
+        107,
+        158
+      ],
+      "accounts": [
+        {
+          "name": "client",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "escrow"
+          ]
+        },
+        {
+          "name": "provider",
+          "docs": [
+            "Provider must co-sign — this is what makes the unwind safe in both",
+            "directions (client cannot drain without provider; provider cannot",
+            "grief without client)."
+          ],
+          "signer": true,
+          "relations": [
+            "escrow"
+          ]
+        },
+        {
+          "name": "escrow",
+          "writable": true
+        },
+        {
+          "name": "escrow_token_account",
+          "writable": true
+        },
+        {
+          "name": "client_token_account",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "cancel_escrow",
       "docs": [
         "Client can cancel an escrow that hasn't been accepted yet."
