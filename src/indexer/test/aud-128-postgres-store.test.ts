@@ -90,29 +90,74 @@ async function makePgMemStore(): Promise<{ store: PostgresStore; mem: IMemoryDb;
 }
 
 // ---------------------------------------------------------------------------
-// Test 1: Schema parity — every SQLite table exists in Postgres with
-// the same columns. Reads `src/indexer/index.ts` is unnecessary because
-// the SQL DDL is already covered by the same migration file we ship; we
-// instead assert that the seven expected tables exist with the column
-// names the dual-write code references.
+// Test 1: Schema parity — every SQLite table from `initDb` exists in
+// Postgres with the SAME column-name set. The SQLite side is the
+// authoritative source per ADR-128 Phase 1 §"Surface impact"; the PG
+// migration is a shadow that must round-trip the same shape.
+//
+// OFF-207 (cycle-3 off-chain audit): the previous version of this block
+// hard-coded the expected column list inline in the test, so a developer
+// who edited the migration SQL would (mechanically) edit the test in
+// lockstep and the gate passed silently. The fix: derive BOTH sides
+// independently — SQLite via `PRAGMA table_info(<table>)` against a
+// freshly `initDb`'d database, Postgres via `information_schema.columns`
+// after `applyMigration`. The test compares the two sets directly. A
+// SQL-only edit on either side is now caught at test time.
 // ---------------------------------------------------------------------------
 
-describe("ADR-128 Phase 1 — schema parity", () => {
+/**
+ * SQLite column set per `initDb`. Reads `PRAGMA table_info(<table>)`
+ * which returns one row per column with `name`, `type`, `notnull`,
+ * `dflt_value`, `pk`. We only need the column-name set for the parity
+ * check — type mappings (INTEGER -> BIGINT, TEXT -> TEXT/TIMESTAMPTZ)
+ * are documented in `001-initial-postgres.sql` and would require a
+ * type-map oracle the test cannot derive.
+ */
+function sqliteColumns(db: Database.Database, table: string): string[] {
+  const rows = db
+    .prepare(`PRAGMA table_info(${table})`)
+    .all() as Array<{ name: string }>;
+  return rows.map((r) => r.name).sort();
+}
+
+/**
+ * Postgres column set per `information_schema.columns`. Returns sorted
+ * to match `sqliteColumns` so `assert.deepEqual` is order-stable.
+ */
+async function postgresColumns(pool: Pool, table: string): Promise<string[]> {
+  const res = await pool.query<{ column_name: string }>(
+    `SELECT column_name FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = $1
+     ORDER BY column_name`,
+    [table],
+  );
+  return res.rows.map((r) => r.column_name).sort();
+}
+
+describe("ADR-128 Phase 1 — schema parity (SQLite ↔ Postgres)", () => {
   let store: PostgresStore;
   let pool: Pool;
+  let sqliteDb: Database.Database;
 
   before(async () => {
     const fixture = await makePgMemStore();
     store = fixture.store;
     pool = fixture.pool;
+    // Authoritative SQLite source: spin up the real `initDb` so the test
+    // reads whatever DDL `src/indexer/index.ts` actually executes today.
+    // No hand-maintained mirror.
+    sqliteDb = initDb(":memory:");
   });
 
   after(async () => {
     await store.close();
+    sqliteDb.close();
   });
 
   // The seven tables specified in ADR-128 §"Surface impact" — must all
-  // exist after migration.
+  // exist in BOTH stores after their respective migrations. This list
+  // is the cross-store contract; if either side adds a table without
+  // adding it to the other, the loop below fails on the missing side.
   const expectedTables = [
     "events",
     "agents",
@@ -124,46 +169,40 @@ describe("ADR-128 Phase 1 — schema parity", () => {
   ];
 
   for (const table of expectedTables) {
-    it(`creates table '${table}'`, async () => {
-      const res = await pool.query(
+    it(`'${table}' exists in BOTH SQLite and Postgres`, async () => {
+      const sqliteRow = sqliteDb
+        .prepare(
+          `SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`,
+        )
+        .get(table) as { name: string } | undefined;
+      assert.ok(sqliteRow, `expected SQLite table '${table}' to exist`);
+
+      const pgRes = await pool.query(
         `SELECT table_name FROM information_schema.tables
          WHERE table_schema = 'public' AND table_name = $1`,
         [table],
       );
-      assert.equal(res.rowCount, 1, `expected table '${table}' to exist`);
+      assert.equal(
+        pgRes.rowCount,
+        1,
+        `expected Postgres table '${table}' to exist`,
+      );
+    });
+
+    it(`'${table}' has matching column-name set across both stores`, async () => {
+      // OFF-207: the load-bearing parity check. Neither side is a
+      // hardcoded expected-list — both are introspected from the
+      // authoritative source. A column rename / add / drop on either
+      // side without a matching change on the other surfaces here.
+      const sqlite = sqliteColumns(sqliteDb, table);
+      const pg = await postgresColumns(pool, table);
+      assert.deepEqual(
+        pg,
+        sqlite,
+        `column-name parity drift on '${table}': sqlite=${JSON.stringify(sqlite)} pg=${JSON.stringify(pg)}`,
+      );
     });
   }
-
-  it("events table has the columns the dual-write code references", async () => {
-    const res = await pool.query(
-      `SELECT column_name FROM information_schema.columns
-       WHERE table_schema = 'public' AND table_name = 'events'
-       ORDER BY column_name`,
-    );
-    const cols = res.rows.map((r) => r.column_name as string).sort();
-    // Must match SQLite source at `src/indexer/index.ts:58-67`.
-    const expected = [
-      "data",
-      "event_name",
-      "event_ordinal",
-      "id",
-      "program",
-      "signature",
-      "slot",
-      "timestamp",
-    ];
-    assert.deepEqual(cols, expected, "events column set drift vs SQLite");
-  });
-
-  it("cursor table has program / last_processed_slot / last_signature / updated_at", async () => {
-    const res = await pool.query(
-      `SELECT column_name FROM information_schema.columns
-       WHERE table_schema = 'public' AND table_name = 'cursor'
-       ORDER BY column_name`,
-    );
-    const cols = res.rows.map((r) => r.column_name as string).sort();
-    assert.deepEqual(cols, ["last_processed_slot", "last_signature", "program", "updated_at"]);
-  });
 
   it("idempotency UNIQUE index on (program, signature, event_ordinal) is enforced", async () => {
     // Confirms the load-bearing primitive ADR-128 §"Decision" (5)
