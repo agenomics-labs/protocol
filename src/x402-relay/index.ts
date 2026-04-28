@@ -175,10 +175,33 @@ const RELAY_REDIS_URL = process.env.RELAY_REDIS_URL;
 const RELAY_INSTANCE_ID =
   process.env.RELAY_INSTANCE_ID ||
   `${require("node:os").hostname()}#${process.pid}`;
+// OFF-206 — operator-tunable Redis command timeout. Default 2000ms (see
+// `REDIS_COMMAND_TIMEOUT_DEFAULT_MS`); operators can dial this down to
+// fail faster during a Redis brown-out, or up if intra-region latency
+// is unusually high. NaN / non-positive values fall back to the default
+// so a typo in the env doesn't disable the timeout (which was the
+// pre-OFF-206 failure mode).
+const RELAY_REDIS_COMMAND_TIMEOUT_MS = (() => {
+  const raw = process.env.RELAY_REDIS_COMMAND_TIMEOUT_MS;
+  if (raw === undefined || raw === "") return undefined;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+})();
+// OFF-201 — operator-tunable counter reconciler interval. Default 60s
+// (see `RECONCILE_DEFAULT_MS`). Setting `0` disables the automatic
+// reconciler entirely (operators wanting full manual control).
+const RELAY_REDIS_RECONCILE_MS = (() => {
+  const raw = process.env.RELAY_REDIS_RECONCILE_MS;
+  if (raw === undefined || raw === "") return undefined;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+})();
 const redisDedup: RedisDedup = createRedisDedup({
   url: RELAY_REDIS_URL,
   maxRedeemed: MAX_REDEEMED_SIGNATURES,
   logger,
+  commandTimeoutMs: RELAY_REDIS_COMMAND_TIMEOUT_MS,
+  reconcileIntervalMs: RELAY_REDIS_RECONCILE_MS,
 });
 if (redisDedup.enabled) {
   logger.info(
@@ -561,8 +584,12 @@ async function processPaymentRequest(
   //                            response body, so SDK clients with
   //                            retry-on-503 do not need a special case.
   //   - `kind: "ok"`        -> we own the redis lock (or redis is
-  //                            disabled and this is a no-op). Continue
-  //                            through the existing in-memory path.
+  //                            disabled and this is a no-op). The
+  //                            `releaseToken` is the OFF-205 owner
+  //                            capability we MUST present to release
+  //                            this slot on a verify-failed path.
+  //                            Continue through the existing in-memory
+  //                            path.
   //
   // PHASE 2 REMOVAL: when the in-memory map goes away, this block
   // becomes the SOLE dedup gate; the in-memory `.has` checks below
@@ -578,30 +605,38 @@ async function processPaymentRequest(
   if (redisGate.kind === "saturated") {
     return { kind: "saturated" };
   }
+  // OFF-205 — capture the release token. Only meaningful when redis is
+  // enabled; the disabled path returns the empty string and we never
+  // call releaseRedeemed against it (the `redisDedup.enabled` gates
+  // below short-circuit). Capturing here once means every subsequent
+  // release branch is owner-bound by construction.
+  const redisReleaseToken = redisGate.releaseToken;
 
   // Fast-reject: prior commit short-circuits before paying for an RPC
   // roundtrip. The check is repeated post-verify below to close the
   // TOCTOU window.
   //
-  // ADR-126 Phase 1 nuance: when redis is ENABLED and we got `ok`
-  // above, an in-memory hit here means our local cache disagrees with
-  // redis (e.g. our redis lock TTL'd out but the in-memory entry is
-  // still live, or a concurrent racer on this same instance committed
-  // in-memory while our SET-NX was in-flight). The in-memory map is
-  // the more conservative answer (already-issued JWT here means a
-  // duplicate would be a bug); we honor it AND release the just-
-  // acquired redis lock so the counter does not drift.
+  // OFF-203 (cycle-3, 2026-04-27) — the pre-fix code released the just-
+  // acquired redis lock here on the assumption that "the in-memory map
+  // is the more conservative answer; if it says redeemed, our lock is
+  // a leak." That release was the OFF-203 bug: dropping the redis lock
+  // exposed the slot for re-acquisition by ANOTHER instance, which
+  // would then run verify, mint a duplicate JWT, and hand out a second
+  // token for one on-chain payment. The redis lock IS the cluster-wide
+  // record of redemption — once held, it must ride out its TTL. We
+  // simply return `redeemed` and leave the lock alone. The lock is
+  // bound to OUR releaseToken anyway; no other instance can free it.
   const existingExpiry = redeemedSignatures.get(txSignature);
   if (existingExpiry !== undefined && Date.now() < existingExpiry) {
-    if (redisDedup.enabled) {
-      await redisDedup.releaseRedeemed(txSignature);
-    }
     return { kind: "redeemed" };
   }
 
   if (!recipient) {
+    // No JWT will be minted on this branch — the relay misconfig is a
+    // 500. Releasing here is safe (and desirable, so the slot reclaims
+    // immediately rather than after SIGNATURE_TTL_MS).
     if (redisDedup.enabled) {
-      await redisDedup.releaseRedeemed(txSignature);
+      await redisDedup.releaseRedeemed(txSignature, redisReleaseToken);
     }
     return { kind: "no-config" };
   }
@@ -635,9 +670,13 @@ async function processPaymentRequest(
     // would burn its slot for the full SIGNATURE_TTL_MS window across
     // ALL instances. The disabled client is a no-op here.
     //
-    // PHASE 2: this call stays as-is.
+    // OFF-205: the CAS-DEL gate inside redisDedup checks our token
+    // against the stored lock value. Since we just acquired this lock
+    // ourselves above, the CAS will succeed.
+    //
+    // PHASE 2: this call stays as-is (with the releaseToken arg).
     if (redisDedup.enabled) {
-      await redisDedup.releaseRedeemed(txSignature);
+      await redisDedup.releaseRedeemed(txSignature, redisReleaseToken);
     }
     return { kind: "invalid", details: verification.error, verification };
   }
@@ -652,14 +691,19 @@ async function processPaymentRequest(
   // `await` may appear between them, otherwise the atomicity guarantee
   // is lost.
   //
-  // ADR-126 Phase 1 nuance: same as the pre-verify check above — if
-  // redis is enabled and we got `ok` from tryRedeem but in-memory now
-  // says redeemed (an in-flight-collapsed sibling awaiter beat us to
-  // the commit), release the redis lock so it does not leak.
+  // OFF-203 (cycle-3, 2026-04-27) — pre-fix code released the redis
+  // lock here on the assumption that the sibling awaiter's in-memory
+  // commit had "claimed" the slot and our redis lock was a leak. That
+  // release was the OFF-203 bug: a JWT had ALREADY BEEN MINTED on
+  // this instance for this signature (by the sibling awaiter), so the
+  // redis lock represents an authoritative cluster-wide redemption
+  // record. Releasing it let a SECOND relay instance re-acquire,
+  // re-verify, and mint a SECOND JWT — two tokens for one payment.
+  // Fix: do not release. The lock holds for the full SIGNATURE_TTL_MS
+  // and the duplicate signature stays globally rejected. We DO NOT
+  // commit the in-memory entry either (the sibling already did, our
+  // commit would be a redundant Map.set; the early return is correct).
   if (redeemedSignatures.has(txSignature)) {
-    if (redisDedup.enabled) {
-      await redisDedup.releaseRedeemed(txSignature);
-    }
     return { kind: "redeemed" };
   }
   // AUD-209 (cycle-2): fail-closed saturation guard. The previous
@@ -674,9 +718,11 @@ async function processPaymentRequest(
   // at the top of this function. If we reach here with `redeemedSignatures.size
   // >= MAX_REDEEMED_SIGNATURES` it means the in-memory map is at cap
   // independently — release the redis lock since we will not commit.
+  // No JWT was minted, so this release is safe (unlike the OFF-203
+  // race-loss release we removed above). Owner-bound via releaseToken.
   if (redeemedSignatures.size >= MAX_REDEEMED_SIGNATURES) {
     if (redisDedup.enabled) {
-      await redisDedup.releaseRedeemed(txSignature);
+      await redisDedup.releaseRedeemed(txSignature, redisReleaseToken);
     }
     return { kind: "saturated" };
   }
