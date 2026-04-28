@@ -14,7 +14,7 @@ remain unset in production.
 | ID | Title | File:Lines | Owner | Status |
 |---|---|---|---|---|
 | OFF-200 | Indexer dual-write non-transactional | src/indexer/index.ts:1030,1082-1089 | k2jac9 | **Partial — `cfe8e92`** [^off200] |
-| OFF-201 | Redis counter drifts unbounded | src/x402-relay/redis-dedup.ts:295,322 | k2jac9 | **Closed — `__OFF_FIXES_SHA__`** [^off201] |
+| OFF-201 | Redis counter drifts unbounded | src/x402-relay/redis-dedup.ts:295,322 | k2jac9 | **Closed — `3c63f8e`** [^off201] |
 
 [^off200]: Closed for the canonical event-INSERT + cursor-UPSERT pair via `withTransaction` helper (`postgres-store.ts`) and rewire of the two authoritative dual-write sites in `index.ts`. **Scoped out**: 10 projection-only fire-and-forget sites in `updateAgentFromEvent` (lines 678, 704, 747, 793, 808, 825, 841, 856, 880, 881 of the pre-fix file) remain single-write; projection rows are derivable from the authoritative event log if they ever diverge. Real-PG transactional verification closed in OFF-217 (`c0ba30a`).
 
@@ -25,10 +25,10 @@ remain unset in production.
 | ID | Title | File:Lines | Owner | Status |
 |---|---|---|---|---|
 | OFF-202 | Migration __dirname path ENOENT | src/indexer/postgres-store.ts (applyMigration) | k2jac9 | **Closed — `6f5c719`** |
-| OFF-203 | Multi-instance race issues 2 JWTs | src/x402-relay/index.ts:594-600,659-664 | k2jac9 | **Closed — `__OFF_FIXES_SHA__`** [^off203] |
+| OFF-203 | Multi-instance race issues 2 JWTs | src/x402-relay/index.ts:594-600,659-664 | k2jac9 | **Closed — `3c63f8e`** [^off203] |
 | OFF-204 | pg.Pool no timeouts/error handler | src/indexer/postgres-store.ts:473-475 | _unassigned_ | Open |
-| OFF-205 | releaseRedeemed unauthenticated | src/x402-relay/redis-dedup.ts:348-373 | k2jac9 | **Closed — `__OFF_FIXES_SHA__`** [^off205] |
-| OFF-206 | Redis client no commandTimeout | src/x402-relay/redis-dedup.ts:269 | k2jac9 | **Closed — `__OFF_FIXES_SHA__`** [^off206] |
+| OFF-205 | releaseRedeemed unauthenticated | src/x402-relay/redis-dedup.ts:348-373 | k2jac9 | **Closed — `3c63f8e`** [^off205] |
+| OFF-206 | Redis client no commandTimeout | src/x402-relay/redis-dedup.ts:269 | k2jac9 | **Closed — `3c63f8e`** [^off206] |
 | OFF-207 | Schema-parity gate self-referential | src/indexer/test/aud-128-postgres-store.test.ts:127-156 | _unassigned_ | Open |
 | OFF-217 | OFF-200 transactional semantics tested only against pg-mem mock; pg-mem 3.x does not honour BEGIN/COMMIT/ROLLBACK, so `withTransaction` rollback path is verified via a hand-rolled mock Pool rather than a real engine. Required before flipping `INDEXER_PG_URL` in production. | src/indexer/test/aud-200-dual-write-tx.test.ts | k2jac9 | **Closed — `c0ba30a`** [^off217] |
 
