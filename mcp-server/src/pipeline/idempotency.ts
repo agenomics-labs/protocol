@@ -62,9 +62,21 @@ export interface IdempotencyStore {
 // In-memory backend (PR5, renamed — the canonical single-instance path)
 // --------------------------------------------------------------------------
 
+/**
+ * Cache entry. MCP-310 (cycle-3) clarifies the TTL lifecycle:
+ *   - While `fn()` is in-flight: `expiresAt = null` and `timer = null`.
+ *     Concurrent acquire piggybacks on `promise`; the entry can NEVER be
+ *     evicted mid-execution.
+ *   - After `fn()` settles (success or failure): `expiresAt = now + ttlMs`
+ *     and `timer` is armed for that deadline. Pre-fix behavior armed
+ *     eviction at start time, which could fire during a slow `fn()` and
+ *     allow a concurrent caller to spawn a second invocation.
+ */
 interface Entry {
   promise: Promise<Result<unknown>>;
-  expiresAt: number;
+  /** null while in-flight, set to deadline at settle time. */
+  expiresAt: number | null;
+  /** null while in-flight, set to active timer at settle time. */
   timer: NodeJS.Timeout | null;
 }
 
@@ -92,43 +104,49 @@ export class InMemoryIdempotencyStore implements IdempotencyStore {
     fn: () => Promise<Result<T>>,
   ): Promise<Result<T>> {
     const existing = this.store.get(key);
-    if (existing && existing.expiresAt > this.now()) {
-      return existing.promise as Promise<Result<T>>;
+    if (existing) {
+      // In-flight (expiresAt === null) OR cached-and-unexpired — both
+      // piggyback on the same promise. MCP-310: an in-flight entry can
+      // NEVER expire because we don't arm the TTL until settle time.
+      const stillValid =
+        existing.expiresAt === null || existing.expiresAt > this.now();
+      if (stillValid) {
+        return existing.promise as Promise<Result<T>>;
+      }
+      // Expired — clean up before installing replacement.
+      if (existing.timer) clearTimeout(existing.timer);
+      this.store.delete(key);
     }
-    // If we stumbled on an expired entry, clear it so the replacement's
-    // timer is the only one left live.
-    if (existing?.timer) clearTimeout(existing.timer);
-    if (existing) this.store.delete(key);
 
     // `fn()` may throw synchronously (rare — handlers are `async`, but
     // defensive). Wrap in Promise.resolve().then(() => fn()) so both sync
     // throws and rejected promises land on the same rejection path.
     const promise = Promise.resolve().then(() => fn());
 
-    const expiresAt = this.now() + this.ttlMs;
-    // We store the entry BEFORE awaiting completion so that a concurrent
-    // acquire for the same key sees the in-flight promise immediately.
-    const entry: Entry = { promise, expiresAt, timer: null };
+    // MCP-310: store with `expiresAt: null` → in-flight, no eviction yet.
+    // A concurrent acquire for the same key sees this entry and piggybacks
+    // on `promise`. Pre-fix code armed `setTimeout(... ttlMs)` here, which
+    // could evict mid-execution if `fn()` exceeded ttlMs.
+    const entry: Entry = { promise, expiresAt: null, timer: null };
     this.store.set(key, entry);
 
-    // Arm TTL eviction after the promise settles. We arm relative to "now
-    // + ttlMs" regardless of how long `fn` takes — the spec says "cache
-    // the result for 10 minutes", not "cache the result for 10 minutes
-    // after the first call started", but using the start-time makes the
-    // invariant `expiresAt === store.get(key).expiresAt` true for all
-    // callers. Good enough for in-memory single-instance.
-    entry.timer = setTimeout(() => {
-      // Only evict if this entry is still the current one — a caller may
-      // have forced re-entry via `invalidate` and installed a new entry
-      // under the same key.
-      if (this.store.get(key) === entry) this.store.delete(key);
-    }, this.ttlMs);
-    // In Node the timer keeps the event loop alive; for MCP-server-long
-    // lifetimes that's fine, but we `unref` so a short-lived test process
-    // isn't held open waiting for eviction.
-    if (entry.timer && typeof entry.timer.unref === "function") {
-      entry.timer.unref();
-    }
+    // Arm TTL eviction at SETTLE time (success or failure). Relative to
+    // settle: the spec says "cache the result for 10 minutes" — counting
+    // from when there is a result to cache, not from when the call started.
+    promise.finally(() => {
+      // Re-check the entry hasn't been replaced or invalidated. Another
+      // caller may have run invalidate(key) while fn() was in-flight and
+      // installed a new entry; we don't want to attach OUR timer to
+      // someone else's entry.
+      if (this.store.get(key) !== entry) return;
+      entry.expiresAt = this.now() + this.ttlMs;
+      entry.timer = setTimeout(() => {
+        if (this.store.get(key) === entry) this.store.delete(key);
+      }, this.ttlMs);
+      if (entry.timer && typeof entry.timer.unref === "function") {
+        entry.timer.unref();
+      }
+    });
 
     return promise as Promise<Result<T>>;
   }
