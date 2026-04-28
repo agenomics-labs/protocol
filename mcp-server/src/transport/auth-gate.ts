@@ -60,6 +60,54 @@ export interface TransportPostureEnv {
   readonly AEP_MCP_HTTP_PORT?: string;
   readonly AEP_MCP_UNIX_PATH?: string;
   readonly AEP_MCP_ALLOWED_UID?: string;
+  /**
+   * MCP-322 (ADR-132). Set to a truthy value (`1`/`true`) when running in a
+   * containerized context so the default transport flips from `stdio` to
+   * `unix`. Detected automatically when `/.dockerenv` exists or
+   * `process.env.container` is set; this env can also force the flip in
+   * other container runtimes.
+   */
+  readonly container?: string;
+}
+
+/**
+ * MCP-322 — Detect a containerized runtime so the default transport can
+ * flip from `stdio` (parent-process trust) to `unix` (UID-bounded). In
+ * containers like Docker / podman / nerdctl, the parent of the MCP
+ * process is `tini`/`dumb-init`/PID 1, NOT a single trusted user; any
+ * other process that can `exec` into the container would inherit stdio
+ * trust. The unix transport's optional UID check is the safer default.
+ *
+ * Detection signals:
+ *   - `/.dockerenv` exists (Docker, podman with `--init`)
+ *   - `process.env.container` set (systemd-nspawn / podman default)
+ *   - `AEP_MCP_FORCE_CONTAINER_DEFAULT=1` (operator override)
+ */
+export interface ContainerEnv {
+  /** Sync filesystem check, default `node:fs.existsSync('/.dockerenv')`. */
+  readonly dockerEnvExists?: () => boolean;
+  /** Direct env-var read; defaults to `process.env`. */
+  readonly env?: NodeJS.ProcessEnv;
+}
+
+export function isContainerizedRuntime(opts: ContainerEnv = {}): boolean {
+  const env = opts.env ?? process.env;
+  if (env.AEP_MCP_FORCE_CONTAINER_DEFAULT?.trim() === "1") return true;
+  if (env.container && env.container.trim().length > 0) return true;
+  const exists =
+    opts.dockerEnvExists ??
+    ((): boolean => {
+      try {
+        // Lazy fs require to keep the module load-time graph identical to
+        // pre-Batch-F when not running in a container test scenario.
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const fs = require("node:fs") as typeof import("node:fs");
+        return fs.existsSync("/.dockerenv");
+      } catch {
+        return false;
+      }
+    });
+  return exists();
 }
 
 /**
@@ -92,13 +140,37 @@ export const DEFAULT_HTTP_PORT = 7037;
  * so an operator can act without consulting docs.
  */
 export function detectTransportPosture(env: TransportPostureEnv): TransportPosture {
-  const raw = (env.AEP_MCP_TRANSPORT ?? "stdio").trim().toLowerCase();
+  // MCP-322 (ADR-132): when AEP_MCP_TRANSPORT is unset and the runtime
+  // appears containerized, default to `unix` rather than `stdio`. The
+  // operator can still pin `AEP_MCP_TRANSPORT=stdio` explicitly to opt
+  // back in. When `AEP_MCP_UNIX_PATH` is unset in container mode, fall
+  // back to a sensible default at `/run/aep-mcp/mcp.sock`.
+  const explicit = env.AEP_MCP_TRANSPORT?.trim().toLowerCase();
+  let raw: string;
+  let autoFlippedToUnix = false;
+  if (explicit && explicit.length > 0) {
+    raw = explicit;
+  } else if (isContainerizedRuntime({ env: env as NodeJS.ProcessEnv })) {
+    log.warn(
+      {
+        adr: "ADR-132",
+        audit: "MCP-322",
+        signal: env.container ? "process.env.container" : "/.dockerenv",
+      },
+      "mcp-auth: containerized runtime detected; defaulting AEP_MCP_TRANSPORT=unix " +
+        "(set AEP_MCP_TRANSPORT=stdio to override)",
+    );
+    raw = "unix";
+    autoFlippedToUnix = true;
+  } else {
+    raw = "stdio";
+  }
 
   if (raw !== "stdio" && raw !== "http" && raw !== "unix") {
     throw new Error(
       `AEP_MCP_TRANSPORT="${raw}" is not recognized. ` +
-        `Valid modes: "stdio" (default), "http", "unix". ` +
-        `See docs/adr/ADR-083-mcp-transport-security-model.md.`,
+        `Valid modes: "stdio" (default outside containers), "http", "unix" (default in containers). ` +
+        `See docs/adr/ADR-083-mcp-transport-security-model.md and ADR-132.`,
     );
   }
 
@@ -138,7 +210,14 @@ export function detectTransportPosture(env: TransportPostureEnv): TransportPostu
   }
 
   // raw === "unix"
-  const sockPath = env.AEP_MCP_UNIX_PATH?.trim();
+  // MCP-322: in container-auto-flip mode, default the socket path so the
+  // operator doesn't need to set AEP_MCP_UNIX_PATH for the auto-flip to
+  // be a drop-in replacement for stdio. Outside auto-flip we keep the
+  // explicit-required behavior (operators choosing unix transport
+  // intentionally set the path to live where their orchestrator expects).
+  const sockPath =
+    env.AEP_MCP_UNIX_PATH?.trim() ||
+    (autoFlippedToUnix ? "/run/aep-mcp/mcp.sock" : "");
   if (!sockPath) {
     throw new Error(
       `AEP_MCP_TRANSPORT=unix requires AEP_MCP_UNIX_PATH to be set ` +

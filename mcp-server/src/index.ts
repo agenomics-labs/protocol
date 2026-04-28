@@ -32,6 +32,10 @@ import {
   readRateLimitConfig,
 } from "./transport/rate-limit.js";
 import {
+  makeOriginGate,
+  readOriginGateConfig,
+} from "./transport/origin-gate.js";
+import {
   serverLogger as log,
   newCorrelationId,
   withRequestContext,
@@ -242,6 +246,13 @@ async function startHttpTransport(posture: TransportPosture): Promise<void> {
     void transport.handleRequest(req, res);
   };
 
+  // MCP-321 (ADR-132): origin allowlist runs FIRST so cross-origin probes
+  // don't even consume rate-limit bucket capacity. Server-to-server callers
+  // (no Origin header) pass through; browser cross-origin requests must
+  // match `AEP_MCP_HTTP_ALLOWED_ORIGINS`.
+  const originGateConfig = readOriginGateConfig(process.env);
+  const originGate = makeOriginGate(originGateConfig);
+
   // MCP-320: Per-bucket rate limit in front of the auth gate. Bucketing is
   // bearer-token-first, IP-fallback (see `transport/rate-limit.ts` header
   // for full rationale). The limiter runs BEFORE auth so unauthenticated
@@ -253,7 +264,10 @@ async function startHttpTransport(posture: TransportPosture): Promise<void> {
   const authMiddleware = makeBearerAuthMiddleware({
     expectedToken: posture.httpToken!,
   });
-  const wrapped = rateLimiter.middleware(authMiddleware(downstream));
+  // Order: origin → rate-limit → bearer-auth → downstream
+  const wrapped = originGate.middleware(
+    rateLimiter.middleware(authMiddleware(downstream)),
+  );
   const httpServer = http.createServer(wrapped);
 
   // Best-effort graceful shutdown: drop the pruner interval and clear the
@@ -287,10 +301,12 @@ async function startHttpTransport(posture: TransportPosture): Promise<void> {
       rate_limit_window_ms: rateLimitConfig.windowMs,
       rate_limit_max_requests: rateLimitConfig.maxRequests,
       rate_limit_trust_proxy: rateLimitConfig.trustProxy,
-      adr: "ADR-083",
-      audit: "MCP-320",
+      origin_allowlist_count: originGateConfig.allowedOrigins.length,
+      origin_allowlist: originGateConfig.allowedOrigins,
+      adr: "ADR-083 + ADR-132",
+      audit: "MCP-320 + MCP-321",
     },
-    "MCP server bound (HTTP + bearer-token auth + rate limit enforced)",
+    "MCP server bound (HTTP + bearer-token auth + rate limit + origin gate enforced)",
   );
 }
 
