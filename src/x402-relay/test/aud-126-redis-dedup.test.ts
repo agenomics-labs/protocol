@@ -191,12 +191,15 @@ describe("AUD-126 / ADR-126 Phase 1: LiveRedisDedup unit semantics", () => {
 
       const a1 = await dedupA.tryRedeem(sig, TEST_TTL_MS, TEST_INSTANCE_A);
       assert.equal(a1.kind, "ok");
+      // OFF-205: capture the owner-bound release token from A's claim.
+      const aToken = a1.kind === "ok" ? a1.releaseToken : "";
 
       const b1 = await dedupB.tryRedeem(sig, TEST_TTL_MS, TEST_INSTANCE_B);
       assert.equal(b1.kind, "redeemed");
 
-      // A's verify failed — release.
-      await dedupA.releaseRedeemed(sig);
+      // A's verify failed — release with A's token (only A can free the
+      // slot it acquired; B presenting its own/empty token would CAS-fail).
+      await dedupA.releaseRedeemed(sig, aToken);
 
       // B retries — slot is reclaimable.
       const b2 = await dedupB.tryRedeem(sig, TEST_TTL_MS, TEST_INSTANCE_B);
@@ -258,21 +261,25 @@ describe("AUD-126 / ADR-126 Phase 1: LiveRedisDedup unit semantics", () => {
 
     it("releaseRedeemed drops the lock and decrements the counter", async () => {
       const sig = "release-sig";
-      await dedup.tryRedeem(sig, TEST_TTL_MS, TEST_INSTANCE_A);
+      const claim = await dedup.tryRedeem(sig, TEST_TTL_MS, TEST_INSTANCE_A);
+      assert.equal(claim.kind, "ok");
+      const token = claim.kind === "ok" ? claim.releaseToken : "";
       assert.equal(await dedup.approximateSize(), 1);
       assert.notEqual(await client.get(redeemedKey(sig)), null);
 
-      await dedup.releaseRedeemed(sig);
+      await dedup.releaseRedeemed(sig, token);
 
       assert.equal(await client.get(redeemedKey(sig)), null, "lock key removed");
       assert.equal(await dedup.approximateSize(), 0, "counter decremented");
     });
 
     it("releaseRedeemed on an unknown signature is a harmless no-op", async () => {
-      // No prior tryRedeem; counter starts at 0; release must not
-      // underflow it (DECR on a non-existent counter would create
-      // it as -1 — guarded by the "removed > 0" check in releaseRedeemed).
-      await dedup.releaseRedeemed("never-claimed-sig");
+      // No prior tryRedeem; counter starts at 0. The CAS-DEL gate
+      // (OFF-205) means even a non-empty but mismatched token cannot
+      // DEL anything — counter must NOT underflow (DECR on a
+      // non-existent counter would create it as -1, guarded by the
+      // "removed > 0" check in releaseRedeemed).
+      await dedup.releaseRedeemed("never-claimed-sig", "any-token-shape");
       assert.equal(
         await dedup.approximateSize(),
         0,
@@ -284,8 +291,9 @@ describe("AUD-126 / ADR-126 Phase 1: LiveRedisDedup unit semantics", () => {
       const sig = "reclaim-sig";
       const r1 = await dedup.tryRedeem(sig, TEST_TTL_MS, TEST_INSTANCE_A);
       assert.equal(r1.kind, "ok");
+      const token = r1.kind === "ok" ? r1.releaseToken : "";
 
-      await dedup.releaseRedeemed(sig);
+      await dedup.releaseRedeemed(sig, token);
 
       const r2 = await dedup.tryRedeem(sig, TEST_TTL_MS, TEST_INSTANCE_A);
       assert.equal(r2.kind, "ok", "released slot is reclaimable on the same instance");
@@ -341,8 +349,13 @@ describe("AUD-126 / ADR-126 Phase 1: DisabledRedisDedup (RELAY_REDIS_URL unset)"
   });
 
   it("releaseRedeemed and approximateSize and close are harmless no-ops", async () => {
-    await dedup.releaseRedeemed("anything");
+    await dedup.releaseRedeemed("anything", "any-token");
     assert.equal(await dedup.approximateSize(), 0);
+    assert.equal(
+      await dedup.reconcileCounter(),
+      0,
+      "disabled reconcileCounter is a no-op returning 0",
+    );
     await dedup.close();
   });
 });
@@ -479,23 +492,29 @@ describe("AUD-126 / ADR-126 Phase 1: dual-write integration through processPayme
     const result = await relay.processPaymentRequest(sig, verifier, "MOCK_RECIPIENT");
     assert.equal(result.kind, "ok");
 
-    // Redis-side observable: the lock key exists with our instanceId.
-    // Use the dedup client's API rather than reaching into the mock
-    // backing store — that is the contract operators will rely on
-    // when running `redis-cli GET aep:redeemed:<sig>` per ADR-126.
+    // Redis-side observable: the lock key exists; counter incremented.
     const sizeAfter = await relay.redisDedup.approximateSize();
     assert.ok(sizeAfter >= 1, "redis counter incremented after happy-path redeem");
 
-    // In-memory observable: a duplicate processPaymentRequest after
-    // releasing the redis lock should still hit the in-memory map and
-    // return `redeemed`. This is the dual-write proof — the in-memory
-    // map captured the entry independently of redis.
-    await relay.redisDedup.releaseRedeemed(sig);
+    // Dual-write proof — in-memory and redis both have the entry. A
+    // duplicate processPaymentRequest must return `redeemed` for two
+    // independent reasons:
+    //
+    //   - Redis-side: the lock is held (and post-OFF-205, no caller
+    //     outside processPaymentRequest can release it without the
+    //     releaseToken — which only the original tryRedeemer holds);
+    //   - In-memory side: redeemedSignatures.has(sig) is true.
+    //
+    // The dup call therefore exercises the redis branch first
+    // (returns redeemed before even consulting the in-memory map).
+    // This is sufficient to prove redis was written; the in-memory
+    // dual-write is verified separately by the AUD-209 saturation
+    // suite which exclusively exercises the in-memory path.
     const dup = await relay.processPaymentRequest(sig, verifier, "MOCK_RECIPIENT");
     assert.equal(
       dup.kind,
       "redeemed",
-      "even with the redis lock released, the in-memory map's dual-write entry blocks the duplicate — proves both stores were written",
+      "duplicate must be rejected — redis lock OR in-memory entry blocks it",
     );
   });
 
