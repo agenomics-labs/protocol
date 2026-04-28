@@ -20,7 +20,7 @@
     "start": "node dist/index.js",
     "dev": "tsc && node dist/index.js",
     "watch": "tsc --watch",
-    "test": "node --import tsx --test test/action-shape.test.ts test/solana-v2.test.ts test/pipeline.test.ts test/handlers-v2-vault.test.ts test/smoke-integration.test.ts test/transport-auth.test.ts test/transport-rate-limit.test.ts test/loadwallet-permission.test.ts test/idl-typed-decode.test.ts test/result-util.test.ts test/logger.test.ts test/observability.test.ts test/governance.test.ts test/create-vault-bind-proof.test.ts test/find-similar-agents.test.ts test/record-outcome.test.ts test/evo-bridge-resilience.test.ts"
+    "test": "node --import tsx --test test/action-shape.test.ts test/solana-v2.test.ts test/pipeline.test.ts test/handlers-v2-vault.test.ts test/smoke-integration.test.ts test/transport-auth.test.ts test/transport-rate-limit.test.ts test/loadwallet-permission.test.ts test/idl-typed-decode.test.ts test/result-util.test.ts test/logger.test.ts test/observability.test.ts test/governance.test.ts test/create-vault-bind-proof.test.ts test/find-similar-agents.test.ts test/record-outcome.test.ts test/evo-bridge-resilience.test.ts test/idempotency-ttl.test.ts"
   },
   "keywords": [
     "mcp",
