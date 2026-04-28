@@ -417,6 +417,79 @@ Out of scope for Phase 1.
 (observe N outcomes → consolidate → assert L2 strategies formed);
 `aud-13X-evo-budget-bound.test.ts` (assert `token_budget` honored).
 
+## Resilience primitives (cycle-3 close of MCP-300/301/302/305/307)
+
+The Phase 1 subprocess transport (`mcp-server/src/adapters/evo-bridge.ts`,
+EvoSubprocessTransport class) shipped without timeouts, restart logic,
+queue bounds, version handshake, or multi-line startup-error capture.
+Cycle-3 audit surfaced this as a ship-gate for `AEP_EVO_ENABLED=true` in
+production. The transport has been split into
+`mcp-server/src/adapters/evo-subprocess-transport.ts` and hardened with
+the following primitives.
+
+### State machine
+
+```
+idle ─send─▶ starting ─handshake-ok─▶ running
+                            │
+                            ├─send-success─▶ running
+                            ├─send-failure (consecutive < threshold) ─▶ running
+                            ├─send-failure (consecutive >= threshold)─▶ restarting
+                            └─subprocess close ─▶ restarting | breaker_open
+
+restarting ─cooldown elapsed─▶ idle (next send re-spawns)
+restarting ─restartCount > maxRestarts─▶ breaker_open
+breaker_open ─send─▶ reject immediately (terminal)
+```
+
+### Env knobs
+
+| Env var | Default | Audit | Purpose |
+|---|---|---|---|
+| `AEP_EVO_CALL_TIMEOUT_MS` | 5000 | MCP-300 | Per-call timeout. Wedged subprocess no longer hangs callers. |
+| `AEP_EVO_MAX_QUEUE_DEPTH` | 64 | MCP-302 | Bounded queue. New `send()` rejects with `EvoBridgeBackpressureError` once depth (inflight + queued) hits the cap. |
+| `AEP_EVO_BREAKER_FAILURE_THRESHOLD` | 3 | MCP-301 | Consecutive call failures before tripping a restart. |
+| `AEP_EVO_RESTART_COOLDOWN_MS` | 1000 | MCP-301 | Floor of the exponential-backoff restart cooldown (capped at 30s). |
+| `AEP_EVO_RESTART_MAX` | 10 | MCP-301 | Lifetime restart cap. Exceeding this locks the breaker open permanently for the process lifetime. |
+| `AEP_EVO_PROTOCOL_MAJOR` | 1 | MCP-305 | Required EVO protocol major version. Mismatch trips the breaker permanently. |
+
+### Behavioral guarantees
+
+1. **MCP-300** — A timed-out caller rejects with `EvoBridgeTimeoutError`.
+   Any late stdout response that arrives after the timeout is silently
+   dropped (the inflight is marked `settled`, so `onLine` no-ops).
+2. **MCP-301** — Subprocess `close` events trigger restart with
+   exponential backoff (`restartCooldownMs * 2^(restartCount-1)`, capped
+   at 30s). After `maxRestarts`, `EvoBridgeBreakerOpenError` becomes
+   the terminal failure mode and the transport behaves like
+   `DisabledEvoClient` for the rest of the process lifetime.
+3. **MCP-302** — Queue depth (inflight + queued) is bounded. The
+   handshake is exempt (it `unshift`s to the queue head). New user
+   `send()` calls past the cap reject synchronously.
+4. **MCP-305** — On every (re-)spawn, the transport sends `{ cmd:
+   "version" }` ahead of any user command. A `protocol_version`
+   response with the wrong major locks the breaker open. Legacy EVO
+   binaries that reject the cmd with `{ ok: false, error: "unknown
+   command" }` are accepted as v1 (the version string is recorded as
+   `"1.legacy"` for observability).
+5. **MCP-307** — Unsolicited stdout lines (lines arriving while no
+   command is inflight, e.g. EVO startup banners) accumulate into a
+   bounded buffer (`MAX_STARTUP_ERROR_BYTES = 2048`). On subprocess
+   close, all accumulated lines appear in the rejection reason rather
+   than just the first.
+
+The Phase 1 kill-switch posture (default OFF) is unchanged. When EVO is
+enabled, the resilience policy is logged at boot under
+`evo_call_timeout_ms` / `evo_max_queue_depth` / `evo_breaker_threshold`
+/ `evo_max_restarts` / `evo_protocol_major` so operators see the live
+policy at a glance.
+
+Tests: `mcp-server/test/evo-bridge-resilience.test.ts` (9 tests across
+the five audit IDs) inject a fake subprocess + line source via the
+`spawnFn` and `lineSourceFactory` test seams so no real EVO binary is
+spawned. The `ManualScheduler` test seam advances virtual time
+deterministically.
+
 ## Consequences
 
 ### Positive
