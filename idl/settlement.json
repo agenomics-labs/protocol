@@ -2873,15 +2873,40 @@
         "",
         "This is an *interim* governance path. A richer DAO/multisig scheme is",
         "out of scope; the `authority` field can be rotated to any key — a",
-        "timelock or multisig program's PDA would be a natural upgrade target."
+        "timelock or multisig program's PDA would be a natural upgrade target.",
+        "",
+        "AUD-202 (cycle-3): `#[repr(C)]` is load-bearing. Agent Registry's",
+        "`verify_protocol_invariants` reads `authority` from raw account bytes",
+        "at offset `[8..40]` (8 = Anchor discriminator, then `authority`'s 32",
+        "bytes). Borsh serializes fields in declaration order, so as long as",
+        "`authority` is the first declared field the on-wire layout is correct.",
+        "`#[repr(C)]` additionally pins the in-memory layout to declaration",
+        "order, which lets the `const _: ()` block below assert at *Settlement",
+        "build time* that `authority` has not been displaced — failing the",
+        "build before any drifted binary can ship. AUD-104 closed the",
+        "discriminator-name leg of this gate; AUD-202 closes the field-order",
+        "leg. See also the runtime Borsh-layout regression test in this file's",
+        "`#[cfg(test)] mod layout_pin` and the symmetric Registry-side",
+        "regression test `aud_202_*` in",
+        "`programs/agent-registry/src/lib.rs`."
       ],
+      "repr": {
+        "kind": "c"
+      },
       "type": {
         "kind": "struct",
         "fields": [
           {
             "name": "authority",
             "docs": [
-              "Key authorized to run `update_protocol_config`. Can be rotated."
+              "Key authorized to run `update_protocol_config`. Can be rotated.",
+              "",
+              "AUD-202: MUST remain the first declared field. Registry's",
+              "`verify_protocol_invariants` reads bytes `[8..40]` of the raw",
+              "account data as this pubkey. Reordering or prepending another",
+              "field would silently break every governance sweep — see the",
+              "`const _: ()` build-time pin below and the layout-pin test",
+              "module at the bottom of this file."
             ],
             "type": "pubkey"
           },

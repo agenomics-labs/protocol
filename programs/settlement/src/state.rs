@@ -156,9 +156,32 @@ pub struct TaskEscrow {
 /// This is an *interim* governance path. A richer DAO/multisig scheme is
 /// out of scope; the `authority` field can be rotated to any key — a
 /// timelock or multisig program's PDA would be a natural upgrade target.
+///
+/// AUD-202 (cycle-3): `#[repr(C)]` is load-bearing. Agent Registry's
+/// `verify_protocol_invariants` reads `authority` from raw account bytes
+/// at offset `[8..40]` (8 = Anchor discriminator, then `authority`'s 32
+/// bytes). Borsh serializes fields in declaration order, so as long as
+/// `authority` is the first declared field the on-wire layout is correct.
+/// `#[repr(C)]` additionally pins the in-memory layout to declaration
+/// order, which lets the `const _: ()` block below assert at *Settlement
+/// build time* that `authority` has not been displaced — failing the
+/// build before any drifted binary can ship. AUD-104 closed the
+/// discriminator-name leg of this gate; AUD-202 closes the field-order
+/// leg. See also the runtime Borsh-layout regression test in this file's
+/// `#[cfg(test)] mod layout_pin` and the symmetric Registry-side
+/// regression test `aud_202_*` in
+/// `programs/agent-registry/src/lib.rs`.
 #[account]
+#[repr(C)]
 pub struct ProtocolConfig {
     /// Key authorized to run `update_protocol_config`. Can be rotated.
+    ///
+    /// AUD-202: MUST remain the first declared field. Registry's
+    /// `verify_protocol_invariants` reads bytes `[8..40]` of the raw
+    /// account data as this pubkey. Reordering or prepending another
+    /// field would silently break every governance sweep — see the
+    /// `const _: ()` build-time pin below and the layout-pin test
+    /// module at the bottom of this file.
     pub authority: Pubkey,
 
     /// ADR-028: minimum escrow amount in token base units. Anti-sybil floor.
@@ -180,6 +203,32 @@ pub struct ProtocolConfig {
     /// PDA bump for re-derivation.
     pub bump: u8,
 }
+
+// AUD-202 (cycle-3): build-time pin on `ProtocolConfig`'s field-order
+// layout. Combined with `#[repr(C)]` on the struct above, in-memory
+// offsets equal declaration order, and Borsh (used by Anchor for on-wire
+// serialization) also follows declaration order — so an `offset_of!`
+// check on the in-memory layout transitively pins the on-wire layout
+// Registry depends on. If anyone ever prepends a field to
+// `ProtocolConfig`, this assertion fires at *Settlement build time*,
+// before any drifted binary can ship to a cluster where Registry would
+// silently read garbage as `config_authority`.
+//
+// `core::mem::offset_of!` is stable since Rust 1.77; const `assert!` is
+// stable since 1.79. The workspace toolchain is `stable` (see
+// rust-toolchain.toml), well above both floors. Done with `core::mem`
+// rather than the `static_assertions` crate to avoid a new workspace
+// dependency for a one-off check.
+const _: () = {
+    assert!(
+        core::mem::offset_of!(ProtocolConfig, authority) == 0,
+        "AUD-202: `authority` must be the first field of ProtocolConfig — \
+         Agent Registry's verify_protocol_invariants reads bytes [8..40] of \
+         the raw account as this pubkey. Reordering or prepending a field \
+         would silently break every governance sweep. See programs/\
+         agent-registry/src/lib.rs:766-799."
+    );
+};
 
 impl ProtocolConfig {
     /// Explicit serialized size (8 disc + fields + margin).
@@ -251,4 +300,126 @@ impl std::fmt::Display for EscrowStatus {
 pub struct MilestoneData {
     pub description_hash: [u8; 32],
     pub amount: u64,
+}
+
+// ============================================================================
+// LAYOUT PIN — AUD-202 (cycle-3)
+// ============================================================================
+
+#[cfg(test)]
+mod layout_pin {
+    //! AUD-202 (cycle-3): runtime Borsh-layout regression tests for
+    //! `ProtocolConfig`. The compile-time `const _: ()` block above pins
+    //! the in-memory layout via `#[repr(C)] + offset_of!`; this module
+    //! verifies the *on-wire* (Borsh / Anchor `try_serialize`) layout that
+    //! Agent Registry actually reads. The two checks are belt-and-braces:
+    //! `#[repr(C)]` + Borsh's "fields in declaration order" contract make
+    //! them equivalent, but if either contract ever changed (e.g. an
+    //! upstream Anchor major-version that switched serialization formats),
+    //! these tests would be the second line of defense.
+    //!
+    //! See `verify_protocol_invariants` at
+    //! `programs/agent-registry/src/lib.rs:764-799` for the consumer of
+    //! this layout invariant.
+    use super::*;
+    use anchor_lang::AccountSerialize;
+
+    /// AUD-202: with the discriminator stripped, `authority` must occupy
+    /// the first 32 bytes of the Borsh-serialized payload. Equivalently,
+    /// it must occupy bytes `[8..40]` of the raw account data Registry
+    /// reads.
+    #[test]
+    fn aud_202_authority_at_offset_zero_after_discriminator() {
+        let authority = Pubkey::new_from_array([0xAB; 32]);
+        let cfg = ProtocolConfig {
+            authority,
+            min_escrow_amount: 10_000,
+            dispute_timeout_seconds: 7 * 24 * 3600,
+            reputation_delta_task_completed: 10,
+            reputation_delta_dispute_loss: -5,
+            reputation_delta_expiry_undelivered: -3,
+            bump: 255,
+        };
+
+        let mut buf: Vec<u8> = Vec::with_capacity(ProtocolConfig::SPACE);
+        cfg.try_serialize(&mut buf)
+            .expect("ProtocolConfig must serialize");
+
+        // Anchor's `try_serialize` writes 8-byte discriminator + Borsh
+        // payload. The discriminator is the same `cf 5b fa 1c 98 b3 d7 d1`
+        // hardcoded in `agent-registry/src/lib.rs::PROTOCOL_CONFIG_DISCRIMINATOR`.
+        assert!(
+            buf.len() >= 8 + 32,
+            "serialized ProtocolConfig must be at least 40 bytes (8 disc + 32 authority)"
+        );
+
+        // Bytes [8..40] of the on-wire layout MUST equal the authority
+        // pubkey. This is the exact slice Registry reads at
+        // `verify_protocol_invariants`. If a field is ever prepended to
+        // `ProtocolConfig`, those bytes will instead hold the new field's
+        // serialization, this assertion will fail, and the build's test
+        // suite will block the bad change before redeploy.
+        assert_eq!(
+            &buf[8..8 + 32],
+            authority.as_ref(),
+            "AUD-202: bytes [8..40] of serialized ProtocolConfig must be \
+             the authority pubkey. If this fails, a field has been \
+             reordered/prepended and Registry's verify_protocol_invariants \
+             will silently reject every legitimate sweep."
+        );
+    }
+
+    /// AUD-202: simulate the footgun. Construct a hypothetical "drifted"
+    /// payload as if Settlement had prepended a `u64` field before
+    /// `authority` (Borsh-serialized = 8 bytes of LE), then verify that a
+    /// reader using the AUD-104 gate's `[8..40]` slice would read the
+    /// prepended field's bytes instead of the authority — i.e. confirms
+    /// the threat is real and the pin above is what closes it.
+    ///
+    /// This test does NOT modify `ProtocolConfig`; it constructs a raw
+    /// byte buffer that mimics what Settlement WOULD serialize if a
+    /// future refactor added a leading field, and proves the resulting
+    /// bytes do not match the actual authority. The compile-time pin
+    /// above is what prevents this drift from ever materializing in a
+    /// real `ProtocolConfig`.
+    #[test]
+    fn aud_202_simulated_prepended_field_breaks_authority_offset() {
+        let authority = Pubkey::new_from_array([0xCD; 32]);
+        let prepended_value: u64 = 0xDEAD_BEEF_CAFE_F00D;
+
+        // Hypothetical drifted on-wire layout:
+        //   [0..8]   = Anchor discriminator (any 8 bytes for the simulation)
+        //   [8..16]  = prepended u64 (Borsh LE)
+        //   [16..48] = authority (the field that USED to be at [8..40])
+        let mut drifted = Vec::with_capacity(48);
+        drifted.extend_from_slice(&[0u8; 8]); // disc placeholder
+        drifted.extend_from_slice(&prepended_value.to_le_bytes());
+        drifted.extend_from_slice(authority.as_ref());
+
+        // What Registry's AUD-104 gate would read at the (now-stale) offset:
+        let reader_offset_authority = &drifted[8..8 + 32];
+
+        // Confirm the threat: the reader does NOT see the real authority,
+        // it sees the prepended u64 followed by the first 24 bytes of the
+        // real authority — i.e. garbage. This is precisely the silent
+        // mis-read AUD-202 flagged.
+        assert_ne!(
+            reader_offset_authority,
+            authority.as_ref(),
+            "AUD-202: a prepended field WOULD shift authority past offset 8 — \
+             confirming this was a real footgun before the field-order pin \
+             closed it. The compile-time `const _: ()` block above + \
+             `#[repr(C)]` on `ProtocolConfig` now prevents this drift from \
+             ever reaching the build."
+        );
+
+        // And specifically the first 8 bytes the reader sees are the
+        // prepended u64 (Borsh LE), not any portion of the authority.
+        assert_eq!(
+            &reader_offset_authority[..8],
+            &prepended_value.to_le_bytes(),
+            "AUD-202: reader at offset 8 would mistake the prepended field's \
+             bytes for the authority's leading bytes."
+        );
+    }
 }
