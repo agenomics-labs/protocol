@@ -491,6 +491,52 @@ pub struct CancelEscrow<'info> {
     pub token_program: Program<'info, Token>,
 }
 
+/// AUD-201 (cycle-3): Mutual-rescission unwind for an `Active` escrow.
+/// BOTH `client` and `provider` must sign in the same transaction. This is
+/// the only `Active → Cancelled` edge in the lifecycle; it adds the
+/// shortest-window refund path that doesn't rely on `expire_escrow`'s
+/// 365-day deadline (which combined with the 365-day dispute timeout could
+/// strand client funds for up to ~730 days post-acceptance).
+///
+/// Both `has_one` bindings ensure the signers actually correspond to the
+/// stored `escrow.client` / `escrow.provider`; the `constraint = status ==
+/// Active` hoist follows AUD-019's pattern of front-loading status gates
+/// at the Account-deserialization layer.
+#[derive(Accounts)]
+pub struct CancelActiveEscrow<'info> {
+    #[account(mut)]
+    pub client: Signer<'info>,
+
+    /// Provider must co-sign — this is what makes the unwind safe in both
+    /// directions (client cannot drain without provider; provider cannot
+    /// grief without client).
+    pub provider: Signer<'info>,
+
+    #[account(
+        mut,
+        has_one = client @ SettlementError::UnauthorizedClient,
+        has_one = provider @ SettlementError::UnauthorizedProvider,
+        constraint = escrow.status == EscrowStatus::Active @ SettlementError::InvalidStatus,
+    )]
+    pub escrow: Account<'info, TaskEscrow>,
+
+    #[account(
+        mut,
+        constraint = escrow_token_account.mint == escrow.token_mint @ SettlementError::InvalidTokenAccount,
+        constraint = escrow_token_account.owner == escrow.key() @ SettlementError::InvalidTokenAccount,
+    )]
+    pub escrow_token_account: Account<'info, TokenAccount>,
+
+    #[account(
+        mut,
+        constraint = client_token_account.mint == escrow.token_mint @ SettlementError::InvalidTokenAccount,
+        constraint = client_token_account.owner == escrow.client @ SettlementError::InvalidTokenAccount,
+    )]
+    pub client_token_account: Account<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token>,
+}
+
 #[derive(Accounts)]
 pub struct ExpireEscrow<'info> {
     #[account(mut)]

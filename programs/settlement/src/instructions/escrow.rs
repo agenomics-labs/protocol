@@ -409,6 +409,113 @@ pub fn cancel_escrow(ctx: Context<CancelEscrow>) -> Result<()> {
     Ok(())
 }
 
+/// AUD-201 (cycle-3): Mutual rescission of an `Active` escrow.
+///
+/// Pre-fix, once the provider accepted (`Created` → `Active`), the only
+/// refund path was `expire_escrow` after the 365-day `escrow.deadline`. If
+/// a dispute then ran the full `MAX_DISPUTE_TIMEOUT_SECONDS` (also 365
+/// days), worst-case client funds could remain locked for ~730 days.
+/// `cancel_escrow` is `Created`-only (provider hasn't committed yet), so
+/// post-acceptance abandonment had no in-window recovery.
+///
+/// This instruction closes that gap with the minimum-surface fix: BOTH
+/// parties must sign in the same transaction to refund the full remaining
+/// balance to the client and mark the escrow `Cancelled`. Mutual consent
+/// makes this a strict superset of safety:
+///   * Client cannot drain unilaterally — provider must co-sign.
+///   * Provider cannot grief unilaterally — client must co-sign.
+///   * Either party who refuses to sign retains every right they had
+///     before this instruction existed (the existing `expire_escrow` and
+///     dispute paths are unchanged).
+///
+/// State semantics mirror `cancel_escrow`:
+///   * Refunds the FULL remaining balance to the client (not the
+///     released-aware split that `expire_escrow` does on the timeout
+///     rail). Already-released milestone payments stay with the provider;
+///     the on-chain escrow only ever holds `total_amount - released_amount`.
+///   * NO reputation slash — mutual rescission is consensual unwind, not
+///     non-delivery (which is what `expire_escrow`'s slash captures).
+///   * Final status: `Cancelled` (matches `cancel_escrow` for indexer
+///     parity; no off-chain consumer needs to distinguish "cancelled
+///     from Created" vs "cancelled from Active by mutual consent").
+///
+/// Consistency with ADRs:
+///   * ADR-023 / ADR-025: lifecycle transitions remain the union of
+///     `{Created → Cancelled, Active → Active/Disputed/Completed/Expired,
+///     Disputed → Completed}`. This adds one new edge: `Active →
+///     Cancelled` gated on dual signature.
+///   * ADR-030: same principle as the dispute timeout — funds must not be
+///     locked indefinitely; this provides an active-cooperation path
+///     analogous to ADR-030's passive-timeout path for disputes.
+///   * ADR-102 grace window: not relevant here. Grace protects the
+///     provider from a unilateral slash; mutual rescission is consensual
+///     and applies no slash, so there is no front-run window to protect.
+pub fn cancel_active_escrow(ctx: Context<CancelActiveEscrow>) -> Result<()> {
+    // The Account-level constraint on `CancelActiveEscrow` already enforces
+    // `escrow.status == Active` and the `has_one` bindings for both
+    // signers. Re-check status in the handler for defense-in-depth parity
+    // with `cancel_escrow` (handler `require!` mirrors AUD-019 pattern).
+    let escrow = &ctx.accounts.escrow;
+    require!(escrow.status == EscrowStatus::Active, SettlementError::InvalidStatus);
+
+    // Refund what is still in the escrow. `released_amount` already left
+    // the vault in `approve_milestone`; only the unreleased balance is
+    // ours to send back.
+    let amount = escrow
+        .total_amount
+        .checked_sub(escrow.released_amount)
+        .ok_or(SettlementError::AmountOverflow)?;
+
+    let bump = escrow.bump;
+    let client_key = escrow.client;
+    let provider_key = escrow.provider;
+    let task_id = escrow.task_id;
+    let task_id_bytes = task_id.to_le_bytes();
+
+    let signer_seeds: &[&[&[u8]]] = &[&[
+        b"escrow",
+        client_key.as_ref(),
+        provider_key.as_ref(),
+        &task_id_bytes,
+        &[bump],
+    ]];
+
+    if amount > 0 {
+        let transfer_instruction = Transfer {
+            from: ctx.accounts.escrow_token_account.to_account_info(),
+            to: ctx.accounts.client_token_account.to_account_info(),
+            authority: ctx.accounts.escrow.to_account_info(),
+        };
+
+        token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                transfer_instruction,
+                signer_seeds,
+            ),
+            amount,
+        )?;
+    }
+
+    let escrow = &mut ctx.accounts.escrow;
+    // Track the full balance as released so any subsequent (mistaken)
+    // call against this account would see `released_amount == total_amount`.
+    escrow.released_amount = escrow
+        .released_amount
+        .checked_add(amount)
+        .ok_or(SettlementError::AmountOverflow)?;
+    escrow.status = EscrowStatus::Cancelled;
+
+    emit!(EscrowCancelled {
+        escrow: escrow.key(),
+        client: ctx.accounts.client.key(),
+        task_id,
+        refunded_amount: amount,
+    });
+
+    Ok(())
+}
+
 pub fn expire_escrow(ctx: Context<ExpireEscrow>) -> Result<()> {
     let escrow = &ctx.accounts.escrow;
     let clock = Clock::get()?;

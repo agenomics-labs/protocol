@@ -799,6 +799,396 @@ describe("Settlement Protocol Tests", () => {
   });
 
   // ============================================================================
+  // AUD-201 (cycle-3): Mutual rescission of Active escrows
+  // ============================================================================
+  //
+  // Pre-fix: once `accept_task` flipped Created→Active, the only refund
+  // rail was `expire_escrow` after the 365-day deadline. Stacked with the
+  // 365-day dispute timeout, worst-case client funds could be locked for
+  // ~730 days. `cancel_escrow` is Created-only — provider abandonment
+  // post-acceptance had no recovery in any reasonable window.
+  //
+  // Fix: `cancel_active_escrow` accepts `Active → Cancelled` IF AND ONLY
+  // IF both client AND provider sign in the same transaction. The dual
+  // signature is the safety property: neither party can drain or grief
+  // unilaterally; either side that refuses retains every prior right
+  // (the existing expire_escrow / dispute paths are unchanged).
+  //
+  // Tests below cover:
+  //   1. Happy path — both sign, refund credits client, status flips to
+  //      Cancelled, provider keeps already-released milestone payouts.
+  //   2. Wrong status — `Created` escrow rejects (status constraint
+  //      hoisted to Accounts struct per AUD-019 pattern).
+  describe("AUD-201: cancel_active_escrow (mutual rescission)", () => {
+    let aud201Client: Keypair;
+    let aud201Provider: Keypair;
+    let aud201ClientTA: PublicKey;
+    let aud201ProviderTA: PublicKey;
+    let aud201EscrowPDA: PublicKey;
+    let aud201EscrowTA: PublicKey;
+    const aud201TaskId = new BN(2010);
+
+    before(async () => {
+      aud201Client = Keypair.generate();
+      aud201Provider = Keypair.generate();
+
+      for (const kp of [aud201Client, aud201Provider]) {
+        const sig = await connection.requestAirdrop(
+          kp.publicKey,
+          10 * LAMPORTS_PER_SOL
+        );
+        await connection.confirmTransaction(sig);
+      }
+
+      aud201ClientTA = await getOrCreateTokenAccount(
+        aud201Client.publicKey,
+        aud201Client
+      );
+      aud201ProviderTA = await getOrCreateTokenAccount(
+        aud201Provider.publicKey,
+        aud201Client
+      );
+
+      await mintTo(
+        connection,
+        mintAuthority,
+        tokenMint,
+        aud201ClientTA,
+        mintAuthority.publicKey,
+        10_000_000n
+      );
+
+      [aud201EscrowPDA] = await deriveEscrowPDA(
+        aud201Client.publicKey,
+        aud201Provider.publicKey,
+        aud201TaskId
+      );
+      aud201EscrowTA = deriveEscrowTokenAccount(aud201EscrowPDA);
+
+      // Two-milestone escrow — exercises the released_amount > 0 path on
+      // the happy test (M0 approved, then mutual cancel on M1).
+      const milestonesData = [
+        createMilestoneData(400_000n, Buffer.alloc(32, 1)),
+        createMilestoneData(600_000n, Buffer.alloc(32, 2)),
+      ];
+
+      await program.methods
+        .createEscrow(
+          aud201TaskId,
+          new BN(1_000_000),
+          Buffer.alloc(32),
+          FUTURE_DEADLINE,
+          milestonesData,
+          null
+        )
+        .accounts({
+          client: aud201Client.publicKey,
+          clientVault: vaultFor(aud201Client.publicKey),
+          providerVault: vaultFor(aud201Provider.publicKey),
+          provider: aud201Provider.publicKey,
+          protocolConfig: PROTOCOL_CONFIG_PDA,
+          tokenMint,
+          clientTokenAccount: aud201ClientTA,
+          escrow: aud201EscrowPDA,
+          escrowTokenAccount: aud201EscrowTA,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        })
+        .signers([aud201Client])
+        .rpc();
+
+      // Register provider in the registry — required so the M0 approval
+      // can fire its CPI (the mutual-rescission instruction itself does
+      // NOT invoke the registry, but the test setup approves M0 before
+      // the rescission to exercise the released_amount > 0 path).
+      const registryProgram = anchor.workspace.AgentRegistry as Program;
+      const [profilePDA] = deriveAgentProfilePDA(aud201Provider.publicKey);
+      await registryProgram.methods
+        .registerAgent(
+          "AUD-201 Provider",
+          "Provider for cancel_active_escrow tests",
+          "aud201",
+          ["task-execution"],
+          { perTask: {} },
+          new BN(100000),
+          [tokenMint]
+        )
+        .accounts({
+          authority: aud201Provider.publicKey,
+          ownerNonce: deriveOwnerNoncePDA(aud201Provider.publicKey)[0],
+          agentProfile: profilePDA,
+          vault: deriveVaultPDA(aud201Provider.publicKey)[0],
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([aud201Provider])
+        .rpc();
+    });
+
+    it("happy path: both client + provider sign, refunds unreleased balance, status → Cancelled", async () => {
+      // Step 1: provider accepts (Created → Active).
+      await program.methods
+        .acceptTask()
+        .accounts({
+          provider: aud201Provider.publicKey,
+          escrow: aud201EscrowPDA,
+        })
+        .signers([aud201Provider])
+        .rpc();
+
+      // Step 2: provider submits M0 + client approves M0 (releases 400k
+      // to provider, leaves 600k in escrow vault). This puts us in a
+      // realistic "mid-task abandonment" shape where some funds have
+      // already left the vault.
+      await program.methods
+        .submitMilestone(new BN(0), new BN(0))
+        .accounts({
+          provider: aud201Provider.publicKey,
+          escrow: aud201EscrowPDA,
+        })
+        .signers([aud201Provider])
+        .rpc();
+
+      const [providerProfilePDA] = deriveAgentProfilePDA(
+        aud201Provider.publicKey
+      );
+      await program.methods
+        .approveMilestone(new BN(0), 4)
+        .accounts({
+          client: aud201Client.publicKey,
+          escrow: aud201EscrowPDA,
+          escrowTokenAccount: aud201EscrowTA,
+          providerTokenAccount: aud201ProviderTA,
+          registryProgram: REGISTRY_PROGRAM_ID,
+          providerProfile: providerProfilePDA,
+          providerOwnerNonce: deriveOwnerNoncePDA(aud201Provider.publicKey)[0],
+          providerAuthority: aud201Provider.publicKey,
+          settlementAuthority: SETTLEMENT_AUTHORITY_PDA,
+          protocolConfig: PROTOCOL_CONFIG_PDA,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([aud201Client])
+        .rpc();
+
+      // Snapshot balances pre-rescission. Provider already has 400k from
+      // the M0 approval; the rescission must NOT claw that back.
+      const clientBalBefore = BigInt(
+        (await connection.getTokenAccountBalance(aud201ClientTA)).value.amount
+      );
+      const providerBalBefore = BigInt(
+        (await connection.getTokenAccountBalance(aud201ProviderTA)).value.amount
+      );
+      const escrowBalBefore = BigInt(
+        (await connection.getTokenAccountBalance(aud201EscrowTA)).value.amount
+      );
+      // Sanity: provider has the M0 payout, escrow holds the M1 balance.
+      expect(providerBalBefore).to.equal(400_000n);
+      expect(escrowBalBefore).to.equal(600_000n);
+
+      // Step 3: mutual rescission — both sign in the same transaction.
+      await program.methods
+        .cancelActiveEscrow()
+        .accounts({
+          client: aud201Client.publicKey,
+          provider: aud201Provider.publicKey,
+          escrow: aud201EscrowPDA,
+          escrowTokenAccount: aud201EscrowTA,
+          clientTokenAccount: aud201ClientTA,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([aud201Client, aud201Provider])
+        .rpc();
+
+      // Status flipped to Cancelled.
+      const escrow = await program.account.taskEscrow.fetch(aud201EscrowPDA);
+      expect(escrow.status.cancelled).to.be.ok;
+      // released_amount tracked the full total post-rescission.
+      expect(escrow.releasedAmount.toString()).to.equal("1000000");
+
+      // Client got the 600k unreleased back; provider's 400k stays put.
+      const clientBalAfter = BigInt(
+        (await connection.getTokenAccountBalance(aud201ClientTA)).value.amount
+      );
+      const providerBalAfter = BigInt(
+        (await connection.getTokenAccountBalance(aud201ProviderTA)).value.amount
+      );
+      expect(clientBalAfter - clientBalBefore).to.equal(
+        600_000n,
+        "client must receive the unreleased escrow balance"
+      );
+      expect(providerBalAfter).to.equal(
+        providerBalBefore,
+        "provider's already-released milestone payout MUST NOT be clawed back"
+      );
+
+      // Escrow vault drained.
+      const escrowBalAfter = BigInt(
+        (await connection.getTokenAccountBalance(aud201EscrowTA)).value.amount
+      );
+      expect(escrowBalAfter).to.equal(0n);
+    });
+
+    it("rejection: status constraint blocks cancel_active on a Created escrow", async () => {
+      // Fresh escrow that is NEVER accepted — stays in Created. The
+      // CancelActiveEscrow constraint `escrow.status == Active` must
+      // reject before the handler runs (AUD-019-style hoisted constraint).
+      const taskId = new BN(2011);
+      const [escrowPDA] = await deriveEscrowPDA(
+        aud201Client.publicKey,
+        aud201Provider.publicKey,
+        taskId
+      );
+      const escrowTA = deriveEscrowTokenAccount(escrowPDA);
+
+      const milestonesData = [createMilestoneData(500_000n)];
+      await program.methods
+        .createEscrow(
+          taskId,
+          new BN(500_000),
+          Buffer.alloc(32),
+          FUTURE_DEADLINE,
+          milestonesData,
+          null
+        )
+        .accounts({
+          client: aud201Client.publicKey,
+          clientVault: vaultFor(aud201Client.publicKey),
+          providerVault: vaultFor(aud201Provider.publicKey),
+          provider: aud201Provider.publicKey,
+          protocolConfig: PROTOCOL_CONFIG_PDA,
+          tokenMint,
+          clientTokenAccount: aud201ClientTA,
+          escrow: escrowPDA,
+          escrowTokenAccount: escrowTA,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        })
+        .signers([aud201Client])
+        .rpc();
+
+      // No accept_task call — escrow remains in Created. Mutual
+      // rescission must fail with InvalidStatus.
+      try {
+        await program.methods
+          .cancelActiveEscrow()
+          .accounts({
+            client: aud201Client.publicKey,
+            provider: aud201Provider.publicKey,
+            escrow: escrowPDA,
+            escrowTokenAccount: escrowTA,
+            clientTokenAccount: aud201ClientTA,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .signers([aud201Client, aud201Provider])
+          .rpc();
+        expect.fail(
+          "cancel_active_escrow on Created escrow must throw InvalidStatus"
+        );
+      } catch (error: any) {
+        const code =
+          (error?.error?.errorCode?.code as string | undefined) ??
+          (error?.message as string | undefined) ??
+          "";
+        expect(code).to.match(/InvalidStatus/);
+      }
+
+      // Escrow remains intact for any subsequent flow. Status still Created,
+      // no balances mutated.
+      const escrow = await program.account.taskEscrow.fetch(escrowPDA);
+      expect(escrow.status.created).to.be.ok;
+    });
+
+    it("rejection: provider signature missing → tx fails (single-sig drain attempt)", async () => {
+      // Adversarial shape: client tries to invoke cancel_active without
+      // the provider's signature. The instruction declares `provider:
+      // Signer<'info>`, so the missing signer must be rejected before
+      // any state mutation. Create a fresh Active escrow, then attempt
+      // the call WITH only the client signer.
+      const taskId = new BN(2012);
+      const [escrowPDA] = await deriveEscrowPDA(
+        aud201Client.publicKey,
+        aud201Provider.publicKey,
+        taskId
+      );
+      const escrowTA = deriveEscrowTokenAccount(escrowPDA);
+
+      const milestonesData = [createMilestoneData(500_000n)];
+      await program.methods
+        .createEscrow(
+          taskId,
+          new BN(500_000),
+          Buffer.alloc(32),
+          FUTURE_DEADLINE,
+          milestonesData,
+          null
+        )
+        .accounts({
+          client: aud201Client.publicKey,
+          clientVault: vaultFor(aud201Client.publicKey),
+          providerVault: vaultFor(aud201Provider.publicKey),
+          provider: aud201Provider.publicKey,
+          protocolConfig: PROTOCOL_CONFIG_PDA,
+          tokenMint,
+          clientTokenAccount: aud201ClientTA,
+          escrow: escrowPDA,
+          escrowTokenAccount: escrowTA,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        })
+        .signers([aud201Client])
+        .rpc();
+
+      await program.methods
+        .acceptTask()
+        .accounts({
+          provider: aud201Provider.publicKey,
+          escrow: escrowPDA,
+        })
+        .signers([aud201Provider])
+        .rpc();
+
+      // Attempt the unilateral rescission — provider keypair NOT passed
+      // to .signers(). Anchor's runtime must reject on missing signer.
+      try {
+        await program.methods
+          .cancelActiveEscrow()
+          .accounts({
+            client: aud201Client.publicKey,
+            provider: aud201Provider.publicKey,
+            escrow: escrowPDA,
+            escrowTokenAccount: escrowTA,
+            clientTokenAccount: aud201ClientTA,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .signers([aud201Client]) // <-- provider deliberately omitted
+          .rpc();
+        expect.fail(
+          "cancel_active_escrow must reject when provider signature is missing"
+        );
+      } catch (error: any) {
+        // The exact error variant depends on the Anchor / web3.js layer
+        // (typically "Signature verification failed" or "missing
+        // signature for"); we just assert the call did NOT silently
+        // succeed. The escrow state is the load-bearing assertion.
+        expect(error).to.exist;
+      }
+
+      // Escrow still Active, vault still funded — no unilateral drain.
+      const escrow = await program.account.taskEscrow.fetch(escrowPDA);
+      expect(escrow.status.active).to.be.ok;
+      const escrowBal = BigInt(
+        (await connection.getTokenAccountBalance(escrowTA)).value.amount
+      );
+      expect(escrowBal).to.equal(500_000n);
+    });
+  });
+
+  // ============================================================================
   // DISPUTE FLOW
   // ============================================================================
 
