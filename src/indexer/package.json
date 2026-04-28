@@ -8,7 +8,7 @@
     "dev": "ts-node-dev --respawn index.ts",
     "build": "tsc",
     "clean": "rm -rf dist",
-    "test": "tsx --test metrics-server.test.ts heartbeat.test.ts decoder.test.ts test/aud-128-postgres-store.test.ts test/aud-202-migration-embedded.test.ts test/aud-200-dual-write-tx.test.ts test/aud-200-dual-write-tx-real-pg.test.ts test/off-204-pg-pool-hardening.test.ts"
+    "test": "NODE_ENV=test tsx --test metrics-server.test.ts heartbeat.test.ts decoder.test.ts test/aud-128-postgres-store.test.ts test/aud-202-migration-embedded.test.ts test/aud-200-dual-write-tx.test.ts test/aud-200-dual-write-tx-real-pg.test.ts test/off-204-pg-pool-hardening.test.ts test/off-208-215-bundle.test.ts"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.31.1",

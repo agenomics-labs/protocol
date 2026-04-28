@@ -28,6 +28,20 @@ const REDACTION_PATHS: readonly string[] = [
   "*.SOLANA_KEYPAIR_PATH",
   "DATABASE_URL",
   "*.DATABASE_URL",
+  // OFF-209 (cycle-3 off-chain audit): the indexer's Postgres shadow
+  // connection URL is a credential — `postgres://user:pass@host/db`
+  // embeds the operator password in plaintext. Pre-fix a log line that
+  // accidentally included `INDEXER_PG_URL` (e.g. a structured boot-error
+  // record dumping `process.env`, or a future debug log mirroring the
+  // dual-write config) leaked the password to stdout. The variable is
+  // listed alongside `DATABASE_URL` because both share the same shape
+  // and the same blast radius. `INDEXER_PG_TEST_URL` is the test-suite
+  // counterpart (OFF-217) and gets the same treatment so a CI log
+  // capturing the test env doesn't leak the test DB password.
+  "INDEXER_PG_URL",
+  "*.INDEXER_PG_URL",
+  "INDEXER_PG_TEST_URL",
+  "*.INDEXER_PG_TEST_URL",
 ];
 
 const SAFE_KEYS = new Set([

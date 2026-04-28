@@ -102,22 +102,87 @@ export const INDEXER_PG_QUERY_TIMEOUT_DEFAULT_MS = 15_000;
 export const INDEXER_PG_STATEMENT_TIMEOUT_DEFAULT_MS = 15_000;
 
 /**
- * Parse a millisecond env var with NaN / non-positive fallback to
- * `defaultMs`. Mirrors the OFF-206 contract: a typo'd env var must NOT
- * silently disable the timeout — that is exactly the pre-fix failure
- * mode (a missing knob = no timeout = indefinite hang). Returning the
- * default also means an operator can tune per-deployment without ever
- * losing the safety floor.
+ * Parse a positive-integer env var with NaN / non-positive fallback to
+ * `defaultValue`. Generalised from the OFF-204 `parsePositiveMsEnv`
+ * helper (which only covered millisecond knobs) to also gate the
+ * OFF-215 fix on `INDEXER_PG_POOL_MAX`. Mirrors the OFF-206 contract:
+ * a typo'd env var must NOT silently fall back to "no limit" — that is
+ * exactly the pre-fix failure mode for both timeouts (`pg.Pool` would
+ * hang forever on `query_timeout=NaN`) and pool sizing (`pg.Pool` would
+ * silently use its own internal default of 10 on `max=NaN`, which
+ * happens to match here but is a footgun for any future tuning that
+ * uses a non-default).
+ *
+ * The same parser is reused by OFF-204 (timeouts in milliseconds) and
+ * OFF-215 (pool size as a count) so both call sites get identical
+ * NaN / negative / zero / whitespace / fractional fallback semantics.
  */
-export function parsePositiveMsEnv(
+export function parsePositiveIntEnv(
   raw: string | undefined,
-  defaultMs: number,
+  defaultValue: number,
 ): number {
-  if (raw === undefined || raw === "") return defaultMs;
+  if (raw === undefined || raw === "") return defaultValue;
   const n = Number(raw);
-  if (!Number.isFinite(n) || n <= 0) return defaultMs;
+  if (!Number.isFinite(n) || n <= 0) return defaultValue;
   return Math.floor(n);
 }
+
+/**
+ * Backwards-compatible alias kept so the OFF-204 test fixture
+ * (`off-204-pg-pool-hardening.test.ts`) and any out-of-tree callers
+ * importing the old symbol keep compiling unchanged. The semantic is
+ * identical — milliseconds are just positive integers — and the new
+ * `parsePositiveIntEnv` name better describes the OFF-215 reuse.
+ */
+export const parsePositiveMsEnv = parsePositiveIntEnv;
+
+/**
+ * Default value for `INDEXER_PG_POOL_MAX`. Matches `pg.Pool`'s own
+ * internal default and the value documented in ADR-128 §"New env vars",
+ * but pinning it here makes the OFF-215 fallback observable at the
+ * call site rather than silently delegated to the driver.
+ */
+export const INDEXER_PG_POOL_MAX_DEFAULT = 10;
+
+// ---------------------------------------------------------------------------
+// OFF-214 (cycle-3 off-chain audit) — single source of truth for the
+// Phase 1 table set.
+//
+// Pre-fix the table allow-list inside `countRows` was a duplicate of
+// the `CREATE TABLE` set declared in `migrations.embedded.ts` (and
+// `migrations/001-initial-postgres.sql`). A future migration that
+// adds a table would have had to update `countRows` in lockstep —
+// easy to forget, and the failure mode is "the new table is silently
+// uncountable from the parity-check path", which is exactly the kind
+// of drift the punchlist gate was supposed to prevent.
+//
+// Fix: export the canonical table set from one place. `countRows`
+// references it via `INDEXER_PG_TABLE_SET` (a `Set` for O(1)
+// membership rejection of injection attempts in the `table` argument);
+// a future migration that adds a table updates ONE constant and the
+// allow-list follows automatically. The aud-202 byte-for-byte parity
+// test on `migrations.embedded.ts` ensures the migration SQL itself
+// can't drift from the .sql source, and the OFF-214 regression test
+// asserts every name in `INDEXER_PG_TABLES` actually appears as a
+// `CREATE TABLE` in the embedded migration SQL — closing the cross-
+// file drift dimension.
+//
+// Order matches the migration's `CREATE TABLE` order so a future
+// `applyMigration`-style runner that wants to truncate / drop in
+// reverse-dependency order can iterate the array directly.
+// ---------------------------------------------------------------------------
+
+export const INDEXER_PG_TABLES: readonly string[] = [
+  "events",
+  "agents",
+  "cursor",
+  "agent_tombstones",
+  "vault_identity_history",
+  "manifest_history",
+  "protocol_config_history",
+] as const;
+
+const INDEXER_PG_TABLE_SET: ReadonlySet<string> = new Set(INDEXER_PG_TABLES);
 
 // ---------------------------------------------------------------------------
 // Shared SQL — kept as module-level constants so the transactional
@@ -587,20 +652,13 @@ export class LivePostgresStore implements PostgresStore {
   }
 
   async countRows(table: string): Promise<number> {
-    // ALLOWED-LIST guard — `table` interpolates into SQL identifier
-    // position which `pg` cannot parameterize. Any value not in this
-    // explicit list is rejected to prevent injection. Keep in sync with
-    // the migration's table set.
-    const allowed = new Set([
-      "events",
-      "agents",
-      "cursor",
-      "agent_tombstones",
-      "vault_identity_history",
-      "manifest_history",
-      "protocol_config_history",
-    ]);
-    if (!allowed.has(table)) {
+    // OFF-214: the allow-list is now derived from the single
+    // `INDEXER_PG_TABLES` source-of-truth declared above, not a
+    // hand-maintained literal. `table` interpolates into SQL identifier
+    // position which `pg` cannot parameterize, so the membership check
+    // is still the only line of defence against injection — but it can
+    // no longer drift from the migration's `CREATE TABLE` set.
+    if (!INDEXER_PG_TABLE_SET.has(table)) {
       throw new Error(`countRows: refusing unknown table '${table}'`);
     }
     const res = await this.pool.query<QueryResultRow>(
@@ -681,7 +739,19 @@ export function createPostgresStore(env: NodeJS.ProcessEnv = process.env): Postg
       `INDEXER_PG_URL is set but malformed: ${(err as Error).message}`,
     );
   }
-  const poolMax = parseInt(env.INDEXER_PG_POOL_MAX || "10", 10);
+  // OFF-215: pre-fix `parseInt(env.INDEXER_PG_POOL_MAX || "10", 10)`
+  // returned NaN for any non-numeric env value (`"abc"`, `"10x"`,
+  // a stray newline). `pg.Pool({ max: NaN })` then silently fell back
+  // to its driver-internal default of 10, hiding operator config errors.
+  // Reusing `parsePositiveIntEnv` (the OFF-204 helper, generalised
+  // here from milliseconds to plain positive ints) means a typo'd pool
+  // size lands deterministically on `INDEXER_PG_POOL_MAX_DEFAULT`
+  // instead — same observable behaviour as the driver default but with
+  // a fallback that is documented and testable from this module.
+  const poolMax = parsePositiveIntEnv(
+    env.INDEXER_PG_POOL_MAX,
+    INDEXER_PG_POOL_MAX_DEFAULT,
+  );
   // OFF-204: every timeout below is env-overridable with NaN / non-
   // positive fallback to the documented default. The pool also wires
   // a process-survivable `error` handler so an idle-client socket
@@ -689,19 +759,19 @@ export function createPostgresStore(env: NodeJS.ProcessEnv = process.env): Postg
   const poolConfig: PoolConfig = {
     connectionString: url,
     max: poolMax,
-    connectionTimeoutMillis: parsePositiveMsEnv(
+    connectionTimeoutMillis: parsePositiveIntEnv(
       env.INDEXER_PG_CONNECTION_TIMEOUT_MS,
       INDEXER_PG_CONNECTION_TIMEOUT_DEFAULT_MS,
     ),
-    idleTimeoutMillis: parsePositiveMsEnv(
+    idleTimeoutMillis: parsePositiveIntEnv(
       env.INDEXER_PG_IDLE_TIMEOUT_MS,
       INDEXER_PG_IDLE_TIMEOUT_DEFAULT_MS,
     ),
-    query_timeout: parsePositiveMsEnv(
+    query_timeout: parsePositiveIntEnv(
       env.INDEXER_PG_QUERY_TIMEOUT_MS,
       INDEXER_PG_QUERY_TIMEOUT_DEFAULT_MS,
     ),
-    statement_timeout: parsePositiveMsEnv(
+    statement_timeout: parsePositiveIntEnv(
       env.INDEXER_PG_STATEMENT_TIMEOUT_MS,
       INDEXER_PG_STATEMENT_TIMEOUT_DEFAULT_MS,
     ),
@@ -765,6 +835,206 @@ export function attachPoolErrorHandler(pool: Pool): void {
 export function createPostgresStoreFromPool(pool: Pool): PostgresStore {
   attachPoolErrorHandler(pool);
   return new LivePostgresStore(pool);
+}
+
+// ---------------------------------------------------------------------------
+// OFF-212 (cycle-3 off-chain audit) — single-writer guarantee via PG
+// session-scoped advisory lock.
+//
+// Pre-fix the indexer assumed a single writer per `INDEXER_PG_URL` but
+// nothing enforced it. Two concurrently-running indexer processes
+// (operator misconfiguration: a stale systemd unit not torn down, a
+// pod that lost its Kubernetes lease but kept running, a developer
+// running `npm start` against a prod URL by mistake) would both
+// compete on the same SQLite cursor advance + the same PG dual-write
+// rows. Idempotency on the events `(program, signature, event_ordinal)`
+// UNIQUE index saves correctness, but the cursor and the projection
+// rows can race in pathological ways — and an operator has no signal
+// that two processes are stepping on each other.
+//
+// Fix: at boot, the indexer takes a Postgres session-scoped advisory
+// lock via `pg_try_advisory_lock(<key>)`. Only one process can hold
+// the lock at a time; subsequent boots fail-fast with a clear log.
+// The lock is session-scoped (NOT transaction-scoped) so it lasts as
+// long as the holding client holds the connection — which is the
+// indexer's process lifetime. When the indexer process exits (graceful
+// SIGINT, SIGTERM, OOM-kill, segfault, host reboot) the connection
+// closes and Postgres releases the lock automatically. No external
+// cleanup required, no stale-lock recovery, no TTL tuning.
+//
+// Why advisory and not row-level: a row in a `singletons` table would
+// require a heartbeat job to expire stale claims, which adds the same
+// complexity that ADR-128 §"Decision" 5 deliberately rejected.
+// Advisory locks are designed for exactly this lease pattern and the
+// expiry semantic is "the holder's TCP connection died" — which is
+// the real signal of "the holder is no longer running".
+//
+// Why a fixed key not derived from the DB URL: every indexer process
+// targets the same logical write surface inside a single PG database.
+// A single fixed key (`INDEXER_WRITER_LOCK_KEY`) is the correct
+// granularity — two indexers against the same DB MUST collide.
+// Operators who run a per-environment indexer use per-environment DBs;
+// the lock is scoped per-DB by Postgres itself.
+//
+// Fallback: when `INDEXER_PG_URL` is unset (the no-PG / SQLite-only
+// posture), there is no shared backend to coordinate on, and the
+// SQLite WAL itself rejects a second writer attempt with `SQLITE_BUSY`
+// already. So the OFF-212 guard only runs when PG is configured —
+// when it isn't, two indexers writing to two different SQLite files
+// is a configuration error of a different shape that's out of scope
+// here. (The audit's punchlist suggested `proper-lockfile` as a
+// SQLite-mode fallback; that dependency is NOT a workspace dep today
+// and adding it for a corner case the SQLite WAL already covers
+// would be a net regression.)
+// ---------------------------------------------------------------------------
+
+/**
+ * Stable 64-bit key for the indexer's writer lock. The value is
+ * arbitrary but MUST NOT change across releases — a key change would
+ * make a new indexer start that doesn't conflict with an old indexer
+ * still running, defeating the lock. Picked as a high-bit-set i64 to
+ * avoid colliding with any application-level advisory key an operator
+ * might use for their own coordination (mcp-server's deploy lock,
+ * etc.). Hex form: `0xAEF1_DEC0_DEC0_001` -> the bit pattern below.
+ *
+ * Postgres `pg_try_advisory_lock(bigint)` accepts an i64 directly;
+ * the JS `bigint` is passed through `pg`'s param marshalling.
+ */
+export const INDEXER_WRITER_LOCK_KEY: bigint = 0x4145_5046_1212_0212n;
+
+/**
+ * Outcome of `acquireIndexerWriterLock`. The release callback is a
+ * no-op for `acquired=false` so call sites can unconditionally invoke
+ * it on shutdown without a branch.
+ */
+export interface IndexerWriterLockHandle {
+  /**
+   * `true` when this process is the lock holder. `false` means another
+   * indexer process already held the lock (fail-fast at boot). Calls
+   * to `release()` on a non-holding handle are silent no-ops.
+   */
+  readonly acquired: boolean;
+  /**
+   * Release the lock and return the borrowed client to the pool.
+   * Idempotent — a second `release()` call is a silent no-op so the
+   * SIGINT handler can call it without checking whether the boot path
+   * also called it.
+   *
+   * On crash / OOM-kill / `process.exit()` the connection closes
+   * automatically and PG releases the lock without a call to this
+   * method. `release()` is therefore an optimisation for a graceful
+   * shutdown, not a correctness primitive.
+   */
+  release(): Promise<void>;
+}
+
+/**
+ * Acquire the indexer's PG advisory writer lock. Returns immediately
+ * with `acquired=false` when:
+ *
+ *   - the store is `DisabledPostgresStore` (no PG configured — the
+ *     SQLite WAL is the only writer arbitrator and is process-local);
+ *   - the connect / advisory-lock query throws (logged at WARN; the
+ *     handle's `acquired=false` branch is the caller's signal to either
+ *     fail-fast or proceed in degraded mode per its own policy).
+ *
+ * The acquired client is held for the lifetime of the lock. It is
+ * NOT returned to the pool after the `pg_try_advisory_lock` query —
+ * doing so would release the lock immediately because session-scoped
+ * advisory locks bind to the session that took them. The client is
+ * released only via `handle.release()` (graceful path) or via the
+ * pool's `pool.end()` on indexer shutdown (which the existing SIGINT
+ * handler in `index.ts` already calls via `pgStore.close()`).
+ */
+export async function acquireIndexerWriterLock(
+  store: PostgresStore,
+): Promise<IndexerWriterLockHandle> {
+  if (!store.enabled) {
+    // No PG configured — single-writer enforcement deferred to the
+    // SQLite WAL (which rejects concurrent writers via SQLITE_BUSY).
+    // Surface as `acquired: false` with a no-op release so call sites
+    // can treat this branch identically to "PG configured but lock
+    // taken" if they want strict cluster-singleton semantics.
+    logger.info(
+      { off: "OFF-212" },
+      "indexer writer lock: PG disabled — relying on SQLite WAL for single-writer",
+    );
+    return { acquired: false, release: async () => {} };
+  }
+  // We need a borrowed client whose session holds the lock for the
+  // process lifetime. `LivePostgresStore.withTransaction` takes a
+  // client but BEGIN/COMMIT scope it; we want the client unbound from
+  // any tx. Cast through the interface to reach the pool.
+  const live = store as unknown as { pool?: Pool };
+  if (!live.pool || typeof live.pool.connect !== "function") {
+    logger.warn(
+      { off: "OFF-212" },
+      "indexer writer lock: store has no pool surface — skipping (test fixture?)",
+    );
+    return { acquired: false, release: async () => {} };
+  }
+  let client: PoolClient;
+  try {
+    client = await live.pool.connect();
+  } catch (err) {
+    logger.warn(
+      { err: String(err), off: "OFF-212" },
+      "indexer writer lock: pool.connect failed — skipping",
+    );
+    return { acquired: false, release: async () => {} };
+  }
+  try {
+    const res = await client.query<{ pg_try_advisory_lock: boolean }>(
+      "SELECT pg_try_advisory_lock($1) AS pg_try_advisory_lock",
+      [INDEXER_WRITER_LOCK_KEY.toString()],
+    );
+    const got = res.rows[0]?.pg_try_advisory_lock === true;
+    if (!got) {
+      // Another process holds the lock — release the client back to
+      // the pool (we hold no lock to keep the session alive for) and
+      // surface a clear signal to the caller.
+      client.release();
+      logger.error(
+        { off: "OFF-212", lock_key: INDEXER_WRITER_LOCK_KEY.toString() },
+        "indexer writer lock NOT acquired — another indexer process holds it; refusing to start",
+      );
+      return { acquired: false, release: async () => {} };
+    }
+    logger.info(
+      { off: "OFF-212", lock_key: INDEXER_WRITER_LOCK_KEY.toString() },
+      "indexer writer lock acquired",
+    );
+    let released = false;
+    return {
+      acquired: true,
+      release: async () => {
+        if (released) return;
+        released = true;
+        try {
+          await client.query("SELECT pg_advisory_unlock($1)", [
+            INDEXER_WRITER_LOCK_KEY.toString(),
+          ]);
+        } catch (err) {
+          logger.warn(
+            { err: String(err), off: "OFF-212" },
+            "indexer writer lock: pg_advisory_unlock raised; pool teardown will release",
+          );
+        } finally {
+          client.release();
+        }
+      },
+    };
+  } catch (err) {
+    // Query failed (transient PG unreachable, statement timeout, etc.)
+    // — release the client and surface as not-acquired. The caller
+    // policy decides whether to fail-fast or proceed.
+    client.release();
+    logger.warn(
+      { err: String(err), off: "OFF-212" },
+      "indexer writer lock: pg_try_advisory_lock failed — skipping",
+    );
+    return { acquired: false, release: async () => {} };
+  }
 }
 
 // ---------------------------------------------------------------------------

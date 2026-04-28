@@ -11,10 +11,27 @@ import {
 } from "@solana/web3.js";
 import { logger, programLogger } from "./logger.js";
 import {
+  acquireIndexerWriterLock,
   createPostgresStore,
   DisabledPostgresStore,
+  type IndexerWriterLockHandle,
   type PostgresStore,
 } from "./postgres-store.js";
+// OFF-208 (cycle-3 off-chain audit): wire the prom-client counters
+// declared in `metrics-server.ts` to the actual event-processing /
+// dual-write / backfill error sites. Pre-fix the counters were defined
+// (and the /metrics endpoint published them) but `inc()` was never
+// called from production code, so every scrape returned the
+// initial-zero series and operators had no real signal of indexer
+// throughput or error rate. The increments below are intentionally
+// inline (no helper wrapper) because the call sites already carry the
+// correct `event_type` / `error_type` label values; a wrapper would
+// just re-marshal the same data through one more frame.
+import {
+  eventsProcessed,
+  indexerErrors,
+  lastSlotProcessed,
+} from "./metrics-server.js";
 
 // ===========================================================================
 // ADR-128 Phase 1 — Postgres dual-write singleton.
@@ -67,8 +84,39 @@ function getPostgresStore(): PostgresStore {
  * can hand in a `pg-mem`-backed `LivePostgresStore` (or a swap to a
  * `DisabledPostgresStore` for parity tests). Pass `null` to reset the
  * cache so the next `getPostgresStore()` call re-reads env.
+ *
+ * OFF-213 (cycle-3 off-chain audit): pre-fix this hook was an
+ * unconditional public export. Any importer of `@agenomics/indexer`
+ * could swap the production singleton at runtime — the function name
+ * advertised the test-only intent but nothing enforced it. The audit
+ * called this out as a soft escape hatch into the dual-write path:
+ * a misuse from non-test code (a debug script, a future operator tool,
+ * an accidentally-shipped fixture) could silently disable the Postgres
+ * shadow store or replace it with a fake.
+ *
+ * Fix (option (a) per the punchlist guidance): hard-gate on
+ * `process.env.NODE_ENV === "test"`. Production / development calls
+ * throw immediately so the misuse surfaces at the call site, not as a
+ * silent dual-write skip three layers down. The check uses an explicit
+ * `"test"` match (not a `!== "production"` or a falsy guard) so a
+ * staging deploy with `NODE_ENV` unset is treated as production —
+ * fail-closed mirroring ADR-128's opt-in posture. The indexer's
+ * `package.json` `test` script sets `NODE_ENV=test` ahead of `tsx
+ * --test` so existing fixtures (`aud-128-postgres-store.test.ts`,
+ * `aud-200-dual-write-tx.test.ts`) keep working unchanged.
+ *
+ * Minimum surface change: the export stays in place so existing test
+ * imports continue to resolve; the runtime guard is the only addition.
  */
 export function setPostgresStoreForTest(store: PostgresStore | null): void {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error(
+      "setPostgresStoreForTest: refusing call outside NODE_ENV=test " +
+        "(OFF-213 — this hook MUST NOT run in production / dev). " +
+        "If you are inside a test runner, ensure NODE_ENV=test is set " +
+        "before importing @agenomics/indexer.",
+    );
+  }
   _pgStore = store;
 }
 
@@ -1169,6 +1217,14 @@ function persistEventsForTx(
       if (result.changes > 0) {
         inserted++;
         metrics.eventsInserted++;
+        // OFF-208: prom counter for events successfully persisted to
+        // SQLite (the authoritative store). Labelled by `event_name`
+        // so a Grafana panel can surface per-event-type rates without
+        // re-parsing the body of the metric. We DO NOT count duplicate-
+        // skips here — `metrics.eventsDuplicateSkipped` is the
+        // in-process counter for those, and a future ADR can wire a
+        // separate prom counter if operators ask for it.
+        eventsProcessed.inc({ event_type: event.name });
         updateAgentFromEvent(db, event, slot, signature);
         // OFF-200 / ADR-128 Phase 1 — defer the PG INSERT; the batch is
         // flushed inside a single PG transaction with the cursor
@@ -1187,6 +1243,12 @@ function persistEventsForTx(
       }
     } catch (err) {
       metrics.parseErrors++;
+      // OFF-208: prom counter for SQLite-write failures inside the
+      // per-event loop (a JSON.stringify throw, a disk-full, a UNIQUE
+      // constraint we somehow missed). Labelled `store_event` to match
+      // the value used in `metrics-server.test.ts` so the prom
+      // contract stays stable across the audit close.
+      indexerErrors.inc({ error_type: "store_event" });
       programLogger(label).error({ err: String(err), corr_id: signature }, "failed to store event");
     }
     ordinal++;
@@ -1202,6 +1264,18 @@ function persistEventsForTx(
         last_signature = excluded.last_signature,
         updated_at = datetime('now')
     `).run(label, slot, signature);
+    // OFF-208: prom gauge for the most recent slot the indexer has
+    // committed to SQLite. Set after the cursor advance so the gauge
+    // never reports a slot we haven't actually persisted. A monotonic-
+    // forward set is safe under `prom-client`'s gauge semantics — the
+    // last-write-wins nature of `set()` matches the cursor's monotonic
+    // advance, and a backfill that processes an OLDER slot than the
+    // current cursor is invariant under the SQLite UPSERT (the cursor
+    // won't move backwards, and this gauge tracks the cursor not the
+    // input event). For the rare interleaving where backfill +
+    // realtime touch the gauge in close succession, a brief dip is
+    // acceptable: the next realtime tick re-asserts the head slot.
+    lastSlotProcessed.set(slot);
     // OFF-200 — single PG transaction wrapping every PG event INSERT
     // for this batch and the cursor UPSERT. Fire-and-forget at the
     // outer boundary preserves the SQLite-authoritative invariant; the
@@ -1252,6 +1326,11 @@ async function backfillProgram(
       }
     } catch (err) {
       metrics.backfillErrors++;
+      // OFF-208: prom counter for cursor-seed failures (first-run
+      // boot when no persisted cursor exists). `error_type` namespaced
+      // so backfill-page-fetch / backfill-tx / cursor-seed can each be
+      // alert-ruled separately.
+      indexerErrors.inc({ error_type: "backfill_cursor_seed" });
       state.lastError = `cursor seed failed: ${(err as Error).message}`;
       programLogger(label).error({ err: String(err) }, "cursor seed failed");
     }
@@ -1276,6 +1355,11 @@ async function backfillProgram(
     }
   } catch (err) {
     metrics.backfillErrors++;
+    // OFF-208: prom counter for `getSignaturesForAddress` paging
+    // failures. Distinct label from the per-tx fetch below so an RPC
+    // outage that wedges paging surfaces independently of a tx-level
+    // RPC flap.
+    indexerErrors.inc({ error_type: "backfill_page_fetch" });
     state.lastError = `backfill page fetch failed: ${(err as Error).message}`;
     programLogger(label).error({ err: String(err) }, "backfill page fetch failed");
     return 0;
@@ -1313,6 +1397,11 @@ async function backfillProgram(
       state.lastSignature = info.signature;
     } catch (err) {
       metrics.backfillErrors++;
+      // OFF-208: prom counter for per-tx `getTransaction` failures
+      // during backfill. Distinct from `backfill_page_fetch` above so
+      // operators can tell "RPC pagination broken" from "RPC tx-fetch
+      // intermittently 5xx-ing".
+      indexerErrors.inc({ error_type: "backfill_tx_fetch" });
       state.lastError = `backfill tx ${info.signature.substring(0, 8)}... failed: ${(err as Error).message}`;
       programLogger(label).error(
         { err: String(err), corr_id: info.signature },
@@ -1429,6 +1518,12 @@ function subscribeToPrograms(
     // history is catching up; `INSERT OR IGNORE` handles any overlap.
     backfillProgram(connection, db, label, programId, state, activeMetrics).catch((err) => {
       activeMetrics.backfillErrors++;
+      // OFF-208: prom counter for unexpected backfill throws (the
+      // top-level rejection that escapes the inner try/catch sites).
+      // Different `error_type` so an alert that fires on this label
+      // means "the backfill itself crashed", not "an RPC call inside
+      // backfill failed and was already counted above".
+      indexerErrors.inc({ error_type: "backfill_threw" });
       state.lastError = `backfill threw: ${(err as Error).message}`;
       programLogger(label).error({ err: String(err) }, "backfill threw");
     });
@@ -1583,17 +1678,37 @@ export function startConnectionHeartbeat(
       failures++;
       if (failures >= opts.failureThreshold) {
         const reason = (err as Error).message ?? String(err);
-        // Reset BEFORE calling so the callback can trigger a re-subscribe
-        // path that re-arms the heartbeat without us double-counting the
-        // outage on the very next tick.
-        failures = 0;
+        // OFF-210 (cycle-3 off-chain audit): reset the failure counter
+        // ONLY after the callback returns successfully. Pre-fix the
+        // reset happened BEFORE the call, so a callback that itself
+        // threw on the same tick (e.g. a `removeOnLogsListener` reject
+        // on a flaky network, or a synchronous re-subscribe error) had
+        // its own failure invisibly swallowed AND the heartbeat
+        // counter was already at zero — meaning the next outage tick
+        // had to climb the threshold from scratch instead of firing
+        // immediately. The fix is to keep the counter at the
+        // threshold value during the callback, then clear it only on
+        // a clean return so a successful re-subscribe re-arms the
+        // heartbeat without double-counting the outage on the very
+        // next tick. If the callback throws we leave `failures` at
+        // its current value: the next failed ping will increment it
+        // further (still >= threshold), the next-tick branch will
+        // re-fire the callback, and we recover automatically when the
+        // callback path becomes healthy. The error path remains
+        // logged at ERROR so an operator sees both the outage and the
+        // callback failure.
         try {
           opts.onConnectionLost(reason);
+          failures = 0;
         } catch (cbErr) {
           logger.error(
             { err: String(cbErr) },
             "heartbeat onConnectionLost callback threw",
           );
+          // Intentionally do NOT reset `failures` here — see comment
+          // above. The next tick re-evaluates the threshold, and a
+          // persistently-failing callback will re-fire (with logging)
+          // until it stops throwing.
         }
       }
     }
@@ -1855,6 +1970,52 @@ async function main(): Promise<void> {
     }
   }
 
+  // OFF-212 (cycle-3 off-chain audit): single-writer guarantee.
+  //
+  // Pre-fix two indexer processes targeting the same `INDEXER_PG_URL`
+  // would both write — idempotency saved correctness on the events
+  // table but the cursor and projection rows could race. Fix is a PG
+  // session-scoped advisory lock taken at boot:
+  //
+  //   - When PG is unconfigured (`pgStore.enabled === false`) the
+  //     SQLite WAL itself rejects a concurrent writer with
+  //     SQLITE_BUSY, so we skip the lock attempt and let WAL do its
+  //     job. The lock helper logs an INFO line either way so an
+  //     operator can audit which mode is active.
+  //
+  //   - When PG is configured AND the lock is already held by another
+  //     process, we fail-fast at boot with a clear log. The
+  //     `INDEXER_ALLOW_NO_WRITER_LOCK=1` opt-out exists so a one-off
+  //     debug run (read-only inspection, schema parity check) can
+  //     proceed without owning the lock; the default posture is
+  //     fail-closed, mirroring ADR-128's opt-in-with-strict-validation
+  //     stance.
+  //
+  // The lock is released by `release()` in the SIGINT handler below,
+  // and additionally by Postgres itself on connection close — so an
+  // OOM-kill / SIGKILL / host reboot never strands the lock.
+  const writerLock: IndexerWriterLockHandle = await acquireIndexerWriterLock(
+    pgStore,
+  );
+  if (pgStore.enabled && !writerLock.acquired) {
+    if (process.env.INDEXER_ALLOW_NO_WRITER_LOCK === "1") {
+      logger.warn(
+        { off: "OFF-212", env: "INDEXER_ALLOW_NO_WRITER_LOCK=1" },
+        "indexer writer lock NOT held but starting anyway (operator override)",
+      );
+    } else {
+      logger.fatal(
+        { off: "OFF-212" },
+        "indexer writer lock NOT acquired — refusing to start (set INDEXER_ALLOW_NO_WRITER_LOCK=1 to override)",
+      );
+      // Best-effort cleanup before exit so the pool sockets get torn
+      // down cleanly rather than leaked into the OS's TIME_WAIT bucket.
+      await pgStore.close().catch(() => {});
+      db.close();
+      process.exit(1);
+    }
+  }
+
   const { states, metrics, heartbeat } = subscribeToPrograms(connection, db);
   const app = createApi(db, states, metrics);
   // AUD-203: bind to INDEXER_HOST (loopback by default) so the /metrics
@@ -1881,6 +2042,14 @@ async function main(): Promise<void> {
   process.on("SIGINT", () => {
     logger.info("shutting down (SIGINT)");
     heartbeat.stop();
+    // OFF-212: release the writer lock explicitly on graceful
+    // shutdown. The PG session-close path also releases it, so this
+    // is an optimisation for a clean exit, not a correctness
+    // primitive — `release()` is idempotent and safe to call even
+    // when the lock was never acquired.
+    void writerLock.release().catch((err) => {
+      logger.warn({ err: String(err), off: "OFF-212" }, "writer lock release failed");
+    });
     // ADR-128 Phase 1: close the shadow pool. `close()` is a no-op on
     // DisabledPostgresStore, so this is safe regardless of opt-in.
     void pgStore.close().catch((err) => {
