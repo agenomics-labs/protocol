@@ -769,6 +769,18 @@ pub mod agent_registry {
         // first after the 8-byte Anchor discriminator, so the pubkey lives
         // at bytes [8, 40). Borrowing the data avoids a cross-program
         // account-type dependency.
+        //
+        // AUD-202 (cycle-3): the assumption "`authority` is the first
+        // declared field" is now load-bearing across two programs, so
+        // Settlement pins it at *its own build time* via `#[repr(C)]` plus
+        // a `const _: () = assert!(offset_of!(ProtocolConfig, authority)
+        // == 0)` block in `programs/settlement/src/state.rs`. That fails
+        // the Settlement build before any drifted binary can ship. The
+        // discriminator gate below (AUD-104) handles the *name-drift* leg
+        // of this defense; the field-order pin handles the *layout-drift*
+        // leg. A runtime regression test in this file's `tests` module
+        // (`aud_202_*`) demonstrates the threat would be real without
+        // the pin.
         let data = ctx.accounts.protocol_config.try_borrow_data()?;
         require!(data.len() >= 8 + 32, AgentRegistryError::Unauthorized);
 
@@ -780,6 +792,12 @@ pub mod agent_registry {
         // pubkey — bypassing authorization entirely. The discriminator is
         // sha256("account:ProtocolConfig")[..8]; see
         // `PROTOCOL_CONFIG_DISCRIMINATOR` for the canonical bytes.
+        //
+        // AUD-202 (cycle-3): the discriminator is computed from the account
+        // *name* only, not its field layout — so a field reorder/prepend
+        // would leave the discriminator unchanged and silently shift
+        // `authority` past offset 8. That layout-drift threat is now
+        // closed in Settlement (see comment above and `state.rs`).
         require!(
             data[..8] == PROTOCOL_CONFIG_DISCRIMINATOR,
             AgentRegistryError::InvalidProtocolConfigAccount
@@ -2131,6 +2149,114 @@ mod tests {
         bad[0] ^= 0xFF;
         let rejects = bad[..8] == PROTOCOL_CONFIG_DISCRIMINATOR;
         assert!(!rejects, "drifted prefix must fail the gate");
+    }
+
+    // ================================================================
+    // AUD-202 (cycle-3): ProtocolConfig field-order layout regression.
+    // AUD-104 closed the discriminator-NAME drift threat. AUD-202 closes
+    // the discriminator-stays-the-same-but-field-LAYOUT-drifts threat:
+    // if Settlement prepends a field to `ProtocolConfig`, the
+    // discriminator is unchanged but `authority` shifts past offset 8,
+    // and Registry would silently read garbage as `config_authority` —
+    // rejecting every legitimate sweep. The build-time pin lives in
+    // Settlement (`programs/settlement/src/state.rs`: `#[repr(C)]` +
+    // `const _: () = assert!(offset_of!(ProtocolConfig, authority) ==
+    // 0)`). The tests below are Registry-side belt-and-braces:
+    //   (1) `…_intact_layout_passes`: a buffer mimicking the current
+    //       on-wire layout with `authority` at [8..40] satisfies the
+    //       gate's downstream comparison.
+    //   (2) `…_simulated_prepended_field_fails`: a buffer mimicking a
+    //       drifted layout (extra leading bytes) does NOT, proving the
+    //       Registry gate would reject it as `Unauthorized` — the
+    //       silent-rejection failure mode the audit flagged.
+    // ================================================================
+
+    /// AUD-202: with the field-order pin in place (Settlement's
+    /// `#[repr(C)]` + `offset_of!` const-assert), the on-wire layout
+    /// Registry reads has `authority` at bytes [8..40]. Confirm a
+    /// well-formed buffer passes the gate's `config_authority ==
+    /// signer.key()` check when the signer matches.
+    #[test]
+    fn aud_202_intact_layout_authority_matches_signer() {
+        let signer = Pubkey::new_from_array([0x42; 32]);
+
+        // Construct the on-wire bytes Registry would read for an intact
+        // ProtocolConfig: 8-byte discriminator + authority pubkey.
+        let mut buf = [0u8; 40];
+        buf[..8].copy_from_slice(&PROTOCOL_CONFIG_DISCRIMINATOR);
+        buf[8..40].copy_from_slice(signer.as_ref());
+
+        // Mirror the gate's read path: discriminator check + bytes [8..40]
+        // → Pubkey → equality with the signer.
+        assert_eq!(buf[..8], PROTOCOL_CONFIG_DISCRIMINATOR);
+        let mut authority_bytes = [0u8; 32];
+        authority_bytes.copy_from_slice(&buf[8..40]);
+        let config_authority = Pubkey::new_from_array(authority_bytes);
+
+        assert_eq!(
+            config_authority, signer,
+            "intact layout: gate's config_authority MUST equal signer"
+        );
+    }
+
+    /// AUD-202: simulate the footgun. If Settlement ever prepended a
+    /// field (e.g. a `u64`) before `authority`, the discriminator would
+    /// be unchanged but `authority` would shift to bytes [16..48].
+    /// Registry's `data[8..40]` read would then surface 8 bytes of the
+    /// prepended field followed by 24 bytes of the real authority — a
+    /// pubkey that does NOT equal the signer's key, causing the
+    /// `Unauthorized` check to silently reject every legitimate sweep.
+    /// This test confirms the rejection mode by construction; the
+    /// build-time pin in Settlement prevents this scenario from ever
+    /// materializing in real on-wire bytes.
+    #[test]
+    fn aud_202_simulated_prepended_field_fails_authority_check() {
+        let signer = Pubkey::new_from_array([0x42; 32]);
+        let prepended_value: u64 = 0xDEAD_BEEF_CAFE_F00D;
+
+        // Drifted on-wire layout (hypothetical — what would happen if a
+        // field were prepended without changing the account name):
+        //   [0..8]   = discriminator (unchanged: name didn't change)
+        //   [8..16]  = prepended u64 (Borsh LE)
+        //   [16..48] = the real authority (shifted past offset 8)
+        let mut drifted = [0u8; 48];
+        drifted[..8].copy_from_slice(&PROTOCOL_CONFIG_DISCRIMINATOR);
+        drifted[8..16].copy_from_slice(&prepended_value.to_le_bytes());
+        drifted[16..48].copy_from_slice(signer.as_ref());
+
+        // Discriminator gate passes (unchanged) — this is exactly the
+        // silent-failure mode AUD-202 flagged: AUD-104 alone does NOT
+        // catch field-order drift.
+        assert_eq!(
+            drifted[..8],
+            PROTOCOL_CONFIG_DISCRIMINATOR,
+            "AUD-104 gate alone passes a drifted layout — confirming \
+             AUD-202 was a real footgun before Settlement's build-time pin"
+        );
+
+        // But the AUD-104 gate's downstream `config_authority` read at
+        // [8..40] now surfaces the prepended bytes, NOT the signer.
+        let mut authority_bytes = [0u8; 32];
+        authority_bytes.copy_from_slice(&drifted[8..40]);
+        let config_authority = Pubkey::new_from_array(authority_bytes);
+
+        assert_ne!(
+            config_authority, signer,
+            "AUD-202: drifted layout MUST yield a config_authority that \
+             does not match the legitimate signer — proving Registry would \
+             silently reject every legitimate sweep until the field-order \
+             pin in Settlement closes the upstream threat at build time."
+        );
+
+        // And the leading 8 bytes of the misread authority are exactly
+        // the prepended field's bytes — closing the loop on the threat
+        // model.
+        assert_eq!(
+            &authority_bytes[..8],
+            &prepended_value.to_le_bytes(),
+            "AUD-202: misread authority's leading bytes are the prepended \
+             field's bytes — confirms the exact mis-decode mode."
+        );
     }
 
     // ================================================================
