@@ -165,16 +165,40 @@ const MAX_REDEEMED_SIGNATURES = 100_000;
 // `instanceId` is the value embedded in each Redis lock for operator
 // observability (`redis.GET aep:redeemed:<sig>` returns which instance
 // issued the JWT). It is NOT a security primitive (per ADR-126
-// §"Trust-boundary placement"); it is a debugging aid. We derive it
-// from `os.hostname() + pid` so a multi-process deployment on the same
-// host (PM2 cluster, k8s pod with multiple replicas) still distinguishes
-// instances. The optional `RELAY_INSTANCE_ID` override lets operators
-// pin a stable name (e.g. the k8s pod name) without rebuilding.
+// §"Trust-boundary placement"); it is a debugging aid.
+//
+// OFF-216 (cycle-3, 2026-04-27) — per-boot CSPRNG instance id.
+//
+// Pre-fix derivation was `os.hostname() + "#" + process.pid`. On a
+// k8s pod or single-host deploy where the hostname is fixed AND the
+// runtime supervisor (systemd, pm2, k8s) re-spawns the relay with a
+// PID that often recycles to the same low integer, two consecutive
+// boots of the same process would emit IDENTICAL `RELAY_INSTANCE_ID`
+// values. That defeats two things:
+//
+//   1. Per-instance observability — operators correlating "which boot
+//      issued this JWT?" via the OFF-205 `<instanceId>|<nonce>`
+//      release-token format (commit `3c63f8e`) cannot tell boots
+//      apart, so a post-incident replay can't be attributed to a
+//      specific instance lifetime.
+//   2. The OFF-205 release-token contract — the lock VALUE includes
+//      the instance id; if two boots share an id, a stale token from
+//      boot N can collide with a fresh CAS-DEL attempt by boot N+1.
+//      The 128-bit nonce still makes accidental collision astronomical,
+//      but the design intent (instance id + nonce, defence-in-depth)
+//      is muddied.
+//
+// Fix: default the instance id to a per-boot CSPRNG value
+// (`crypto.randomUUID()`). Two consecutive boots of the same process
+// on the same host with the same PID get DIFFERENT ids. The env-
+// override path (`RELAY_INSTANCE_ID` env var, e.g. set to the k8s pod
+// name for log correlation) is preserved unchanged — operators who
+// WANT a stable id for log correlation can still pin one. Only the
+// default changes, from stable-derivation to per-boot-random.
 // ---------------------------------------------------------------------------
 const RELAY_REDIS_URL = process.env.RELAY_REDIS_URL;
 const RELAY_INSTANCE_ID =
-  process.env.RELAY_INSTANCE_ID ||
-  `${require("node:os").hostname()}#${process.pid}`;
+  process.env.RELAY_INSTANCE_ID || crypto.randomUUID();
 // OFF-206 — operator-tunable Redis command timeout. Default 2000ms (see
 // `REDIS_COMMAND_TIMEOUT_DEFAULT_MS`); operators can dial this down to
 // fail faster during a Redis brown-out, or up if intra-region latency
@@ -398,15 +422,40 @@ function requirePayment(req: Request, res: Response, next: NextFunction): void {
 
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX_REQUESTS = 10;
-// S-offchain-02: Cap the rate-limit map. Without a cap, a scanner rotating
-// source IPs grows this map unbounded. 100k distinct IPs * ~80B overhead
-// per entry ≈ 8 MB, which is a comfortable ceiling for a single-purpose
-// service. If the cap is hit the oldest entry (insertion order) is
-// evicted — this is safe because each entry already expires after
-// RATE_LIMIT_WINDOW_MS, so eviction under pressure just means an
-// attacker's earliest bucket is forgotten slightly sooner than its
-// natural expiry. The cap is a backstop; periodic pruning below is the
-// primary mechanism.
+// S-offchain-02 / OFF-211 (cycle-3, 2026-04-27): cap + LRU rate-limit map.
+//
+// Original intent (S-offchain-02): without a cap, a scanner rotating source
+// IPs grows this map unbounded. 100k distinct IPs * ~80B overhead per entry
+// ≈ 8 MB, a comfortable ceiling for a single-purpose service.
+//
+// OFF-211 bug (pre-fix): the eviction policy was insertion-order ONLY.
+// `rateLimit` never bumped recency on a hit — the bucket created at time
+// T sat at the front of the Map's iteration order regardless of how many
+// requests it served. Under sustained saturation (a hot client driving
+// thousands of /pay calls while cold IPs rotated in via a scanner), the
+// hot client's bucket was the OLDEST entry by insertion order and got
+// evicted FIRST when the cap was hit — exactly the wrong direction. The
+// hot client then got a fresh window and could renew its quota; the cold
+// scanner IPs (each used once) survived in the map. The S-offchain-02
+// header comment's "safe because each entry already expires after
+// RATE_LIMIT_WINDOW_MS" reasoning was wrong for the cap-hit path
+// specifically: the cap eviction fires PRECISELY when TTL eviction
+// hasn't caught up, so "natural expiry" cannot be relied on as a
+// correctness argument for that branch.
+//
+// Fix: make the map a true LRU. On every TOUCH (both the create-new
+// branch in `rateLimit` and the increment-existing branch), `delete`
+// the key first then `set` it — this moves the entry to the end of
+// `Map`'s insertion-ordered iteration, which is also our recency
+// order. The pruner (`pruneRateLimitMap`) and the in-line cap check
+// in `rateLimit` then evict from the FRONT, which is the
+// least-recently-used end. Rationale for hand-rolled vs `lru-cache`
+// dep: the underlying data shape is already a `Map`, the eviction
+// trigger is already insertion-order; the only missing piece was
+// recency-bump-on-touch. Adding `lru-cache` would pull a workspace
+// dep for a 5-line behavior change. The hand-rolled form is auditable
+// in-place and matches the existing structure of `redeemedSignatures`
+// which uses the same `Map`-as-LRU pattern.
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 const MAX_RATE_LIMIT_ENTRIES = 100_000;
 
@@ -417,6 +466,12 @@ function pruneRateLimitMap(): void {
       rateLimitMap.delete(ip);
     }
   }
+  // OFF-211: LRU cap eviction. `Map` iterates in insertion order, and
+  // `rateLimit` re-inserts every touched entry to the END — so
+  // `keys().next().value` is the LEAST-recently-used surviving entry.
+  // Evict from there until we're back under cap. Hot keys (re-inserted
+  // recently) survive; cold keys are evicted first, which is the
+  // correct LRU direction.
   while (rateLimitMap.size > MAX_RATE_LIMIT_ENTRIES) {
     const oldest = rateLimitMap.keys().next().value;
     if (oldest === undefined) break;
@@ -435,17 +490,35 @@ function rateLimit(req: Request, res: Response, next: NextFunction): void {
   const entry = rateLimitMap.get(ip);
 
   if (!entry || now >= entry.resetAt) {
+    // OFF-211: fresh-window touch. Delete-then-set so a renewed entry
+    // moves to the END of the iteration order (most-recently-used).
+    // Without the delete, an existing TTL-expired entry would be
+    // overwritten in place and stay at its old, stale insertion-order
+    // position — defeating LRU semantics on quota renewal.
+    rateLimitMap.delete(ip);
     rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
     next();
     return;
   }
 
   if (entry.count >= RATE_LIMIT_MAX_REQUESTS) {
+    // OFF-211: even the rate-limited rejection path bumps recency.
+    // The client IS active (it's hitting us hard); LRU eviction must
+    // not target a hot rejected client over a cold one-shot scanner.
+    rateLimitMap.delete(ip);
+    rateLimitMap.set(ip, entry);
     res.status(429).json({ error: "Too many requests. Try again later." });
     return;
   }
 
+  // OFF-211: count-bump + recency-bump. The increment is reflected in
+  // the entry object regardless of which set() call observes it
+  // (objects are reference-equal). Delete-then-set moves the bucket
+  // to the END of iteration order so subsequent cap-evictions look at
+  // colder entries first.
   entry.count++;
+  rateLimitMap.delete(ip);
+  rateLimitMap.set(ip, entry);
   next();
 }
 
@@ -942,6 +1015,22 @@ function __resetDrainStateForTests(): void {
   draining = false;
 }
 
+// OFF-211 test hook: clear the rate-limit map so subtests don't see
+// IPs left over from previous /pay traffic. Not part of the public
+// runtime contract — production callers must never invoke this.
+function __resetRateLimitStateForTests(): void {
+  rateLimitMap.clear();
+}
+
+// OFF-211 test hook: snapshot the current rate-limit map iteration
+// order (which under the LRU fix IS the insertion-by-recency order).
+// Tests assert on key order to prove that touched keys move to the
+// end and untouched cold keys stay at the front for eviction. Not
+// part of the public runtime contract.
+function __rateLimitKeysForTests(): string[] {
+  return Array.from(rateLimitMap.keys());
+}
+
 export {
   app,
   server,
@@ -950,9 +1039,16 @@ export {
   verifyPaymentOnChain,
   verifyAccessToken,
   processPaymentRequest,
+  rateLimit,
+  pruneRateLimitMap,
   redisDedup,
   RELAY_INSTANCE_ID,
+  RATE_LIMIT_WINDOW_MS,
+  RATE_LIMIT_MAX_REQUESTS,
+  MAX_RATE_LIMIT_ENTRIES,
   __resetRedemptionStateForTests,
   __fillRedemptionStateForTests,
   __resetDrainStateForTests,
+  __resetRateLimitStateForTests,
+  __rateLimitKeysForTests,
 };
