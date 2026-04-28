@@ -1945,6 +1945,11 @@
       "code": 6028,
       "name": "InvalidReputationReason",
       "msg": "Reputation delta `reason` must be 0 (task_completed), 1 (dispute_loss), or 2 (expiry_undelivered); codes 3-255 are reserved for future ADR-driven extensions (AUD-108)"
+    },
+    {
+      "code": 6029,
+      "name": "ProfileRetired",
+      "msg": "AgentProfile is in terminal Retired status; reputation deltas are not accepted on closed-state profiles (AUD-206)"
     }
   ],
   "types": [

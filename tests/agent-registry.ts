@@ -2458,4 +2458,56 @@ describe("Agent Registry Program Tests", () => {
       );
     });
   });
+
+  describe("AUD-206: propose_reputation_delta rejects Retired profiles", () => {
+    // The IDL-level error code for ProfileRetired. Pinning this
+    // constant in the test forces a future variant insertion ahead of
+    // ProfileRetired in `errors.rs` to update the test alongside the
+    // change — making any silent SDK-consumer drift visible at PR
+    // time. The code is `6029` because ProfileRetired is appended
+    // after AUD-108's `InvalidReputationReason` (6028) at the end of
+    // the enum.
+    const PROFILE_RETIRED_CODE = 6029;
+
+    it("declares the ProfileRetired error variant on the IDL with the AUD-206 contract", () => {
+      const idl: any = (program as any).idl;
+      const errs: Array<{ code: number; name: string; msg?: string }> = idl.errors ?? [];
+      // Anchor's runtime IDL camelCases names (see the AUD-108
+      // "InvalidReputationReason" test above for the same convention
+      // applied to error variants). Accept either casing so this test
+      // survives an Anchor coder upgrade.
+      const variant = errs.find(
+        (e) => e.name === "ProfileRetired" || e.name === "profileRetired"
+      );
+
+      expect(variant, "ProfileRetired must be declared on the IDL").to.exist;
+      // Code: load-bearing for downstream SDK consumers that
+      // string-match the rejection out of program logs.
+      expect(variant!.code).to.equal(
+        PROFILE_RETIRED_CODE,
+        "AUD-206 error code must equal 6029 — drift breaks every SDK consumer"
+      );
+      // Message: the canonical wording from
+      // `programs/agent-registry/src/errors.rs` AUD-206 block. We
+      // assert on substrings (not the full string) so a future
+      // copy-edit is allowed without test churn, but the policy
+      // semantics — that the rejection is specifically for terminal
+      // Retired profiles — must remain visible.
+      expect(variant!.msg).to.include("Retired");
+      expect(variant!.msg).to.include("AUD-206");
+    });
+
+    // Note on test coverage: a TS-direct-call rejection test (mirroring
+    // the AUD-108 boundary tests above) cannot exercise the
+    // handler-body require! because the `settlement_authority` PDA
+    // signer constraint on `ProposeReputationDelta`
+    // (contexts.rs:317-323) trips first — the call never reaches the
+    // handler. The handler-body guard's regression coverage lives in
+    // `programs/agent-registry/src/lib.rs` Rust unit tests
+    // `aud_206_active_paused_suspended_pass_terminal_guard` (happy
+    // path) and `aud_206_retired_profile_rejected_at_handler_entry`
+    // (rejection path), invoked under `cargo test -p agent-registry`.
+    // This TS test pins the IDL error-variant surface for SDK
+    // consumers; the Rust tests pin the handler semantics.
+  });
 });
