@@ -44,7 +44,9 @@ supposed to close — **mainnet-promotion verdict from cycle 2 is REVOKED.**
 | ID | Title | File:Lines | Status |
 |---|---|---|---|
 | AUD-203 | AUD-117 case E (ResolveDisputeTimeout substitution) intentionally untested per `tests/cpi-failures.test.ts:1255-1270`; defense-in-depth claim is asymmetric — only 3 of 4 contexts have negative-path proof. | `tests/cpi-failures.test.ts:1255` | Open |
-| AUD-204 | ADR-125 (`rotate_protocol_config_authority`) is `Proposed` and explicitly deferred to post-launch. `ProtocolConfig.authority` is operationally entangled with the BPF upgrade authority forever post-init; wrong-bind at `initialize_protocol_config` has zero recovery short of redeploy. | `programs/settlement/src/instructions/protocol_config.rs:18`, `docs/adr/ADR-125-rotate-protocol-config-authority.md` | Open |
+| AUD-204 | ADR-125 (`rotate_protocol_config_authority`) is `Proposed` and explicitly deferred to post-launch. `ProtocolConfig.authority` is operationally entangled with the BPF upgrade authority forever post-init; wrong-bind at `initialize_protocol_config` has zero recovery short of redeploy. | `programs/settlement/src/instructions/protocol_config.rs:18`, `docs/adr/ADR-125-rotate-protocol-config-authority.md` | **Deferred — ADR-125 Accepted (`<commit-sha>`)** [^aud204] |
+
+[^aud204]: Deferral, not closure. ADR-125 (Status: Accepted, this commit) is the auditable record that the AUD-115 path-(b) rotation instruction was considered for the launch window and explicitly deferred to the first post-launch governance cycle. Three load-bearing facts (per ADR-125 Decision §): (1) post-A2 the upgrade authority IS the Squads multisig PDA, so the original "rotate away from a weak key" use case AUD-115 contemplated has collapsed — there is no stronger key to rotate to; (2) Squads-internal membership/threshold mutation already covers normal-operation governance changes without changing the on-chain PDA (`docs/PROTOCOL_AUTHORITY_OPERATIONS.md` §4 rows 3-4); (3) adding a new on-chain governance surface during the launch window is high-risk per ADR-080 §H Alt-D's tested-rejection-path principle, at roughly the ADR-124 cost (~37 tests across 4 surfaces) for a non-compromise-defending change. **Post-launch shape**: Option β (2-step propose-then-accept), per ADR-125 §"Options Considered" — the future-cycle implementer inherits the design, does not re-litigate α/β/γ. **Launch-window recovery posture**: the `docs/PROTOCOL_AUTHORITY_OPERATIONS.md` §4 failure-modes table rows for `initialize_protocol_config` mis-bind (deployer-keypair signed instead of multisig; typo'd multisig PDA signed) remain redeploy-only at a new program ID until β ships; the §3 pre-bind operator checklist is the only mitigation in the launch window. Closure mechanism is the Accepted ADR itself, not a code change.
 
 ## Architecture (calibration)
 
@@ -62,6 +64,6 @@ supposed to close — **mainnet-promotion verdict from cycle 2 is REVOKED.**
 
 - **Critical**: AUD-200 ✅ closed `4c2341c` (rotation proof-of-control mirrors ADR-124 init flow)
 - **High**: AUD-201 ✅ closed `9daf07f` (mutual-rescission `cancel_active_escrow`); AUD-202 ✅ closed `e59072a` (Settlement-side build-time field-order pin)
-- **ADR-125 (AUD-204)**: ship the propose/accept rotation before mainnet (C4 runbook §4 lists 3 redeploy-only recovery scenarios without it)
+- **Medium (deferred, not blocking)**: AUD-204 ✅ deferred via ADR-125 Accepted (Option δ for launch, Option β post-launch); C4 runbook §4 redeploy-only recovery rows stay redeploy-only in the launch window per the ADR's Negative consequences
 
 Architecture themes (carry to ADR governance): require ADR closure to demonstrate *symmetric* coverage of init + mutation surfaces (the ADR-124 → AUD-200 lesson).
