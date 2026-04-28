@@ -17,6 +17,7 @@ import { createRpc } from "./solana-v2.js";
 import { createActionRouter } from "./adapters/mcp.js";
 import { allActions } from "./actions/index.js";
 import { activeIdempotencyBackend } from "./pipeline/idempotency.js";
+import { assertVaultLayoutMatchesIdl } from "./pipeline/vault-layout-drift.js";
 import { getEvoClient, resolveEvoBridgeConfig } from "./adapters/evo-bridge.js";
 import type { ActionContext } from "./types/action.js";
 import type { Capability } from "./types/capability.js";
@@ -178,6 +179,22 @@ async function main() {
   // retrieve return void / empty-results respectively.
   const evoClient = getEvoClient();
   const evoConfig = resolveEvoBridgeConfig(process.env);
+
+  // MCP-311 (ADR-119, Batch D): runtime IDL-drift defense for the
+  // generated `vault-layout.generated.ts` artifact. Build-time CI gate is
+  // the primary guard; this catches the case where the operator deployed
+  // a stale generated artifact against a newer IDL. Best-effort — when
+  // the IDL is not present in the runtime image (e.g. tarball-only
+  // install), the check no-ops with a debug log.
+  try {
+    assertVaultLayoutMatchesIdl();
+  } catch (err) {
+    log.error(
+      { err: err instanceof Error ? err.message : String(err), audit: "MCP-311" },
+      "vault-layout drift detected at boot; refusing to serve",
+    );
+    throw err;
+  }
 
   if (posture.mode === "stdio") {
     const transport = new StdioServerTransport();

@@ -1,10 +1,10 @@
 # ADR-119: SDK boundary validation and PDA derivation completion
 
 ## Status
-Proposed
+Accepted
 
 ## Date
-2026-04-24
+2026-04-24 (originally Proposed); 2026-04-28 (Accepted with scope expansion to mcp-server vault-layout drift gate, Batch D close of MCP-311 / MCP-313)
 
 ## Context
 
@@ -74,6 +74,60 @@ they do not change existing method signatures.
   instead of at third-party integration time.
 - Forward-compat: future registry/vault method additions flow
   through `isValidPublicKey` with no per-method repetition.
+
+## Scope expansion (2026-04-28, Batch D — MCP-311 / MCP-313)
+
+Cycle-3 audit (`docs/audits/CYCLE-3-MCP-PUNCHLIST.md`) flagged the
+mcp-server's `vault-layout.ts` byte offsets as the same drift class as
+the SDK side this ADR originally covered: hand-rolled constants
+mirroring a Rust struct, with no automated drift guard. Batch D
+extends this ADR's scope to the mcp-server with three additions.
+
+### `mcp-server/scripts/gen-vault-layout.ts`
+
+Reads `sdk/idl/src/idl/agent_vault.json`, walks the `Vault` account
+type's fixed-width prefix (and the nested `VaultPolicy` struct's
+fixed-width prefix), and emits
+`mcp-server/src/pipeline/vault-layout.generated.ts`. The walker stops
+at the first variable-width field (vec / option / string), since
+beyond that the offset is data-dependent.
+
+Wired into `npm run build` via a `prebuild` script. CI verifies
+`git diff --exit-code` on the generated file post-codegen so a Rust
+struct reorder surfaces as a CI failure rather than a runtime garbage
+decode.
+
+### `vault-layout.ts` re-exports the codegen output
+
+`vault-layout.ts:VAULT_LAYOUT` is rebuilt to re-export the constants
+from `vault-layout.generated.ts`. The hand-rolled offsets are gone;
+the only place computing offsets is the codegen script, with the live
+IDL as input.
+
+### `vault-layout-drift.ts` — runtime drift assertion (MCP-311)
+
+Defense-in-depth in addition to the build-time gate. At boot,
+`assertVaultLayoutMatchesIdl()` re-walks the live IDL with a mirror
+of the codegen logic and asserts every constant in the generated
+module still matches. Throws `VaultLayoutDriftError` with a multi-line
+diff on the first mismatch. Catches the case where the operator
+deployed a stale generated artifact against a newer IDL (e.g.
+published mcp-server tarball vs. fresh `programs/agent-vault` binary).
+
+Best-effort: when the IDL is not present in the runtime image
+(tarball-only install), the check no-ops with a debug log. The build-
+time CI gate remains the authoritative defense.
+
+### Tests
+
+`mcp-server/test/vault-layout-drift.test.ts` (5 tests):
+- Drift assertion passes against the live IDL.
+- Drift assertion throws when a field's offset shifts (simulated Rust
+  reorder).
+- Drift assertion throws when `TokenSpendRecord` size changes.
+- `VAULT_LAYOUT` constants match the codegen output.
+- `invalidateVaultStateCache` (MCP-314 in the same batch) removes the
+  cached entry; next `fetchVaultState` goes back to RPC.
 
 ## References
 

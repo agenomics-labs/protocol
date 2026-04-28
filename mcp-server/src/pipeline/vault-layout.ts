@@ -31,10 +31,23 @@
 
 import type { Address } from "@solana/kit";
 import type { AccountDataRpc } from "./preflight-types.js";
+import {
+  SPENT_TODAY_OFFSET as GEN_SPENT_TODAY_OFFSET,
+  LAST_SPEND_DAY_OFFSET as GEN_LAST_SPEND_DAY_OFFSET,
+  POLICY_PER_TX_LIMIT_OFFSET as GEN_POLICY_PER_TX_LIMIT_OFFSET,
+  DAILY_LIMIT_OFFSET as GEN_DAILY_LIMIT_OFFSET,
+  POLICY_FIXED_END_OFFSET as GEN_POLICY_FIXED_END_OFFSET,
+  TOKEN_SPEND_RECORD_SIZE as GEN_TOKEN_SPEND_RECORD_SIZE,
+} from "./vault-layout.generated.js";
 
 // --------------------------------------------------------------------------
-// Layout constants
+// Layout constants — re-exported from `vault-layout.generated.ts`
 // --------------------------------------------------------------------------
+//
+// MCP-313 (ADR-119, Batch D): the byte offsets are now derived from
+// `sdk/idl/src/idl/agent_vault.json` by `scripts/gen-vault-layout.ts` at
+// build time. CI verifies `git diff --exit-code` on the generated file
+// post-codegen so a Rust struct reorder surfaces as a CI failure.
 //
 // On-chain Vault account (programs/agent-vault/src/state.rs):
 //
@@ -57,22 +70,16 @@ import type { AccountDataRpc } from "./preflight-types.js";
 // Each `TokenSpendRecord` = 32 (mint) + 8 (per_tx_limit) + 8 (daily_limit)
 //                         + 8 (spent_today) + 8 (last_spend_day) = 64 bytes.
 
-const SPENT_TODAY_OFFSET = 8 + 32 + 32 + 1; // 73
-const LAST_SPEND_DAY_OFFSET = SPENT_TODAY_OFFSET + 8; // 81
-const POLICY_PER_TX_LIMIT_OFFSET = LAST_SPEND_DAY_OFFSET + 8; // 89
-const DAILY_LIMIT_OFFSET = POLICY_PER_TX_LIMIT_OFFSET + 8; // 97
-const POLICY_FIXED_END_OFFSET = DAILY_LIMIT_OFFSET + 8 + 4; // 109 — past max_txs_per_hour
-
 export const VAULT_LAYOUT = {
   /** Minimum bytes required to read the SOL-cap header (up to daily_limit). */
-  SOL_MIN_BYTES: DAILY_LIMIT_OFFSET + 8, // 105
+  SOL_MIN_BYTES: GEN_DAILY_LIMIT_OFFSET + 8, // 105
   /** End of the fixed-width policy prefix; Vec<Pubkey> skips follow. */
-  POLICY_FIXED_END_OFFSET, // 109
-  SPENT_TODAY_OFFSET, // 73
-  LAST_SPEND_DAY_OFFSET, // 81
-  POLICY_PER_TX_LIMIT_OFFSET, // 89
-  DAILY_LIMIT_OFFSET, // 97
-  TOKEN_SPEND_RECORD_SIZE: 32 + 8 + 8 + 8 + 8, // 64
+  POLICY_FIXED_END_OFFSET: GEN_POLICY_FIXED_END_OFFSET, // 109
+  SPENT_TODAY_OFFSET: GEN_SPENT_TODAY_OFFSET, // 73
+  LAST_SPEND_DAY_OFFSET: GEN_LAST_SPEND_DAY_OFFSET, // 81
+  POLICY_PER_TX_LIMIT_OFFSET: GEN_POLICY_PER_TX_LIMIT_OFFSET, // 89
+  DAILY_LIMIT_OFFSET: GEN_DAILY_LIMIT_OFFSET, // 97
+  TOKEN_SPEND_RECORD_SIZE: GEN_TOKEN_SPEND_RECORD_SIZE, // 64
   /**
    * Defensive upper bound on each variable-length vec. On-chain the true
    * ceilings are `MAX_TOKEN_ALLOWLIST = 10`, `MAX_PROGRAM_ALLOWLIST = 10`,
@@ -178,7 +185,7 @@ export function decodeVaultState(data: Buffer): DecodedVaultState {
     return { spentTodayLamports, lastSpendDay, dailyLimitLamports, tokenSpendRecords: [] };
   }
 
-  let cursor = VAULT_LAYOUT.POLICY_FIXED_END_OFFSET;
+  let cursor: number = VAULT_LAYOUT.POLICY_FIXED_END_OFFSET;
   cursor = skipPubkeyVec(data, cursor); // policy.token_allowlist
   cursor = skipPubkeyVec(data, cursor); // policy.program_allowlist
 
@@ -251,6 +258,18 @@ const vaultStateCache = new Map<string, VaultCacheEntry>();
 
 export function __resetVaultStateCacheForTests(): void {
   vaultStateCache.clear();
+}
+
+/**
+ * MCP-314 (Batch D): explicit cache invalidation hook. Call this from the
+ * post-confirm site of any vault-mutating handler (vault_transfer,
+ * vault_token_transfer) so a follow-up cap check doesn't read pre-spend
+ * `spent_today_lamports` for up to 5s after the on-chain ix landed.
+ *
+ * Idempotent — invalidating a key that isn't cached is a no-op.
+ */
+export function invalidateVaultStateCache(vaultAddress: Address): void {
+  vaultStateCache.delete(vaultAddress);
 }
 
 export async function fetchVaultState(
