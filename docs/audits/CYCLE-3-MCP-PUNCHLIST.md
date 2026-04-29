@@ -75,7 +75,9 @@ defense gap relative to the x402-relay layer.
 
 ## Handlers v1/v2 status
 
-Migration paused at ~4% (1/27 actions in v2). `handlers-v2/` contains only `vault.ts` (`execute_transfer` Kit-native path) + `keypair-signer.ts`. Routing opt-in via `AEP_USE_V2_VAULT_TRANSFER=1`; v1 default. Same TODOs cycle-1 flagged. **Decision needed**: (a) defer indefinitely + delete dual-path branching at `actions/vault.ts:175-178`, OR (b) commit a wave to migrate `vault_token_transfer` + `create_vault` to v2.
+Migration paused at ~4% (1/27 actions in v2). `handlers-v2/` contains only `vault.ts` (`execute_transfer` Kit-native path) + `keypair-signer.ts`. Routing opt-in via `AEP_USE_V2_VAULT_TRANSFER=1`; v1 default.
+
+**Decision: ADR-133 (Accepted, 2026-04-29) — option (c) hybrid.** Keep the dual-path + reference impl; defer the wave; pin re-evaluation triggers (Anchor v2 ship, `@solana-program/token` ≥1.0.0, active CVE on `bigint-buffer`, feature requiring Kit-native primitives, or 18+ months elapsed). Scheduled agent `trig_01GkKKZQd39rY2Z7w7tmmYou` (2026-06-03) checks the first two triggers automatically.
 
 ## Ship gates
 
