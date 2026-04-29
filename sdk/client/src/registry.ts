@@ -15,7 +15,9 @@
  *   const profile = await client.fetchProfile(authority, 0n);
  */
 
-import { Program, AnchorProvider, Idl } from "@coral-xyz/anchor";
+import { Program, AnchorProvider } from "@coral-xyz/anchor";
+
+import type { AgentRegistry } from "./idl-types.js";
 import { PublicKey } from "@solana/web3.js";
 
 /** On-chain seed for the owner-nonce PDA. */
@@ -89,11 +91,11 @@ export function clampReputationScore(raw: bigint): number {
  * Anchor context structs in programs/agent-registry/src/contexts.rs.
  */
 export class AgentRegistryClient {
-  /** The underlying Anchor Program instance. */
-  readonly program: Program;
+  /** The underlying Anchor Program instance. ADR-088 typed via `AgentRegistry`. */
+  readonly program: Program<AgentRegistry>;
 
-  constructor(provider: AnchorProvider, idl: Idl, programId: PublicKey) {
-    this.program = new Program(idl, provider);
+  constructor(provider: AnchorProvider, idl: AgentRegistry, programId: PublicKey) {
+    this.program = new Program<AgentRegistry>(idl, provider);
     if (!this.program.programId.equals(programId)) {
       throw new Error(
         `AgentRegistryClient: IDL programId ${this.program.programId.toBase58()} ` +
@@ -167,16 +169,10 @@ export class AgentRegistryClient {
    *
    * @throws if the account does not exist or cannot be decoded.
    */
-  async fetchProfile(
-    authority: PublicKey,
-    nonce: bigint,
-  ): Promise<Record<string, unknown>> {
+  async fetchProfile(authority: PublicKey, nonce: bigint) {
     const pda = this.profilePda(authority, nonce);
-    // TODO(typed): parameterise once @agenomics/idl provides the AgentRegistry IDL type.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (this.program.account as any)["agentProfile"].fetch(pda) as Promise<
-      Record<string, unknown>
-    >;
+    // ADR-088: typed via `Program<AgentRegistry>.account.agentProfile`.
+    return this.program.account.agentProfile.fetch(pda);
   }
 
   /**
@@ -184,14 +180,9 @@ export class AgentRegistryClient {
    *
    * @throws if the account does not exist or cannot be decoded.
    */
-  async fetchOwnerNonce(
-    authority: PublicKey,
-  ): Promise<Record<string, unknown>> {
+  async fetchOwnerNonce(authority: PublicKey) {
     const pda = this.ownerNoncePda(authority);
-    // TODO(typed): parameterise once @agenomics/idl provides the AgentRegistry IDL type.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (this.program.account as any)["ownerNonce"].fetch(pda) as Promise<
-      Record<string, unknown>
-    >;
+    // ADR-088: typed via `Program<AgentRegistry>.account.ownerNonce`.
+    return this.program.account.ownerNonce.fetch(pda);
   }
 }

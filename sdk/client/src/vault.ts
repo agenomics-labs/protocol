@@ -15,13 +15,15 @@
  *   const vault = await client.fetchVault(authority);
  */
 
-import { Program, AnchorProvider, Idl } from "@coral-xyz/anchor";
+import { Program, AnchorProvider } from "@coral-xyz/anchor";
 import {
   Ed25519Program,
   PublicKey,
   TransactionInstruction,
 } from "@solana/web3.js";
 import * as crypto from "node:crypto";
+
+import type { AgentVault } from "./idl-types.js";
 
 /** On-chain seed for the vault PDA. */
 const VAULT_SEED = Buffer.from("vault");
@@ -118,11 +120,11 @@ export function buildVaultIdentityBindInstruction(args: {
  * via the `vault_address` field on registration (ADR-041).
  */
 export class AgentVaultClient {
-  /** The underlying Anchor Program instance. */
-  readonly program: Program;
+  /** The underlying Anchor Program instance. ADR-088 typed via `AgentVault`. */
+  readonly program: Program<AgentVault>;
 
-  constructor(provider: AnchorProvider, idl: Idl, programId: PublicKey) {
-    this.program = new Program(idl, provider);
+  constructor(provider: AnchorProvider, idl: AgentVault, programId: PublicKey) {
+    this.program = new Program<AgentVault>(idl, provider);
     if (!this.program.programId.equals(programId)) {
       throw new Error(
         `AgentVaultClient: IDL programId ${this.program.programId.toBase58()} ` +
@@ -170,12 +172,12 @@ export class AgentVaultClient {
    *
    * @throws if the account does not exist or cannot be decoded.
    */
-  async fetchVault(authority: PublicKey): Promise<Record<string, unknown>> {
+  async fetchVault(authority: PublicKey) {
     const pda = this.vaultPda(authority);
-    // TODO(typed): parameterise once @agenomics/idl provides the AgentVault IDL type.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (this.program.account as any)["vault"].fetch(pda) as Promise<
-      Record<string, unknown>
-    >;
+    // ADR-088: typed via `Program<AgentVault>.account.vault`. Return type
+    // is Anchor's typed `Vault` projection (`agentIdentity: PublicKey`,
+    // `policy.perTxLimitLamports: BN`, etc.) — no `Record<string, unknown>`
+    // pass-through.
+    return this.program.account.vault.fetch(pda);
   }
 }

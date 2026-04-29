@@ -15,7 +15,9 @@
  *   const escrow = await client.fetchEscrow(clientKey, providerKey, 1n);
  */
 
-import { Program, AnchorProvider, Idl } from "@coral-xyz/anchor";
+import { Program, AnchorProvider } from "@coral-xyz/anchor";
+
+import type { Settlement } from "./idl-types.js";
 import { PublicKey } from "@solana/web3.js";
 
 /** On-chain seed for task escrow PDAs. */
@@ -31,11 +33,11 @@ const PROTOCOL_CONFIG_SEED = Buffer.from("protocol_config");
  * ProtocolConfig account (ADR-075).
  */
 export class SettlementClient {
-  /** The underlying Anchor Program instance. */
-  readonly program: Program;
+  /** The underlying Anchor Program instance. ADR-088 typed via `Settlement`. */
+  readonly program: Program<Settlement>;
 
-  constructor(provider: AnchorProvider, idl: Idl, programId: PublicKey) {
-    this.program = new Program(idl, provider);
+  constructor(provider: AnchorProvider, idl: Settlement, programId: PublicKey) {
+    this.program = new Program<Settlement>(idl, provider);
     if (!this.program.programId.equals(programId)) {
       throw new Error(
         `SettlementClient: IDL programId ${this.program.programId.toBase58()} ` +
@@ -115,17 +117,10 @@ export class SettlementClient {
    *
    * @throws if the account does not exist or cannot be decoded.
    */
-  async fetchEscrow(
-    client: PublicKey,
-    provider: PublicKey,
-    taskId: bigint,
-  ): Promise<Record<string, unknown>> {
+  async fetchEscrow(client: PublicKey, provider: PublicKey, taskId: bigint) {
     const pda = this.escrowPda(client, provider, taskId);
-    // TODO(typed): parameterise once @agenomics/idl provides the Settlement IDL type.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (this.program.account as any)["taskEscrow"].fetch(pda) as Promise<
-      Record<string, unknown>
-    >;
+    // ADR-088: typed via `Program<Settlement>.account.taskEscrow`.
+    return this.program.account.taskEscrow.fetch(pda);
   }
 
   /**
@@ -136,12 +131,9 @@ export class SettlementClient {
    *
    * @throws if the account does not exist or cannot be decoded.
    */
-  async fetchProtocolConfig(): Promise<Record<string, unknown>> {
+  async fetchProtocolConfig() {
     const pda = this.protocolConfigPda();
-    // TODO(typed): parameterise once @agenomics/idl provides the Settlement IDL type.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (this.program.account as any)["protocolConfig"].fetch(
-      pda,
-    ) as Promise<Record<string, unknown>>;
+    // ADR-088: typed via `Program<Settlement>.account.protocolConfig`.
+    return this.program.account.protocolConfig.fetch(pda);
   }
 }

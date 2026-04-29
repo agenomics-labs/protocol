@@ -35,6 +35,7 @@ import {
   getBase64EncodedWireTransaction,
   getSignatureFromTransaction,
   sendAndConfirmTransactionFactory,
+  pipe,
   AccountRole,
   type Address,
   type Blockhash,
@@ -233,35 +234,23 @@ export async function handleVaultTransferV2(
     // This mirrors the canonical Kit pipe pattern in @solana/kit's doc
     // examples.
     //
-    // TODO(typed): The 5 `as any` casts in this block are unavoidable today
-    // because @solana/kit's transaction-message helpers (`setFeePayer`,
-    // `setLifetime`, `appendInstruction`) widen the message type with each
-    // call — the proper Kit pattern is `pipe(msg, setX, setY, ...)`, not
-    // reassignment to a loop-typed local. Switching to `pipe()` removes the
-    // need for these casts but is out-of-scope for this refactor (handler
-    // call shape would change). Tracked under ADR-088 follow-up; see also
-    // upstream Kit issue on message-builder generics.
-    const baseMessage = (() => {
-      let m: ReturnType<typeof createTransactionMessage> =
-        createTransactionMessage({ version: 0 });
-      m = setTransactionMessageFeePayerSigner(
-        deps.signer as unknown as Parameters<typeof setTransactionMessageFeePayerSigner>[0],
-        m,
-      ) as any;
-      m = setTransactionMessageLifetimeUsingBlockhash(blockhashLifetime, m) as any;
-      m = appendTransactionMessageInstruction(executeTransferIx, m) as any;
-      return m;
-    })();
+    // MCP-324 (Batch G): use Kit's `pipe()` helper so each message-builder
+    // step's return type flows into the next. The previous reassignment-
+    // to-locally-typed-variable shape required `as any` casts because
+    // `setFeePayerSigner` / `setLifetimeUsingBlockhash` / `appendInstruction`
+    // each widen the message generic and a single mutable local can't track
+    // that progression. `pipe()` threads the type through monotonically.
+    const baseMessage = pipe(
+      createTransactionMessage({ version: 0 }),
+      (m) => setTransactionMessageFeePayerSigner(deps.signer, m),
+      (m) => setTransactionMessageLifetimeUsingBlockhash(blockhashLifetime, m),
+      (m) => appendTransactionMessageInstruction(executeTransferIx, m),
+    );
 
     // ---- Compute-budget: simulate-then-size + priority fee --------------
     const simulate: SimulateForCuThunk = async () => {
-      // TODO(typed): same Kit message-builder generic limitation as above.
-      // `compileTransaction` and `getBase64EncodedWireTransaction` accept a
-      // message whose `lifetime` slot is the union of supported lifetimes;
-      // the loop-built `baseMessage` is typed too narrowly to satisfy that
-      // union without widening. Unblocked by switching to `pipe()`.
-      const compiled = compileTransaction(baseMessage as any);
-      const wire = getBase64EncodedWireTransaction(compiled as any);
+      const compiled = compileTransaction(baseMessage);
+      const wire = getBase64EncodedWireTransaction(compiled);
       const sim = await deps.rpc
         .simulateTransaction(wire, { encoding: "base64", sigVerify: false })
         .send();
@@ -279,32 +268,28 @@ export async function handleVaultTransferV2(
     // NOTE: `appendTransactionMessageInstructions` here effectively puts the
     // CU ixs in FRONT of execute_transfer because we rebuild from an empty
     // message. ADR-059 §2 requires CU budget before the program ix.
-    let finalMessage: any = createTransactionMessage({ version: 0 });
-    finalMessage = setTransactionMessageFeePayerSigner(
-      deps.signer as unknown as Parameters<typeof setTransactionMessageFeePayerSigner>[0],
-      finalMessage,
+    const finalMessage = pipe(
+      createTransactionMessage({ version: 0 }),
+      (m) => setTransactionMessageFeePayerSigner(deps.signer, m),
+      (m) => setTransactionMessageLifetimeUsingBlockhash(blockhashLifetime, m),
+      (m) =>
+        appendTransactionMessageInstructions(
+          [cb.setComputeUnitLimit, executeTransferIx],
+          m,
+        ),
+      (m) =>
+        cb.priorityMicroLamports > 0n
+          ? setTransactionMessageComputeUnitPrice(cb.priorityMicroLamports, m)
+          : m,
     );
-    finalMessage = setTransactionMessageLifetimeUsingBlockhash(
-      blockhashLifetime,
-      finalMessage,
-    );
-    finalMessage = appendTransactionMessageInstructions(
-      [cb.setComputeUnitLimit, executeTransferIx],
-      finalMessage,
-    );
-    // Apply the compute-unit price using Kit's message helper (fee is
-    // expressed in micro-lamports per CU and is applied as a dedicated ix).
-    if (cb.priorityMicroLamports > 0n) {
-      finalMessage = setTransactionMessageComputeUnitPrice(
-        cb.priorityMicroLamports,
-        finalMessage,
-      );
-    }
 
     // ---- Sign + send + confirm -----------------------------------------
     const buildAndSign = async (): Promise<SignedTransactionLike> => {
       const signed = await signTransactionMessageWithSigners(finalMessage);
-      return signed as unknown as SignedTransactionLike;
+      // MCP-324 (Batch G): SignedTransactionLike is now structurally
+      // satisfied by Kit's `FullySignedTransaction & TransactionWith*` shape;
+      // no cast needed.
+      return signed;
     };
 
     const confirmResult = await sendAndConfirmWithBlockhashExpiry(
@@ -365,10 +350,18 @@ export function buildDefaultSendAndConfirm(
   let cached: ((tx: unknown, cfg: unknown) => Promise<void>) | null = null;
   return async (signed: SignedTransactionLike): Promise<void> => {
     if (!cached) {
+      // MCP-324 (Batch G): the 3 remaining `as unknown as` casts in this
+      // block bridge `VaultTransferV2Rpc` (our narrow structural alias for
+      // the Rpc subset this handler reaches for: GetSignatureStatusesApi +
+      // SendTransactionApi + GetEpochInfoApi) and Kit's full
+      // `Rpc<SolanaRpcApi>` generic that the factory's parameter type
+      // declares. The cleanest fix is to redefine `VaultTransferV2Rpc` as
+      // `Rpc<GetSignatureStatusesApi & SendTransactionApi & GetEpochInfoApi>`
+      // — sound but pulls Kit's `Rpc` generic into the action type and
+      // changes the seam between the action layer and Kit. Tracked as
+      // out-of-scope for Batch G; the casts are structurally correct
+      // (the factory only invokes methods VaultTransferV2Rpc declares).
       cached = sendAndConfirmTransactionFactory({
-        // The structural VaultTransferV2Rpc subset is a proper narrowing of
-        // Kit's full RPC; the factory only reaches for GetSignatureStatusesApi +
-        // SendTransactionApi + GetEpochInfoApi at call time.
         rpc: rpc as unknown as Parameters<typeof sendAndConfirmTransactionFactory>[0]["rpc"],
         rpcSubscriptions: createRpcSubscriptions() as unknown as Parameters<
           typeof sendAndConfirmTransactionFactory
@@ -405,6 +398,10 @@ function resolveDeps(override?: Partial<VaultTransferV2Deps>): VaultTransferV2De
       return publicKeyToAddress(pda);
     })();
 
+  // MCP-324: same RPC-narrowing constraint as `buildDefaultSendAndConfirm`.
+  // `createRpc()` returns Kit's full `Rpc<SolanaRpcApi>`; we cast to our
+  // narrow `VaultTransferV2Rpc` view. Cast is sound (structural narrowing
+  // — every method VaultTransferV2Rpc declares exists on the full Rpc).
   const rpc = override?.rpc ?? (createRpc() as unknown as VaultTransferV2Rpc);
 
   const sendAndConfirm =

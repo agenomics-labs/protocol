@@ -29,8 +29,16 @@ export interface SendAndConfirmOptions {
  * similar shapes conform. We intentionally keep this narrow so callers
  * aren't tied to any one Kit shape.
  */
+// MCP-324 (Batch G): widened `signatures` to accept Kit's branded
+// SignaturesMap (`Record<Address, SignatureBytes | null>`) without forcing
+// callers to bridge the brand at the boundary. Kit's branded record is a
+// structural subset of `Record<string, Uint8Array | null>`; accepting either
+// covers FullySignedTransaction (Kit) and the v1-style array.
 export interface SignedTransactionLike {
-  readonly signatures: Readonly<Record<string, Uint8Array | null>> | readonly (Uint8Array | string)[];
+  readonly signatures:
+    | Readonly<Record<string, Uint8Array | null>>
+    | { readonly [k: string]: { length: number } | null }
+    | readonly (Uint8Array | string)[];
 }
 
 export type Signature = string;
