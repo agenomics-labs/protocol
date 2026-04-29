@@ -719,3 +719,97 @@ function sendWith(
   handler(makeReq({ headers: normalized }), out.res);
   return out;
 }
+
+// ==========================================================================
+// CYCLE4-MCP-001 (Batch H) — unix-mode rate limiter
+// ==========================================================================
+//
+// In unix mode the bucket key collapses to a single global bucket
+// (`unix:global`) regardless of headers, remote address, or auth state.
+// The unbounded-call axis MCP-320 closed at HTTP is now closed at the
+// unix-domain-socket transport too — the new container default after
+// MCP-322 / ADR-132.
+
+describe("CYCLE4-MCP-001 unix-mode rate limiter", () => {
+  it("readRateLimitConfig accepts unixMode option", () => {
+    const c = readRateLimitConfig({}, { unixMode: true });
+    assert.equal(c.unixMode, true);
+    const d = readRateLimitConfig({});
+    assert.equal(d.unixMode, false);
+  });
+
+  it("collapses ALL requests into a single global bucket regardless of headers", () => {
+    const cfg = readRateLimitConfig(
+      { AEP_MCP_RATE_LIMIT_MAX_REQUESTS: "3" },
+      { unixMode: true },
+    );
+    const limiter = makeRateLimiter(cfg);
+    let downstreamCalls = 0;
+    const handler = limiter.middleware((_req, res) => {
+      downstreamCalls++;
+      res.statusCode = 200;
+      res.end("ok");
+    });
+
+    // 3 different "callers" by header — but unix-mode ignores headers and
+    // pools them all into `unix:global`.
+    const r1 = makeRes();
+    handler(makeReq({ headers: { authorization: "Bearer A" } }), r1.res);
+    const r2 = makeRes();
+    handler(makeReq({ headers: { authorization: "Bearer B" } }), r2.res);
+    const r3 = makeRes();
+    handler(makeReq({ remoteAddress: "10.0.0.99" }), r3.res);
+
+    // 3 of 3 budget consumed → all pass
+    assert.equal(downstreamCalls, 3);
+    assert.equal(r1.captured.statusCode, 200);
+    assert.equal(r2.captured.statusCode, 200);
+    assert.equal(r3.captured.statusCode, 200);
+
+    // 4th request — budget exhausted on the single bucket
+    const r4 = makeRes();
+    handler(makeReq({ headers: { authorization: "Bearer C" } }), r4.res);
+    assert.equal(downstreamCalls, 3, "no new downstream call");
+    assert.equal(r4.captured.statusCode, 429);
+
+    limiter.shutdown();
+  });
+
+  it("emits bucketKind=unix on denied events", () => {
+    const cfg = readRateLimitConfig(
+      { AEP_MCP_RATE_LIMIT_MAX_REQUESTS: "1" },
+      { unixMode: true },
+    );
+    const denied: Array<{ bucketKind: string }> = [];
+    const limiter = makeRateLimiter(cfg, {
+      onDenied: (e) => {
+        denied.push({ bucketKind: e.bucketKind });
+      },
+    });
+    const handler = limiter.middleware((_req, _res) => undefined);
+    handler(makeReq({}), makeRes().res); // ok
+    handler(makeReq({}), makeRes().res); // 429
+    assert.equal(denied.length, 1);
+    assert.equal(denied[0]!.bucketKind, "unix");
+    limiter.shutdown();
+  });
+
+  it("HTTP mode (default) keeps token / IP precedence — unix flag does not leak", () => {
+    const cfg = readRateLimitConfig({ AEP_MCP_RATE_LIMIT_MAX_REQUESTS: "1" });
+    assert.equal(cfg.unixMode, false);
+    const limiter = makeRateLimiter(cfg);
+    const handler = limiter.middleware((_req, res) => {
+      res.statusCode = 200;
+      res.end("ok");
+    });
+
+    // Two distinct tokens get distinct buckets (HTTP semantics preserved).
+    const r1 = makeRes();
+    handler(makeReq({ headers: { authorization: "Bearer A" } }), r1.res);
+    const r2 = makeRes();
+    handler(makeReq({ headers: { authorization: "Bearer B" } }), r2.res);
+    assert.equal(r1.captured.statusCode, 200);
+    assert.equal(r2.captured.statusCode, 200, "HTTP mode keeps separate buckets per token");
+    limiter.shutdown();
+  });
+});
