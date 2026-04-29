@@ -113,7 +113,7 @@ ADRs in `Proposed` status with no shipped code AND no clearly-stated criterion f
 | Cluster | ADRs | Pattern |
 |---|---|---|
 | **Research-driven (papers cited)** | 106, 107, 108, 109, 110, 111, 112, 113 | All cite a 2025–2026 arxiv/HF paper. Have decision criteria (params, defaults, formulas). Decision-shaped, not vapor — appropriate to keep Proposed; exit criterion is "implementation tests green". |
-| **Audit-response (findings cited)** | 114, 115, 116, 117, 118, 119, 120 | Each addresses a specific re-audit finding. Concrete code-level. Should be Accepted as soon as the corresponding PR lands. **ADR-116 is C1 (AUD-001); ADR-119 is C3 (AUD-003)** — landing those PRs flips two ADRs. |
+| **Audit-response (findings cited)** | 114, 115, 116, 117, 118, 120 (ADR-119 flipped to Accepted 2026-04-28) | Each addresses a specific re-audit finding. Concrete code-level. Should be Accepted as soon as the corresponding PR lands. **ADR-116 is C1 (AUD-001)** — landing that PR flips it. ADR-119 (C3 / AUD-003) is no longer in this cluster: scope-expanded to mcp-server vault-layout drift gate (Batch D, MCP-311/313) and accepted on 2026-04-28. |
 | **Mainnet-readiness chain** | 077, 078, 079 | Tightly coupled, all blocked on prior ADRs (063 ceremony, 081 scripts). Architecture-Audit-2026-04-23 calls this the mainnet blocker family. |
 | **Procedure-only (no code expected)** | 062, 066, 067, 077, 078, 079 | Reserved/Proposed placeholders. Acceptable as long as exit criteria are stated. |
 
@@ -132,7 +132,7 @@ These ADRs cover the same problem space. None of the clusters has a single canon
 | **SAS integration** | 061, 062, 063, 064, 065, 066, 067, 076, 077, 081, 092 | Coherent within itself — 061 is the depth decision, 064 ships the resolver, 065 caches it, 076 hardens binding. | (positive) |
 | **CPI trust** | 001, 002, 007, 014, 024, 068, 074, 094 | Layered evolution; 094 is the latest, 068 is the previous, and 007/014 are stale-Accepted. | AUD-002 / AUD-048 |
 | **Vault allowlists** | 003, 006, 015, 044, 071, 072, 073, 093 | 071 partly drifted; 073 status-lies; otherwise coherent. | AUD-021 / AUD-082 |
-| **SDK packaging** | 098 (×2), 099 (×2), 100, 119 | Two duplicate-numbered pairs to dedupe; 119 is Proposed and addresses C3. | AUD-003 / AUD-047 |
+| **SDK packaging** | 098 (×2), 099 (×2), 100, 119 | Two duplicate-numbered pairs to dedupe; 119 flipped Proposed → Accepted 2026-04-28 (closes C3 / AUD-003; scope-expanded to mcp-server vault-layout drift gate). | AUD-003 / AUD-047 |
 | **Audit-findings cluster** | 037, 038, 039, 040, 041, 042, 043, 044, 046, 047, 050 | 037 is the index; subsequent are sub-fixes from the audit findings. Path-drift epidemic in 040/041/043/044/047. | (governance) |
 | **Naming** | 085, 086 | Both backfills; clean. | (positive) |
 
@@ -178,7 +178,7 @@ Highest-leverage cleanups, in order:
 3. **Flip 073 / 075 to Accepted with Revisions log** (15 minutes) — Category 3.
 4. **Annotate de-facto supersessions** (1 hour) — Category 4; specifically 031→080, 068→094, 004→042, 032→085.
 5. **Fix dead file-path citations** in 024/025/026/035/040/041/043/044/047 (30 minutes; mass `sed`) — Category 5.
-6. **Land ADR-116 + ADR-119** as code (resolves AUD-001 + AUD-003) — flips two Aspirational to Accepted.
+6. **Land ADR-116** as code (resolves AUD-001) — flips one Aspirational to Accepted. (ADR-119 already flipped 2026-04-28; resolves AUD-003 + Batch D MCP-311/313.)
 7. **Extend status-audit.sh** to detect everything in this matrix (1–2 days) — Category 10. Prevents recurrence.
 8. **Consolidate web3.js v2 cluster**: mark 012, 033, 048 Superseded; ADR-087 is canonical — Category 8.
 9. **Promote `MAINNET_CHECKLIST.md` to an ADR** with explicit gate criteria — Category 8 / AUD-059.
