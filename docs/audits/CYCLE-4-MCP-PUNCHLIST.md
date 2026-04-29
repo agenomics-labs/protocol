@@ -118,7 +118,27 @@ the new default flip should have brought it along.
    right default." Tie the cutover gate (the container auto-flip
    actually ships in production) to closure of this finding.
 
-**Status:** Open.
+**Status:** **Closed — Batch H** (in-session, mirrors the cycle-3
+in-wave-close pattern for AUD-200 + MCP-320).
+
+`startUnixTransport` (`mcp-server/src/index.ts:339-414`) now wires
+the same `originGate.middleware(rateLimiter.middleware(downstream))`
+chain HTTP transport uses. Rate-limiter built with `unixMode: true`
+which collapses the bucket key to a single `unix:global` regardless
+of headers / remote address (`mcp-server/src/transport/rate-limit.ts:73-91,
+297-340`). Origin gate works as-is — AF_UNIX requests have no
+`Origin` header so the server-to-server pass-through path applies;
+the gate still defends a hypothetical HTTP-bridging proxy that
+forwarded `Origin` verbatim. Boot log surfaces `rate_limit_unix_mode:
+true` + `audit: "MCP-320 + MCP-321 + CYCLE4-MCP-001"` so the new
+posture is observable. SIGTERM / SIGINT shutdown handlers free the
+limiter pruner.
+
+Tests: 4 new tests in `mcp-server/test/transport-rate-limit.test.ts`
+(`CYCLE4-MCP-001 unix-mode rate limiter` describe block) — config
+parsing accepts `unixMode`; all-headers-collapse-to-global; denied
+events emit `bucketKind: "unix"`; HTTP-mode unaffected by the new
+flag. Full mcp-server suite 362/362.
 
 ---
 

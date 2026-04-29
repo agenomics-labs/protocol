@@ -346,7 +346,28 @@ async function startUnixTransport(posture: TransportPosture): Promise<void> {
     void transport.handleRequest(req, res);
   };
 
-  const httpServer = http.createServer(downstream);
+  // CYCLE4-MCP-001 (Batch H): unix transport now wraps the same origin-gate
+  // + rate-limit middleware chain HTTP transport uses. Closes the
+  // asymmetric-defense gap that opened when MCP-322 / ADR-132 made `unix`
+  // the new container default — without these, an in-container peer with
+  // socket reachability could fire unbounded `vault_transfer` calls (the
+  // exact axis MCP-320 closed at HTTP). Bucket key collapses to a single
+  // global bucket (`unix:global`) — no bearer / IP precedence on AF_UNIX.
+  // Per-peer bucketing requires SO_PEERCRED introspection deferred to the
+  // mTLS upgrade per ADR-083 §"Upgrade path to mTLS".
+  const originGateConfig = readOriginGateConfig(process.env);
+  const originGate = makeOriginGate(originGateConfig);
+  const rateLimitConfig = readRateLimitConfig(process.env, { unixMode: true });
+  const rateLimiter = makeRateLimiter(rateLimitConfig);
+  const wrapped = originGate.middleware(rateLimiter.middleware(downstream));
+
+  const onShutdown = (): void => {
+    rateLimiter.shutdown();
+  };
+  process.once("SIGTERM", onShutdown);
+  process.once("SIGINT", onShutdown);
+
+  const httpServer = http.createServer(wrapped);
 
   // Optional peer-credential gate. We attach it on `connection` so the check
   // happens before any HTTP framing is parsed.
@@ -393,9 +414,14 @@ async function startUnixTransport(posture: TransportPosture): Promise<void> {
       unix_path: posture.unixPath,
       peer_uid_enforced: posture.unixAllowedUid !== undefined,
       peer_uid: posture.unixAllowedUid,
-      adr: "ADR-083",
+      rate_limit_window_ms: rateLimitConfig.windowMs,
+      rate_limit_max_requests: rateLimitConfig.maxRequests,
+      rate_limit_unix_mode: true,
+      origin_allowlist_count: originGateConfig.allowedOrigins.length,
+      adr: "ADR-083 + ADR-132",
+      audit: "MCP-320 + MCP-321 + CYCLE4-MCP-001",
     },
-    "MCP server bound (Unix-domain socket)",
+    "MCP server bound (Unix-domain socket + origin gate + rate limit enforced)",
   );
 }
 

@@ -82,6 +82,18 @@ export interface RateLimitConfig {
    * bucket. False by default; spoofable in non-proxied deployments.
    */
   readonly trustProxy: boolean;
+  /**
+   * CYCLE4-MCP-001 (Batch H): when true, ALL requests share a single
+   * global bucket (`unix:global`) regardless of headers or remote
+   * address. Used by the unix-domain-socket transport, where there is
+   * no bearer token, no meaningful `req.socket.remoteAddress`, and the
+   * trust boundary is filesystem ACL + (optional) peer-uid. The
+   * single-bucket throughput cap closes the unbounded-call axis MCP-320
+   * already closed at HTTP, with the fall-back-to-global rationale per
+   * `docs/audits/CYCLE-4-MCP-PUNCHLIST.md` CYCLE4-MCP-001 §"Suggested
+   * closure path". HTTP transport keeps `unixMode: false`.
+   */
+  readonly unixMode: boolean;
 }
 
 export interface RateLimitConfigEnv {
@@ -98,7 +110,10 @@ export interface RateLimitConfigEnv {
  * unset uses {@link DEFAULT_RATE_LIMIT_WINDOW_MS} regardless of whether the
  * other vars are set.
  */
-export function readRateLimitConfig(env: RateLimitConfigEnv): RateLimitConfig {
+export function readRateLimitConfig(
+  env: RateLimitConfigEnv,
+  opts: { unixMode?: boolean } = {},
+): RateLimitConfig {
   const windowMs = parsePositiveInt(
     env.AEP_MCP_RATE_LIMIT_WINDOW_MS,
     "AEP_MCP_RATE_LIMIT_WINDOW_MS",
@@ -110,7 +125,7 @@ export function readRateLimitConfig(env: RateLimitConfigEnv): RateLimitConfig {
     DEFAULT_RATE_LIMIT_MAX_REQUESTS,
   );
   const trustProxy = parseTrustProxyFlag(env.AEP_MCP_TRUST_PROXY);
-  return { windowMs, maxRequests, trustProxy };
+  return { windowMs, maxRequests, trustProxy, unixMode: opts.unixMode ?? false };
 }
 
 function parsePositiveInt(
@@ -158,7 +173,7 @@ interface RateLimitEntry {
 }
 
 export interface RateLimitDeniedEvent {
-  readonly bucketKind: "token" | "ip";
+  readonly bucketKind: "token" | "ip" | "unix";
   readonly remoteAddress: string | undefined;
   readonly url: string | undefined;
   readonly retryAfterSec: number;
@@ -224,7 +239,7 @@ export function makeRateLimiter(
 
   const middleware = (downstream: http.RequestListener): http.RequestListener => {
     return (req, res) => {
-      const key = bucketKeyFor(req, config.trustProxy);
+      const key = bucketKeyFor(req, config);
       const t = now();
       const entry = map.get(key.value);
 
@@ -271,12 +286,13 @@ export function makeRateLimiter(
 // ==================== INTERNALS ====================
 
 interface BucketKey {
-  readonly kind: "token" | "ip";
+  readonly kind: "token" | "ip" | "unix";
   /**
    * The Map key. For tokens this is a SHA-256 hex digest, never the raw
    * token. For IPs it's `ip:<addr>` so a token whose hex digest happened
    * to collide with `ip:127.0.0.1` (it can't, but defense in depth) is in
-   * a separate keyspace.
+   * a separate keyspace. For unix transport (CYCLE4-MCP-001 closure) the
+   * single global bucket is `unix:global`.
    */
   readonly value: string;
 }
@@ -296,8 +312,19 @@ interface BucketKey {
  */
 function bucketKeyFor(
   req: http.IncomingMessage,
-  trustProxy: boolean,
+  config: RateLimitConfig,
 ): BucketKey {
+  // CYCLE4-MCP-001 (Batch H): unix transport collapses to a single global
+  // bucket. No bearer-token / IP precedence — there is no bearer auth on
+  // unix and `req.socket.remoteAddress` is empty for AF_UNIX. Per-peer
+  // bucketing would require SO_PEERCRED native introspection (deferred to
+  // the mTLS upgrade per ADR-083 §"Upgrade path to mTLS"); the global
+  // bucket is sufficient defense-in-depth given the filesystem-ACL trust
+  // boundary already bounds the caller set to the container.
+  if (config.unixMode) {
+    return { kind: "unix", value: "unix:global" };
+  }
+
   const authHeader = req.headers["authorization"];
   const headerStr = Array.isArray(authHeader) ? authHeader[0] : authHeader;
   const tok = extractBearerToken(headerStr);
@@ -306,7 +333,7 @@ function bucketKeyFor(
     return { kind: "token", value: `tok:${digest}` };
   }
 
-  if (trustProxy) {
+  if (config.trustProxy) {
     const xff = req.headers["x-forwarded-for"];
     const xffStr = Array.isArray(xff) ? xff[0] : xff;
     if (typeof xffStr === "string" && xffStr.length > 0) {

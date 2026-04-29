@@ -160,7 +160,46 @@ would break those.
   signal cases; three `detectTransportPosture` auto-flip / pin /
   bare-host paths.
 
-Full mcp-server suite: 347/347.
+## Symmetric-coverage update (2026-04-29, CYCLE4-MCP-001 / Batch H)
+
+The cycle-4 hostile re-audit on 2026-04-29 surfaced an asymmetric-
+defense gap created by this ADR's container auto-flip:
+`startUnixTransport` did NOT wire the rate-limit middleware that
+landed alongside the origin gate, so any in-container peer with
+socket reachability could fire unbounded `vault_transfer` calls
+(the same axis MCP-320 closed at HTTP). The gap mirrored the cycle-3
+asymmetric-defense pattern (`feedback_adr_symmetric_coverage.md` —
+defenses on auth surfaces require symmetric init+mutation coverage).
+
+**Closure (Batch H, in-wave with the audit):**
+
+`startUnixTransport` now wraps the same
+`originGate.middleware(rateLimiter.middleware(downstream))` chain
+HTTP transport uses. The rate-limiter is constructed with a new
+`unixMode: true` config flag that collapses the bucket key to a
+single `unix:global` regardless of headers — there is no bearer
+auth on the unix transport and `req.socket.remoteAddress` is empty
+for AF_UNIX. Per-peer bucketing requires `SO_PEERCRED` native
+introspection, which is deferred to the mTLS upgrade per ADR-083
+§"Upgrade path to mTLS"; the global-bucket fall-back is sufficient
+defense-in-depth given the filesystem-ACL trust boundary already
+bounds the caller set to the container.
+
+Origin gate works as-is — AF_UNIX requests carry no `Origin` header,
+so the server-to-server pass-through path applies. The gate still
+defends the hypothetical case where an operator builds an HTTP-to-
+unix bridging proxy that forwards `Origin` verbatim.
+
+**Threat-model statement (added per CYCLE4-MCP-001's suggested
+closure path #3):** the unix transport's defenses are filesystem
+ACL + optional peer-uid + rate-limit defense-in-depth (as of Batch
+H). The container auto-flip is the right default ONLY because all
+three layers are now in place.
+
+Test coverage extended with 4 unix-mode tests in
+`mcp-server/test/transport-rate-limit.test.ts`.
+
+Full mcp-server suite after Batch H: 362/362.
 
 ## References
 
@@ -168,3 +207,9 @@ Full mcp-server suite: 347/347.
   default extend the posture defined here.
 - `docs/audits/CYCLE-3-MCP-PUNCHLIST.md` — MCP-321 and MCP-322
   findings + closure footnote.
+- `docs/audits/CYCLE-4-MCP-PUNCHLIST.md` — CYCLE4-MCP-001 finding +
+  Batch H closure footnote.
+- Memory `feedback_adr_symmetric_coverage.md` — the lesson driving
+  the in-wave close: ADRs on auth/transport surfaces need symmetric
+  defense across siblings, not just at the surface they were drafted
+  against.
