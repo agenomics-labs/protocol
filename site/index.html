@@ -557,8 +557,9 @@
       <p class="lede" style="max-width: 600px; margin-top: 12px;">
         Updates from the coordination layer — protocol notes, builder previews, no spam.
       </p>
-      <form class="signup" id="signup-form" onsubmit="event.preventDefault(); this.classList.add('success'); this.querySelector('button').textContent='You’re in →'; this.querySelector('input').value='';">
-        <input type="email" placeholder="you@domain.com" required>
+      <form class="signup" id="signup-form" novalidate>
+        <input type="email" name="email" placeholder="you@domain.com" required autocomplete="email">
+        <input type="text" name="company" tabindex="-1" autocomplete="off" class="signup-hp" aria-hidden="true">
         <button type="submit">Join waitlist →</button>
       </form>
       <div class="small-note" style="margin-top: 20px; font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-4);">
@@ -632,6 +633,49 @@
     entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('in'); });
   }, { threshold: 0.12, rootMargin: '0px 0px -40px 0px' });
   document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+
+  const form = document.getElementById('signup-form');
+  const button = form.querySelector('button');
+  const emailInput = form.querySelector('input[name=email]');
+  const hpInput = form.querySelector('input[name=company]');
+  const ORIGINAL_LABEL = button.textContent;
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (form.classList.contains('submitting')) return;
+
+    const email = emailInput.value.trim();
+    if (!email) return;
+
+    form.classList.remove('error', 'success');
+    form.classList.add('submitting');
+    button.textContent = 'Joining…';
+
+    try {
+      const res = await fetch('/api/waitlist', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email, company: hpInput.value }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error(data.error || 'http_' + res.status);
+
+      form.classList.remove('submitting');
+      form.classList.add('success');
+      button.textContent = 'You’re in →';
+      emailInput.value = '';
+    } catch (err) {
+      form.classList.remove('submitting');
+      form.classList.add('error');
+      button.textContent = err && err.message === 'invalid_email' ? 'Check email' : 'Try again';
+      setTimeout(() => {
+        if (form.classList.contains('error')) {
+          form.classList.remove('error');
+          button.textContent = ORIGINAL_LABEL;
+        }
+      }, 3500);
+    }
+  });
 </script>
 
 </body>
