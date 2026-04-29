@@ -156,8 +156,21 @@ For cross-cuts (duplicate detection, supersession-chain integrity, overlap clust
 | 116 | ProposeReputationDelta nonce-seed alignment | Proposed | 2026-04-24 | Add owner_nonce account + nonce in seed to ProposeReputationDelta context | **DRIFT CONFIRMED**: `contexts.rs:301-325` STILL omits owner_nonce | Aspirational | — | onchain-sybil |
 | 117 | x402-relay error redaction | Proposed | 2026-04-24 | Two-surface error model: pino logs raw; client gets {code,message,correlationId} | No code | Aspirational | — | offchain-hardening |
 | 118 | Indexer concurrency hardening | Proposed | 2026-04-24 | synchronous=FULL, async-mutex per program, SIGTERM handler with batch flush | No code | Aspirational | — | offchain-hardening |
-| 119 | SDK boundary validation | Proposed | 2026-04-24 | Implement deriveAgentProfilePda, validate pubkey inputs, add cluster guard, IDL drift check | `sdk/client/src/index.ts` shipped; need to verify deriveAgentProfilePda is still stub | Aspirational | — | sdk-packaging |
+| 119 | SDK boundary validation + mcp-server vault-layout drift gate | Accepted | 2026-04-24 (Proposed); 2026-04-28 (Accepted, scope-expanded) | SDK input validation + PDA derivation; codegen vault-layout from IDL + boot-time drift assertion (Batch D, MCP-311/313) | `sdk/client/src/index.ts` deriveAgentProfilePda + isValidPublicKey; `mcp-server/scripts/gen-vault-layout.ts`; `vault-layout.generated.ts`; `vault-layout-drift.ts:assertVaultLayoutMatchesIdl`; 5 tests at `mcp-server/test/vault-layout-drift.test.ts` | Implemented | — | sdk-packaging, mcp-idl-drift |
 | 120 | Off-chain service unit-test mandate | Proposed | 2026-04-24 | Every src/* and packages/* MUST ship test script + smoke suite | `src/{indexer,x402-relay}/package.json` lacked test per ADR | Aspirational | — | offchain-hardening |
+
+---
+
+## Batch 5 — ADR-121 through ADR-133 (cycle-3 closeout — partial; only deltas added in 2026-04-28 refresh)
+
+Only the ADRs landed in the cycle-3 closeout that the prior inventory snapshot did not yet reference are populated below. ADRs 121–129 will be backfilled by the next full inventory pass; the rows for 130–133 are added now because cycle-3 commits (`f0efc00..37f0acc`) reference them as in-force decisions.
+
+| ADR | Title | Status | Date | Decision (≤15 words) | Implementation evidence | Drift verdict | Supersession | Overlap cluster |
+|---|---|---|---|---|---|---|---|---|
+| 130 | Sigstore-style artifact provenance for the program `.so` | Reserved | 2026-04-28 | Number reserved for cosign sign-blob layered on ADR-080 if SLSA / regulatory / multi-team triggers fire | doc-only; no code expected until trigger | Aspirational (Reserved-by-design) | — | mainnet-safety, supply-chain |
+| 131 | Sybil-cost calibration — current bounds and threat-model boundary | Accepted | 2026-04-28 | Hold MAX_DELTA=10, SUSPEND_AT=3, no-min-stake; pin AUD-205 inequality `E > 3R + 3L`; name re-cal triggers | doc-only governance pin; cites `agent-registry/lib.rs:17,21,322-325,358-359`; `state.rs:197-201`; `settlement/state.rs:28,117` | Implemented (governance decision) | — | sybil, calibration, governance |
+| 132 | MCP HTTP origin gate + container-aware transport default | Accepted | 2026-04-28 | Add origin allowlist middleware (MCP-321) + container auto-detect flips stdio→unix default (MCP-322) | `mcp-server/src/transport/origin-gate.ts` (~115 LOC); `auth-gate.ts:isContainerizedRuntime`/`detectTransportPosture`; 17 tests at `transport-origin.test.ts`; mcp-server suite 347/347 | Implemented | extends ADR-083 | mcp-security, transport |
+| 133 | Handlers-v2 wave deferral — keep dual-path as living reference until Anchor v2 ships | Accepted | 2026-04-29 | Option (c) hybrid: defer wave, keep `handlers-v2/vault.ts` reference impl + dual-path; pin 5 re-eval triggers | `actions/vault.ts:171-189,223-241` env-gated dispatcher; `handlers-v2/vault.ts` (441 LOC) + `keypair-signer.ts` (114 LOC); test `handlers-v2-vault.test.ts` (503 LOC); scheduled trig_01GkKKZQd39rY2Z7w7tmmYou (2026-06-03) | Implemented (deferral pin) | governance overlay on ADR-012/033/087 | web3js-v2, governance |
 
 ---
 
@@ -165,23 +178,23 @@ For cross-cuts (duplicate detection, supersession-chain integrity, overlap clust
 
 | Status | Count |
 |---|---:|
-| Accepted | 92 |
-| Proposed | 24 |
-| Reserved | 3 |
+| Accepted | 96 |
+| Proposed | 23 |
+| Reserved | 4 |
 | Not Written | 3 |
 | Superseded (explicit) | 1 |
-| **Total numbered files** | **123** (incl. 2 duplicates) |
+| **Total numbered files** | **127** (incl. 2 duplicates; ADRs 121–129 not yet inventoried) |
 
 ## Roll-up by drift verdict
 
 | Verdict | Count | Notable examples |
 |---|---:|---|
-| Implemented | 67 | 001, 003, 020, 049, 080, 089, 090 |
+| Implemented | 71 | 001, 003, 020, 049, 080, 089, 090, 119, 131, 132, 133 |
 | Partial | 17 | 012, 048, 058, 059, 071, 080→partial-supersession ADRs, 094, 095, 097, 104 |
 | Drifted | 12 | 004, 007, 014, 024, 035, 040, 043, 047, 088, 098-client-sdk, 103 |
-| Aspirational | 21 | 060, 062, 066, 067, 078, 079, 106-120 cluster |
-| Unverifiable | 9 | 009, 011, 013, 022, 023, 070, 102, 114, 119 |
-| Placeholder (Not Written / Reserved) | 6 | 045, 055, 056, 062, 066, 067 |
+| Aspirational | 21 | 060, 062, 066, 067, 078, 079, 106-118, 120, 130 |
+| Unverifiable | 9 | 009, 011, 013, 022, 023, 070, 102, 114 |
+| Placeholder (Not Written / Reserved) | 7 | 045, 055, 056, 062, 066, 067, 130 |
 
 ## Notes
 
