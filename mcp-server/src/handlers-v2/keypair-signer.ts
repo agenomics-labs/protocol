@@ -30,21 +30,18 @@ import type { Keypair } from "@solana/web3.js";
 import { publicKeyToAddress } from "../solana.js";
 import type {
   Address,
+  TransactionPartialSigner,
 } from "@solana/kit";
 
 /**
- * Kit's `TransactionPartialSigner`-shaped object. We type this structurally
- * rather than importing the Kit alias directly because the Kit type uses
- * heavy type parameters that fight our narrower wrapping. At runtime the
- * shape is `{ address, signTransactions }` — which is all
- * `signTransactionMessageWithSigners` inspects.
+ * Re-export of Kit's `TransactionPartialSigner` interface (MCP-324, Batch G).
+ * Earlier versions of this module declared a hand-rolled structural alias
+ * with `messageBytes: Uint8Array`, but Kit brands `messageBytes` as
+ * `TransactionMessageBytes` and the structural mismatch forced `as unknown
+ * as` casts at every call site that fed our signer to Kit's helpers.
+ * Re-exporting Kit's actual type makes the casts unnecessary.
  */
-export interface KitTransactionPartialSigner {
-  readonly address: Address;
-  signTransactions(
-    transactions: readonly { readonly messageBytes: Uint8Array }[],
-  ): Promise<readonly Record<string, Uint8Array>[]>;
-}
+export type KitTransactionPartialSigner = TransactionPartialSigner;
 
 /**
  * Build a Kit-compatible `TransactionPartialSigner` from a v1 Keypair.
@@ -77,28 +74,38 @@ export function createKeypairSignerFromV1Keypair(
   }
   const seed = secretKey.slice(0, 32);
 
-  return {
-    address,
-    async signTransactions(transactions) {
-      // Partial signer contract: sign every provided tx in parallel, return
-      // a SignatureDictionary per tx. We do NOT mutate inputs.
-      return transactions.map((tx) => {
-        if (!tx.messageBytes || !(tx.messageBytes instanceof Uint8Array)) {
-          throw new Error(
-            "KeypairSigner.signTransactions: tx.messageBytes missing or not a Uint8Array",
-          );
-        }
-        const sig = ed25519.sign(tx.messageBytes, seed);
-        // Force a 64-byte view; ed25519.sign returns 64 bytes by spec.
-        if (sig.length !== 64) {
-          throw new Error(
-            `KeypairSigner.signTransactions: unexpected signature length ${sig.length}`,
-          );
-        }
-        return { [address]: sig } as Record<string, Uint8Array>;
-      });
-    },
+  // The single ADR-088-aligned cast for this module: Kit brands
+  // `SignatureDictionary` keys as `Address` and values as `SignatureBytes`
+  // (nominal types). Our raw signature bytes ARE address-keyed
+  // SignatureBytes-shaped (64-byte ed25519); the cast at the return
+  // boundary is the only place that crosses the brand without
+  // structural-assignability proof.
+  const signTransactions: TransactionPartialSigner["signTransactions"] = async (
+    transactions,
+  ) => {
+    return transactions.map((tx) => {
+      const messageBytes = tx.messageBytes;
+      if (!(messageBytes instanceof Uint8Array)) {
+        throw new Error(
+          "KeypairSigner.signTransactions: tx.messageBytes missing or not a Uint8Array",
+        );
+      }
+      const sig = ed25519.sign(messageBytes, seed);
+      if (sig.length !== 64) {
+        throw new Error(
+          `KeypairSigner.signTransactions: unexpected signature length ${sig.length}`,
+        );
+      }
+      // The single brand-bridge cast in this module (ADR-088).
+      return { [address]: sig } as ReturnType<
+        TransactionPartialSigner["signTransactions"]
+      > extends Promise<readonly (infer U)[]>
+        ? U
+        : never;
+    });
   };
+
+  return { address, signTransactions };
 }
 
 /**

@@ -297,21 +297,42 @@ export class RedisIdempotencyStore implements IdempotencyStore {
     }
   }
 
+  /**
+   * MCP-315 (Batch G): wait-time bound is computed by ACCUMULATING the
+   * sleep durations we actually issued, rather than diffing two
+   * `this.now()` reads. This eliminates the clock-skew failure mode the
+   * cycle-3 audit flagged: two MCP instances pointed at the same Redis
+   * but with NTP-skewed local clocks would compute different effective
+   * `inflightWaitMs` budgets — A might time out after 8s of wall-clock
+   * while B (skewed slow) still has 2s left, so the same operator-set
+   * `inflightWaitMs=10000` produced different outcomes.
+   *
+   * Now: `elapsed = sum(intervals slept)`. The interval doubling schedule
+   * is deterministic, so total wait is bounded by `inflightWaitMs`
+   * regardless of host-clock state. The `sleep()` injection is the only
+   * time-source; `this.now()` is no longer consulted in the hot path.
+   */
   private async waitForResult<T>(resultKey: string): Promise<Result<T>> {
-    const deadline = this.now() + this.inflightWaitMs;
+    let elapsedMs = 0;
     let interval = this.pollInitialMs;
 
-    while (this.now() < deadline) {
+    while (elapsedMs < this.inflightWaitMs) {
       const cached = await this.client.get(resultKey);
       if (cached !== null) {
         return deserializeResult<T>(cached);
       }
-      await this.sleep(interval);
+      // Cap the final sleep so we don't overrun the budget. If the next
+      // doubled interval would exceed the remaining budget, sleep for
+      // exactly the remainder and exit on the next iteration.
+      const remaining = this.inflightWaitMs - elapsedMs;
+      const thisSleep = Math.min(interval, remaining);
+      await this.sleep(thisSleep);
+      elapsedMs += thisSleep;
       interval = Math.min(interval * 2, this.pollMaxMs);
     }
 
-    // Final check after the deadline elapses, in case the peer wrote
-    // between our last poll and the deadline.
+    // Final check after the budget elapses, in case the peer wrote
+    // between our last poll and exhaustion.
     const finalCheck = await this.client.get(resultKey);
     if (finalCheck !== null) {
       return deserializeResult<T>(finalCheck);
