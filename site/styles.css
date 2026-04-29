@@ -737,6 +737,16 @@ p.body {
   border-color: var(--acc-2);
   background: oklch(0.78 0.16 175 / 0.06);
 }
+.signup.submitting button { opacity: 0.7; cursor: wait; }
+.signup.error { border-color: oklch(0.62 0.18 30 / 0.55); background: oklch(0.62 0.18 30 / 0.05); }
+.signup-hp {
+  position: absolute !important;
+  left: -9999px !important;
+  width: 1px; height: 1px;
+  opacity: 0;
+  pointer-events: none;
+  tab-index: -1;
+}
 
 /* ───────── Footer ───────── */
 .site-footer {
