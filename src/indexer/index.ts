@@ -540,8 +540,19 @@ const EVENT_DECODERS: Record<string, EventDecoder> = {
     timestamp: i64ToJson(r.i64()),
   }),
   SuspensionCleared: (r) => ({
+    // Wire layout from programs/agent-registry/src/events.rs:
+    //   pub authority: Pubkey
+    //   pub new_reputation_score: u64
+    //   pub cleared_count: u8        // <-- AUD-004 (was missing pre-ADR-082-field-coverage)
+    //   pub timestamp: i64
+    //
+    // Pre-fix the decoder skipped cleared_count, so every SuspensionCleared
+    // event since AUD-004 landed had `timestamp` read 1 byte too early (bit-
+    // shifted garbage), and `cleared_count` was silently dropped. Surfaced
+    // by the field-coverage extension to scripts/check-event-coverage.ts.
     authority: r.pubkey(),
     new_reputation_score: u64ToJson(r.u64()),
+    cleared_count: r.u8(),
     timestamp: i64ToJson(r.i64()),
   }),
 
