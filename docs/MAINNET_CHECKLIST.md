@@ -51,6 +51,27 @@
 | Edge cases tested on devnet (expiry, dispute, cancel) | Pending | ADR-009 scenarios |
 | MCP server connected to devnet programs | Pending | Verify all tool handlers work |
 
+### 1.5 MCP transport posture (ADR-083, ADR-132)
+
+The MCP server runs in one of three transport modes; each has a
+distinct trust boundary. Pick deliberately — the container default
+auto-flipped from `stdio` to `unix` in cycle-3 (ADR-132 / MCP-322), so
+a checklist-only operator can be surprised on rolling deploy.
+
+| Item | Status | Notes |
+|------|--------|-------|
+| Transport mode chosen | Pending | `stdio` (parent-process trust), `http` (bearer + origin allowlist + rate limit), or `unix` (socket-mode 0600 + optional peer-uid) |
+| `AEP_MCP_TRANSPORT` set explicitly OR container auto-flip understood | Pending | In a container without explicit `AEP_MCP_TRANSPORT` the default is **`unix`** (auto-path `/run/aep-mcp/mcp.sock`). Confirm this is intended. |
+| `AEP_MCP_ALLOWED_UID` set when using `unix` | Pending | `AEP_MCP_ALLOWED_UID=$(id -u <mcp-service-user>)` enables the optional peer-uid check. |
+| `AEP_MCP_HTTP_ALLOWED_ORIGINS` set when using `http` | Pending | CSV; required for browser callers. See ADR-083 §"Origin gate". |
+| `AEP_MCP_AUTH_TOKEN` ≥ 16 bytes when using `http` | Pending | Generate with `openssl rand -hex 32`. Server refuses to bind below this floor. |
+| `AEP_MCP_TRUSTED_PROXY_HOPS` set when behind a reverse proxy | Pending | Integer hop count; default 0 = ignore `X-Forwarded-For`. Misconfigure too low → trust attacker-prepended XFF. CYCLE4 hardening; legacy `AEP_MCP_TRUST_PROXY=1` retained as deprecated alias for hops=1. |
+| Parent dir of unix socket is mode 0700 | Pending | Defense-in-depth; the socket file itself is chmod'd 0600 by the server. |
+
+> See also: ADR-083 (transport security model), ADR-132 (container
+> auto-flip), `mcp-server/src/transport/auth-gate.ts`,
+> `mcp-server/src/transport/rate-limit.ts`.
+
 ---
 
 ## 2. Key Management Procedures

@@ -126,3 +126,4 @@ Both are scoped under `@agenomics/`. Bump the `file:` dep in
 - New preflight gates — update ADR-058 §2.1 (single source of truth), `types/capability.ts`, `pipeline/preflight-types.ts` context, `pipeline/preflight.ts` dispatch, and the relevant action declarations.
 - New MCP actions — update `src/actions/index.ts`, add a hand-written Tool descriptor in `src/tools/` if you want byte-identical `list_tools` wire output, and update the snapshot-count assertion in `test/action-shape.test.ts`.
 - New `file:` workspace deps — update the `typescript-check-mcp` and `mcp-server-tests` jobs in `ci.yml` to build the referenced package first.
+- Adding a Kit-native-only feature to `mcp-server/src/handlers-v2/` — see ADR-133 §"Triggers" for the wave-reopen criteria. The handlers-v2 migration is paused at ~4 % (1 / 27 actions) per ADR-133; a Kit-only feature is one of the five explicit triggers that should reopen the wave decision rather than ship under the deferral.
