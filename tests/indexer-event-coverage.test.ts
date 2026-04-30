@@ -98,10 +98,29 @@ test("extractIndexerDiscriminators returns every key from the live indexer map",
   assert.ok(keys.size >= 31, `expected at least 31 entries, found ${keys.size}`);
 });
 
-test("script exits 0 when indexer covers every program-side event", () => {
-  // Run the script as a subprocess so we exercise the real CLI path
-  // (argv parsing, exit codes, stderr formatting).
+test("script exits 1 listing decoder-less events when DISCRIMINATOR_MAP entries lack decoders", () => {
+  // Contract changed in commit dd498b2 (ADR-082 cycle-3 follow-up):
+  // disc-map events without a parseable decoder are now coverage
+  // failures (was silently skipped). On the current tree there are
+  // 18 such events — adding their decoders is the next workstream.
+  //
+  // We assert on the new fail-mode contract:
+  //   (a) exit code 1
+  //   (b) stderr lists at least one specific known-decoder-less event
+  //       (ReputationStaked, the first agent-registry event without a
+  //       decoder — chosen as a stable anchor because the indexer has
+  //       no plans to add a no-op decoder for it)
+  //   (c) the composite summary line is emitted
+  //   (d) AgentStatusUpdated is NOT decoder-less — Fix 2 in dd498b2
+  //       taught extractDecoderFields to parse block-body arrow
+  //       decoders, of which AgentStatusUpdated is the exemplar; if
+  //       the regex regresses, AgentStatusUpdated would resurface as
+  //       decoder-less and this assertion would fire.
+  //
+  // When the 18 decoders are added in a follow-up workstream this
+  // test must be flipped back to the exit-0 OK contract.
   let exitCode = -1;
+  let stderr = "";
   try {
     execFileSync("npx", ["tsx", SCRIPT_PATH], {
       cwd: REPO_ROOT,
@@ -110,9 +129,39 @@ test("script exits 0 when indexer covers every program-side event", () => {
     });
     exitCode = 0;
   } catch (err) {
-    exitCode = (err as { status?: number }).status ?? -1;
+    const e = err as { status?: number; stderr?: string | Buffer };
+    exitCode = e.status ?? -1;
+    stderr = e.stderr?.toString() ?? "";
   }
-  assert.equal(exitCode, 0, "expected gate to pass on the current tree");
+  assert.equal(
+    exitCode,
+    1,
+    `expected gate to fail with exit 1 on the current tree (decoder-less events outstanding); got ${exitCode}. stderr: ${stderr}`
+  );
+  assert.match(
+    stderr,
+    /\[event-coverage\] FAIL: \d+ event\(s\) in DISCRIMINATOR_MAP without a parseable decoder/,
+    "expected the decoder-less FAIL header"
+  );
+  assert.match(
+    stderr,
+    /\bReputationStaked\b[^\n]*\n\s*reason: no decoder entry in EVENT_DECODERS/,
+    "expected ReputationStaked listed as decoder-less (stable anchor; if a decoder was added, pick a different anchor or flip to OK contract)"
+  );
+  assert.match(
+    stderr,
+    /\[event-coverage\] FAIL: \d+ decoder-less \+ \d+ field-drift across \d+ on-chain #\[event\] declaration\(s\); skipped \d+ events with neither disc-map nor decoder\./,
+    "expected the composite summary line introduced by dd498b2"
+  );
+  // Fix 2 regression guard: AgentStatusUpdated has a block-body arrow
+  // decoder (src/indexer/index.ts ~524-529). If extractDecoderFields
+  // ever loses block-body support, AgentStatusUpdated re-appears as
+  // decoder-less. Cheap check — no need to anchor on file:line.
+  assert.doesNotMatch(
+    stderr,
+    /\bAgentStatusUpdated\b[^\n]*\n\s*reason:/,
+    "AgentStatusUpdated should be parseable (Fix 2: block-body arrow decoder support)"
+  );
 });
 
 test("script exits 1 and names the missing event when DISCRIMINATOR_MAP loses an entry", () => {
