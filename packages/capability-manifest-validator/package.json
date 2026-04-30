@@ -14,13 +14,11 @@
   "files": [
     "dist/**",
     "src/**",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
-  "scripts": {
-    "build": "tsc",
-    "test": "node --import tsx --test test/validate.test.ts test/golden-canonical.test.ts"
-  },
   "keywords": [
+    "agenomics",
     "aep",
     "solana",
     "capability",
@@ -28,7 +26,24 @@
     "ed25519",
     "rfc-8785"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/agenomics-labs/protocol.git",
+    "directory": "packages/capability-manifest-validator"
+  },
+  "bugs": {
+    "url": "https://github.com/agenomics-labs/protocol/issues"
+  },
+  "homepage": "https://github.com/agenomics-labs/protocol/tree/main/packages/capability-manifest-validator#readme",
   "license": "UNLICENSED",
+  "private": true,
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "node --import tsx --test test/validate.test.ts test/golden-canonical.test.ts"
+  },
   "dependencies": {
     "@agenomics/action-runtime": "*",
     "@noble/curves": "^1.4.0",

@@ -18,13 +18,11 @@
   "files": [
     "dist/**",
     "src/**",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
-  "scripts": {
-    "build": "tsc",
-    "test": "node --import tsx --test test/resolver.test.ts test/schema.test.ts test/merge.test.ts test/cache.test.ts"
-  },
   "keywords": [
+    "agenomics",
     "aep",
     "solana",
     "sas",
@@ -32,7 +30,24 @@
     "reputation",
     "resolver"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/agenomics-labs/protocol.git",
+    "directory": "packages/sas-resolver"
+  },
+  "bugs": {
+    "url": "https://github.com/agenomics-labs/protocol/issues"
+  },
+  "homepage": "https://github.com/agenomics-labs/protocol/tree/main/packages/sas-resolver#readme",
   "license": "UNLICENSED",
+  "private": true,
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "node --import tsx --test test/resolver.test.ts test/schema.test.ts test/merge.test.ts test/cache.test.ts"
+  },
   "dependencies": {
     "@agenomics/action-runtime": "*",
     "zod": "^3.23.8"

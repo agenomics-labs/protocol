@@ -1,0 +1,155 @@
+# NPM Publish — 5 SDK packages (DORMANT until each package's `private: true`
+# is flipped to `false` in package.json by the user, in a separate, deliberate
+# commit). Until that flip, `npm publish` will refuse to publish any package
+# marked private — which is the intended safety until publish-day. The guard
+# below (`jq -r .private`) makes the skip explicit so the workflow doesn't
+# fail loudly on a tag push; it just no-ops per-package.
+#
+# Packages covered:
+#   - @agenomics/idl                          (sdk/idl)
+#   - @agenomics/client                       (sdk/client)
+#   - @agenomics/action-runtime               (sdk/action-runtime)
+#   - @agenomics/capability-manifest-validator (packages/capability-manifest-validator)
+#   - @agenomics/sas-resolver                  (packages/sas-resolver)
+#
+# Note: `.github/workflows/publish.yml` already publishes the two `packages/*`
+# packages on tag pushes via a stricter, version-checked pipeline. This file
+# is the broader successor that also covers the three `sdk/*` packages once
+# the user flips their `private` flags. The two workflows are designed to
+# coexist — both gate on `private: true` (this one explicitly; the other
+# fails fast because npm refuses).
+#
+# One-time setup (manual, before first real publish):
+#   1. Claim the @agenomics org on npm (already done — see RELEASE.md).
+#   2. Create a granular npm token (Account → Access Tokens → Granular,
+#      scope = @agenomics, perms = packages:read+write).
+#   3. Add it as a GitHub repo secret named `NPM_TOKEN`.
+#   4. Flip `"private": true` -> `"private": false` in each of the 5
+#      package.json files (one focused commit, no other changes).
+#   5. Tag a release: `git tag v0.1.0 && git push origin v0.1.0`.
+#   6. Publish a GitHub Release at that tag (or run this workflow via
+#      `workflow_dispatch`).
+#
+# See docs/SDK_PUBLISH.md for the full first-publish runbook.
+
+name: NPM Publish (SDK packages)
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry-run only (no actual publish)"
+        type: boolean
+        default: true
+
+concurrency:
+  group: npm-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: [self-hosted, linux]
+    permissions:
+      contents: read
+      id-token: write   # required for npm provenance via OIDC
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # pin v6 (AUD-406)
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+          cache: "npm"
+
+      - name: Install workspace deps (npm ci)
+        run: npm ci --no-audit --no-fund
+
+      - name: Build all 5 SDK packages
+        run: |
+          npm run build --workspace @agenomics/idl
+          npm run build --workspace @agenomics/action-runtime
+          npm run build --workspace @agenomics/client
+          npm run build --workspace @agenomics/capability-manifest-validator
+          npm run build --workspace @agenomics/sas-resolver
+
+      # Publishes in dependency order. Each step inspects `private` first and
+      # skips with a clear log message if the package is still gated. This is
+      # the intended state until the user flips `private: false` in a
+      # deliberate commit.
+      - name: Publish @agenomics/idl
+        working-directory: sdk/idl
+        run: |
+          if [ "$(jq -r .private package.json)" = "true" ]; then
+            echo "::notice::@agenomics/idl is private — skipping (flip private:false to publish)"
+            exit 0
+          fi
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            npm publish --dry-run --access public --provenance
+          else
+            npm publish --access public --provenance
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @agenomics/action-runtime
+        working-directory: sdk/action-runtime
+        run: |
+          if [ "$(jq -r .private package.json)" = "true" ]; then
+            echo "::notice::@agenomics/action-runtime is private — skipping (flip private:false to publish)"
+            exit 0
+          fi
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            npm publish --dry-run --access public --provenance
+          else
+            npm publish --access public --provenance
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @agenomics/client
+        working-directory: sdk/client
+        run: |
+          if [ "$(jq -r .private package.json)" = "true" ]; then
+            echo "::notice::@agenomics/client is private — skipping (flip private:false to publish)"
+            exit 0
+          fi
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            npm publish --dry-run --access public --provenance
+          else
+            npm publish --access public --provenance
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @agenomics/capability-manifest-validator
+        working-directory: packages/capability-manifest-validator
+        run: |
+          if [ "$(jq -r .private package.json)" = "true" ]; then
+            echo "::notice::@agenomics/capability-manifest-validator is private — skipping (flip private:false to publish)"
+            exit 0
+          fi
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            npm publish --dry-run --access public --provenance
+          else
+            npm publish --access public --provenance
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @agenomics/sas-resolver
+        working-directory: packages/sas-resolver
+        run: |
+          if [ "$(jq -r .private package.json)" = "true" ]; then
+            echo "::notice::@agenomics/sas-resolver is private — skipping (flip private:false to publish)"
+            exit 0
+          fi
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            npm publish --dry-run --access public --provenance
+          else
+            npm publish --access public --provenance
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

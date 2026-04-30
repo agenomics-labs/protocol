@@ -1,7 +1,7 @@
 {
   "name": "@agenomics/action-runtime",
   "version": "0.1.0",
-  "description": "AEP action-definition runtime: Result type, ok/err constructors, wrap helper, defineAction builder",
+  "description": "AEP action-definition runtime: Result type, ok/err constructors, wrap helper, and the defineAction builder used by AEP capabilities.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -13,13 +13,35 @@
   },
   "files": [
     "dist/**",
-    "src/**"
+    "src/**",
+    "README.md",
+    "LICENSE"
   ],
+  "keywords": [
+    "agenomics",
+    "aep",
+    "action-runtime",
+    "result-type",
+    "capabilities"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/agenomics-labs/protocol.git",
+    "directory": "sdk/action-runtime"
+  },
+  "bugs": {
+    "url": "https://github.com/agenomics-labs/protocol/issues"
+  },
+  "homepage": "https://github.com/agenomics-labs/protocol/tree/main/sdk/action-runtime#readme",
+  "license": "UNLICENSED",
+  "private": true,
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc",
     "test": "node --import tsx --test test/*.test.ts"
   },
-  "license": "UNLICENSED",
   "devDependencies": {
     "@types/node": "^20.9.0",
     "tsx": "^4.0.0",

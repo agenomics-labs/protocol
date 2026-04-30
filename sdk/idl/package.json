@@ -1,7 +1,7 @@
 {
   "name": "@agenomics/idl",
   "version": "0.1.0",
-  "description": "AEP protocol IDL types and cluster-keyed program IDs",
+  "description": "AEP protocol IDL types and cluster-keyed program IDs for the Agenomics on-chain programs (agent-registry, agent-vault, settlement).",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -13,14 +13,37 @@
   },
   "files": [
     "dist/**",
-    "src/**"
+    "src/**",
+    "README.md",
+    "LICENSE"
   ],
+  "keywords": [
+    "agenomics",
+    "aep",
+    "solana",
+    "anchor",
+    "idl",
+    "program-ids"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/agenomics-labs/protocol.git",
+    "directory": "sdk/idl"
+  },
+  "bugs": {
+    "url": "https://github.com/agenomics-labs/protocol/issues"
+  },
+  "homepage": "https://github.com/agenomics-labs/protocol/tree/main/sdk/idl#readme",
+  "license": "UNLICENSED",
+  "private": true,
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test test/*.test.ts"
   },
-  "license": "UNLICENSED",
   "devDependencies": {
     "@types/node": "^20.9.0",
     "tsx": "^4.0.0",
