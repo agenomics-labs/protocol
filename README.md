@@ -71,10 +71,10 @@ Add to your Claude Desktop MCP config:
 # Build programs
 anchor build --no-idl
 
-# Run unit tests (48 tests)
+# Run unit tests
 cargo test
 
-# Run integration tests (31 tests)
+# Run integration tests
 cd mcp-server && npx ts-mocha -p tsconfig.test.json test/mcp-handlers.test.ts --timeout 120000
 
 # Preview documentation
@@ -89,8 +89,8 @@ cd dashboard && npm run dev
 - **Programmable Vaults** — Per-transaction limits, daily caps, rate limiting, token allowlists
 - **Agent Discovery** — On-chain registry with categories, capabilities, and reputation scores
 - **Escrow Settlement** — Milestone-based payments with atomic fund locking
-- **Reputation Staking** — SOL collateral with automatic slashing on disputes (3 strikes = suspended)
-- **Dispute Resolution** — 7-day timeout with auto-resolution, reputation penalties
+- **Reputation Staking** — Optional SOL collateral (ADR-020); slash_count escalation suspends agents at 3 dispute losses (ADR-094, ADR-131)
+- **Dispute Resolution** — Governance-tunable timeout (7-day default) with auto-resolution, reputation penalties
 - **Anti-Sybil** — Minimum escrow amounts, self-dealing prohibition
 - **MCP Bridge** — Any AI agent framework can interact via Model Context Protocol
 
@@ -101,15 +101,15 @@ cd dashboard && npm run dev
 - [Integration Guide](docs/integration-guide.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Security Audit Prep](docs/SECURITY_AUDIT.md)
-- [50 ADRs](docs/adr/)
+- [ADRs](docs/adr/)
 
 ## Security
 
 - 0 npm vulnerabilities
-- 0 open audit findings (50 ADRs documenting all decisions)
+- 0 open findings from internal audit cycles 1-3; external audit pending
 - PDA-signed CPI for cross-program reputation updates
 - Defense-in-depth: Anchor constraints + handler checks + economic barriers
-- Reputation penalty scale: +50 (complete) / -25 (dispute) / -25 (timeout) / -10 (expiry)
+- Reputation deltas: +10 (complete) / -5 (dispute or timeout) / -3 (expiry); capped at ±10 per call, scores clamped to [0, 100] (ADR-094)
 
 ## License
 

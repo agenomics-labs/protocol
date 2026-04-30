@@ -73,13 +73,13 @@ On-chain discovery and reputation system where agents register profiles with cap
 - `register_agent` — Create profile with name, description, category, capabilities, pricing model, accepted tokens
 - `update_profile` — Modify agent metadata (blocked for Retired agents)
 - `update_status` — Lifecycle transitions: Active ↔ Paused → Retired (terminal)
-- `update_reputation` — CPI-only: called by Settlement program to update score, tasks completed, and earnings
+- `propose_reputation_delta` — CPI-only (ADR-094): called by Settlement program with a bounded delta (`|delta| ≤ MAX_DELTA_PER_CALL = 10`) to mutate the reputation score, clamped to `[0, 100]`. The legacy `update_reputation` direct-setter is deprecated.
 - `deregister_agent` — Close account and reclaim rent
 
 **Key implementation details:**
 
 - Settlement program verified via `require_eq!(settlement_program.key(), SETTLEMENT_PROGRAM_ID)` + `#[account(executable)]`
-- Reputation score (i64), tasks_completed (u64), total_earnings (u64) updated atomically via CPI
+- Reputation score (`u64`, clamped to `[0, 100]`) updated atomically via CPI per ADR-094. The legacy aggregates `total_tasks_completed`, `total_earnings`, and `avg_rating` were removed in AUD-007 PR-Q (replaced with a layout-preserving `__padding_aud007: [u8; 17]` to keep the binary layout of existing accounts intact).
 - Status machine enforces: Retired is terminal, no reactivation allowed
 - Validation: name ≤ 64 bytes, description ≤ 256 bytes, 1–10 capabilities, 1–5 accepted tokens
 
@@ -105,7 +105,7 @@ Milestone-based escrow that locks SPL tokens and releases them as milestones are
 
 **Key implementation details:**
 
-- Real CPI to Registry: `update_provider_reputation` builds instruction manually with discriminator `sha256("global:update_reputation")[0..8]`, passes Settlement's own executable account for caller verification
+- Real CPI to Registry: `update_provider_reputation` builds the `propose_reputation_delta` instruction manually with discriminator `sha256("global:propose_reputation_delta")[0..8]` (ADR-094), passes Settlement's own executable account for caller verification (ADR-001 / ADR-068)
 - Checks-Effects-Interactions (CEI) pattern: scoped borrows separate state reads, state mutations, and CPI calls
 - Escrow token account is an ATA owned by the escrow PDA
 - Milestone amounts must sum exactly to total_amount; each must be > 0; total must be > 0
@@ -120,9 +120,9 @@ Milestone-based escrow that locks SPL tokens and releases them as milestones are
 
 The protocol uses real Solana `invoke()` for cross-program calls — not stubs or event-based patterns.
 
-### Settlement → Registry: `update_reputation`
+### Settlement → Registry: `propose_reputation_delta`
 
-When all milestones in an escrow are approved, the Settlement program calls Registry's `update_reputation` instruction via `invoke()`. This atomically updates the provider's reputation score (+50), tasks_completed (+1), and total_earnings. The Registry verifies the caller by checking `settlement_program.key() == SETTLEMENT_PROGRAM_ID` with an `#[account(executable)]` constraint.
+When all milestones in an escrow are approved, the Settlement program calls Registry's `propose_reputation_delta` instruction via `invoke()` (ADR-094). The delta is bounded (`|delta| ≤ 10` per call) and the score is clamped to `[0, 100]` by Registry — Settlement proposes, Registry validates and applies. Default deltas: `+10` task_completed, `-5` dispute_loss, `-3` expiry_undelivered (governance-tunable per ADR-075). The Registry verifies the caller by checking `settlement_program.key() == SETTLEMENT_PROGRAM_ID` with an `#[account(executable)]` constraint.
 
 ### Vault: no cross-program-call surface
 
@@ -254,7 +254,7 @@ aep/
 | Anchor 0.30.1 with `--no-idl` build | IDL generation broken with newer Rust toolchains (`anchor-syn` `source_file()` incompatibility). IDLs maintained manually. |
 | No vault cross-program-call surface | Per ADR-050, the vault no longer exposes `execute_program_call`. Transfers are SOL-only via `execute_transfer` and SPL via `execute_token_transfer`. |
 | Scoped borrows for CEI | Rust borrow checker requires `{...}` blocks to separate mutable state updates from immutable CPI account access |
-| Manual CPI discriminator | Settlement builds Registry CPI manually with `sha256("global:update_reputation")[0..8]` to avoid circular Anchor dependencies |
+| Manual CPI discriminator | Settlement builds Registry CPI manually with `sha256("global:propose_reputation_delta")[0..8]` (ADR-094) to avoid circular Anchor dependencies |
 | PDA bump storage | Vault stores bump at init for `invoke_signed` on SPL `token::transfer` — gas optimization and correctness requirement |
 | `CARGO_TARGET_DIR` override | Moved build artifacts to `/sessions/.../target-aep` to avoid disk space issues on mounted volumes |
 | UncheckedAccount for CPI targets | `provider_profile` and `settlement_self` use `UncheckedAccount` since they're validated by the target program during CPI, not by Anchor constraints |
