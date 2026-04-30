@@ -873,6 +873,117 @@ const EVENT_DECODERS: Record<string, EventDecoder> = {
     requester: r.pubkey(),
     task_id: u64ToJson(r.u64()),
   }),
+
+  // ADR-082 decoder gap closure: settlement events (commit 3 of 3 — final).
+  // All 7 events below had DISCRIMINATOR_MAP entries but no
+  // EVENT_DECODERS entries, so they fell through to the
+  // {discriminator, rawData} forensics fallback. Field layouts are
+  // copied verbatim from programs/settlement/src/events.rs; field
+  // names match the Rust struct field names so downstream consumers
+  // can index by the same identifiers used on-chain. EscrowCreated,
+  // DisputeRaised, and DisputeResolved (the other three settlement
+  // events) were already wired above as part of the ADR-131 trigger
+  // surface — this batch finishes the settlement decoder set.
+  //
+  // Closing this batch takes the gate decoder-less count from 7 -> 0
+  // across all 33 declared #[event] structs; the indexer-event-
+  // coverage test is flipped back to the OK contract in the same
+  // commit so the tree never sits in a state where the gate passes
+  // but the test asserts it should fail.
+
+  // TaskAccepted — emitted when the provider accepts an escrow task.
+  // Wire layout:
+  //   pub escrow: Pubkey
+  //   pub provider: Pubkey
+  //   pub task_id: u64
+  TaskAccepted: (r) => ({
+    escrow: r.pubkey(),
+    provider: r.pubkey(),
+    task_id: u64ToJson(r.u64()),
+  }),
+
+  // MilestoneSubmitted — provider submits a milestone for review.
+  // Wire layout (NOTE: 2nd actor field is `provider`, unlike the
+  // approve/reject events whose 2nd actor is `client` — preserve
+  // declaration order verbatim):
+  //   pub escrow: Pubkey
+  //   pub provider: Pubkey
+  //   pub milestone_index: u32
+  //   pub task_id: u64
+  MilestoneSubmitted: (r) => ({
+    escrow: r.pubkey(),
+    provider: r.pubkey(),
+    milestone_index: r.u32(),
+    task_id: u64ToJson(r.u64()),
+  }),
+
+  // MilestoneApproved — client approves a submitted milestone and
+  // releases the milestone-tranche payout.
+  // Wire layout:
+  //   pub escrow: Pubkey
+  //   pub client: Pubkey
+  //   pub milestone_index: u32
+  //   pub amount: u64
+  //   pub task_id: u64
+  MilestoneApproved: (r) => ({
+    escrow: r.pubkey(),
+    client: r.pubkey(),
+    milestone_index: r.u32(),
+    amount: u64ToJson(r.u64()),
+    task_id: u64ToJson(r.u64()),
+  }),
+
+  // MilestoneRejected — client rejects a submitted milestone.
+  // Wire layout (no `amount` field — rejection releases nothing):
+  //   pub escrow: Pubkey
+  //   pub client: Pubkey
+  //   pub milestone_index: u32
+  //   pub task_id: u64
+  MilestoneRejected: (r) => ({
+    escrow: r.pubkey(),
+    client: r.pubkey(),
+    milestone_index: r.u32(),
+    task_id: u64ToJson(r.u64()),
+  }),
+
+  // EscrowCompleted — final milestone approved, escrow fully settled.
+  // Wire layout:
+  //   pub escrow: Pubkey
+  //   pub provider: Pubkey
+  //   pub task_id: u64
+  //   pub total_released: u64
+  EscrowCompleted: (r) => ({
+    escrow: r.pubkey(),
+    provider: r.pubkey(),
+    task_id: u64ToJson(r.u64()),
+    total_released: u64ToJson(r.u64()),
+  }),
+
+  // EscrowCancelled — client cancels a not-yet-accepted escrow.
+  // Wire layout:
+  //   pub escrow: Pubkey
+  //   pub client: Pubkey
+  //   pub task_id: u64
+  //   pub refunded_amount: u64
+  EscrowCancelled: (r) => ({
+    escrow: r.pubkey(),
+    client: r.pubkey(),
+    task_id: u64ToJson(r.u64()),
+    refunded_amount: u64ToJson(r.u64()),
+  }),
+
+  // EscrowExpired — deadline passed without delivery; refund issued.
+  // Wire layout (NOTE: no `client` field — the on-chain handler
+  // reads it from the escrow account but the event surface omits
+  // it; preserve declaration order verbatim):
+  //   pub escrow: Pubkey
+  //   pub task_id: u64
+  //   pub refunded_amount: u64
+  EscrowExpired: (r) => ({
+    escrow: r.pubkey(),
+    task_id: u64ToJson(r.u64()),
+    refunded_amount: u64ToJson(r.u64()),
+  }),
 };
 
 function parseLogsForEvents(logs: string[], _programLabel: string): ParsedEvent[] {
