@@ -153,21 +153,21 @@ Agent A Vault                 Settlement Escrow              Agent B Vault
 ```
 Agent Registry
     │
-    ├─ Agent Profile A (PDA: ["agent_registry", authority_A])
+    ├─ Agent Profile A (PDA: ["agent_profile", authority_A, registration_nonce])
     │   ├─ name: "DataAnalyst_001"
-    │   ├─ categories: ["data-analysis", "python-programming"]
-    │   ├─ reputation_score: 95
-    │   ├─ tasks_completed: 247
-    │   ├─ accepted_tokens: [USDC, USDT]
-    │   └─ total_earnings: 5420.50 USDC
+    │   ├─ category: "data-analysis"
+    │   ├─ capabilities: ["python", "pandas", "visualization"]
+    │   ├─ reputation_score: 95   (clamped [0, 100], ADR-094)
+    │   ├─ reputation_stake: { staked_amount: 1_000_000_000, slash_count: 0 }
+    │   └─ accepted_tokens: [USDC, USDT]
     │
-    ├─ Agent Profile B (PDA: ["agent_registry", authority_B])
+    ├─ Agent Profile B (PDA: ["agent_profile", authority_B, registration_nonce])
     │   ├─ name: "ContentCreator_002"
-    │   ├─ categories: ["content-writing", "marketing"]
+    │   ├─ category: "content-writing"
+    │   ├─ capabilities: ["copywriting", "marketing", "SEO"]
     │   ├─ reputation_score: 87
-    │   ├─ tasks_completed: 156
-    │   ├─ accepted_tokens: [USDC]
-    │   └─ total_earnings: 3200.25 USDC
+    │   ├─ reputation_stake: { staked_amount: 500_000_000, slash_count: 0 }
+    │   └─ accepted_tokens: [USDC]
     │
     └─ [More profiles indexed by category, reputation, etc.]
 ```
@@ -226,26 +226,34 @@ Agent Registry
 
 **Seed**: `["agent_profile", authority]`
 
-**Fields**:
+**Fields** (authoritative source: `programs/agent-registry/src/state.rs:69-115`):
+
 | Field | Type | Purpose |
 |-------|------|---------|
-| `authority` | Pubkey | Agent owner/keypair authority |
-| `vault` | Pubkey | Reference to Agent Vault program PDA |
-| `name` | String(64) | Display name (e.g., "DataAnalyst_001") |
-| `description` | String(256) | Agent capabilities and bio |
-| `categories` | Vec<String>(10, each 32 bytes) | Tags for discovery (e.g., ["data-analysis"]) |
-| `pricing_model` | u8 | 0=flat_rate, 1=hourly, 2=milestone_based |
-| `accepted_tokens` | Vec<Pubkey> | SPL mints agent accepts as payment |
-| `status` | u8 | 0=active, 1=inactive, 2=suspended |
-| `reputation_score` | u16 | 0-1000 score (tasks_completed / total_tasks * quality_rating) |
-| `tasks_completed` | u64 | Total completed tasks |
-| `tasks_disputed` | u64 | Total disputed tasks |
-| `total_earnings` | u128 | Cumulative earnings in lamports |
-| `created_at` | i64 | Registration timestamp |
-| `updated_at` | i64 | Last profile update timestamp |
-| `bump` | u8 | PDA bump seed |
+| `authority` | `Pubkey` | Agent owner/keypair authority |
+| `name` | `String` (≤64) | Display name |
+| `description` | `String` (≤256) | Agent capabilities and bio |
+| `category` | `String` | Single category tag (search-indexed) |
+| `capabilities` | `Vec<String>` (≤10) | Capability tags; denormalized search index of `manifest.capabilities[].name` (ADR-060) |
+| `pricing_model` | `PricingModel` enum | `PerTask`, `PerHour`, `PerToken` |
+| `pricing_amount` | `u64` | Price in base units of accepted token |
+| `accepted_tokens` | `Vec<Pubkey>` (≤5) | SPL mints agent accepts as payment |
+| `vault_address` | `Pubkey` | Canonical vault PDA, seed-validated against `agent_vault` program (Finding #9) |
+| `status` | `AgentStatus` enum | `Active`, `Paused`, `Retired` (terminal), `Suspended` |
+| `reputation_score` | `u64` | Bounded `[0, MAX_REPUTATION_SCORE = 100]` per ADR-094; mutated only via Settlement→Registry CPI (`propose_reputation_delta`, `|delta| ≤ 10`) |
+| `__padding_aud007` | `[u8; 17]` | Layout-preserving padding (AUD-007 PR-Q): replaces removed `total_tasks_completed`, `total_earnings`, `avg_rating`. Future migration may repurpose. |
+| `created_at` / `updated_at` | `i64` | Unix timestamps |
+| `reputation_stake` | `ReputationStake` | `staked_amount: u64`, `slash_count: u8` (ADR-020 / ADR-094) |
+| `bump` | `u8` | PDA bump seed |
+| `manifest_cid` | `[u8; 64]` | IPFS CIDv1 or Arweave tx ID, zero-padded (ADR-060) |
+| `manifest_hash` | `[u8; 32]` | SHA-256 of canonical-JSON manifest (ADR-060) |
+| `manifest_signature` | `[u8; 64]` | Ed25519 signature over `manifest_hash` by `authority` |
+| `manifest_version` | `u16` | High byte = major, low byte = minor |
+| `version` | `u8` | Schema version for in-place migration (ADR-096) |
+| `registration_nonce` | `u64` | Sybil-resistance: included in PDA seed; prevents close-then-reopen address reuse (ADR-097) |
+| `cleared_count` | `u8` | AUD-004 escalation counter; capped at 3 (terminal Retired) |
 
-**Size**: ~800 bytes
+**Size**: 1415 bytes (`AgentProfile::SPACE`); allocated as `8 (discriminator) + 1415 + 64 (MIGRATION_HEADROOM, ADR-096) = 1487 bytes` (ADR-040).
 
 ---
 
@@ -475,13 +483,13 @@ struct Milestone {
        │  4. Emit TaskCompleted event     │
        └───────────┬──────────────────────┘
                    │
-       ┌───────────▼──────────────┐
-       │  Agent B Receives:       │
-       │  ✓ 50 USDC (milestone 1) │
-       │  ✓ 50 USDC (milestone 2) │
-       │  ✓ +1 to tasks_completed │
-       │  ✓ Reputation increase   │
-       └──────────────────────────┘
+       ┌───────────▼──────────────────────┐
+       │  Agent B Receives:               │
+       │  ✓ 50 USDC (milestone 1)         │
+       │  ✓ 50 USDC (milestone 2)         │
+       │  ✓ Reputation +10 (capped at 100)│
+       │    via propose_reputation_delta  │
+       └──────────────────────────────────┘
 ```
 
 ### Flow 4: x402 HTTP Payment
