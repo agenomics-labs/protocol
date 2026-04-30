@@ -580,6 +580,112 @@ const EVENT_DECODERS: Record<string, EventDecoder> = {
     new_identity: r.pubkey(),
   }),
 
+  // ADR-082 decoder gap closure: agent-vault events (commit 1 of 4).
+  // All 8 events below had DISCRIMINATOR_MAP entries but no
+  // EVENT_DECODERS entries, so they fell through to the
+  // {discriminator, rawData} forensics fallback. Field layouts are
+  // copied verbatim from programs/agent-vault/src/events.rs; field
+  // names match the Rust struct field names so downstream consumers
+  // can index by the same identifiers used on-chain.
+
+  // VaultInitialized — emitted by initialize_vault.
+  // Wire layout:
+  //   pub vault: Pubkey
+  //   pub agent_identity: Pubkey
+  //   pub authority: Pubkey
+  //   pub daily_limit: u64
+  //   pub per_tx_limit: u64
+  VaultInitialized: (r) => ({
+    vault: r.pubkey(),
+    agent_identity: r.pubkey(),
+    authority: r.pubkey(),
+    daily_limit: u64ToJson(r.u64()),
+    per_tx_limit: u64ToJson(r.u64()),
+  }),
+
+  // PolicyUpdated — emitted on vault policy edits.
+  // Wire layout:
+  //   pub vault: Pubkey
+  //   pub daily_limit: u64
+  //   pub per_tx_limit: u64
+  //   pub max_txs_per_hour: u32
+  PolicyUpdated: (r) => ({
+    vault: r.pubkey(),
+    daily_limit: u64ToJson(r.u64()),
+    per_tx_limit: u64ToJson(r.u64()),
+    max_txs_per_hour: r.u32(),
+  }),
+
+  // TransactionExecuted — SOL transfer from vault.
+  // Wire layout:
+  //   pub vault: Pubkey
+  //   pub recipient: Pubkey
+  //   pub amount: u64
+  //   pub timestamp: i64
+  //   pub success: bool
+  TransactionExecuted: (r) => ({
+    vault: r.pubkey(),
+    recipient: r.pubkey(),
+    amount: u64ToJson(r.u64()),
+    timestamp: i64ToJson(r.i64()),
+    success: r.bool(),
+  }),
+
+  // ProgramCallExecuted — CPI to an allowlisted program.
+  // Wire layout:
+  //   pub vault: Pubkey
+  //   pub program_id: Pubkey
+  //   pub instruction_hash: [u8; 32]
+  //   pub timestamp: i64
+  //   pub success: bool
+  ProgramCallExecuted: (r) => ({
+    vault: r.pubkey(),
+    program_id: r.pubkey(),
+    instruction_hash: r.hexBytes(32),
+    timestamp: i64ToJson(r.i64()),
+    success: r.bool(),
+  }),
+
+  // TokenTransferExecuted — SPL token transfer from vault.
+  // Wire layout (NOTE: no `success` field, unlike TransactionExecuted):
+  //   pub vault: Pubkey
+  //   pub mint: Pubkey
+  //   pub recipient: Pubkey
+  //   pub amount: u64
+  //   pub timestamp: i64
+  TokenTransferExecuted: (r) => ({
+    vault: r.pubkey(),
+    mint: r.pubkey(),
+    recipient: r.pubkey(),
+    amount: u64ToJson(r.u64()),
+    timestamp: i64ToJson(r.i64()),
+  }),
+
+  // AllowlistUpdated — recipient/program allowlist mutation.
+  // Wire layout:
+  //   pub vault: Pubkey
+  //   pub item: Pubkey
+  //   pub action: String
+  AllowlistUpdated: (r) => ({
+    vault: r.pubkey(),
+    item: r.pubkey(),
+    action: r.string(),
+  }),
+
+  // VaultPaused — emergency-pause toggle on.
+  // Wire layout:
+  //   pub vault: Pubkey
+  VaultPaused: (r) => ({
+    vault: r.pubkey(),
+  }),
+
+  // VaultResumed — emergency-pause toggle off.
+  // Wire layout:
+  //   pub vault: Pubkey
+  VaultResumed: (r) => ({
+    vault: r.pubkey(),
+  }),
+
   // ADR-082 / item 6: ManifestUpdated (agent-registry, ADR-060).
   // Wire layout from programs/agent-registry/src/events.rs:
   //   pub authority: Pubkey
