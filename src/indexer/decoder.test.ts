@@ -149,3 +149,143 @@ describe("AUD-200: ReputationDeltaProposed.delta is decoded as i16", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// ADR-131 byte-layout pins for the settlement-side decoders added in the
+// same wiring pass. The wire formats are sourced from
+// `programs/settlement/src/events.rs` and re-asserted here so a future
+// struct re-order, field rename, or accidental field deletion fails the
+// test rather than silently producing mis-decoded events downstream.
+//
+// Pre-existing tech debt (per Agent B's report on the indexer wiring):
+// no decoder unit tests existed for any of the three settlement events
+// before this change. Adding them now closes the gap that ADR-082's
+// discriminator-only coverage gate cannot catch (see scripts/check-event-
+// coverage.ts header for the ADR-082 field-coverage limitation).
+// ---------------------------------------------------------------------------
+
+const DISC_ESCROW_CREATED   = "467f69665c6107ad";
+const DISC_DISPUTE_RESOLVED = "7940f9998b80ecbb";
+const DISC_DISPUTE_RAISED   = "f6a76d258e2d26b0";
+
+function encU32(n: number): Buffer {
+  const b = Buffer.alloc(4);
+  b.writeUInt32LE(n, 0);
+  return b;
+}
+function encU64(n: number | bigint): Buffer {
+  const b = Buffer.alloc(8);
+  b.writeBigUInt64LE(BigInt(n), 0);
+  return b;
+}
+
+describe("ADR-131: EscrowCreated decoder pins token_mint at the tail", () => {
+  it("decodes all 8 fields including the ADR-131 token_mint", () => {
+    const escrow      = Keypair.generate().publicKey;
+    const client      = Keypair.generate().publicKey;
+    const provider    = Keypair.generate().publicKey;
+    const tokenMint   = Keypair.generate().publicKey;
+
+    // Wire layout from programs/settlement/src/events.rs::EscrowCreated.
+    // token_mint is the LAST field — appended in the ADR-131 wiring pass
+    // to preserve the binary layout of the seven existing fields.
+    const payload = Buffer.concat([
+      encPubkey(escrow),
+      encPubkey(client),
+      encPubkey(provider),
+      encU64(42),                  // task_id
+      encU64(1_000_000),           // total_amount (1 USDC)
+      encI64(1_700_000_000),       // deadline
+      encU32(3),                   // milestone_count
+      encPubkey(tokenMint),        // ADR-131
+    ]);
+
+    const events = parseLogsForEvents(
+      [makeLog(DISC_ESCROW_CREATED, payload)],
+      "settlement",
+    );
+
+    assert.equal(events.length, 1);
+    assert.equal(events[0].name, "EscrowCreated");
+
+    const data = events[0].data as Record<string, unknown>;
+    assert.equal(data.escrow,          escrow.toBase58());
+    assert.equal(data.client,          client.toBase58());
+    assert.equal(data.provider,        provider.toBase58());
+    assert.equal(data.task_id,         42);
+    assert.equal(data.total_amount,    1_000_000);
+    assert.equal(data.deadline,        1_700_000_000);
+    assert.equal(data.milestone_count, 3);
+    // The load-bearing assertion: the trailing token_mint MUST decode
+    // to the right pubkey. ADR-131's median-escrow trigger metric is
+    // bucketed by this field; if it ever stops being decoded the
+    // dashboard's "Median Escrow (30d)" card silently aggregates
+    // SOL + USDC into a single meaningless number.
+    assert.equal(
+      data.token_mint,
+      tokenMint.toBase58(),
+      "token_mint failed to decode at byte offset 32+32+32+8+8+8+4 = 124",
+    );
+  });
+});
+
+describe("ADR-131: DisputeResolved decoder pins refund-split layout", () => {
+  it("decodes all 5 fields in declaration order", () => {
+    const escrow   = Keypair.generate().publicKey;
+    const resolver = Keypair.generate().publicKey;
+
+    // Wire layout from programs/settlement/src/events.rs::DisputeResolved.
+    const payload = Buffer.concat([
+      encPubkey(escrow),
+      encPubkey(resolver),
+      encU64(750_000),    // client_refund
+      encU64(250_000),    // provider_refund
+      encU64(99),         // task_id
+    ]);
+
+    const events = parseLogsForEvents(
+      [makeLog(DISC_DISPUTE_RESOLVED, payload)],
+      "settlement",
+    );
+
+    assert.equal(events.length, 1);
+    assert.equal(events[0].name, "DisputeResolved");
+
+    const data = events[0].data as Record<string, unknown>;
+    assert.equal(data.escrow,          escrow.toBase58());
+    assert.equal(data.resolver,        resolver.toBase58());
+    // The refund-split fields are the input to vw_dispute_resolved's
+    // winner_side derivation (Client/Provider/Split/Unknown). If the
+    // u64 byte-order ever flips, the cluster trigger view aggregates
+    // wrong-side counts.
+    assert.equal(data.client_refund,   750_000);
+    assert.equal(data.provider_refund, 250_000);
+    assert.equal(data.task_id,         99);
+  });
+});
+
+describe("ADR-131: DisputeRaised decoder pins 3-field shape", () => {
+  it("decodes escrow, requester, task_id", () => {
+    const escrow    = Keypair.generate().publicKey;
+    const requester = Keypair.generate().publicKey;
+
+    const payload = Buffer.concat([
+      encPubkey(escrow),
+      encPubkey(requester),
+      encU64(7),
+    ]);
+
+    const events = parseLogsForEvents(
+      [makeLog(DISC_DISPUTE_RAISED, payload)],
+      "settlement",
+    );
+
+    assert.equal(events.length, 1);
+    assert.equal(events[0].name, "DisputeRaised");
+
+    const data = events[0].data as Record<string, unknown>;
+    assert.equal(data.escrow,    escrow.toBase58());
+    assert.equal(data.requester, requester.toBase58());
+    assert.equal(data.task_id,   7);
+  });
+});
