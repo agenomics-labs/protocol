@@ -31,6 +31,7 @@ import {
   eventsProcessed,
   indexerErrors,
   lastSlotProcessed,
+  startMetricsServer,
 } from "./metrics-server.js";
 
 // ===========================================================================
@@ -632,6 +633,76 @@ const EVENT_DECODERS: Record<string, EventDecoder> = {
     reputation_delta_task_completed: i64ToJson(r.i64()),
     reputation_delta_dispute_loss: i64ToJson(r.i64()),
     reputation_delta_expiry_undelivered: i64ToJson(r.i64()),
+  }),
+
+  // ADR-131: EscrowCreated (settlement).
+  // Wire layout from programs/settlement/src/events.rs:
+  //   pub escrow: Pubkey
+  //   pub client: Pubkey
+  //   pub provider: Pubkey
+  //   pub task_id: u64
+  //   pub total_amount: u64
+  //   pub deadline: i64
+  //   pub milestone_count: u32
+  //   pub token_mint: Pubkey         // <-- ADR-131 (added 2026-04)
+  //
+  // Pre-ADR-131 this event fell through to the `event_<hex>` raw
+  // classification (no decoder in EVENT_DECODERS), so downstream
+  // dashboards saw {discriminator, rawData} only. ADR-131 §"Re-
+  // calibration trigger" item 2 requires bucketing escrow medians
+  // by `token_mint` to be meaningful (SOL vs USDC unit values
+  // differ by orders of magnitude); decoding the event here is
+  // what makes `vw_escrow_created` and `vw_escrow_median_30d`
+  // (migration 002-adr-131-trigger-views.sql) return non-empty.
+  //
+  // u64 amounts go through u64ToJson — the same lossless
+  // bigint-string fallback the rest of the file uses for values
+  // that may exceed Number.MAX_SAFE_INTEGER.
+  EscrowCreated: (r) => ({
+    escrow: r.pubkey(),
+    client: r.pubkey(),
+    provider: r.pubkey(),
+    task_id: u64ToJson(r.u64()),
+    total_amount: u64ToJson(r.u64()),
+    deadline: i64ToJson(r.i64()),
+    milestone_count: r.u32(),
+    token_mint: r.pubkey(),
+  }),
+
+  // ADR-131 trigger-1 surface: DisputeResolved (settlement).
+  // Wire layout from programs/settlement/src/events.rs:
+  //   pub escrow: Pubkey
+  //   pub resolver: Pubkey
+  //   pub client_refund: u64
+  //   pub provider_refund: u64
+  //   pub task_id: u64
+  //
+  // The fresh-authority dispute-cluster trigger view
+  // (`vw_fresh_authority_disputes_7d` in migration 002) joins
+  // DisputeResolved to EscrowCreated via task_id and derives the
+  // winning side from the refund split. Without this decoder the
+  // view returns zero rows and the dashboard's "Sybil Patterns (7d)"
+  // card stays at 0 even when the protocol observes real clustering.
+  DisputeResolved: (r) => ({
+    escrow: r.pubkey(),
+    resolver: r.pubkey(),
+    client_refund: u64ToJson(r.u64()),
+    provider_refund: u64ToJson(r.u64()),
+    task_id: u64ToJson(r.u64()),
+  }),
+
+  // Counterpart to DisputeResolved: surfacing DisputeRaised in the
+  // events stream is also a dependency of any future per-dispute
+  // analytics. Included alongside DisputeResolved in this same wiring
+  // pass to keep the dispute-lifecycle decoder set complete.
+  // Wire layout from programs/settlement/src/events.rs:
+  //   pub escrow: Pubkey
+  //   pub requester: Pubkey
+  //   pub task_id: u64
+  DisputeRaised: (r) => ({
+    escrow: r.pubkey(),
+    requester: r.pubkey(),
+    task_id: u64ToJson(r.u64()),
   }),
 };
 
@@ -2038,6 +2109,33 @@ async function main(): Promise<void> {
       "indexer API listening",
     );
   });
+
+  // ADR-131: start the metrics-server companion on a separate port (default
+  // 9100, override via METRICS_PORT). Hosts the Prometheus `/metrics` scrape
+  // surface AND the two re-calibration trigger JSON endpoints
+  // (`/api/metrics/sybil-patterns`, `/api/metrics/escrow-median`) backed by
+  // the views in migration 002. The pg.Pool is sourced from the live
+  // postgres-store so this server reuses the dual-write pool rather than
+  // opening a second connection set; when PG is unconfigured, the trigger
+  // endpoints return 503 and the dashboard renders a "metric unavailable"
+  // state — the prom scrape surface stays up either way.
+  const metricsPort = Number.parseInt(process.env.METRICS_PORT ?? "9100", 10);
+  if (Number.isFinite(metricsPort) && metricsPort > 0) {
+    startMetricsServer(metricsPort, pgStore.pool);
+    logger.info(
+      {
+        adr: "ADR-131",
+        port: metricsPort,
+        pgPoolWired: Boolean(pgStore.pool),
+        endpoints: [
+          "GET /metrics",
+          "GET /api/metrics/sybil-patterns",
+          "GET /api/metrics/escrow-median",
+        ],
+      },
+      "metrics-server listening",
+    );
+  }
 
   // CYCLE4-OFF-001: SIGTERM is what container orchestrators send (k8s,
   // Docker, systemd) before SIGKILL. Without a handler, the process

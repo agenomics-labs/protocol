@@ -117,6 +117,7 @@ pub fn create_escrow(
         total_amount,
         deadline,
         milestone_count: escrow.milestones.len() as u32,
+        token_mint: ctx.accounts.token_mint.key(),
     });
 
     Ok(())

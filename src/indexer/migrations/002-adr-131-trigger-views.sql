@@ -1,202 +1,4 @@
-/**
- * AUTO-EMBEDDED FROM src/indexer/migrations/*.sql — DO NOT HAND-EDIT THE SQL
- * STRINGS BELOW. Edit the .sql files (which remain authoritative for
- * grep / SQL-tooling / migration history) and re-run the embedder, OR
- * synchronise by hand and rely on the parity test in
- * `test/aud-202-migration-embedded.test.ts` to catch drift.
- *
- * WHY THIS FILE EXISTS — OFF-202 (ADR-128 cycle-3 off-chain audit):
- *   The previous `applyMigration` used `__dirname` +
- *   `fs.readFileSync('migrations/001-initial-postgres.sql')`. After
- *   `tsc` compiled `postgres-store.ts` into `dist/`, that
- *   `__dirname` resolved under `dist/`, but the migration files
- *   ship at `src/indexer/migrations/*.sql` and were not copied into
- *   `dist/` by the build. Production boot ENOENT'd. Inlining the SQL as
- *   a TypeScript constant makes the migration string a build artifact of
- *   the source itself — no filesystem lookup at runtime, no copy step in
- *   the build pipeline, no source-vs-shipped drift surface.
- *
- * The SQL strings below MUST stay byte-identical to the .sql sources;
- * the parity test enforces that.
- */
-
-export interface EmbeddedMigration {
-  /** File-name of the source .sql (also the schema_migrations key when we add one). */
-  readonly name: string;
-  /** Verbatim SQL contents, comments and whitespace preserved. */
-  readonly sql: string;
-}
-
-export const MIGRATIONS: ReadonlyArray<EmbeddedMigration> = [
-  {
-    name: "001-initial-postgres.sql",
-    sql: `-- ===========================================================================
--- ADR-128 Phase 1 — Initial PostgreSQL schema (shadow / dual-write).
---
--- This migration mirrors the SQLite schema defined inline in
--- \`src/indexer/index.ts::initDb\` (the seven-table CREATE TABLE block at
--- lines 53-198 as of commit 7886554, ADR-128 acceptance) so a future
--- Phase 2 PR can flip reads from SQLite to Postgres by config alone
--- without redesigning the storage shape.
---
--- Phase 1 contract (read carefully before editing):
---   * SQLite (\`better-sqlite3\`) remains the authoritative read + write
---     store. Postgres is shadow-write-only; operators verify schema and
---     data parity offline.
---   * This file is idempotent (\`CREATE TABLE IF NOT EXISTS\`,
---     \`CREATE INDEX IF NOT EXISTS\`). Operators may re-run during
---     bring-up + parity testing without harm.
---   * Type mappings vs. SQLite source (per ADR-128 §"Surface impact"):
---       SQLite INTEGER PRIMARY KEY AUTOINCREMENT  -> BIGSERIAL PRIMARY KEY
---       SQLite INTEGER (slot, ordinal, timestamp) -> BIGINT
---         (avoids 32-bit overflow at year-out chain scale; ADR-128
---         requirement R7)
---       SQLite TEXT                                -> TEXT
---       SQLite TEXT DEFAULT (datetime('now'))      -> TIMESTAMPTZ
---                                                     DEFAULT now()
---       SQLite CHECK(... IN (...))                 -> identical syntax
---   * The UNIQUE(program, signature, event_ordinal) idempotency
---     primitive on \`events\` maps 1:1 onto Postgres
---     \`INSERT ... ON CONFLICT (program, signature, event_ordinal)
---     DO NOTHING\`. This is the load-bearing claim per ADR-128
---     §"Decision" (5).
---   * u64 amounts (e.g. \`min_escrow_amount\`) are stored as TEXT in both
---     stores — see \`coerceU64String\` in \`src/indexer/index.ts\`. Lossless
---     round-trip is the requirement; arithmetic at read time is the
---     consumer's problem.
---   * No SQLite-only feature is in use upstream
---     (no FTS5, no WITHOUT ROWID, no AUTOINCREMENT abuse, no BLOB) —
---     so there is no Phase 1 schema-feature gap to paper over.
---
--- Phase 2 (separate future PR) will:
---   1. Flip reads from SQLite to Postgres (driven by \`INDEXER_PG_URL\`
---      presence + a future \`INDEXER_STORAGE\` flag).
---   2. Deprecate SQLite write path; the dual-write becomes
---      Postgres-only.
---   3. Convert the inline SQLite DDL block in \`index.ts::initDb\` to a
---      thin migration runner over this file plus future \`00N-*.sql\`
---      siblings.
 -- ===========================================================================
-
-CREATE TABLE IF NOT EXISTS events (
-  id             BIGSERIAL PRIMARY KEY,
-  program        TEXT NOT NULL,
-  event_name     TEXT NOT NULL,
-  data           TEXT NOT NULL,
-  signature      TEXT NOT NULL,
-  slot           BIGINT NOT NULL,
-  event_ordinal  BIGINT NOT NULL DEFAULT 0,
-  timestamp      TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS idx_events_program ON events(program);
-CREATE INDEX IF NOT EXISTS idx_events_name    ON events(event_name);
-CREATE INDEX IF NOT EXISTS idx_events_slot    ON events(slot);
-
--- Idempotency primitive (ADR-128 R2 / §"Decision" 5). Mapped from the
--- SQLite UNIQUE INDEX created at \`index.ts:194\`. The \`INSERT ... ON
--- CONFLICT (program, signature, event_ordinal) DO NOTHING\` semantics in
--- \`postgres-store.ts\` depend on this index existing.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_events_unique
-  ON events(program, signature, event_ordinal);
-
-CREATE TABLE IF NOT EXISTS agents (
-  id                BIGSERIAL PRIMARY KEY,
-  authority         TEXT NOT NULL UNIQUE,
-  name              TEXT,
-  category          TEXT,
-  reputation_score  BIGINT DEFAULT 0,
-  tasks_completed   BIGINT DEFAULT 0,
-  last_updated      TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS idx_agents_category   ON agents(category);
-CREATE INDEX IF NOT EXISTS idx_agents_reputation ON agents(reputation_score);
-
--- Per-program checkpoint. Cursor advance is monotonic and dual-written
--- from \`upsertCursor\` in \`src/indexer/index.ts\`. Phase 2 needs this in
--- lockstep with the SQLite cursor row at cutover, so Phase 1 dual-writes
--- on every cursor advance.
-CREATE TABLE IF NOT EXISTS cursor (
-  program              TEXT PRIMARY KEY,
-  last_processed_slot  BIGINT NOT NULL DEFAULT 0,
-  last_signature       TEXT,
-  updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
--- S-offchain-04 tombstone table. The AgentRegistered handler in
--- \`updateAgentFromEvent\` consults this BEFORE inserting an agent row to
--- prevent backfill resurrection of a deregistered authority. Phase 1
--- preserves consultation against SQLite (authoritative); this Postgres
--- copy stays in lockstep so Phase 2 cutover can flip the consultation
--- target without semantic change.
-CREATE TABLE IF NOT EXISTS agent_tombstones (
-  authority             TEXT PRIMARY KEY,
-  deregistered_at_slot  BIGINT NOT NULL,
-  updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
--- ADR-082: append-only history of vault.agent_identity rotations.
-CREATE TABLE IF NOT EXISTS vault_identity_history (
-  id            BIGSERIAL PRIMARY KEY,
-  vault         TEXT NOT NULL,
-  old_identity  TEXT NOT NULL,
-  new_identity  TEXT NOT NULL,
-  slot          BIGINT NOT NULL,
-  signature     TEXT NOT NULL,
-  observed_at   TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS idx_vault_identity_vault ON vault_identity_history(vault);
-CREATE INDEX IF NOT EXISTS idx_vault_identity_slot  ON vault_identity_history(slot);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_vault_identity_unique
-  ON vault_identity_history(vault, signature, slot);
-
--- ADR-082: append-only history of capability-manifest rotations
--- (ADR-060). manifest_cid is the hex-encoded 64-byte CIDv1; manifest_hash
--- is the hex-encoded 32-byte sha256. Both are TEXT in both stores.
-CREATE TABLE IF NOT EXISTS manifest_history (
-  id                BIGSERIAL PRIMARY KEY,
-  authority         TEXT NOT NULL,
-  manifest_cid      TEXT NOT NULL,
-  manifest_hash     TEXT NOT NULL,
-  manifest_version  BIGINT NOT NULL,
-  event_timestamp   BIGINT NOT NULL,
-  slot              BIGINT NOT NULL,
-  signature         TEXT NOT NULL,
-  observed_at       TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS idx_manifest_authority ON manifest_history(authority);
-CREATE INDEX IF NOT EXISTS idx_manifest_slot      ON manifest_history(slot);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_manifest_unique
-  ON manifest_history(authority, signature, slot);
-
--- ADR-082: append-only history of ProtocolConfig governance changes.
--- min_escrow_amount stays TEXT (u64 lossless round-trip — see
--- coerceU64String). The CHECK constraint mirrors the SQLite source
--- exactly so a future Phase 2 read against Postgres surfaces the same
--- enum-validity guarantee.
-CREATE TABLE IF NOT EXISTS protocol_config_history (
-  id                                    BIGSERIAL PRIMARY KEY,
-  kind                                  TEXT NOT NULL CHECK (kind IN ('Initialized', 'Updated')),
-  authority                             TEXT NOT NULL,
-  min_escrow_amount                     TEXT NOT NULL,
-  dispute_timeout_seconds               BIGINT NOT NULL,
-  reputation_delta_task_completed       BIGINT NOT NULL,
-  reputation_delta_dispute_loss         BIGINT NOT NULL,
-  reputation_delta_expiry_undelivered   BIGINT NOT NULL,
-  slot                                  BIGINT NOT NULL,
-  signature                             TEXT NOT NULL,
-  observed_at                           TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS idx_protocol_config_slot ON protocol_config_history(slot);
-CREATE INDEX IF NOT EXISTS idx_protocol_config_kind ON protocol_config_history(kind);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_protocol_config_unique
-  ON protocol_config_history(signature, slot, kind);
-`,
-  },
-  {
-    name: "002-adr-131-trigger-views.sql",
-    sql: `-- ===========================================================================
 -- ADR-131 — Sybil-cost re-calibration trigger views.
 --
 -- ADR-131 §"Re-calibration trigger" defines two off-chain conditions that
@@ -210,8 +12,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_protocol_config_unique
 --
 --   (2) Median escrow value. Sustained 30-day rolling average of median
 --       per-task escrow exceeds 1 SOL (≈$150-200 USD). The AUD-205
---       inequality \`E > 3R + 3L\` becomes adversary-favorable once median
---       \`E\` is two orders of magnitude above \`R ≈ 0.011 SOL\`.
+--       inequality `E > 3R + 3L` becomes adversary-favorable once median
+--       `E` is two orders of magnitude above `R ≈ 0.011 SOL`.
 --
 -- The on-chain protocol does not surface either metric directly;
 -- ADR-131 §Consequences §Follow-ups makes the indexer the home of
@@ -225,19 +27,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_protocol_config_unique
 --     SQLite mirror is untouched. Phase 2 (separate future PR) will
 --     flip reads to Postgres at which point these views become the
 --     trigger queries' read path.
---   * \`events.data\` is TEXT (JSON-stringified by \`JSON.stringify\` in
---     \`index.ts::insertEvents\`); jsonb access requires an explicit
---     \`data::jsonb\` cast. The cast is IMMUTABLE in PG 12+ so it can
+--   * `events.data` is TEXT (JSON-stringified by `JSON.stringify` in
+--     `index.ts::insertEvents`); jsonb access requires an explicit
+--     `data::jsonb` cast. The cast is IMMUTABLE in PG 12+ so it can
 --     appear in expression indexes.
---   * Idempotent: every view uses \`CREATE OR REPLACE VIEW\` (PG always
+--   * Idempotent: every view uses `CREATE OR REPLACE VIEW` (PG always
 --     supports this for non-materialized views); every index uses
---     \`CREATE INDEX IF NOT EXISTS\`. Operators may re-run during
+--     `CREATE INDEX IF NOT EXISTS`. Operators may re-run during
 --     bring-up + parity testing without harm — same contract as
 --     001-initial-postgres.sql.
 --   * Views (regular, not materialized) chosen on these grounds:
 --       - The trigger query cadence is daily / weekly, not per-event.
---       - The underlying \`events\` table is already indexed on
---         \`event_name\`; the per-event-name jsonb-expression indexes
+--       - The underlying `events` table is already indexed on
+--         `event_name`; the per-event-name jsonb-expression indexes
 --         added below give views index-only-scan-friendly shape.
 --       - Materialization adds a REFRESH maintenance surface with no
 --         payoff during Phase 1 shadow-write (when nothing reads from
@@ -249,22 +51,22 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_protocol_config_unique
 --         on. CREATE OR REPLACE VIEW preserves that option.
 --
 -- Wire-format dependencies (must stay in lockstep with on-chain):
---   * \`EscrowCreated\` decoder in \`index.ts::EVENT_DECODERS\` MUST
---     surface \`total_amount\` (u64 → TEXT via u64ToJson) AND
---     \`token_mint\` (Pubkey → base58) at JSON keys matching
---     \`(data::jsonb)->>'total_amount'\` and \`(data::jsonb)->>'token_mint'\`.
---     \`token_mint\` was added per ADR-131 — the metric is only
+--   * `EscrowCreated` decoder in `index.ts::EVENT_DECODERS` MUST
+--     surface `total_amount` (u64 → TEXT via u64ToJson) AND
+--     `token_mint` (Pubkey → base58) at JSON keys matching
+--     `(data::jsonb)->>'total_amount'` and `(data::jsonb)->>'token_mint'`.
+--     `token_mint` was added per ADR-131 — the metric is only
 --     meaningful when bucketed by denomination (SOL vs USDC have
 --     wildly different unit values).
---   * \`DisputeResolved\` decoder MUST surface \`task_id\`, \`client_refund\`,
---     \`provider_refund\` so vw_dispute_resolved can compute the
+--   * `DisputeResolved` decoder MUST surface `task_id`, `client_refund`,
+--     `provider_refund` so vw_dispute_resolved can compute the
 --     winning side from the refund split. (Currently
---     DisputeResolved falls through to the \`event_<hex>\` raw
+--     DisputeResolved falls through to the `event_<hex>` raw
 --     classification — the decoder is pre-existing tech debt that
 --     blocks trigger-1 from being computable from indexed data.
 --     Noted, not fixed in this migration.)
---   * \`AgentRegistered\` decoder already surfaces \`authority\` and
---     \`timestamp\` per \`EVENT_DECODERS.AgentRegistered\` in \`index.ts\`.
+--   * `AgentRegistered` decoder already surfaces `authority` and
+--     `timestamp` per `EVENT_DECODERS.AgentRegistered` in `index.ts`.
 -- ===========================================================================
 
 -- ---------------------------------------------------------------------------
@@ -290,9 +92,9 @@ CREATE INDEX IF NOT EXISTS idx_events_name_task_id
 CREATE INDEX IF NOT EXISTS idx_events_name_token_mint
   ON events (event_name, ((data::jsonb)->>'token_mint'));
 
--- Time-bounded scans use the existing \`timestamp\` column on events
+-- Time-bounded scans use the existing `timestamp` column on events
 -- (TIMESTAMPTZ, indexed implicitly via slot-correlated insert order).
--- An explicit btree on \`timestamp\` makes the 7-day / 30-day window
+-- An explicit btree on `timestamp` makes the 7-day / 30-day window
 -- predicates index-friendly without requiring the planner to chase
 -- via slot.
 CREATE INDEX IF NOT EXISTS idx_events_timestamp
@@ -343,10 +145,10 @@ WHERE e.event_name = 'EscrowCreated';
 -- 'Split' so the trigger-1 query can choose to count or exclude
 -- splits per its own policy.
 --
--- KNOWN CONSTRAINT: as of this migration, the \`EVENT_DECODERS\` map
--- in \`src/indexer/index.ts\` does NOT include a DisputeResolved
--- decoder, so events fall through to the \`event_<hex>\` raw
--- classification with \`data = {discriminator, rawData}\`. This view
+-- KNOWN CONSTRAINT: as of this migration, the `EVENT_DECODERS` map
+-- in `src/indexer/index.ts` does NOT include a DisputeResolved
+-- decoder, so events fall through to the `event_<hex>` raw
+-- classification with `data = {discriminator, rawData}`. This view
 -- will return zero rows until the decoder is added. The trigger-1
 -- query is therefore not yet executable end-to-end; that's
 -- pre-existing tech debt outside this migration's scope. The view
@@ -460,9 +262,9 @@ GROUP BY token_mint;
 -- This view is the per-7-day-window cluster aggregator the dashboard
 -- reads. Each row represents one 7-day window where ≥3 fresh
 -- authorities clustered as dispute winners; the dashboard sums
--- \`incident_count\` across rows to compute the quarterly tally.
+-- `incident_count` across rows to compute the quarterly tally.
 --
--- Window alignment: \`date_trunc('week', dispute_at)\` (ISO-8601 weeks
+-- Window alignment: `date_trunc('week', dispute_at)` (ISO-8601 weeks
 -- starting Monday). This is a deterministic, simple bucketing — the
 -- alternative (true rolling 7-day windows) requires a window function
 -- with a frame clause that is more expensive to compute and harder to
@@ -471,18 +273,18 @@ GROUP BY token_mint;
 -- most by a single window per quarter; the trigger-action (open a
 -- successor ADR) is unaffected by that resolution.
 --
--- Winner derivation: relies on \`vw_dispute_resolved.winner_side\`,
+-- Winner derivation: relies on `vw_dispute_resolved.winner_side`,
 -- which classifies the refund split into Provider / Client / Split /
 -- Unknown. Only Provider and Client outcomes contribute to a "fresh
 -- authority won" cluster; Splits and Unknowns are excluded — they
 -- don't unambiguously identify a beneficiary, so they don't fit the
 -- ADR-131 "favored a counterparty" semantic.
 --
--- KNOWN CONSTRAINT: this view depends on \`vw_dispute_resolved\`, which
--- in turn depends on a \`DisputeResolved\` decoder in
--- \`index.ts::EVENT_DECODERS\`. The decoder is added in the same
+-- KNOWN CONSTRAINT: this view depends on `vw_dispute_resolved`, which
+-- in turn depends on a `DisputeResolved` decoder in
+-- `index.ts::EVENT_DECODERS`. The decoder is added in the same
 -- ADR-131 wiring pass that ships this view; without it,
--- \`vw_dispute_resolved\` returns zero rows and this view returns
+-- `vw_dispute_resolved` returns zero rows and this view returns
 -- empty.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE VIEW vw_fresh_authority_disputes_7d AS
@@ -512,6 +314,3 @@ SELECT
 FROM fresh_only
 GROUP BY date_trunc('week', dispute_at)::timestamptz
 HAVING count(DISTINCT winning_authority) >= 3;
-`,
-  },
-];

@@ -2658,6 +2658,15 @@
     },
     {
       "name": "EscrowCreated",
+      "docs": [
+        "ADR-131 (sybil-cost calibration): off-chain consumers compute the",
+        "\"median escrow value\" trigger metric per token denomination. SOL and",
+        "USDC escrows have wildly different unit values, so the metric is only",
+        "meaningful when bucketed by `token_mint`. The on-chain `TaskEscrow`",
+        "account already carries `token_mint`; emitting it here closes the",
+        "missing-emission gap so the indexer no longer has to fetch the",
+        "account to disambiguate."
+      ],
       "type": {
         "kind": "struct",
         "fields": [
@@ -2688,6 +2697,10 @@
           {
             "name": "milestone_count",
             "type": "u32"
+          },
+          {
+            "name": "token_mint",
+            "type": "pubkey"
           }
         ]
       }
