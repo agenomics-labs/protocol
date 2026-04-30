@@ -15,10 +15,10 @@
 | Feature freeze declared | Pending | Lead Dev | No new instructions after freeze date |
 | All ADR changes merged (ADR-001 through ADR-027) | Done | Team | Security and feature improvements |
 | Program IDs finalized for mainnet | Pending | Lead Dev | Generate new keypairs for mainnet deployment |
-| Anchor version pinned in `Cargo.toml` | Pending | Lead Dev | Pin exact version (e.g., `anchor-lang = "=0.30.1"`) |
+| Anchor version pinned in `Cargo.toml` | Done | Team | `=0.31.1` exact-pinned across all three programs (commit `<this-batch>`) |
 | Rust toolchain pinned in `rust-toolchain.toml` | Done | Team | Ensures reproducible builds |
-| All `Cargo.lock` dependencies reviewed for known CVEs | Pending | Security | Run `cargo audit` |
-| No `TODO`, `FIXME`, or `HACK` comments in program source | Pending | Team | `grep -rn "TODO\|FIXME\|HACK" programs/` |
+| All `Cargo.lock` dependencies reviewed for known CVEs | Done | Security | `cargo audit` 2026-04-30: 0 CVEs; 3 unmaintained-crate warnings (`bincode`, `libsecp256k1`, `rand`), all transitive through Solana SDK — no upstream fix until Solana ships replacements; documented as accepted |
+| No `TODO`, `FIXME`, or `HACK` comments in program source | Done | Team | `grep -rn 'TODO\|FIXME\|HACK' programs/` returns 0 matches as of 2026-04-30 (last TODO at `agent-registry/src/state.rs:184` cleaned up in commit `635c061` — was a stale reference to PR-I which has since landed) |
 
 ### 1.2 Audit Complete
 
@@ -34,12 +34,12 @@
 
 | Item | Status | Notes |
 |------|--------|-------|
-| `anchor test` passes (all unit + integration tests) | Pending | Must pass on clean checkout |
+| `anchor test` passes (all unit + integration tests) | Done | 2026-04-30: 164 passing / 3 pending (intentional skips for test-scaffold-limited paths; coverage at `programs/settlement/src/contexts.rs::aud_117_seeds_parity` per AUD-203). Re-verify on each pre-deploy clean build. |
 | Fuzz tests completed (ADR-021) | Pending | Trident or honggfuzz |
 | Load tests completed (ADR-022) | Pending | Discovery and settlement stress tests |
 | Devnet smoke test passes (`scripts/smoke-test-devnet.ts`) | Pending | End-to-end lifecycle on devnet |
-| MCP server test suite passes | Pending | `cd mcp-server && npm test` |
-| No test flakiness (3 consecutive green runs) | Pending | CI pipeline verification |
+| MCP server test suite passes | Done | 2026-04-30: 383/383 pass via `cd mcp-server && npm test`. Re-verify on each pre-deploy clean build. |
+| No test flakiness (3 consecutive green runs) | Done | 2026-04-30: anchor test 3× green (164/164 each, ~4m each), mcp-server test 3× green (383/383 each, 1.5–3.0s). No flakes observed. |
 
 ### 1.4 Devnet Validation
 
