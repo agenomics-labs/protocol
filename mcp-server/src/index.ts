@@ -317,7 +317,7 @@ async function startHttpTransport(posture: TransportPosture): Promise<void> {
       auth: "bearer-token",
       rate_limit_window_ms: rateLimitConfig.windowMs,
       rate_limit_max_requests: rateLimitConfig.maxRequests,
-      rate_limit_trust_proxy: rateLimitConfig.trustProxy,
+      rate_limit_trusted_proxy_hops: rateLimitConfig.trustedProxyHops,
       origin_allowlist_count: originGateConfig.allowedOrigins.length,
       origin_allowlist: originGateConfig.allowedOrigins,
       adr: "ADR-083 + ADR-132",

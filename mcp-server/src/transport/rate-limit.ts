@@ -32,11 +32,54 @@
  *     would shed legitimate same-uid load with no security benefit. Both are
  *     intentionally NOT rate-limited.
  *
- * Trust model for IP fallback:
- *   - `X-Forwarded-For` is honored ONLY when `AEP_MCP_TRUST_PROXY=1`. By
- *     default we read `req.socket.remoteAddress` so a non-proxied deployment
- *     cannot be spoofed by an attacker setting `X-Forwarded-For: 1.2.3.4`
- *     to skip past their own bucket.
+ * Trust model for IP fallback (CYCLE4 hardening):
+ *   - `X-Forwarded-For` is read ONLY when `AEP_MCP_TRUSTED_PROXY_HOPS=N`
+ *     with N > 0. The integer N counts trusted reverse proxies between the
+ *     client and the MCP server. The real client IP is at position
+ *     `XFF[len - N]` (Nth from the right), because each trusted proxy
+ *     APPENDS the IP it received from. Anything to the left of that
+ *     position is attacker-controllable and MUST be ignored. Reading the
+ *     leftmost (XFF[0]) — the prior MCP-320 behavior — let an attacker
+ *     prepend arbitrary values per request to (a) bypass their own IP
+ *     bucket and (b) DoS-deny a victim by exhausting the victim's bucket.
+ *     Cycle-4 review caught this; the fix is the hop-count semantic.
+ *   - `AEP_MCP_TRUST_PROXY=1` is retained as a deprecated alias mapping to
+ *     `AEP_MCP_TRUSTED_PROXY_HOPS=1` so existing deployments behind a
+ *     single trusted proxy keep working; a deprecation warning is logged
+ *     so operators see it in `git log`-discoverable env-dump runbooks.
+ *   - When the XFF header has fewer than N entries, OR the value at
+ *     `XFF[len - N]` is not a parseable IP literal, we fall back to
+ *     `req.socket.remoteAddress` and emit a `xff_misconfigured` warning.
+ *     Fail-safe direction: prefer falling back to the (truthful) socket
+ *     peer over honoring an attacker-shaped XFF.
+ *   - When `trustedProxyHops === 0` (the default) we read
+ *     `req.socket.remoteAddress` directly, so a non-proxied deployment
+ *     cannot be spoofed by an attacker setting `X-Forwarded-For:` at all.
+ *
+ * IPv6 normalization (CYCLE4 hardening):
+ *   - All IP-bucket keys pass through `normalizeIp()` which strips the
+ *     `::ffff:` IPv4-mapped-IPv6 prefix, strips `[...]` URL brackets, and
+ *     lowercases hex digits. Without this, a single client hitting a
+ *     dual-stack listener could appear under multiple bucket keys
+ *     (`::1`, `::ffff:127.0.0.1`, `127.0.0.1`) and gain a multiplied
+ *     budget. Default bind is loopback-only (`auth-gate.ts:127`) so the
+ *     real-world exposure was small; operators on `::` / `0.0.0.0` would
+ *     have been multiplied 2-3×.
+ *
+ * Memory cap eviction (CYCLE4 hardening):
+ *   - When the bucket map reaches `MAX_RATE_LIMIT_ENTRIES`, we evict ONLY
+ *     entries whose window has already expired. If no expired entries
+ *     exist, we **fail closed**: reject the new caller with 429 rather
+ *     than evict a still-live victim's entry. Prior MCP-320 behavior was
+ *     insertion-order eviction, which let an attacker spray distinct
+ *     synthetic keys to evict victim entries — when the victim's NEXT
+ *     request landed, it created a fresh entry with `count=1`, resetting
+ *     the rate-limit progress an attacker had already pushed them
+ *     through. Cycle-4 review caught this; fail-closed eviction
+ *     preserves victim bucket integrity at the cost of denial-of-
+ *     availability for new callers when the map is full of live buckets
+ *     — a state that only occurs under active flood, when shedding new
+ *     work is the right answer anyway.
  *
  * Wiring: see `src/index.ts:startHttpTransport`. The middleware MUST run
  * BEFORE the bearer-auth middleware so unauthenticated probes also hit the
@@ -45,6 +88,7 @@
 
 import * as crypto from "crypto";
 import * as http from "http";
+import * as net from "net";
 import { extractBearerToken } from "./auth-gate.js";
 import { serverLogger } from "../util/logger.js";
 
@@ -66,9 +110,10 @@ export const DEFAULT_RATE_LIMIT_MAX_REQUESTS = 60;
 /**
  * Memory cap on the rate-limit table. 100k entries × ~80B/entry ≈ 8 MB,
  * matching the relay's MAX_RATE_LIMIT_ENTRIES rationale at
- * `src/x402-relay/index.ts:388`. When the cap is hit, oldest insertion-
- * order entries are evicted; safe because each entry already expires
- * after `windowMs`.
+ * `src/x402-relay/index.ts:388`. When the cap is hit, ONLY expired
+ * entries are evicted (CYCLE4 hardening — see file header). If no
+ * expired entries exist, new callers fail-closed with 429 rather than
+ * having their entry slot stolen from a still-live victim.
  */
 export const MAX_RATE_LIMIT_ENTRIES = 100_000;
 
@@ -78,10 +123,15 @@ export interface RateLimitConfig {
   readonly windowMs: number;
   readonly maxRequests: number;
   /**
-   * When true, honor `X-Forwarded-For` first hop for the IP-fallback
-   * bucket. False by default; spoofable in non-proxied deployments.
+   * Number of trusted reverse proxies between the client and us. When
+   * 0 (the default), `X-Forwarded-For` is ignored entirely. When N > 0,
+   * the real client IP is read from `XFF[len - N]`, since each trusted
+   * proxy APPENDS the IP it received from (so the rightmost N entries
+   * are the trusted proxy chain, and the (N+1)th-from-right is the real
+   * client). Reading the leftmost — the prior behavior — was bypassable
+   * by attacker-prepended XFF values.
    */
-  readonly trustProxy: boolean;
+  readonly trustedProxyHops: number;
   /**
    * CYCLE4-MCP-001 (Batch H): when true, ALL requests share a single
    * global bucket (`unix:global`) regardless of headers or remote
@@ -99,6 +149,21 @@ export interface RateLimitConfig {
 export interface RateLimitConfigEnv {
   readonly AEP_MCP_RATE_LIMIT_WINDOW_MS?: string;
   readonly AEP_MCP_RATE_LIMIT_MAX_REQUESTS?: string;
+  /**
+   * Integer count of trusted reverse proxies between the client and us.
+   * Default 0 (XFF ignored). Set to 1 if you have exactly one nginx /
+   * Cloudflare / ALB in front; 2 if there's a second layer; etc.
+   * Misconfigure too low and you trust attacker-prepended XFF values;
+   * too high and the limiter falls back to socket.remoteAddress (safe
+   * default).
+   */
+  readonly AEP_MCP_TRUSTED_PROXY_HOPS?: string;
+  /**
+   * Deprecated alias for `AEP_MCP_TRUSTED_PROXY_HOPS=1` (or =0 when
+   * falsy). Retained for one cycle so existing single-proxy deployments
+   * don't break on upgrade. New deployments should set the explicit
+   * hop count.
+   */
   readonly AEP_MCP_TRUST_PROXY?: string;
 }
 
@@ -124,8 +189,16 @@ export function readRateLimitConfig(
     "AEP_MCP_RATE_LIMIT_MAX_REQUESTS",
     DEFAULT_RATE_LIMIT_MAX_REQUESTS,
   );
-  const trustProxy = parseTrustProxyFlag(env.AEP_MCP_TRUST_PROXY);
-  return { windowMs, maxRequests, trustProxy, unixMode: opts.unixMode ?? false };
+  const trustedProxyHops = parseTrustedProxyHops(
+    env.AEP_MCP_TRUSTED_PROXY_HOPS,
+    env.AEP_MCP_TRUST_PROXY,
+  );
+  return {
+    windowMs,
+    maxRequests,
+    trustedProxyHops,
+    unixMode: opts.unixMode ?? false,
+  };
 }
 
 function parsePositiveInt(
@@ -154,15 +227,102 @@ function parsePositiveInt(
   return parsed;
 }
 
-function parseTrustProxyFlag(raw: string | undefined): boolean {
-  if (raw === undefined) return false;
-  const v = raw.trim().toLowerCase();
-  if (v === "" || v === "0" || v === "false" || v === "no") return false;
-  if (v === "1" || v === "true" || v === "yes") return true;
+/**
+ * Parse the trusted-proxy-hops env vars. Returns the integer hop count
+ * (0 = no trust). Precedence:
+ *   1. `AEP_MCP_TRUSTED_PROXY_HOPS` if set — explicit, preferred.
+ *   2. `AEP_MCP_TRUST_PROXY` if set — legacy boolean, mapped: truthy → 1,
+ *      falsy → 0. Logs a deprecation warning when truthy.
+ *   3. Default 0 (XFF ignored).
+ *
+ * Throws on garbage in either var so a misconfiguration is loud at boot.
+ */
+function parseTrustedProxyHops(
+  hopsRaw: string | undefined,
+  legacyRaw: string | undefined,
+): number {
+  // 1. Explicit hop count wins.
+  if (hopsRaw !== undefined && hopsRaw.trim() !== "") {
+    const trimmed = hopsRaw.trim();
+    if (!/^[0-9]+$/.test(trimmed)) {
+      throw new Error(
+        `AEP_MCP_TRUSTED_PROXY_HOPS="${hopsRaw}" must be a non-negative ` +
+          `integer (0 disables; 1 = single proxy in front; etc).`,
+      );
+    }
+    const parsed = Number.parseInt(trimmed, 10);
+    if (!Number.isInteger(parsed) || parsed < 0) {
+      throw new Error(
+        `AEP_MCP_TRUSTED_PROXY_HOPS="${hopsRaw}" must be a non-negative ` +
+          `integer (0 disables; 1 = single proxy in front; etc).`,
+      );
+    }
+    if (legacyRaw !== undefined && legacyRaw.trim() !== "") {
+      log.warn(
+        {
+          hops: parsed,
+          legacy: legacyRaw,
+          adr: "ADR-083",
+        },
+        "mcp-rate-limit: AEP_MCP_TRUST_PROXY set alongside " +
+          "AEP_MCP_TRUSTED_PROXY_HOPS — explicit hop count wins; unset " +
+          "the legacy var to silence this warning",
+      );
+    }
+    return parsed;
+  }
+
+  // 2. Legacy boolean fallback.
+  if (legacyRaw === undefined) return 0;
+  const v = legacyRaw.trim().toLowerCase();
+  if (v === "" || v === "0" || v === "false" || v === "no") return 0;
+  if (v === "1" || v === "true" || v === "yes") {
+    log.warn(
+      {
+        adr: "ADR-083",
+        replace_with: "AEP_MCP_TRUSTED_PROXY_HOPS=1",
+      },
+      "mcp-rate-limit: AEP_MCP_TRUST_PROXY=1 is deprecated; treating as " +
+        "AEP_MCP_TRUSTED_PROXY_HOPS=1. Set the explicit hop count to " +
+        "silence this warning and to enable >1-hop topologies.",
+    );
+    return 1;
+  }
   throw new Error(
-    `AEP_MCP_TRUST_PROXY="${raw}" must be one of: 0,1,true,false,yes,no. ` +
-      `Default: 0 (off — X-Forwarded-For is ignored).`,
+    `AEP_MCP_TRUST_PROXY="${legacyRaw}" must be one of: ` +
+      `0,1,true,false,yes,no. Prefer AEP_MCP_TRUSTED_PROXY_HOPS=N for ` +
+      `explicit hop count. Default: 0 (off — X-Forwarded-For is ignored).`,
   );
+}
+
+/**
+ * Normalize an IP address string to a canonical bucket-key form so a
+ * single client doesn't appear under multiple keys.
+ *
+ *   - Strip `::ffff:` IPv4-mapped-IPv6 prefix → bare IPv4.
+ *   - Strip `[...]` URL brackets (some XFF emitters add them).
+ *   - Lowercase IPv6 hex digits.
+ *
+ * Returns the input unchanged if it doesn't parse as an IP — the caller
+ * is responsible for deciding whether to use a non-IP value as a key.
+ */
+export function normalizeIp(addr: string): string {
+  let s = addr.trim();
+  // Strip surrounding `[...]` brackets (e.g. `[::1]` from URL form).
+  if (s.startsWith("[") && s.endsWith("]") && s.length >= 2) {
+    s = s.slice(1, -1);
+  }
+  // IPv4-mapped-IPv6 → bare IPv4. Case-insensitive prefix.
+  const lower = s.toLowerCase();
+  if (lower.startsWith("::ffff:")) {
+    const tail = s.slice("::ffff:".length);
+    if (net.isIPv4(tail)) return tail;
+    // ::ffff: followed by something that isn't a v4 literal — keep
+    // lowercased v6 form rather than trust a half-parsed value.
+    return lower;
+  }
+  if (net.isIPv6(s)) return lower;
+  return s;
 }
 
 // ==================== RATE LIMITER ====================
@@ -173,7 +333,7 @@ interface RateLimitEntry {
 }
 
 export interface RateLimitDeniedEvent {
-  readonly bucketKind: "token" | "ip" | "unix";
+  readonly bucketKind: "token" | "ip" | "unix" | "cap";
   readonly remoteAddress: string | undefined;
   readonly url: string | undefined;
   readonly retryAfterSec: number;
@@ -244,14 +404,26 @@ export function makeRateLimiter(
       const entry = map.get(key.value);
 
       if (!entry || t >= entry.resetAt) {
-        // First request in this window — replace any expired entry.
-        map.set(key.value, { count: 1, resetAt: t + config.windowMs });
-        // Evict oldest entries if we've blown through the cap. Done on
-        // insert (not just in the periodic pruner) so a flood-of-distinct-
-        // keys can't grow the map past the cap between prune ticks.
-        if (map.size > MAX_RATE_LIMIT_ENTRIES) {
-          evictOldest(map, map.size - MAX_RATE_LIMIT_ENTRIES);
+        // First request in this window — or the prior entry has expired.
+        // Memory-cap enforcement (CYCLE4 hardening): we're about to add
+        // a new entry. If the map is at cap, evict ONLY expired entries
+        // first. If none are expired, fail closed: reject this caller
+        // with 429 rather than evict a still-live victim.
+        if (!entry && map.size >= MAX_RATE_LIMIT_ENTRIES) {
+          const reclaimed = pruneExpired(map, t);
+          if (reclaimed === 0) {
+            // Map is full of live buckets — under flood. Shed.
+            onDenied({
+              bucketKind: "cap",
+              remoteAddress: req.socket.remoteAddress,
+              url: req.url,
+              retryAfterSec: 1,
+            });
+            write429(res, 1);
+            return;
+          }
         }
+        map.set(key.value, { count: 1, resetAt: t + config.windowMs });
         downstream(req, res);
         return;
       }
@@ -289,10 +461,10 @@ interface BucketKey {
   readonly kind: "token" | "ip" | "unix";
   /**
    * The Map key. For tokens this is a SHA-256 hex digest, never the raw
-   * token. For IPs it's `ip:<addr>` so a token whose hex digest happened
-   * to collide with `ip:127.0.0.1` (it can't, but defense in depth) is in
-   * a separate keyspace. For unix transport (CYCLE4-MCP-001 closure) the
-   * single global bucket is `unix:global`.
+   * token. For IPs it's `ip:<normalized-addr>` so a token whose hex
+   * digest happened to collide with `ip:127.0.0.1` (it can't, but defense
+   * in depth) is in a separate keyspace. For unix transport (CYCLE4-MCP-001
+   * closure) the single global bucket is `unix:global`.
    */
   readonly value: string;
 }
@@ -300,7 +472,7 @@ interface BucketKey {
 /**
  * Choose the bucket key for a request. Precedence:
  *   1. Bearer token from `Authorization` header → `tok:<sha256>`.
- *   2. `X-Forwarded-For` first hop, only if `trustProxy` → `ip:<addr>`.
+ *   2. Trusted XFF position (only if `trustedProxyHops > 0`) → `ip:<addr>`.
  *   3. `req.socket.remoteAddress` → `ip:<addr>`.
  *   4. `ip:unknown` as a last-resort fallback so we never throw.
  *
@@ -333,46 +505,95 @@ function bucketKeyFor(
     return { kind: "token", value: `tok:${digest}` };
   }
 
-  if (config.trustProxy) {
+  // CYCLE4 hardening: read XFF[len - N] when N trusted proxies are in
+  // front. The rightmost N entries are the trusted proxy chain (each
+  // proxy appended the IP it received from on receipt); position
+  // (len - N) is the real client. Anything to the left is attacker-
+  // controllable and MUST be ignored.
+  if (config.trustedProxyHops > 0) {
     const xff = req.headers["x-forwarded-for"];
     const xffStr = Array.isArray(xff) ? xff[0] : xff;
     if (typeof xffStr === "string" && xffStr.length > 0) {
-      const firstHop = xffStr.split(",")[0]?.trim();
-      if (firstHop) {
-        return { kind: "ip", value: `ip:${firstHop}` };
+      const parts = xffStr.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+      if (parts.length >= config.trustedProxyHops) {
+        const idx = parts.length - config.trustedProxyHops;
+        const candidate = parts[idx]!;
+        if (net.isIP(candidate) !== 0) {
+          return { kind: "ip", value: `ip:${normalizeIp(candidate)}` };
+        }
+        // Non-IP at the trusted position — fall through to socket peer.
+        log.warn(
+          {
+            xff_len: parts.length,
+            hops: config.trustedProxyHops,
+            non_ip_value: candidate,
+          },
+          "mcp-rate-limit: XFF position resolves to non-IP value; " +
+            "falling back to socket.remoteAddress (xff_misconfigured)",
+        );
+      } else {
+        // Fewer entries than expected — operator's hop count is too high
+        // OR a peer is stripping XFF. Fall back to socket peer.
+        log.warn(
+          {
+            xff_len: parts.length,
+            hops: config.trustedProxyHops,
+          },
+          "mcp-rate-limit: XFF has fewer entries than trustedProxyHops; " +
+            "falling back to socket.remoteAddress (xff_misconfigured)",
+        );
       }
     }
   }
 
-  const peer = req.socket.remoteAddress ?? "unknown";
-  return { kind: "ip", value: `ip:${peer}` };
+  const peer = req.socket.remoteAddress;
+  if (typeof peer === "string" && peer.length > 0) {
+    return { kind: "ip", value: `ip:${normalizeIp(peer)}` };
+  }
+  return { kind: "ip", value: "ip:unknown" };
 }
 
+/**
+ * Periodic pruner — sweep expired entries. Called on the `setInterval`
+ * tick. Does NOT evict still-live entries: if the map is over cap with
+ * no expired entries, that's a flood-or-misconfig signal which we log
+ * (so operators alert on it) rather than mask by evicting victims.
+ */
 function pruneMap(
   map: Map<string, RateLimitEntry>,
   nowMs: number,
 ): void {
-  for (const [key, entry] of map) {
-    if (nowMs >= entry.resetAt) {
-      map.delete(key);
-    }
-  }
+  pruneExpired(map, nowMs);
   if (map.size > MAX_RATE_LIMIT_ENTRIES) {
-    evictOldest(map, map.size - MAX_RATE_LIMIT_ENTRIES);
+    log.warn(
+      {
+        map_size: map.size,
+        cap: MAX_RATE_LIMIT_ENTRIES,
+      },
+      "mcp-rate-limit: bucket map at cap with no expired entries; " +
+        "fail-closed eviction is rejecting new callers — investigate flood / sizing",
+    );
   }
 }
 
-function evictOldest(
+/**
+ * Sweep expired entries from the map. Returns the count removed.
+ * Inline scan — Map iteration is order-stable and cheap up to ~100k
+ * entries, well below the threshold where a heap-backed structure
+ * would be worth the complexity.
+ */
+function pruneExpired(
   map: Map<string, RateLimitEntry>,
-  count: number,
-): void {
-  // Map iteration is insertion-order in JS, so `.keys().next()` gives us
-  // the oldest entry. Same idiom as the relay's `pruneRateLimitMap`.
-  for (let i = 0; i < count; i++) {
-    const oldest = map.keys().next().value;
-    if (oldest === undefined) return;
-    map.delete(oldest);
+  nowMs: number,
+): number {
+  let removed = 0;
+  for (const [key, entry] of map) {
+    if (nowMs >= entry.resetAt) {
+      map.delete(key);
+      removed += 1;
+    }
   }
+  return removed;
 }
 
 function write429(res: http.ServerResponse, retryAfterSec: number): void {
