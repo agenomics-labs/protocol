@@ -1,7 +1,7 @@
 {
   "name": "@agenomics/client",
   "version": "0.1.0",
-  "description": "AEP protocol TypeScript client: AepClient class, PDA derivation helpers, re-exports @agenomics/idl",
+  "description": "AEP protocol TypeScript client: AepClient, typed wrappers (AgentRegistryClient, AgentVaultClient, SettlementClient), PDA derivation helpers; re-exports @agenomics/idl.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -13,13 +13,36 @@
   },
   "files": [
     "dist/**",
-    "src/**"
+    "src/**",
+    "README.md",
+    "LICENSE"
   ],
+  "keywords": [
+    "agenomics",
+    "aep",
+    "solana",
+    "anchor",
+    "client",
+    "sdk"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/agenomics-labs/protocol.git",
+    "directory": "sdk/client"
+  },
+  "bugs": {
+    "url": "https://github.com/agenomics-labs/protocol/issues"
+  },
+  "homepage": "https://github.com/agenomics-labs/protocol/tree/main/sdk/client#readme",
+  "license": "UNLICENSED",
+  "private": true,
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc",
     "test": "node --import tsx --test test/*.test.ts"
   },
-  "license": "UNLICENSED",
   "dependencies": {
     "@agenomics/idl": "*",
     "@coral-xyz/anchor": "^0.31.0",
