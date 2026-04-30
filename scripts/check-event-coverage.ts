@@ -21,6 +21,25 @@
  * `DISCRIMINATOR_MAP` is a flat `Record<string, string>` literal whose
  * keys we extract by matching object-literal entries inside the
  * declaration. If the indexer's shape changes, update INDEXER_MAP_REGEX.
+ *
+ * KNOWN LIMITATION — field-level coverage is NOT enforced.
+ *
+ * This gate verifies that every event NAME on the program side has a
+ * matching DISCRIMINATOR_MAP entry on the indexer side. It does NOT
+ * verify that every FIELD declared inside an event struct is actually
+ * decoded by the indexer. A future change that adds, removes, or
+ * renames a field in `#[event] pub struct ...` will pass this gate
+ * unchanged and silently produce mis-decoded events downstream
+ * (Anchor decoders typically tolerate trailing bytes — they read what
+ * they know and ignore the rest).
+ *
+ * This was surfaced by ADR-131's median-escrow-value trigger metric:
+ * `EscrowCreated` was missing `token_mint` for months without the
+ * gate firing. A follow-up ADR (numbered ≥134 at write-time) should
+ * extend this script to parse the field list of each `#[event]`
+ * struct and assert the indexer's per-event decoder reads each field.
+ * Estimated cost: 3–4 hours; pairs naturally with a Borsh-schema
+ * round-trip test of fixture event payloads.
  */
 
 import { createHash } from "node:crypto";
