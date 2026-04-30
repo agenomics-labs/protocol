@@ -22,24 +22,16 @@
  * keys we extract by matching object-literal entries inside the
  * declaration. If the indexer's shape changes, update INDEXER_MAP_REGEX.
  *
- * KNOWN LIMITATION — field-level coverage is NOT enforced.
- *
- * This gate verifies that every event NAME on the program side has a
- * matching DISCRIMINATOR_MAP entry on the indexer side. It does NOT
- * verify that every FIELD declared inside an event struct is actually
- * decoded by the indexer. A future change that adds, removes, or
- * renames a field in `#[event] pub struct ...` will pass this gate
- * unchanged and silently produce mis-decoded events downstream
- * (Anchor decoders typically tolerate trailing bytes — they read what
- * they know and ignore the rest).
- *
- * This was surfaced by ADR-131's median-escrow-value trigger metric:
- * `EscrowCreated` was missing `token_mint` for months without the
- * gate firing. A follow-up ADR (numbered ≥134 at write-time) should
- * extend this script to parse the field list of each `#[event]`
- * struct and assert the indexer's per-event decoder reads each field.
- * Estimated cost: 3–4 hours; pairs naturally with a Borsh-schema
- * round-trip test of fixture event payloads.
+ * Field-level coverage (added 2026-04-30, paired with ADR-131): for every
+ * event that has a decoder in `EVENT_DECODERS`, the gate now also asserts
+ * the decoder's ordered field list matches the on-chain struct's ordered
+ * field list. Borsh is positional, so a swap or omission silently
+ * misaligns every following field. This catches the ADR-131 class of bug
+ * (EscrowCreated missing token_mint) AND surfaced a pre-existing
+ * SuspensionCleared decoder that was missing AUD-004's cleared_count
+ * field — which had been silently bit-shifting `timestamp` since AUD-004
+ * landed. Events without a decoder fall through to the raw
+ * `event_<hex>` path by design and are NOT a coverage failure.
  */
 
 import { createHash } from "node:crypto";
@@ -145,6 +137,84 @@ export function extractIndexerDiscriminators(indexerSource: string): Set<string>
   return keys;
 }
 
+/**
+ * Extract the ordered field-name list from `pub struct <Name> { ... }`.
+ * Returns `null` if the struct is not present in the source. Tolerates
+ * doc comments, line comments, and trailing-comma styles.
+ *
+ * The on-chain Borsh wire format serializes struct fields in declaration
+ * order; the decoder MUST read them in the same order. So returning the
+ * ordered list (not a set) is load-bearing — a swap of two same-typed
+ * fields would be undetectable by an unordered comparison.
+ */
+export function extractStructFields(
+  rustSource: string,
+  structName: string,
+): string[] | null {
+  // Match `pub struct <Name> { ... }` capturing the body. The body terminator
+  // is the matching `}`; we keep this regex shallow because event structs
+  // do not nest braces (no inline tuple structs etc. in the codebase).
+  const re = new RegExp(
+    `pub\\s+struct\\s+${structName}\\s*\\{([\\s\\S]*?)\\n\\}`,
+    "m",
+  );
+  const m = rustSource.match(re);
+  if (!m) return null;
+  const body = m[1];
+  const fields: string[] = [];
+  for (const rawLine of body.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line.length === 0) continue;
+    if (line.startsWith("//")) continue; // line + doc comments
+    const fm = line.match(/^pub\s+([A-Za-z_][A-Za-z0-9_]*)\s*:/);
+    if (fm) fields.push(fm[1]);
+  }
+  return fields;
+}
+
+/**
+ * Extract the ordered property-key list from the indexer's
+ * `<EventName>: (r) => ({ ... })` decoder body inside `EVENT_DECODERS`.
+ * Returns `null` if the event has no decoder (an explicit, non-erroneous
+ * state — events without a decoder fall through to the raw `event_<hex>`
+ * classification path by design).
+ *
+ * Two shapes are supported:
+ *   `EventName: (r) => ({ field: ..., ... })`   ← arrow with object body
+ *   `EventName: (r) => { ... return { ... }; }` ← arrow with block body
+ * Only the object-body shape is currently used in the codebase, but the
+ * matcher tolerates both so a stylistic refactor doesn't break the gate.
+ */
+export function extractDecoderFields(
+  indexerSource: string,
+  eventName: string,
+): string[] | null {
+  // The EVENT_DECODERS literal sits at the top level of index.ts. We anchor
+  // on `<EventName>: (r) =>` and then take everything up to the matching
+  // close-paren of the wrapping `({ ... })` (object-literal arrow). For
+  // simplicity we cap the match at 2KB which is well above any current
+  // decoder body — the largest is ProtocolConfigInitialized at ~700 bytes.
+  const re = new RegExp(
+    `\\b${eventName}\\s*:\\s*\\(r\\)\\s*=>\\s*\\(\\s*\\{([\\s\\S]{0,2048}?)\\}\\s*\\)\\s*,`,
+    "m",
+  );
+  const m = indexerSource.match(re);
+  if (!m) return null;
+  const body = m[1];
+  const fields: string[] = [];
+  for (const rawLine of body.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line.length === 0) continue;
+    if (line.startsWith("//")) continue;
+    // Property keys at the top level of the body. Excludes nested object
+    // values by requiring the property key be at the start of the trimmed
+    // line and followed by `:`.
+    const fm = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*:/);
+    if (fm) fields.push(fm[1]);
+  }
+  return fields;
+}
+
 function main(): void {
   let eventFiles: string[];
   try {
@@ -221,11 +291,92 @@ function main(): void {
     process.exit(1);
   }
 
+  // Field-coverage gate (ADR-082 follow-up): for every event that has a
+  // decoder in EVENT_DECODERS, assert the decoder's ordered field list
+  // matches the on-chain struct's ordered field list. Events without a
+  // decoder fall through to the raw `event_<hex>` classification by
+  // design — that's NOT a coverage failure here.
+  //
+  // This catches the EscrowCreated/token_mint class of bug: a new field
+  // added on-chain that the decoder doesn't read. Pre-fix the
+  // discriminator-only gate would pass, the decoder would silently emit
+  // events without the new field, and downstream views (e.g. the
+  // ADR-131 median-escrow trigger) would silently aggregate
+  // unbucketed data.
+  const fieldMismatches: Array<{
+    event: ProgramEvent;
+    structFields: string[];
+    decoderFields: string[];
+    diff: string;
+  }> = [];
+  for (const ev of programEvents) {
+    const src = readFileSync(join(REPO_ROOT, ev.sourceFile), "utf8");
+    const structFields = extractStructFields(src, ev.name);
+    if (structFields === null) {
+      // Discriminator gate already passed for this event, so the struct
+      // exists; failing to extract its fields is a parser bug, not a
+      // protocol mismatch. Surface and bail.
+      console.error(
+        `[event-coverage] internal: couldn't extract struct fields for ${ev.name} from ${ev.sourceFile}`,
+      );
+      process.exit(2);
+    }
+    const decoderFields = extractDecoderFields(indexerSrc, ev.name);
+    if (decoderFields === null) {
+      // No decoder for this event — raw classification path. OK.
+      continue;
+    }
+    if (
+      structFields.length !== decoderFields.length ||
+      structFields.some((f, i) => f !== decoderFields[i])
+    ) {
+      const diff = buildFieldDiff(structFields, decoderFields);
+      fieldMismatches.push({ event: ev, structFields, decoderFields, diff });
+    }
+  }
+
+  if (fieldMismatches.length > 0) {
+    console.error(
+      `\n[event-coverage] FAIL: ${fieldMismatches.length} event decoder(s) drift from on-chain struct:\n`,
+    );
+    for (const fm of fieldMismatches) {
+      console.error(
+        `  ${fm.event.name} (${fm.event.programCrate}, ${fm.event.sourceFile}):\n` +
+          `    on-chain struct fields: [${fm.structFields.join(", ")}]\n` +
+          `    indexer decoder fields: [${fm.decoderFields.join(", ")}]\n` +
+          `    diff: ${fm.diff}\n` +
+          `    fix: align EVENT_DECODERS.${fm.event.name} in src/indexer/index.ts\n` +
+          `         with the struct in ${fm.event.sourceFile}. Borsh is positional —\n` +
+          `         field order MUST match.\n`,
+      );
+    }
+    process.exit(1);
+  }
+
   console.log(
     `[event-coverage] OK: indexer covers all ${programEvents.length} on-chain #[event] declaration(s) ` +
-      `across ${eventFiles.length} program crate(s).`
+      `across ${eventFiles.length} program crate(s); field-coverage verified for events with decoders.`
   );
   process.exit(0);
+}
+
+/**
+ * Compose a short human-readable diff between two ordered field lists.
+ * Reports the first divergence (position + values) plus any tail
+ * additions/removals — the operator's eye is faster than a full LCS.
+ */
+function buildFieldDiff(struct: string[], decoder: string[]): string {
+  const n = Math.max(struct.length, decoder.length);
+  for (let i = 0; i < n; i++) {
+    const s = struct[i];
+    const d = decoder[i];
+    if (s !== d) {
+      if (s === undefined) return `decoder has extra field at position ${i}: '${d}' (struct ends here)`;
+      if (d === undefined) return `decoder is missing field at position ${i}: '${s}' (struct continues)`;
+      return `mismatch at position ${i}: struct='${s}' vs decoder='${d}'`;
+    }
+  }
+  return "(no diff — should be unreachable)";
 }
 
 // Only run when invoked directly — keeps the helpers importable from
