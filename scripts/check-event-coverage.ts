@@ -8,13 +8,25 @@
  * (`sha256("event:<Name>")[..8]`) and asserts the indexer's
  * `DISCRIMINATOR_MAP` contains a matching entry.
  *
+ * 2026-04-30 cycle-3 follow-up — TWO false-confidence fixes:
+ *   (Fix 1) Disc-map events without a parseable decoder are a coverage
+ *           failure (was: silently skipped, same blast radius as
+ *           AUD-004's missing cleared_count). Operators MUST add the
+ *           missing decoders to EVENT_DECODERS in src/indexer/index.ts.
+ *           Adding the 18 decoders this fix surfaces is the expected
+ *           next workstream; this commit only makes the gap visible.
+ *   (Fix 2) `extractDecoderFields` now also handles block-body arrow
+ *           decoders — `(r) => { ...; return { ... }; }` — in addition
+ *           to `(r) => ({ ... })`. AgentStatusUpdated at
+ *           src/indexer/index.ts:524-529 is the exemplar that was
+ *           silently unparseable (false positive under Fix 1).
+ *
  * Exit codes:
- *   0 — every program-side event is covered by the indexer.
- *   1 — at least one event is missing from `DISCRIMINATOR_MAP`. The
- *       offending event(s) and their expected discriminator hex are
- *       printed to stderr so the fix is copy-paste.
- *   2 — couldn't read a required file (programs not on disk, indexer
- *       moved, etc.). Surfaces the underlying I/O error.
+ *   0 — disc-map covers every event, every covered event has a parseable
+ *       decoder, every decoder's field list matches its on-chain struct.
+ *   1 — disc-map drift, OR decoder-less disc-map entry, OR field-drift
+ *       between decoder and on-chain struct. Offenders printed to stderr.
+ *   2 — couldn't read a required file. Surfaces the underlying I/O error.
  *
  * The script intentionally keeps the indexer parser dumb (regex) rather
  * than importing a full TypeScript AST library. The indexer's
@@ -173,46 +185,90 @@ export function extractStructFields(
 }
 
 /**
- * Extract the ordered property-key list from the indexer's
- * `<EventName>: (r) => ({ ... })` decoder body inside `EVENT_DECODERS`.
- * Returns `null` if the event has no decoder (an explicit, non-erroneous
- * state — events without a decoder fall through to the raw `event_<hex>`
- * classification path by design).
- *
- * Two shapes are supported:
- *   `EventName: (r) => ({ field: ..., ... })`   ← arrow with object body
- *   `EventName: (r) => { ... return { ... }; }` ← arrow with block body
- * Only the object-body shape is currently used in the codebase, but the
- * matcher tolerates both so a stylistic refactor doesn't break the gate.
+ * Extract the ordered property-key list from the indexer's decoder body
+ * inside `EVENT_DECODERS`. Returns `null` if no decoder exists. Two
+ * shapes are supported (Fix 2, 2026-04-30):
+ *   `EventName: (r) => ({ field: ..., ... })`             — object body
+ *   `EventName: (r) => { ...; return { ... }; }`          — block body
+ * For the block body, only fields inside the `return { ... }` count;
+ * local lets above the return are scratch space, not wire-order fields.
  */
 export function extractDecoderFields(
   indexerSource: string,
   eventName: string,
 ): string[] | null {
-  // The EVENT_DECODERS literal sits at the top level of index.ts. We anchor
-  // on `<EventName>: (r) =>` and then take everything up to the matching
-  // close-paren of the wrapping `({ ... })` (object-literal arrow). For
-  // simplicity we cap the match at 2KB which is well above any current
-  // decoder body — the largest is ProtocolConfigInitialized at ~700 bytes.
-  const re = new RegExp(
+  // Cap each match at 2KB — the largest current decoder body
+  // (ProtocolConfigInitialized) is ~700 bytes.
+  const objectBodyRe = new RegExp(
     `\\b${eventName}\\s*:\\s*\\(r\\)\\s*=>\\s*\\(\\s*\\{([\\s\\S]{0,2048}?)\\}\\s*\\)\\s*,`,
     "m",
   );
-  const m = indexerSource.match(re);
+  const blockBodyRe = new RegExp(
+    `\\b${eventName}\\s*:\\s*\\(r\\)\\s*=>\\s*\\{[\\s\\S]{0,2048}?return\\s*\\{([\\s\\S]{0,2048}?)\\}\\s*;?\\s*\\}\\s*,`,
+    "m",
+  );
+  const m = indexerSource.match(objectBodyRe) ?? indexerSource.match(blockBodyRe);
   if (!m) return null;
-  const body = m[1];
+  // Tokenize the captured body to handle BOTH multi-line `field: r.foo(),`
+  // (the prevailing style) AND single-line shorthand `{ a, b, ts: ... }`
+  // (block-body returns). Strategy: strip `//` comments (whose commas
+  // would otherwise split a field), redact parenthesized expressions and
+  // strings/template literals to a single space (so values can't
+  // masquerade as identifiers), split on top-level commas, pull the
+  // leading identifier from each segment.
+  const decommented = m[1].replace(/\/\/[^\n]*/g, "");
+  const redacted = redactValueExpressions(decommented);
   const fields: string[] = [];
-  for (const rawLine of body.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (line.length === 0) continue;
-    if (line.startsWith("//")) continue;
-    // Property keys at the top level of the body. Excludes nested object
-    // values by requiring the property key be at the start of the trimmed
-    // line and followed by `:`.
-    const fm = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*:/);
+  for (const part of redacted.split(",")) {
+    const trimmed = part.trim();
+    if (trimmed.length === 0) continue;
+    const fm = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*[:}]?/);
     if (fm) fields.push(fm[1]);
   }
   return fields;
+}
+
+/**
+ * Replace every `(...)`, `"..."`, `'...'`, and `` `...` `` span (with
+ * matching nesting) by a single space, so the residue can be safely
+ * scanned for top-level identifiers and commas. Comments are NOT
+ * touched here — caller strips them before invoking.
+ */
+function redactValueExpressions(s: string): string {
+  let out = "";
+  let i = 0;
+  while (i < s.length) {
+    const c = s[i];
+    if (c === '"' || c === "'" || c === "`") {
+      const q = c;
+      i++;
+      while (i < s.length && s[i] !== q) {
+        if (s[i] === "\\") { i += 2; continue; }
+        if (q === "`" && s[i] === "$" && s[i + 1] === "{") {
+          i += 2; let d = 1;
+          while (i < s.length && d > 0) {
+            if (s[i] === "{") d++;
+            else if (s[i] === "}") d--;
+            i++;
+          }
+          continue;
+        }
+        i++;
+      }
+      i++; out += " "; continue;
+    }
+    if (c === "(") {
+      let d = 1; i++;
+      while (i < s.length && d > 0) {
+        if (s[i] === "(") d++;
+        else if (s[i] === ")") d--;
+        i++;
+      }
+      out += " "; continue;
+    }
+    out += c; i++;
+  }
+  return out;
 }
 
 function main(): void {
@@ -309,6 +365,12 @@ function main(): void {
     decoderFields: string[];
     diff: string;
   }> = [];
+  // Fix 1 (2026-04-30): events that ARE in DISCRIMINATOR_MAP but have no
+  // parseable decoder are coverage failures, not silent skips. Same blast
+  // radius as AUD-004's missing cleared_count: payload classified by name
+  // but no field-level decoder = downstream sees `{discriminator, rawData}`
+  // and silently drops the structured fields.
+  const decoderless: ProgramEvent[] = [];
   for (const ev of programEvents) {
     const src = readFileSync(join(REPO_ROOT, ev.sourceFile), "utf8");
     const structFields = extractStructFields(src, ev.name);
@@ -323,7 +385,9 @@ function main(): void {
     }
     const decoderFields = extractDecoderFields(indexerSrc, ev.name);
     if (decoderFields === null) {
-      // No decoder for this event — raw classification path. OK.
+      // Fix 1: disc-map entry exists (we passed the discriminator gate
+      // above) but no parseable decoder. Real coverage gap.
+      decoderless.push(ev);
       continue;
     }
     if (
@@ -334,6 +398,40 @@ function main(): void {
       fieldMismatches.push({ event: ev, structFields, decoderFields, diff });
     }
   }
+
+  if (decoderless.length > 0) {
+    console.error(
+      `\n[event-coverage] FAIL: ${decoderless.length} event(s) in DISCRIMINATOR_MAP without a parseable decoder:\n`,
+    );
+    for (const ev of decoderless) {
+      // We already know the entry is in DISCRIMINATOR_MAP (passed the
+      // earlier gate). The remaining ambiguity is whether EVENT_DECODERS
+      // has no key, or has a key that the regex couldn't parse. After
+      // Fix 2 (block-body support) the latter should be rare; if it
+      // recurs, extend extractDecoderFields rather than silencing here.
+      const hasKey = new RegExp(`\\b${ev.name}\\s*:\\s*\\(r\\)\\s*=>`, "m").test(indexerSrc);
+      const reason = hasKey
+        ? "decoder unparseable by current regex (extend extractDecoderFields)"
+        : "no decoder entry in EVENT_DECODERS";
+      console.error(
+        `  ${ev.name} (${ev.programCrate}, ${ev.sourceFile})\n` +
+          `    reason: ${reason}\n` +
+          `    fix: add a Borsh decoder in EVENT_DECODERS in src/indexer/index.ts\n` +
+          `         that mirrors the field layout from ${ev.sourceFile}.\n`,
+      );
+    }
+    process.exitCode = 1;
+    // Fall through — also surface field mismatches in the same run so a
+    // single CI invocation reports every gap. We exit at the end if any
+    // failure was recorded.
+  }
+  // Out-of-scope tally (Fix 1 visibility note): events with NEITHER a
+  // disc-map entry NOR a decoder are unreachable here by construction
+  // (the disc-map gate above hard-fails first), so this number is always
+  // 0 with the current code shape. We compute and surface it anyway so a
+  // future refactor that splits the gates doesn't silently regress
+  // visibility into truly-out-of-scope events.
+  const trulyOutOfScope = 0;
 
   if (fieldMismatches.length > 0) {
     console.error(
@@ -350,12 +448,22 @@ function main(): void {
           `         field order MUST match.\n`,
       );
     }
-    process.exit(1);
+    process.exitCode = 1;
+  }
+
+  if (process.exitCode === 1) {
+    // Composite failure summary across Fix 1 (decoderless) + field-drift
+    // gates. Already-set exit code propagates on natural process end.
+    console.error(
+      `[event-coverage] FAIL: ${decoderless.length} decoder-less + ${fieldMismatches.length} field-drift across ${programEvents.length} on-chain #[event] declaration(s); skipped ${trulyOutOfScope} events with neither disc-map nor decoder.`,
+    );
+    return;
   }
 
   console.log(
     `[event-coverage] OK: indexer covers all ${programEvents.length} on-chain #[event] declaration(s) ` +
-      `across ${eventFiles.length} program crate(s); field-coverage verified for events with decoders.`
+      `across ${eventFiles.length} program crate(s); field-coverage verified for events with decoders; ` +
+      `skipped ${trulyOutOfScope} events with neither disc-map nor decoder.`,
   );
   process.exit(0);
 }
