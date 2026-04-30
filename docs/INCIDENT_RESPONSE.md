@@ -19,9 +19,10 @@ specific to one tenant. Operator-specific config is spelled
 - `docs/PRE_MAINNET_ROADMAP.md` §4 (C2) — the spec this playbook
   delivers against.
 
-Four incident classes: on-chain triage (§1), multisig rotation (§2),
-indexer recovery (§3), x402-relay saturation (§4). Each section is:
-triggers → decision tree → procedure → post-incident.
+Five incident classes: on-chain triage (§1), multisig rotation (§2),
+indexer recovery (§3), x402-relay saturation (§4), and ADR-131
+calibration trigger response (§5). Each section is: triggers →
+decision tree → procedure → post-incident.
 
 ---
 
@@ -526,7 +527,106 @@ spans only a single process) — emergency mitigation, not permanent fix.
 
 ---
 
-## 5. Cross-cutting: post-mortem artifacts
+## 5. ADR-131 calibration trigger response
+
+### 5.1 Triggers
+
+ADR-131 §"Re-calibration trigger" defines four conditions that re-open
+the sybil-cost calibration question. Unlike §1–§4, these are NOT 3am
+alerts — they are dashboard-driven signals with response windows
+measured in days, not minutes. The operator action is "open the ADR
+question," not "stop the bleeding."
+
+- **TR-1** — Sybil-pattern incidents exceed quota:
+  - Y1: ≥5 incidents per quarter.
+  - Y2+: ≥10 incidents per quarter.
+  - "Incident" = ≥3 fresh authorities (registered <90 days before)
+    won disputes within a 7-day window.
+- **TR-2** — Median escrow value > 1 SOL sustained 30 days (rolling).
+- **TR-3** — A funded sybil incident is forensically reconstructed
+  where `E > 3R + 3L` (the AUD-205 inequality) was demonstrably
+  reachable.
+- **TR-4** — A new dispute-resolution code path lands that emits
+  `reason = 1` or `reason = 2` from anywhere other than
+  `resolve_dispute`, `expire_escrow`, or governance suspension.
+  ADR-082's event-coverage gate catches the structural change at PR
+  time; this trigger is the ops-side echo.
+
+### 5.2 Where to watch
+
+- **Primary** — dashboard StatsBar cards "Sybil Patterns (7d)" and
+  "Median Escrow (30d)" — color-coded green/yellow/red against the
+  TR-1 / TR-2 thresholds. Cards are backed by indexer materialized
+  views in `src/indexer/migrations/002-adr-131-trigger-views.sql`.
+- **Manual fallback** (dashboard down or stale) — query the indexer
+  Postgres directly. View names are documented in the migration
+  header.
+- **TR-3** is event-driven (post-mortem of a real incident); enter
+  via §1.1 first, then arrive here.
+- **TR-4** is PR-driven (review of a new slash-emitting code path).
+
+### 5.3 Decision tree
+
+```
+Q1. Which trigger fired?
+    TR-1 / TR-2 → §5.4 (recalibration cadence)
+    TR-3        → §1.1 first (it's also an on-chain incident);
+                  then §5.4
+    TR-4        → §5.4, but the analysis is "does the new emitter
+                  change the AUD-205 inequality?", not "is the
+                  threshold exceeded?"
+
+Q2. Has TR-1 / TR-2 been observed for ≥7 consecutive days?
+    Yes → proceed to §5.4.
+    No  → record the observation, monitor; do not open ADR yet.
+          Single-day trigger spikes can be transient (mainnet
+          chain reorgs, indexer backfill artifacts).
+```
+
+### 5.4 Procedure: open a successor ADR
+
+ADR-131 §"Levers available" enumerates 5 named levers. A successor
+ADR (numbered ≥132 at write-time) MUST select one or more, justify
+the parameter values, and pass the same tested-rejection-path test
+the original calibration accepted (per ADR-080 §H Alt-D).
+
+1. **Open the ADR draft within 7 days of trigger confirmation.**
+   File at `docs/adr/ADR-XXX-<lever-name>.md`. Reference ADR-131
+   inline.
+2. **Quote the trigger source data**: dashboard query timestamp + the
+   SQL view contents at that moment (paste the result). Without the
+   trigger evidence the ADR has no falsifiable claim.
+3. **Pick a lever**, not a parameter tweak:
+   - Lever 1 — lower `MAX_DELTA_PER_CALL` (event-emission frequency).
+   - Lever 2 — raise `SUSPEND_AT_SLASH_COUNT` (closed-state-machine
+     migration, AUD-004-magnitude).
+   - Lever 3 — minimum-stake-at-registration bond (new account, slash
+     CPI, ~ADR-124 magnitude).
+   - Lever 4 — tie escrow size to required reputation/stake at
+     `create_escrow` accept-time (the natural answer for TR-2).
+   - Lever 5 — make these `ProtocolConfig`-tunable (one-time
+     governance-surface expansion).
+4. **Reach governance** per ADR-063 §4 if the lever requires a
+   `ProtocolConfig` update or program redeploy. Standard 14-day
+   notice applies; do not shortcut.
+5. **Continue routine ops** during the ADR cycle. The trigger is a
+   "re-open the question" signal, not a "halt the protocol" signal —
+   ADR-131 explicitly chose calibration over halting.
+
+### 5.5 Post-incident
+
+Per §6 (cross-cutting). Plus:
+
+- **Status audit** — `docs/adr/STATUS-AUDIT-TEMPLATE.md` snapshot
+  including the trigger evidence, the chosen lever, and the linked
+  successor ADR.
+- **Update this section** if the trigger landed in a way the
+  decision-tree did not anticipate. §5 is itself a living document
+  — "what surprised you" applies to ops as much as incidents.
+
+---
+
+## 6. Cross-cutting: post-mortem artifacts
 
 For every incident class, capture:
 
@@ -549,7 +649,7 @@ Filed under `<TODO: operator team to fill in>` post-mortem destination.
 
 ---
 
-## 6. References
+## 7. References
 
 - **C4 companion**: `docs/PROTOCOL_AUTHORITY_OPERATIONS.md`
   (commit `7cb4415`) — required reading for §1 and §2.
