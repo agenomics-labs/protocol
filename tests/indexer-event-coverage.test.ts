@@ -107,9 +107,12 @@ test("script exits 1 listing decoder-less events when DISCRIMINATOR_MAP entries 
   // We assert on the new fail-mode contract:
   //   (a) exit code 1
   //   (b) stderr lists at least one specific known-decoder-less event
-  //       (ReputationStaked, the first agent-registry event without a
-  //       decoder — chosen as a stable anchor because the indexer has
-  //       no plans to add a no-op decoder for it)
+  //       (TaskAccepted, the first settlement event without a decoder —
+  //       chosen as a stable anchor while the agent-vault and agent-
+  //       registry batches land their decoders. The original anchor was
+  //       ReputationStaked, swapped on commit 2 of 4 once that decoder
+  //       landed; once commit 3 of 4 lands TaskAccepted, swap to a
+  //       remaining settlement event or flip to the OK contract.)
   //   (c) the composite summary line is emitted
   //   (d) AgentStatusUpdated is NOT decoder-less — Fix 2 in dd498b2
   //       taught extractDecoderFields to parse block-body arrow
@@ -145,8 +148,8 @@ test("script exits 1 listing decoder-less events when DISCRIMINATOR_MAP entries 
   );
   assert.match(
     stderr,
-    /\bReputationStaked\b[^\n]*\n\s*reason: no decoder entry in EVENT_DECODERS/,
-    "expected ReputationStaked listed as decoder-less (stable anchor; if a decoder was added, pick a different anchor or flip to OK contract)"
+    /\bTaskAccepted\b[^\n]*\n\s*reason: no decoder entry in EVENT_DECODERS/,
+    "expected TaskAccepted listed as decoder-less (stable anchor for commit 2 of 4; if a decoder was added, pick a different anchor or flip to OK contract)"
   );
   assert.match(
     stderr,

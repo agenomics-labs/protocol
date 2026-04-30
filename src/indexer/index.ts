@@ -686,6 +686,58 @@ const EVENT_DECODERS: Record<string, EventDecoder> = {
     vault: r.pubkey(),
   }),
 
+  // ADR-082 decoder gap closure: agent-registry events (commit 2 of 4).
+  // All 3 events below had DISCRIMINATOR_MAP entries but no
+  // EVENT_DECODERS entries, so they fell through to the
+  // {discriminator, rawData} forensics fallback. Field layouts are
+  // copied verbatim from programs/agent-registry/src/events.rs; field
+  // names match the Rust struct field names so downstream consumers
+  // can index by the same identifiers used on-chain.
+
+  // ReputationStaked — emitted when an agent stakes reputation.
+  // Wire layout:
+  //   pub authority: Pubkey
+  //   pub amount: u64
+  //   pub total_staked: u64
+  //   pub timestamp: i64
+  ReputationStaked: (r) => ({
+    authority: r.pubkey(),
+    amount: u64ToJson(r.u64()),
+    total_staked: u64ToJson(r.u64()),
+    timestamp: i64ToJson(r.i64()),
+  }),
+
+  // AgentSlashed — emitted when an agent's stake is slashed.
+  // Wire layout:
+  //   pub authority: Pubkey
+  //   pub total_slashes: u32      // AUD-111: widened from u8 → u32 at the
+  //                               // event surface (cast at emit-time is
+  //                               // `as u32`, lossless). The on-disk
+  //                               // profile still carries `slash_count: u8`
+  //                               // — do NOT confuse the two; this decoder
+  //                               // pins the EVENT wire format.
+  //   pub suspended: bool
+  //   pub timestamp: i64
+  AgentSlashed: (r) => ({
+    authority: r.pubkey(),
+    total_slashes: r.u32(),
+    suspended: r.bool(),
+    timestamp: i64ToJson(r.i64()),
+  }),
+
+  // ReputationUnstaked — emitted when an agent withdraws staked reputation.
+  // Wire layout:
+  //   pub authority: Pubkey
+  //   pub amount: u64
+  //   pub remaining_staked: u64
+  //   pub timestamp: i64
+  ReputationUnstaked: (r) => ({
+    authority: r.pubkey(),
+    amount: u64ToJson(r.u64()),
+    remaining_staked: u64ToJson(r.u64()),
+    timestamp: i64ToJson(r.i64()),
+  }),
+
   // ADR-082 / item 6: ManifestUpdated (agent-registry, ADR-060).
   // Wire layout from programs/agent-registry/src/events.rs:
   //   pub authority: Pubkey
