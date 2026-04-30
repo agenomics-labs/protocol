@@ -1,0 +1,22 @@
+{
+  "name": "@agenomics-examples/register-agent",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "AEP first-agent quickstart — read-only example showing connect/derive/fetch/render against devnet. Not a workspace member; mirrors what an external consumer's repo looks like.",
+  "scripts": {
+    "start": "tsx register-agent.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@agenomics/idl": "file:../sdk/idl",
+    "@agenomics/client": "file:../sdk/client",
+    "@coral-xyz/anchor": "^0.31.1",
+    "@solana/web3.js": "^1.98.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.9.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}
