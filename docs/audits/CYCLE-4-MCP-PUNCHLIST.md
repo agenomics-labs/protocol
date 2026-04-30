@@ -226,7 +226,17 @@ Not Low because:
    advances virtual time across the reset threshold between two
    restart clusters to pin the recovery semantic.
 
-**Status:** Open.
+**Status:** **Closed — commit `ad0294d` (2026-04-29).** Code lands
+the Batch I windowed reset (`restartCountResetAfterMs`, default 1h)
+PLUS the audit-followup hardening: `restartCountLifetimeCap` (default
+100, never reset) closes the slow-flap blind spot, and
+`lastSuccessAt = null` after the reset fires forces the next reset
+to require a fresh sustained-healthy window. 5 new tests cover the
+boundary, multi-reset, handshake-doesn't-refresh-lastSuccessAt,
+recordFailure-path, and lifetime-cap-bricks-slow-flap arms. Existing
+failing test was structurally buggy (cluster-2 emitted a successful
+USER response before close, defeating the reset); rewritten as
+close-mid-flight without success. mcp-server suite 383/383.
 
 ## Adjacent surfaces probed (no findings)
 
