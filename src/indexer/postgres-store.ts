@@ -278,6 +278,20 @@ export interface ProtocolConfigHistoryRecord {
 export interface PostgresStore {
   /** True iff the underlying client is live (used by `/health`). */
   readonly enabled: boolean;
+  /**
+   * The underlying pg.Pool when the store is live; `undefined` otherwise.
+   *
+   * ADR-131 (added 2026-04-30): the metrics-server's trigger endpoints
+   * (`/api/metrics/sybil-patterns`, `/api/metrics/escrow-median`) read
+   * from Postgres-side views shipped in migration 002. Exposing the
+   * pool here avoids constructing a second pool just for the metrics
+   * surface, and keeps the connection-management contract (max
+   * connections, error handling, single-writer advisory lock) in one
+   * place. Keep this an OPTIONAL accessor — the disabled store does
+   * not own a pool and the metrics endpoints gracefully render a
+   * "metric unavailable" state when the pool is undefined.
+   */
+  readonly pool?: Pool;
   /** Apply the schema migration. Idempotent (CREATE ... IF NOT EXISTS). */
   applyMigration(): Promise<void>;
   insertEvent(rec: EventRecord): Promise<void>;
@@ -382,7 +396,10 @@ export class DisabledPostgresStore implements PostgresStore {
  */
 export class LivePostgresStore implements PostgresStore {
   readonly enabled = true;
-  private readonly pool: Pool;
+  // ADR-131: was `private`; now public-readonly so the metrics-server can
+  // query the trigger views without owning a separate pool. See
+  // PostgresStore.pool jsdoc above.
+  readonly pool: Pool;
 
   constructor(pool: Pool) {
     this.pool = pool;

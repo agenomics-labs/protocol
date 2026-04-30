@@ -1,5 +1,12 @@
 use anchor_lang::prelude::*;
 
+/// ADR-131 (sybil-cost calibration): off-chain consumers compute the
+/// "median escrow value" trigger metric per token denomination. SOL and
+/// USDC escrows have wildly different unit values, so the metric is only
+/// meaningful when bucketed by `token_mint`. The on-chain `TaskEscrow`
+/// account already carries `token_mint`; emitting it here closes the
+/// missing-emission gap so the indexer no longer has to fetch the
+/// account to disambiguate.
 #[event]
 pub struct EscrowCreated {
     pub escrow: Pubkey,
@@ -9,6 +16,7 @@ pub struct EscrowCreated {
     pub total_amount: u64,
     pub deadline: i64,
     pub milestone_count: u32,
+    pub token_mint: Pubkey,
 }
 
 #[event]
