@@ -289,3 +289,79 @@ describe("ADR-131: DisputeRaised decoder pins 3-field shape", () => {
     assert.equal(data.task_id,   7);
   });
 });
+
+// ---------------------------------------------------------------------------
+// ADR-082 decoder gap closure (commit 1 of 4): agent-vault byte-layout pin.
+//
+// TransactionExecuted is chosen as the representative pin for this batch
+// because its layout exercises the broadest cross-section of reader types
+// in a single event: pubkey×2 + u64 + i64 + bool. A silent type-width
+// regression on any of those four reader calls (e.g. swapping u64() for
+// i64() — names match and order matches, the discriminator-only ADR-082
+// gate cannot detect it) would shift every following byte and corrupt
+// the trailing `success` boolean. Pinning the exact wire format here is
+// the safety net for the other 7 decoders added in the same edit, since
+// they share the same reader API.
+// ---------------------------------------------------------------------------
+
+const DISC_TRANSACTION_EXECUTED = "d3e3a80e206fbdd2";
+
+describe("ADR-082: TransactionExecuted decoder pins agent-vault wire layout", () => {
+  it("decodes vault, recipient, amount, timestamp, success in declaration order", () => {
+    const vault     = Keypair.generate().publicKey;
+    const recipient = Keypair.generate().publicKey;
+
+    // Wire layout from programs/agent-vault/src/events.rs::TransactionExecuted.
+    const payload = Buffer.concat([
+      encPubkey(vault),
+      encPubkey(recipient),
+      encU64(2_500_000),       // amount (lamports)
+      encI64(1_700_000_000),   // timestamp (Solana clock seconds)
+      Buffer.from([0x01]),     // success = true
+    ]);
+
+    const events = parseLogsForEvents(
+      [makeLog(DISC_TRANSACTION_EXECUTED, payload)],
+      "agent-vault",
+    );
+
+    assert.equal(events.length, 1);
+    assert.equal(events[0].name, "TransactionExecuted");
+
+    const data = events[0].data as Record<string, unknown>;
+    assert.equal(data.vault,     vault.toBase58());
+    assert.equal(data.recipient, recipient.toBase58());
+    // Load-bearing assertions: each of the four trailing field types
+    // must round-trip. If `amount` ever drifts to i64 the byte stream
+    // still parses (same width) but signed-overflow values would
+    // wrap; if `timestamp` drifts to u64 a future negative pre-epoch
+    // Solana clock value would alias to a giant unsigned number; if
+    // `success` shifts by even one byte it reads garbage from the
+    // post-payload region and may surface as `true` on every event.
+    assert.equal(data.amount,    2_500_000);
+    assert.equal(data.timestamp, 1_700_000_000);
+    assert.equal(data.success,   true);
+  });
+
+  it("decodes success=false (failed transfer post-image)", () => {
+    const vault     = Keypair.generate().publicKey;
+    const recipient = Keypair.generate().publicKey;
+
+    const payload = Buffer.concat([
+      encPubkey(vault),
+      encPubkey(recipient),
+      encU64(0),
+      encI64(0),
+      Buffer.from([0x00]),     // success = false
+    ]);
+
+    const events = parseLogsForEvents(
+      [makeLog(DISC_TRANSACTION_EXECUTED, payload)],
+      "agent-vault",
+    );
+
+    assert.equal(events.length, 1);
+    const data = events[0].data as Record<string, unknown>;
+    assert.equal(data.success, false, "success=0x00 must decode to false");
+  });
+});
