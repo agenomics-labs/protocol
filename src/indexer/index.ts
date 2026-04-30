@@ -2039,8 +2039,15 @@ async function main(): Promise<void> {
     );
   });
 
-  process.on("SIGINT", () => {
-    logger.info("shutting down (SIGINT)");
+  // CYCLE4-OFF-001: SIGTERM is what container orchestrators send (k8s,
+  // Docker, systemd) before SIGKILL. Without a handler, the process
+  // exits at default-kill before `writerLock.release()` runs — PG
+  // releases the lock on session teardown anyway (correctness preserved)
+  // but rolling-deploy startup is delayed by the next instance waiting
+  // for the lock-holder's TCP session to time out. Mirror the SIGINT
+  // path for SIGTERM via a shared graceful-shutdown helper.
+  const gracefulShutdown = (reason: "SIGINT" | "SIGTERM"): void => {
+    logger.info({ reason }, "shutting down");
     heartbeat.stop();
     // OFF-212: release the writer lock explicitly on graceful
     // shutdown. The PG session-close path also releases it, so this
@@ -2057,7 +2064,9 @@ async function main(): Promise<void> {
     });
     db.close();
     process.exit(0);
-  });
+  };
+  process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+  process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 }
 
 // When imported by the test runner, `main()` must not auto-run; guard on
