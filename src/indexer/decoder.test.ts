@@ -454,3 +454,113 @@ describe("ADR-082 / AUD-111: AgentSlashed decoder pins total_slashes as u32", ()
     assert.equal(data.timestamp, 0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// ADR-082 decoder gap closure (commit 3 of 3 — final): settlement byte-layout
+// pin.
+//
+// MilestoneApproved is chosen as the representative pin for this batch
+// because its layout exercises the broadest cross-section in the seven
+// settlement events added in this commit: pubkey×2 + u32 + u64 + u64.
+// The u32-vs-u64 width discrimination is the load-bearing trap here —
+// `milestone_index` is u32 and the two trailing fields are u64. A silent
+// regression from `r.u32()` to `r.u64()` on `milestone_index` would (a)
+// pull 4 bytes from the start of `amount`, (b) shift `amount` to consume
+// 4 bytes of `task_id` plus 4 bytes of post-payload garbage, and (c)
+// leave `task_id` reading off the end of the buffer entirely. The
+// discriminator-only ADR-082 gate cannot detect this; this pin is the
+// safety net for the other 6 decoders added in the same edit (the four
+// other Milestone*/Escrow* events share the same u32+u64 reader pair
+// pattern in various combinations).
+//
+// EscrowCreated, DisputeRaised, and DisputeResolved already have pins
+// (above, lines 167-291) from the ADR-131 wiring pass, so this one
+// rounds out the settlement decoder coverage.
+// ---------------------------------------------------------------------------
+
+const DISC_MILESTONE_APPROVED = "286d9f90a9e623e5";
+
+describe("ADR-082: MilestoneApproved decoder pins u32 milestone_index + u64 amount/task_id", () => {
+  it("decodes escrow, client, milestone_index (u32), amount, task_id in declaration order", () => {
+    const escrow = Keypair.generate().publicKey;
+    const client = Keypair.generate().publicKey;
+
+    // Wire layout from programs/settlement/src/events.rs::MilestoneApproved.
+    //   pub escrow: Pubkey
+    //   pub client: Pubkey
+    //   pub milestone_index: u32        // <-- the width-trap field
+    //   pub amount: u64
+    //   pub task_id: u64
+    //
+    // Use a milestone_index that exceeds u8 range to defend against a
+    // future regression to r.u8() (would alias the low byte and shift
+    // every subsequent field by 3 bytes, corrupting amount and task_id).
+    // 1234 = 0x000004D2 little-endian = [0xD2, 0x04, 0x00, 0x00].
+    const payload = Buffer.concat([
+      encPubkey(escrow),
+      encPubkey(client),
+      encU32(1234),                  // milestone_index — exercises >u8 range
+      encU64(5_000_000),             // amount (5 USDC tranche)
+      encU64(99),                    // task_id
+    ]);
+
+    const events = parseLogsForEvents(
+      [makeLog(DISC_MILESTONE_APPROVED, payload)],
+      "settlement",
+    );
+
+    assert.equal(events.length, 1);
+    assert.equal(events[0].name, "MilestoneApproved");
+
+    const data = events[0].data as Record<string, unknown>;
+    assert.equal(data.escrow, escrow.toBase58());
+    assert.equal(data.client, client.toBase58());
+    // The load-bearing assertion: milestone_index is u32, NOT u64.
+    // A regression to r.u64() would consume 8 bytes here (the full
+    // 4-byte milestone_index plus the leading 4 bytes of amount),
+    // then misread amount and task_id.
+    assert.equal(
+      data.milestone_index,
+      1234,
+      "milestone_index must decode as u32 — a regression to r.u64() would yield a giant aliased number here",
+    );
+    assert.equal(
+      data.amount,
+      5_000_000,
+      "amount must remain at byte offset 32+32+4 = 68 — any width-shift on milestone_index corrupts this",
+    );
+    assert.equal(
+      data.task_id,
+      99,
+      "task_id must remain at byte offset 32+32+4+8 = 76 — any width-shift on milestone_index pushes this off the buffer",
+    );
+  });
+
+  it("rejects milestone_index aliasing under high-byte values (regression guard)", () => {
+    const escrow = Keypair.generate().publicKey;
+    const client = Keypair.generate().publicKey;
+    // Boundary: a value where the u32 high bytes carry information.
+    // 0x01020304 = 16,909,060. Under u8 this would alias to 4; under
+    // u16 this would alias to 0x0304 = 772.
+    const payload = Buffer.concat([
+      encPubkey(escrow),
+      encPubkey(client),
+      encU32(0x01020304),
+      encU64(1),
+      encU64(2),
+    ]);
+
+    const events = parseLogsForEvents(
+      [makeLog(DISC_MILESTONE_APPROVED, payload)],
+      "settlement",
+    );
+
+    assert.equal(events.length, 1);
+    const data = events[0].data as Record<string, unknown>;
+    assert.equal(data.milestone_index, 0x01020304);
+    assert.notEqual(data.milestone_index, 4, "u8 aliasing regression — milestone_index lost its high bytes");
+    assert.notEqual(data.milestone_index, 0x0304, "u16 aliasing regression — milestone_index lost its high half-word");
+    assert.equal(data.amount, 1);
+    assert.equal(data.task_id, 2);
+  });
+});

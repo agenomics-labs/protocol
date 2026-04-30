@@ -98,68 +98,69 @@ test("extractIndexerDiscriminators returns every key from the live indexer map",
   assert.ok(keys.size >= 31, `expected at least 31 entries, found ${keys.size}`);
 });
 
-test("script exits 1 listing decoder-less events when DISCRIMINATOR_MAP entries lack decoders", () => {
-  // Contract changed in commit dd498b2 (ADR-082 cycle-3 follow-up):
-  // disc-map events without a parseable decoder are now coverage
-  // failures (was silently skipped). On the current tree there are
-  // 18 such events — adding their decoders is the next workstream.
+test("script exits 0 when indexer covers every program-side event with a parseable decoder", () => {
+  // Workstream arc:
+  //   - cycle-3 audit (2026-04-23) found that the gate silently skipped
+  //     disc-map events whose decoders were missing or unparseable;
+  //   - commit dd498b2 hardened the gate to fail on those (Fix 1) and
+  //     added a block-body arrow-decoder parser (Fix 2);
+  //   - commit 9df533c codified the transitional fail-mode contract in
+  //     this test (asserted exit 1 + ReputationStaked / later TaskAccepted
+  //     anchor + composite FAIL summary), with an explicit note that the
+  //     test would flip back to the OK contract once the 18 decoder-less
+  //     events were wired;
+  //   - commits ad14912 (1/3, agent-vault, 8 events), 0d13f50 (2/3,
+  //     agent-registry, 3 events), and the same commit as this test
+  //     flip (3/3, settlement, 7 events) added the 18 missing decoders;
+  //   - this test now asserts the OK contract, retiring the fail-mode
+  //     contract that lived only across commits dd498b2..0d13f50.
   //
-  // We assert on the new fail-mode contract:
-  //   (a) exit code 1
-  //   (b) stderr lists at least one specific known-decoder-less event
-  //       (TaskAccepted, the first settlement event without a decoder —
-  //       chosen as a stable anchor while the agent-vault and agent-
-  //       registry batches land their decoders. The original anchor was
-  //       ReputationStaked, swapped on commit 2 of 4 once that decoder
-  //       landed; once commit 3 of 4 lands TaskAccepted, swap to a
-  //       remaining settlement event or flip to the OK contract.)
-  //   (c) the composite summary line is emitted
-  //   (d) AgentStatusUpdated is NOT decoder-less — Fix 2 in dd498b2
-  //       taught extractDecoderFields to parse block-body arrow
-  //       decoders, of which AgentStatusUpdated is the exemplar; if
-  //       the regex regresses, AgentStatusUpdated would resurface as
-  //       decoder-less and this assertion would fire.
-  //
-  // When the 18 decoders are added in a follow-up workstream this
-  // test must be flipped back to the exit-0 OK contract.
+  // Contract:
+  //   (a) exit code 0
+  //   (b) stdout contains the OK summary line emitted by
+  //       scripts/check-event-coverage.ts when decoderLess === 0 AND
+  //       fieldDrift === 0 (the all-covered path)
+  //   (c) AgentStatusUpdated is NOT listed as decoder-less in stderr —
+  //       Fix 2 (dd498b2) taught extractDecoderFields to parse block-
+  //       body arrow decoders, of which AgentStatusUpdated is the
+  //       exemplar; if the regex regresses, AgentStatusUpdated would
+  //       resurface as decoder-less and the gate would fail with a
+  //       concrete reason line. This guard outlives the fail-mode
+  //       contract because it asserts a property of Fix 2's parser
+  //       independent of the gate's overall pass/fail state.
   let exitCode = -1;
+  let stdout = "";
   let stderr = "";
   try {
-    execFileSync("npx", ["tsx", SCRIPT_PATH], {
+    stdout = execFileSync("npx", ["tsx", SCRIPT_PATH], {
       cwd: REPO_ROOT,
       stdio: "pipe",
       encoding: "utf8",
     });
     exitCode = 0;
   } catch (err) {
-    const e = err as { status?: number; stderr?: string | Buffer };
+    const e = err as { status?: number; stdout?: string | Buffer; stderr?: string | Buffer };
     exitCode = e.status ?? -1;
+    stdout = e.stdout?.toString() ?? "";
     stderr = e.stderr?.toString() ?? "";
   }
   assert.equal(
     exitCode,
-    1,
-    `expected gate to fail with exit 1 on the current tree (decoder-less events outstanding); got ${exitCode}. stderr: ${stderr}`
+    0,
+    `expected gate to pass on the current tree (all decoders wired); got ${exitCode}. stderr: ${stderr}`
   );
   assert.match(
-    stderr,
-    /\[event-coverage\] FAIL: \d+ event\(s\) in DISCRIMINATOR_MAP without a parseable decoder/,
-    "expected the decoder-less FAIL header"
-  );
-  assert.match(
-    stderr,
-    /\bTaskAccepted\b[^\n]*\n\s*reason: no decoder entry in EVENT_DECODERS/,
-    "expected TaskAccepted listed as decoder-less (stable anchor for commit 2 of 4; if a decoder was added, pick a different anchor or flip to OK contract)"
-  );
-  assert.match(
-    stderr,
-    /\[event-coverage\] FAIL: \d+ decoder-less \+ \d+ field-drift across \d+ on-chain #\[event\] declaration\(s\); skipped \d+ events with neither disc-map nor decoder\./,
-    "expected the composite summary line introduced by dd498b2"
+    stdout,
+    /\[event-coverage\] OK: indexer covers all \d+ on-chain #\[event\] declaration\(s\) across \d+ program crate\(s\); field-coverage verified for events with decoders; skipped \d+ events with neither disc-map nor decoder\./,
+    "expected the all-covered OK summary line emitted by scripts/check-event-coverage.ts when decoderLess === 0 && fieldDrift === 0"
   );
   // Fix 2 regression guard: AgentStatusUpdated has a block-body arrow
   // decoder (src/indexer/index.ts ~524-529). If extractDecoderFields
-  // ever loses block-body support, AgentStatusUpdated re-appears as
-  // decoder-less. Cheap check — no need to anchor on file:line.
+  // ever loses block-body support, AgentStatusUpdated would re-appear
+  // as decoder-less and the gate would fail; in the OK path stderr is
+  // empty, so the absence of the reason line is trivially true — but
+  // we keep the assertion to flag a regression that flipped the gate
+  // back to FAIL with this specific event listed.
   assert.doesNotMatch(
     stderr,
     /\bAgentStatusUpdated\b[^\n]*\n\s*reason:/,
