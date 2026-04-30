@@ -365,3 +365,92 @@ describe("ADR-082: TransactionExecuted decoder pins agent-vault wire layout", ()
     assert.equal(data.success, false, "success=0x00 must decode to false");
   });
 });
+
+// ---------------------------------------------------------------------------
+// ADR-082 decoder gap closure (commit 2 of 4): agent-registry byte-layout pin.
+//
+// AgentSlashed is the representative pin for this batch because of the
+// AUD-111 width-trap: `total_slashes` is `u32` on the event wire (cast at
+// emit-time as `slash_count as u32`) but the on-disk AgentProfile carries
+// `slash_count: u8`. A reviewer who pattern-matches on the on-disk shape
+// would naturally write `r.u8()` here, which would (a) parse the first
+// byte of the u32 as the count, (b) leave 3 bytes of zero-padding to be
+// misread as the leading 3 bytes of `suspended` (a bool), and (c) shift
+// every subsequent byte — corrupting the i64 timestamp into garbage.
+// The discriminator-only ADR-082 gate cannot detect this; this pin is
+// the safety net for the other 2 decoders added in the same edit.
+// ---------------------------------------------------------------------------
+
+const DISC_AGENT_SLASHED = "7897274de30de5b9";
+
+describe("ADR-082 / AUD-111: AgentSlashed decoder pins total_slashes as u32", () => {
+  it("decodes authority, total_slashes (u32), suspended, timestamp", () => {
+    const authority = Keypair.generate().publicKey;
+
+    // Wire layout from programs/agent-registry/src/events.rs::AgentSlashed.
+    //   pub authority: Pubkey
+    //   pub total_slashes: u32     // AUD-111: WIDE on the event surface
+    //   pub suspended: bool
+    //   pub timestamp: i64
+    //
+    // Use a value that is non-trivial in u32 but would corrupt under u8:
+    // 257 = 0x00000101 little-endian = [0x01, 0x01, 0x00, 0x00].
+    // If a future reader regresses to r.u8(), it would read 0x01 as the
+    // slash count and consume 3 zero bytes that no longer belong to it,
+    // shifting `suspended` and `timestamp` downstream.
+    const payload = Buffer.concat([
+      encPubkey(authority),
+      encU32(257),                  // total_slashes — exercises >u8 range
+      Buffer.from([0x01]),          // suspended = true
+      encI64(1_700_000_000),        // timestamp
+    ]);
+
+    const events = parseLogsForEvents(
+      [makeLog(DISC_AGENT_SLASHED, payload)],
+      "registry",
+    );
+
+    assert.equal(events.length, 1);
+    assert.equal(events[0].name, "AgentSlashed");
+
+    const data = events[0].data as Record<string, unknown>;
+    assert.equal(data.authority,     authority.toBase58());
+    // The load-bearing assertion: total_slashes must round-trip the full
+    // u32 value, not be aliased to its low byte.
+    assert.equal(
+      data.total_slashes,
+      257,
+      "total_slashes must decode as u32 per AUD-111 — a regression to r.u8() would yield 1 here",
+    );
+    assert.equal(data.suspended, true, "suspended must remain at byte offset 32+4 = 36");
+    assert.equal(
+      data.timestamp,
+      1_700_000_000,
+      "timestamp must remain at byte offset 32+4+1 = 37 — any width-shift on total_slashes corrupts this",
+    );
+  });
+
+  it("rejects total_slashes aliasing under high-byte values (regression guard)", () => {
+    const authority = Keypair.generate().publicKey;
+    // Boundary: a value where the u32 high bytes carry information.
+    // 0x01020304 = 16,909,060. Under u8 this would alias to 4.
+    const payload = Buffer.concat([
+      encPubkey(authority),
+      encU32(0x01020304),
+      Buffer.from([0x00]),          // suspended = false
+      encI64(0),
+    ]);
+
+    const events = parseLogsForEvents(
+      [makeLog(DISC_AGENT_SLASHED, payload)],
+      "registry",
+    );
+
+    assert.equal(events.length, 1);
+    const data = events[0].data as Record<string, unknown>;
+    assert.equal(data.total_slashes, 0x01020304);
+    assert.notEqual(data.total_slashes, 4, "u8 aliasing regression — total_slashes lost its high bytes");
+    assert.equal(data.suspended, false);
+    assert.equal(data.timestamp, 0);
+  });
+});
