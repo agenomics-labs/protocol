@@ -179,11 +179,11 @@ pub struct ReputationStake {
 ///   2. `status == Suspended ⇒ slash_count >= 3`. The slash path is the
 ///      only instruction that legitimately writes `Suspended`; anything
 ///      else hitting that state is reconciled via `migrate_agent_profile`.
-///   3. `cleared_count <= 3` (PR-I, in flight). The base tree shipped to
-///      this PR-G worktree does not yet include the `cleared_count` field
-///      on `AgentProfile`. The check is left as a TODO that resolves the
-///      moment PR-I lands and adds the field — at that point this guard
-///      becomes enforceable without a coordination handoff.
+///   3. `cleared_count <= 3` (AUD-004, shipped PR-I). The
+///      `clear_suspension` escalation ladder is 1 → halve, 2 → zero,
+///      3+ → terminal Retired; a `cleared_count` beyond 3 means a third
+///      clear landed on a non-Suspended profile, only reachable via
+///      state corruption. Enforced at the require! below.
 ///
 /// Choosing `require!` (vs. `assert!`) keeps the error path Anchor-typed,
 /// so callers see a stable error code instead of an opaque panic. Once a
