@@ -9,13 +9,13 @@
 <meta property="og:description" content="The economy is becoming a nervous system. Agenomics is the coordination layer.">
 <meta property="og:url" content="https://agenomics.xyz/">
 <meta property="og:type" content="website">
-<meta property="og:image" content="https://agenomics.xyz/og-image.png">
+<meta property="og:image" content="https://agenomics.xyz/og-image.a4e3295e.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:alt" content="Agenomics — The coordination layer for a machine-speed economy">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:site" content="@AgenomicsLabs">
-<meta name="twitter:image" content="https://agenomics.xyz/og-image.png">
+<meta name="twitter:image" content="https://agenomics.xyz/og-image.a4e3295e.png">
 <link rel="canonical" href="https://agenomics.xyz/">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="stylesheet" href="/styles.css">
@@ -559,7 +559,7 @@
       </p>
       <form class="signup" id="signup-form" novalidate>
         <input type="email" name="email" placeholder="you@domain.com" required autocomplete="email">
-        <input type="text" name="company" tabindex="-1" autocomplete="off" class="signup-hp" aria-hidden="true">
+        <input type="text" name="website_url" tabindex="-1" autocomplete="off" class="signup-hp" aria-hidden="true">
         <button type="submit">Join waitlist →</button>
       </form>
       <div class="small-note" style="margin-top: 20px; font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-4);">
@@ -628,55 +628,7 @@
   </footer>
 </main>
 
-<script>
-  const io = new IntersectionObserver((entries) => {
-    entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('in'); });
-  }, { threshold: 0.12, rootMargin: '0px 0px -40px 0px' });
-  document.querySelectorAll('.reveal').forEach(el => io.observe(el));
-
-  const form = document.getElementById('signup-form');
-  const button = form.querySelector('button');
-  const emailInput = form.querySelector('input[name=email]');
-  const hpInput = form.querySelector('input[name=company]');
-  const ORIGINAL_LABEL = button.textContent;
-
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    if (form.classList.contains('submitting')) return;
-
-    const email = emailInput.value.trim();
-    if (!email) return;
-
-    form.classList.remove('error', 'success');
-    form.classList.add('submitting');
-    button.textContent = 'Joining…';
-
-    try {
-      const res = await fetch('/api/waitlist', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ email, company: hpInput.value }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.ok) throw new Error(data.error || 'http_' + res.status);
-
-      form.classList.remove('submitting');
-      form.classList.add('success');
-      button.textContent = 'You’re in →';
-      emailInput.value = '';
-    } catch (err) {
-      form.classList.remove('submitting');
-      form.classList.add('error');
-      button.textContent = err && err.message === 'invalid_email' ? 'Check email' : 'Try again';
-      setTimeout(() => {
-        if (form.classList.contains('error')) {
-          form.classList.remove('error');
-          button.textContent = ORIGINAL_LABEL;
-        }
-      }, 3500);
-    }
-  });
-</script>
+<script src="/app.js" defer></script>
 
 </body>
 </html>
