@@ -215,6 +215,16 @@ export function resolveEvoBridgeConfig(env: NodeJS.ProcessEnv = process.env): Ev
         "AEP_EVO_PROTOCOL_MAJOR",
         DEFAULT_RESILIENCE_POLICY.protocolMajor,
       ),
+      restartCountResetAfterMs: envInt(
+        env,
+        "AEP_EVO_RESTART_COUNT_RESET_AFTER_MS",
+        DEFAULT_RESILIENCE_POLICY.restartCountResetAfterMs,
+      ),
+      restartCountLifetimeCap: envInt(
+        env,
+        "AEP_EVO_RESTART_LIFETIME_CAP",
+        DEFAULT_RESILIENCE_POLICY.restartCountLifetimeCap,
+      ),
     },
   };
 }

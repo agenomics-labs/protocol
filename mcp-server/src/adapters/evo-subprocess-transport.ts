@@ -93,6 +93,37 @@ export interface ResiliencePolicy {
   maxRestarts: number;
   /** MCP-305. Required EVO protocol major version. Default 1. */
   protocolMajor: number;
+  /**
+   * CYCLE4-MCP-002 (Batch I). Reset `restartCount` to 0 when the
+   * transport observes ≥ this many ms since the last successful response
+   * before scheduling a new restart. Closes the durability gap where a
+   * long-running MCP server with sparse transient EVO failures
+   * (one-per-week) would eventually exhaust `maxRestarts` and brick.
+   *
+   * Default 1 hour — well above any realistic transient-failure cluster
+   * (which is bounded by the `failureThreshold * restartCooldownMs`
+   * exponential-backoff window). The "10 restarts in a tight window
+   * trips permanent-brick" semantic is preserved; the long-tail-of-
+   * sparse-failures recovery semantic is added.
+   */
+  restartCountResetAfterMs: number;
+  /**
+   * CYCLE4-MCP-002 hardening (audit follow-up). NEVER-RESET ceiling on
+   * cumulative lifetime restarts. Closes the slow-flap blind spot the
+   * windowed reset opened: an EVO bug that crashes once per
+   * (`restartCountResetAfterMs` + ε) while serving healthy traffic
+   * between would otherwise reset `restartCount` indefinitely and
+   * never brick — inverting the cycle-3 invariant that
+   * `maxRestarts` was "evidence the binary is structurally broken."
+   *
+   * This counter is incremented on every restart attempt and is NEVER
+   * touched by the windowed reset. Once it exceeds the cap, the
+   * breaker locks open permanently regardless of healthy-window state.
+   *
+   * Default 100 — at one transient/hour, that's ~4 days of flapping
+   * before brick; healthy production should never approach it.
+   */
+  restartCountLifetimeCap: number;
 }
 
 export const DEFAULT_RESILIENCE_POLICY: ResiliencePolicy = Object.freeze({
@@ -102,6 +133,8 @@ export const DEFAULT_RESILIENCE_POLICY: ResiliencePolicy = Object.freeze({
   restartCooldownMs: 1_000,
   maxRestarts: 10,
   protocolMajor: 1,
+  restartCountResetAfterMs: 60 * 60 * 1_000, // 1 hour
+  restartCountLifetimeCap: 100,
 });
 
 const MAX_BACKOFF_MS = 30_000;
@@ -175,8 +208,25 @@ export class EvoSubprocessTransport {
   private readonly queue: PendingCommand[] = [];
   /** Set on every successful response; reset on failure. */
   private consecutiveFailures = 0;
-  /** Lifetime restart counter; once this exceeds maxRestarts the breaker locks. */
+  /** Lifetime restart counter; once this exceeds maxRestarts the breaker locks.
+   *  CYCLE4-MCP-002 (Batch I): reset to 0 by `scheduleRestart` when the time
+   *  since the last successful response exceeds `policy.restartCountResetAfterMs`,
+   *  so a long-running process with sparse transient failures recovers gracefully
+   *  instead of accumulating restarts indefinitely. */
   private restartCount = 0;
+  /** CYCLE4-MCP-002 hardening (audit follow-up): NEVER-RESET cumulative
+   *  restart counter. Bricks the breaker once it exceeds
+   *  `policy.restartCountLifetimeCap`, regardless of healthy-window state.
+   *  Closes the slow-flap blind spot. */
+  private lifetimeRestartCount = 0;
+  /** CYCLE4-MCP-002 (Batch I): timestamp of the last successful response.
+   *  Null until the first success. Used to decide whether a fresh restart
+   *  cluster should reset `restartCount` (long-tail recovery) vs continue
+   *  accumulating (tight-window failure pattern). Cleared back to null
+   *  immediately after a reset fires (audit follow-up) so the next reset
+   *  requires a fresh sustained-healthy window — prevents repeated
+   *  resets during a single failure cluster from a stale timestamp. */
+  private lastSuccessAt: number | null = null;
   /** MCP-307: accumulate ALL unsolicited startup-time error lines so multi-line
    *  banners aren't silently overwritten. */
   private startupErrorLines: string[] = [];
@@ -497,6 +547,15 @@ export class EvoSubprocessTransport {
     }
     this.settle(current, parsed);
     this.consecutiveFailures = 0;
+    // CYCLE4-MCP-002 (Batch I): record the success timestamp for the
+    // sustained-healthy reset check in `scheduleRestart`. Skip handshake
+    // commands — the handshake fires on every (re-)spawn and would
+    // continuously refresh lastSuccessAt during a tight-window failure
+    // cluster, defeating the reset semantic. Only USER commands count
+    // as evidence of sustained healthy operation.
+    if (!current.isHandshake) {
+      this.lastSuccessAt = this.scheduler.now();
+    }
     if (this.state === "running") this.pump();
   }
 
@@ -587,6 +646,65 @@ export class EvoSubprocessTransport {
 
   private scheduleRestart(reason: string): void {
     if (this.state === "breaker_open" || this.state === "restarting") return;
+
+    // CYCLE4-MCP-002 hardening (audit follow-up): bump the never-reset
+    // lifetime counter FIRST and check it against the lifetime cap. This
+    // closes the slow-flap blind spot that the windowed `restartCount`
+    // reset opened — a process flapping at slightly-above-the-reset-
+    // window cadence would otherwise reset its windowed count
+    // indefinitely and never brick. The lifetime counter is never
+    // touched by the windowed reset below.
+    this.lifetimeRestartCount += 1;
+    if (this.lifetimeRestartCount > this.policy.restartCountLifetimeCap) {
+      log.error(
+        {
+          lifetime_restart_count: this.lifetimeRestartCount,
+          lifetime_cap: this.policy.restartCountLifetimeCap,
+          audit: "CYCLE4-MCP-002",
+        },
+        "evo-bridge: lifetime restart cap exceeded; locking breaker open " +
+          "(slow-flap brick — see ResiliencePolicy.restartCountLifetimeCap)",
+      );
+      this.tripBreakerPermanently(
+        new EvoBridgeBreakerOpenError(
+          this.lifetimeRestartCount,
+          this.policy.restartCountLifetimeCap,
+        ),
+      );
+      return;
+    }
+
+    // CYCLE4-MCP-002 (Batch I): reset `restartCount` BEFORE incrementing
+    // when the transport observed a sustained-healthy window since the
+    // last failure cluster. Preserves the "10 restarts in a tight window
+    // = brick" semantic while letting "10 restarts spread over a year"
+    // recover gracefully. Threshold defaults to 1 hour
+    // (`restartCountResetAfterMs`); operators can tune via the policy.
+    if (
+      this.lastSuccessAt !== null &&
+      this.restartCount > 0 &&
+      this.scheduler.now() - this.lastSuccessAt >=
+        this.policy.restartCountResetAfterMs
+    ) {
+      log.info(
+        {
+          previous_restart_count: this.restartCount,
+          ms_since_last_success: this.scheduler.now() - this.lastSuccessAt,
+          threshold_ms: this.policy.restartCountResetAfterMs,
+          lifetime_restart_count: this.lifetimeRestartCount,
+          audit: "CYCLE4-MCP-002",
+        },
+        "evo-bridge: sustained-healthy window observed, resetting restartCount before incrementing",
+      );
+      this.restartCount = 0;
+      // Audit follow-up: clear lastSuccessAt so the NEXT reset requires
+      // a fresh sustained-healthy window. Without this, a stale
+      // lastSuccessAt could repeatedly fire the reset within a single
+      // long-running failure cluster (each scheduleRestart call would
+      // see the same old timestamp and re-zero restartCount), defeating
+      // the windowed-cap intent.
+      this.lastSuccessAt = null;
+    }
     this.restartCount += 1;
     if (this.restartCount > this.policy.maxRestarts) {
       this.tripBreakerPermanently(

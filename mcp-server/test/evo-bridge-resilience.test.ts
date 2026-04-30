@@ -459,3 +459,477 @@ describe("EvoSubprocessTransport — MCP-307 multi-line startup error", () => {
     });
   });
 });
+
+describe("EvoSubprocessTransport — CYCLE4-MCP-002 sustained-healthy restart reset", () => {
+  it("restartCount resets after a sustained-healthy window between failure clusters", async () => {
+    const scheduler = new ManualScheduler();
+    const fleet = makeSpawnFleet();
+    // maxRestarts=3, restartCountResetAfterMs=10_000 — small numbers so
+    // virtual time advances stay readable. 2 failure clusters of 2 restarts
+    // each, separated by 15s of healthy uptime; without the reset the
+    // 4th restart would trip breaker.
+    const transport = new EvoSubprocessTransport({
+      binaryPath: "evo",
+      dbPath: "/tmp/evo.db",
+      policy: {
+        callTimeoutMs: 60_000,
+        failureThreshold: 999,
+        restartCooldownMs: 100,
+        maxRestarts: 3,
+        restartCountResetAfterMs: 10_000,
+      },
+      spawnFn: fleet.spawnFn,
+      lineSourceFactory: fleet.lineSourceFactory,
+      scheduler,
+    });
+
+    // Cluster 1: 2 restarts.
+    for (let i = 0; i < 2; i++) {
+      const p = transport.send({ cmd: `c1-${i}` });
+      await drain();
+      const h = fleet.handles[fleet.handles.length - 1]!;
+      h.emitLine(JSON.stringify({ ok: true, protocol_version: "1.0" }));
+      await drain();
+      // Drive a successful response so lastSuccessAt updates.
+      h.emitLine(JSON.stringify({ ok: true, c1: i }));
+      await drain();
+      const result = await p;
+      assert.deepEqual(result, { ok: true, c1: i });
+      // Force a subprocess close → restart.
+      h.emitClose(1);
+      await drain();
+      scheduler.advance(2_000); // cooldown (well above exponential-backoff max for this test)
+      await drain();
+    }
+    assert.equal(transport.getState(), "idle", "post-cluster-1: idle");
+
+    // Sustained-healthy window: drive a successful call so lastSuccessAt
+    // is fresh, then advance virtual time past restartCountResetAfterMs.
+    const healthy = transport.send({ cmd: "healthy-ping" });
+    await drain();
+    fleet.handles[fleet.handles.length - 1]!.emitLine(
+      JSON.stringify({ ok: true, protocol_version: "1.0" }),
+    );
+    await drain();
+    fleet.handles[fleet.handles.length - 1]!.emitLine(
+      JSON.stringify({ ok: true, healthy: true }),
+    );
+    await drain();
+    await healthy;
+
+    scheduler.advance(15_000); // > restartCountResetAfterMs (10_000)
+    await drain();
+
+    // Cluster 2: 2 close-mid-flight restarts. CRUCIAL — neither iteration
+    // emits a successful USER response; if we did, the response would
+    // refresh `lastSuccessAt` and the reset would never fire (the bug
+    // the audit reviewer caught in the original v of this test). Iter 0
+    // closes mid-flight while c2-0 is inflight; that triggers
+    // scheduleRestart with `lastSuccessAt` still pointing at the
+    // healthy-ping timestamp ~15s ago → reset fires → restartCount=0→1.
+    // Iter 1 closes after the handshake response (handshakes don't
+    // refresh lastSuccessAt by design). With the audit-followup
+    // `lastSuccessAt = null` after-reset clear, iter-1's reset condition
+    // is false (null), so restartCount goes 1→2; without that clear,
+    // iter-1 would reset again to 0→1. Either path keeps state out of
+    // breaker_open with maxRestarts=3.
+    {
+      const p = transport.send({ cmd: "c2-0" });
+      await drain();
+      const h = fleet.handles[fleet.handles.length - 1]!;
+      h.emitClose(1); // close mid-flight, no response
+      await drain();
+      try { await p; } catch { /* expected: closed mid-flight */ }
+      scheduler.advance(2_000);
+      await drain();
+    }
+    {
+      const p = transport.send({ cmd: "c2-1" });
+      await drain();
+      const h = fleet.handles[fleet.handles.length - 1]!;
+      // Settle ONLY the handshake — don't drive a user response so
+      // lastSuccessAt stays untouched.
+      h.emitLine(JSON.stringify({ ok: true, protocol_version: "1.0" }));
+      await drain();
+      h.emitClose(1);
+      await drain();
+      try { await p; } catch { /* expected */ }
+      scheduler.advance(2_000);
+      await drain();
+    }
+
+    // Critical assertion: breaker did NOT trip (cluster-2 was a fresh
+    // 2-restart count post-reset, not 4-restart cumulative).
+    assert.notEqual(
+      transport.getState(),
+      "breaker_open",
+      "sustained-healthy reset must prevent breaker trip across long-tail failure clusters",
+    );
+  });
+
+  it("WITHOUT sustained-healthy window, accumulated restarts still trip breaker", async () => {
+    const scheduler = new ManualScheduler();
+    const fleet = makeSpawnFleet();
+    const transport = new EvoSubprocessTransport({
+      binaryPath: "evo",
+      dbPath: "/tmp/evo.db",
+      policy: {
+        callTimeoutMs: 60_000,
+        failureThreshold: 999,
+        restartCooldownMs: 10,
+        maxRestarts: 2,
+        restartCountResetAfterMs: 60 * 60 * 1_000, // 1 hour
+      },
+      spawnFn: fleet.spawnFn,
+      lineSourceFactory: fleet.lineSourceFactory,
+      scheduler,
+    });
+
+    // 3 tight-window failure-restart cycles → exceeds maxRestarts=2 → breaker.
+    for (let i = 0; i < 3; i++) {
+      const p = transport.send({ cmd: `tight-${i}` });
+      await drain();
+      const h = fleet.handles[fleet.handles.length - 1]!;
+      h.emitLine(JSON.stringify({ ok: true, protocol_version: "1.0" }));
+      await drain();
+      h.emitClose(1);
+      await drain();
+      try { await p; } catch { /* expected */ }
+      scheduler.advance(50); // small advance, well under reset threshold
+      await drain();
+    }
+
+    const final = transport.send({ cmd: "after-tight-cluster" });
+    await assert.rejects(final, EvoBridgeBreakerOpenError);
+    assert.equal(transport.getState(), "breaker_open");
+  });
+
+  // -------------------------------------------------------------------------
+  // CYCLE4-MCP-002 audit follow-up — required tests added after adversarial
+  // review flagged: (i) boundary, (ii) multi-reset durability,
+  // (iii) handshake-only must NOT refresh lastSuccessAt, (iv) recordFailure
+  // path interacts cleanly with the reset, plus the new lifetime-cap brick.
+  // -------------------------------------------------------------------------
+
+  it("(i) reset fires at the EXACT boundary (now - lastSuccessAt === restartCountResetAfterMs)", async () => {
+    // The reset condition uses `>=`. This test confirms the boundary
+    // is inclusive: at exactly the threshold, the reset MUST fire. If
+    // the comparison were `>`, the third restart in this scenario
+    // would push restartCount past maxRestarts=2 and trip the breaker.
+    const scheduler = new ManualScheduler();
+    const fleet = makeSpawnFleet();
+    const transport = new EvoSubprocessTransport({
+      binaryPath: "evo",
+      dbPath: "/tmp/evo.db",
+      policy: {
+        callTimeoutMs: 60_000,
+        failureThreshold: 999,
+        restartCooldownMs: 100,
+        maxRestarts: 2,
+        restartCountResetAfterMs: 10_000,
+      },
+      spawnFn: fleet.spawnFn,
+      lineSourceFactory: fleet.lineSourceFactory,
+      scheduler,
+    });
+
+    // Setup: 2 successful round-trips that each close → restartCount=2,
+    // lastSuccessAt = scheduler.now() at the second user-response.
+    for (let i = 0; i < 2; i++) {
+      const p = transport.send({ cmd: `setup-${i}` });
+      await drain();
+      const h = fleet.handles[fleet.handles.length - 1]!;
+      h.emitLine(JSON.stringify({ ok: true, protocol_version: "1.0" }));
+      await drain();
+      h.emitLine(JSON.stringify({ ok: true, setup: i }));
+      await drain();
+      await p;
+      h.emitClose(1);
+      await drain();
+      scheduler.advance(1_000);
+      await drain();
+    }
+    const tAfterSetup = scheduler.now();
+    // lastSuccessAt was set at the moment the SECOND emitLine was
+    // processed — that moment had scheduler.now() === tAfterSetup - 1_000
+    // (one advance of 1_000 happened after). Need to advance such that
+    // (tNow - lastSuccessAt) is EXACTLY 10_000.
+    const targetDelta = 10_000;
+    const elapsedSinceLastSuccess = 1_000; // the advance after iter 1's emitLine
+    scheduler.advance(targetDelta - elapsedSinceLastSuccess);
+    await drain();
+
+    // Trigger scheduleRestart via close-mid-flight on a fresh spawn.
+    // We MUST emit the handshake response first so the user command
+    // becomes inflight; otherwise the close fails only the handshake
+    // and `boundary-probe` is left orphaned in the queue with no
+    // settler, which hangs the test. The handshake response does not
+    // refresh `lastSuccessAt` (filtered by `isHandshake`), so the
+    // boundary check still reads the setup-phase timestamp.
+    const p = transport.send({ cmd: "boundary-probe" });
+    await drain();
+    {
+      const h = fleet.handles[fleet.handles.length - 1]!;
+      h.emitLine(JSON.stringify({ ok: true, protocol_version: "1.0" }));
+      await drain();
+      h.emitClose(1);
+      await drain();
+    }
+    try { await p; } catch { /* expected */ }
+
+    // If the reset fired at the boundary (`>=` semantic), restartCount
+    // went 2 → 0 → 1, no breaker. If the reset DID NOT fire (`>`
+    // semantic), restartCount went 2 → 3 > maxRestarts(2) → breaker.
+    assert.notEqual(
+      transport.getState(),
+      "breaker_open",
+      "reset must fire at the exact >= boundary",
+    );
+    void tAfterSetup; // keep tsc happy when unused
+  });
+
+  it("(ii) multiple sequential resets — 3 clusters with healthy gaps stay non-breaker", async () => {
+    const scheduler = new ManualScheduler();
+    const fleet = makeSpawnFleet();
+    const transport = new EvoSubprocessTransport({
+      binaryPath: "evo",
+      dbPath: "/tmp/evo.db",
+      policy: {
+        callTimeoutMs: 60_000,
+        failureThreshold: 999,
+        restartCooldownMs: 100,
+        maxRestarts: 2,
+        restartCountResetAfterMs: 5_000,
+        // Lifetime cap well above 3 clusters × 2 restarts = 6.
+        restartCountLifetimeCap: 100,
+      },
+      spawnFn: fleet.spawnFn,
+      lineSourceFactory: fleet.lineSourceFactory,
+      scheduler,
+    });
+
+    // 3 clusters of (healthy ping → 2 close-mid-flight restarts), with
+    // a 6_000ms healthy gap between clusters (> reset threshold). After
+    // each cluster, restartCount should reset to 0 before the next
+    // cluster's increments. State stays non-breaker throughout.
+    for (let cluster = 0; cluster < 3; cluster++) {
+      // Healthy ping first to set lastSuccessAt.
+      {
+        const p = transport.send({ cmd: `healthy-${cluster}` });
+        await drain();
+        const h = fleet.handles[fleet.handles.length - 1]!;
+        h.emitLine(JSON.stringify({ ok: true, protocol_version: "1.0" }));
+        await drain();
+        h.emitLine(JSON.stringify({ ok: true, healthy: cluster }));
+        await drain();
+        await p;
+      }
+
+      // Wait > reset threshold so the next failure cluster triggers reset.
+      scheduler.advance(6_000);
+      await drain();
+
+      // 2 close-mid-flight restarts.
+      for (let i = 0; i < 2; i++) {
+        const p = transport.send({ cmd: `cluster-${cluster}-${i}` });
+        await drain();
+        const h = fleet.handles[fleet.handles.length - 1]!;
+        // Iter 0: close mid-flight before any response (so lastSuccessAt
+        // stays the healthy-ping timestamp on iter 0; iter 1 will see
+        // lastSuccessAt=null after iter 0's reset clears it).
+        if (i === 1) {
+          h.emitLine(JSON.stringify({ ok: true, protocol_version: "1.0" }));
+          await drain();
+        }
+        h.emitClose(1);
+        await drain();
+        try { await p; } catch { /* expected */ }
+        scheduler.advance(1_000);
+        await drain();
+      }
+
+      assert.notEqual(
+        transport.getState(),
+        "breaker_open",
+        `cluster ${cluster}: state should not be breaker_open`,
+      );
+    }
+  });
+
+  it("(iii) handshake-only success does NOT refresh lastSuccessAt — pure-handshake flap still bricks", async () => {
+    // Regression guard for the `isHandshake` filter at
+    // evo-subprocess-transport.ts:530. If a future edit forgot to mark
+    // the handshake's enqueue as `isHandshake=true`, the handshake's
+    // response would silently refresh lastSuccessAt on every (re-)spawn,
+    // perpetually deferring the brick during a tight-window failure
+    // cluster — the slow-flap blind spot the audit reviewer flagged.
+    //
+    // Setup: only handshake responses fire (no user-command responses).
+    // lastSuccessAt MUST stay null. With reset never firing, the brick
+    // path goes through maxRestarts in the normal way.
+    const scheduler = new ManualScheduler();
+    const fleet = makeSpawnFleet();
+    const transport = new EvoSubprocessTransport({
+      binaryPath: "evo",
+      dbPath: "/tmp/evo.db",
+      policy: {
+        callTimeoutMs: 60_000,
+        failureThreshold: 999,
+        restartCooldownMs: 50,
+        maxRestarts: 2,
+        // Long enough that the test's wall-time advance would PASS the
+        // reset threshold IF lastSuccessAt were ever set. The point of
+        // this test is to prove it never gets set when only handshakes
+        // succeed, so the reset never fires regardless of advance.
+        restartCountResetAfterMs: 5_000,
+        restartCountLifetimeCap: 100,
+      },
+      spawnFn: fleet.spawnFn,
+      lineSourceFactory: fleet.lineSourceFactory,
+      scheduler,
+    });
+
+    // 3 cycles: spawn → handshake-OK → close. Advance 10_000ms between
+    // each (≫ reset threshold). If handshakes leaked into lastSuccessAt,
+    // the reset would fire on cycles 2 and 3 and the breaker would NOT
+    // trip — that's the regression we're guarding against.
+    for (let i = 0; i < 3; i++) {
+      const p = transport.send({ cmd: `hs-only-${i}` });
+      await drain();
+      const h = fleet.handles[fleet.handles.length - 1]!;
+      h.emitLine(JSON.stringify({ ok: true, protocol_version: "1.0" }));
+      await drain();
+      h.emitClose(1);
+      await drain();
+      try { await p; } catch { /* expected */ }
+      // Advance well past the reset threshold — proves the threshold
+      // is moot when lastSuccessAt is null.
+      scheduler.advance(10_000);
+      await drain();
+    }
+
+    // After 3 cumulative restarts and maxRestarts=2, breaker MUST be open.
+    // If `lastSuccessAt` had been incorrectly refreshed by handshake
+    // responses, the reset would have fired between cycles and we'd be
+    // in `idle`/`restarting` instead.
+    const final = transport.send({ cmd: "after-handshake-flap" });
+    await assert.rejects(final, EvoBridgeBreakerOpenError);
+    assert.equal(
+      transport.getState(),
+      "breaker_open",
+      "handshake-only successes must NOT refresh lastSuccessAt; breaker must trip on cumulative maxRestarts",
+    );
+  });
+
+  it("(iv) recordFailure-driven scheduleRestart goes through the same lifetime + reset bookkeeping", async () => {
+    // Earlier tests trigger scheduleRestart via close-mid-flight
+    // (handleSubprocessFailure path). This test triggers it via the
+    // call-timeout → recordFailure → scheduleRestart path. The reset
+    // logic lives inside scheduleRestart and is path-agnostic; this
+    // test guards the property by exercising the failureThreshold arm.
+    const scheduler = new ManualScheduler();
+    const fleet = makeSpawnFleet();
+    const transport = new EvoSubprocessTransport({
+      binaryPath: "evo",
+      dbPath: "/tmp/evo.db",
+      policy: {
+        callTimeoutMs: 100,
+        failureThreshold: 1, // every recorded failure → scheduleRestart
+        restartCooldownMs: 50,
+        maxRestarts: 2,
+        restartCountResetAfterMs: 60 * 60 * 1_000, // long; not tested here
+        restartCountLifetimeCap: 100,
+      },
+      spawnFn: fleet.spawnFn,
+      lineSourceFactory: fleet.lineSourceFactory,
+      scheduler,
+    });
+
+    // Two timeout-driven restarts, then one more — third hits maxRestarts.
+    for (let i = 0; i < 3; i++) {
+      const p = transport.send({ cmd: `timeout-${i}` });
+      await drain();
+      // Settle the handshake so the user command becomes inflight.
+      const h = fleet.handles[fleet.handles.length - 1]!;
+      h.emitLine(JSON.stringify({ ok: true, protocol_version: "1.0" }));
+      await drain();
+      // Advance past the call timeout — recordFailure fires →
+      // failureThreshold(1) hit → scheduleRestart.
+      scheduler.advance(200);
+      await drain();
+      try { await p; } catch { /* expected: timeout */ }
+      // Cooldown advance so the next iteration finds state=idle.
+      scheduler.advance(200);
+      await drain();
+    }
+
+    // 3 timeouts → restartCount = 3 > maxRestarts(2) → breaker. This
+    // mirrors the close-mid-flight tight-cluster path.
+    const final = transport.send({ cmd: "after-timeout-cluster" });
+    await assert.rejects(final, EvoBridgeBreakerOpenError);
+    assert.equal(transport.getState(), "breaker_open");
+  });
+
+  it("(v) lifetime cap bricks a slow-flap process even with healthy gaps between clusters", async () => {
+    // Closes the slow-flap blind spot the audit reviewer flagged: an
+    // EVO bug crashing once per (resetWindow + ε), with healthy traffic
+    // in between, would otherwise reset `restartCount` indefinitely
+    // and never brick. The never-reset `restartCountLifetimeCap` is
+    // the hard ceiling that preserves the cycle-3 invariant
+    // ("evidence the binary is structurally broken").
+    const scheduler = new ManualScheduler();
+    const fleet = makeSpawnFleet();
+    const transport = new EvoSubprocessTransport({
+      binaryPath: "evo",
+      dbPath: "/tmp/evo.db",
+      policy: {
+        callTimeoutMs: 60_000,
+        failureThreshold: 999,
+        restartCooldownMs: 50,
+        maxRestarts: 100, // disable the windowed cap; we want the lifetime cap to fire
+        restartCountResetAfterMs: 5_000,
+        restartCountLifetimeCap: 4, // small for test
+      },
+      spawnFn: fleet.spawnFn,
+      lineSourceFactory: fleet.lineSourceFactory,
+      scheduler,
+    });
+
+    // 5 close-mid-flight cycles, each preceded by a 10s healthy gap so
+    // the windowed reset would fire on every cycle — but the lifetime
+    // cap (4) is hit on the 5th cycle's scheduleRestart and bricks.
+    for (let i = 0; i < 5; i++) {
+      // Healthy ping to set lastSuccessAt fresh.
+      {
+        const p = transport.send({ cmd: `lt-healthy-${i}` });
+        await drain();
+        const h = fleet.handles[fleet.handles.length - 1]!;
+        h.emitLine(JSON.stringify({ ok: true, protocol_version: "1.0" }));
+        await drain();
+        h.emitLine(JSON.stringify({ ok: true, healthy: i }));
+        await drain();
+        await p;
+      }
+      scheduler.advance(10_000); // > resetWindow → reset would fire on next failure
+      await drain();
+      // Close-mid-flight failure. After the healthy ping above the
+      // process is still alive (no close in the healthy branch), so
+      // state=running and the user command goes inflight directly. No
+      // handshake-in-the-way; close fails the user command cleanly.
+      const p = transport.send({ cmd: `lt-fail-${i}` });
+      await drain();
+      const h = fleet.handles[fleet.handles.length - 1]!;
+      h.emitClose(1);
+      await drain();
+      try { await p; } catch { /* expected */ }
+      scheduler.advance(200);
+      await drain();
+      if (transport.getState() === "breaker_open") {
+        // Lifetime cap should fire on the 5th iteration's scheduleRestart.
+        assert.ok(i >= 3, `lifetime cap should fire on iteration > cap (${i})`);
+        return;
+      }
+    }
+    assert.fail("lifetime cap never fired — slow-flap was not bricked");
+  });
+});
