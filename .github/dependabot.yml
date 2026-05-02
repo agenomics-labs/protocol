@@ -168,6 +168,50 @@ updates:
           - "*"
 
   - package-ecosystem: "npm"
+    directory: "/sdk/action-runtime"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "javascript"
+    reviewers:
+      - "agenomics-labs/core"
+    versioning-strategy: "increase-if-necessary"
+    allow:
+      - dependency-type: "direct"
+    groups:
+      security-patches:
+        applies-to: security-updates
+        patterns:
+          - "*"
+
+  # Browser-side bundle: React + Vite + Tailwind get frequent security
+  # patches and major-version bumps. Worth tracking even though dashboard
+  # has no test suite (tsc + vite build will catch wire-shape regressions
+  # if the browser bundle's deps change shape).
+  - package-ecosystem: "npm"
+    directory: "/dashboard"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "javascript"
+    reviewers:
+      - "agenomics-labs/core"
+    versioning-strategy: "increase-if-necessary"
+    allow:
+      - dependency-type: "direct"
+    groups:
+      security-patches:
+        applies-to: security-updates
+        patterns:
+          - "*"
+
+  - package-ecosystem: "npm"
     directory: "/packages/capability-manifest-validator"
     schedule:
       interval: "weekly"
