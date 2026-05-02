@@ -12,13 +12,20 @@
 // a hard guarantee, swap the in-memory Map for Upstash Redis REST (the
 // surface is identical; see `bumpRateLimit()`).
 //
-// #9 timing-oracle defense is response-padding (TIMING_TARGET_MS) plus
-// per-request jitter (TIMING_JITTER_MS), not just always-parse-r.json().
-// All 200-ok branches past body-parse — honeypot-trip, form-fill-drop,
-// duplicate, and new-signup (which does +1 Resend round-trip for the
-// welcome email) — return inside the same uniform [TARGET, TARGET+JITTER]
-// envelope. Jitter smears the fast-path cluster so it overlaps the
-// slow-path natural tail, killing sample-mean statistical separation.
+// #9 timing-oracle defense has three arms, in order of when each kicks
+// in for a given attack:
+//   1. Response-padding (TIMING_TARGET_MS + TIMING_JITTER_MS) makes all
+//      200-ok branches past body-parse return inside the same uniform
+//      envelope. Honeypot/form-fill-drop/duplicate/new-signup all look
+//      identical to an external observer in the single-sample case.
+//   2. Per-request jitter smears the fast-path cluster so it overlaps
+//      the slow-path natural tail, killing sample-mean separation
+//      against an attacker who runs ~10s-100s of probes.
+//   3. Per-email throttle (EMAIL_THROTTLE_*) caps same-email queries
+//      at 1 per 10 min, defeating the residual statistical-denoising
+//      attack where a many-IP adversary submits the SAME email N times
+//      to average out jitter. Trip → silent success-but-drop with the
+//      same padded envelope so the throttle isn't observable.
 // Residual leak: paths that exceed (TARGET + JITTER) return at natural
 // time (bounded by Resend p99). 4xx/5xx paths are NOT padded; the
 // status code is already the signal.
@@ -58,6 +65,26 @@ const VERCEL_PREVIEW_RE = /^https:\/\/[\w-]+\.vercel\.app$/;
 const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1_000;
 const RATE_LIMIT_MAX_REQUESTS = 3;
 const RATE_LIMIT_MAX_ENTRIES = 5_000;
+
+/** Per-email-hash throttle (cycle-4 #9 reinforcement, second arm).
+ *  Defends against statistical denoising of the timing pad: an attacker
+ *  with many residential IPs can submit the SAME email N times to
+ *  average out per-request jitter and recover the new-vs-duplicate
+ *  signal. Capping per-email queries at 1 per 10 min makes
+ *  denoising-by-resampling infeasible — the attacker would need
+ *  N*10min wall-clock per email probed.
+ *
+ *  Real-user UX: a legitimate double-submit (typo, double-click) trips
+ *  this on the 2nd attempt → silent success-but-drop (same posture as
+ *  honeypot and form-fill-drop). User sees ok:true; the audience-add
+ *  already succeeded on attempt 1, so no signup is lost. Welcome email
+ *  is also already sent (or queued) from attempt 1.
+ *
+ *  Shares the rateMap with the IP limiter — both keyed by prefix
+ *  (`ip:` vs `email:`) so no collision. RATE_LIMIT_MAX_ENTRIES caps
+ *  the combined pool. */
+const EMAIL_THROTTLE_WINDOW_MS = 10 * 60 * 1_000;
+const EMAIL_THROTTLE_MAX_REQUESTS = 1;
 
 /** Soft minimum form-fill time. Bots POST in &lt;200ms; real humans
  *  take seconds. Treat sub-1500ms as honeypot-style success-but-drop
@@ -122,11 +149,18 @@ const rateMap = new Map<string, RateBucket>();
 
 /**
  * Fixed-window rate limiter. Returns true if the caller is allowed,
- * false if they're over budget. Caller is identified by `key` (the IP).
- * On cap, evicts EXPIRED entries only (mirrors the cycle-4 fix to the
- * MCP-server limiter — never evict still-live victim entries).
+ * false if they're over budget. Caller is identified by `key` (typically
+ * `ip:<addr>` or `email:<addr>`). On cap, evicts EXPIRED entries only
+ * (mirrors the cycle-4 fix to the MCP-server limiter — never evict
+ * still-live victim entries). Defaults match the IP rate-limit; the
+ * email throttle passes its own (max, window).
  */
-function bumpRateLimit(key: string, now: number): boolean {
+function bumpRateLimit(
+  key: string,
+  now: number,
+  max: number = RATE_LIMIT_MAX_REQUESTS,
+  window: number = RATE_LIMIT_WINDOW_MS,
+): boolean {
   const entry = rateMap.get(key);
   if (!entry || now >= entry.resetAt) {
     if (rateMap.size >= RATE_LIMIT_MAX_ENTRIES) {
@@ -140,10 +174,10 @@ function bumpRateLimit(key: string, now: number): boolean {
       }
       if (reclaimed === 0) return false; // table full of live buckets — shed
     }
-    rateMap.set(key, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+    rateMap.set(key, { count: 1, resetAt: now + window });
     return true;
   }
-  if (entry.count >= RATE_LIMIT_MAX_REQUESTS) return false;
+  if (entry.count >= max) return false;
   entry.count += 1;
   return true;
 }
@@ -285,6 +319,15 @@ export default async function handler(req: Request): Promise<Response> {
   const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
   if (!email || email.length > MAX_EMAIL_LEN || !EMAIL_RE.test(email)) {
     return genericRejection();
+  }
+
+  // Per-email throttle (cycle-4 #9 reinforcement). Defends the timing pad
+  // against statistical denoising via repeated same-email submissions
+  // from many IPs. Trip → silent success-but-drop with the same
+  // padded-200 envelope as honeypot/form-fill paths, so the throttle
+  // itself isn't observable to the attacker.
+  if (!bumpRateLimit(`email:${email}`, now, EMAIL_THROTTLE_MAX_REQUESTS, EMAIL_THROTTLE_WINDOW_MS)) {
+    return paddedOk(now);
   }
 
   const apiKey = process.env.RESEND_API_KEY;
