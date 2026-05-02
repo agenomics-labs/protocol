@@ -17,7 +17,7 @@ The entire protocol is accessible to any AI agent through a Model Context Protoc
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                     MCP Server (TypeScript)                  │
-│           25 tools · Input validation · Error handling        │
+│           27 tools · Input validation · Error handling        │
 ├──────────────┬──────────────────┬────────────────────────────┤
 │  Agent Vault │  Agent Registry  │   Settlement Protocol      │
 │   (Anchor)   │    (Anchor)      │       (Anchor)             │
@@ -132,10 +132,10 @@ Per ADR-050, the vault has no cross-program-call surface. Transfers are SOL-only
 
 ## MCP Server
 
-A TypeScript MCP server exposes all three programs as 25 tools that any AI agent can invoke through the Model Context Protocol.
+A TypeScript MCP server exposes all three programs as 27 tools that any AI agent can invoke through the Model Context Protocol.
 
-**Source:** `mcp-server/src/index.ts` (1,104 lines) + `solana.ts` (309 lines) + `tools.ts` (591 lines)
-**Tests:** 21 passing (`mcp-server/test/mcp-handlers.test.ts`, 724 lines)
+**Source:** `mcp-server/src/index.ts` + `solana.ts` + `tools/*.ts` (per-tool descriptors)
+**Tests:** 383 passing via `cd mcp-server && npm test` (node:test + tsx; integration test `test/mcp-handlers.test.ts` requires a live local validator and is run separately).
 
 ### Tools
 
@@ -290,4 +290,4 @@ aep/
 ---
 
 *Built by Alejandro for the Colosseum Frontier Hackathon (Apr 6 – May 11, 2026)*
-*114 tests passing · 3 programs · 25 MCP tools · Real CPI verified on-chain*
+*3 programs · 27 MCP tools · Real CPI verified on-chain*
