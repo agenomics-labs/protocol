@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted (with resolution log — see Revisions below)
 
 ## Date
 
@@ -209,3 +209,72 @@ Expected log line shapes:
   team ID `team_nOESbCSr6hh3fTEXR6Zaoesz`.
 - Vercel deployment `dpl_Af5uv36Da3adGA9Z2HxBiuvzL5sY` — last known
   200-ok deployment of `17dceb1` from clean working tree.
+
+## Revisions
+
+### 2026-05-02 (same-day): Issues A & B resolved; Issue C still open
+
+The "defer all three" decision was lifted within the same session.
+Final state of the waitlist after resolution:
+
+- **Issue B (503 unavailable) — RESOLVED.** Root cause confirmed via
+  Vercel runtime logs and `vercel env ls production` (returned "No
+  Environment Variables found"): `RESEND_API_KEY` and
+  `RESEND_AUDIENCE_ID` had never been set on the project's production
+  scope. The earlier presumption that env vars "vanished between
+  deploys" was wrong — they were never there. The misleading "200 ok"
+  signals from my smoke tests were because the smoke tests used
+  `website_url: "x"` to trigger the honeypot path, which returns
+  `paddedOk(now)` BEFORE reaching the env-var check. So the smoke
+  tests only proved rate-limiter and origin-check, not env-var
+  presence. Fix: `vercel env add RESEND_API_KEY production` +
+  `vercel env add RESEND_AUDIENCE_ID production` + `vercel --prod`.
+  Verified via runtime logs (200 on real signup at 22:34:50 UTC).
+
+- **Issue A (welcome email never arrives) — RESOLVED.** Root cause
+  found via Resend dashboard `/emails` log: 403 from Resend because
+  the FROM domain (`agenomics.xyz` apex) was not verified — only
+  `mail.agenomics.xyz` (subdomain) was. Compounded by a Porkbun DNS
+  publishing error: records were initially added on
+  `send.agenomics.xyz` instead of `send.mail.agenomics.xyz` (Porkbun
+  Host field is relative, the user dropped the `.mail` segment).
+  Fix:
+    1. Code change `bafb478`: `WELCOME_FROM` and `WELCOME_REPLY_TO`
+       switched from `hello@agenomics.xyz` to
+       `hello@mail.agenomics.xyz` to match the verified domain.
+    2. Porkbun DNS records corrected: MX + SPF moved to
+       `send.mail.agenomics.xyz`, DKIM TXT added at
+       `resend._domainkey.mail.agenomics.xyz`, DMARC TXT at
+       `_dmarc.agenomics.xyz`.
+    3. Resend domain verification flipped to Verified.
+  Verified end-to-end: signup → welcome email landed in inbox at
+  19:10 local time with sender `Agenomics <hello@mail.agenomics.xyz>`
+  and full body intact.
+
+- **Issue C (Vercel auto-deploy gap) — STILL OPEN.** No code change;
+  the `vercel` GitHub App still isn't installed on `agenomics-labs`
+  org and the Vercel project still has no `link` to a Git repo.
+  Every push to `main` continues to require a manual
+  `cd site && vercel --prod`. Documented as a foot-gun; defer until
+  a multi-author or CI-driven workflow makes manual deploys
+  untenable.
+
+### Future apex-verification follow-up
+
+`bafb478` switched the FROM to the subdomain to unblock today.
+Long-term cleaner branding wants `hello@agenomics.xyz` (apex). To
+revert: verify the apex on Resend (separate domain entry,
+publish-and-verify cycle on Porkbun for DKIM + SPF on the apex —
+note: apex SPF already has `include:_spf.porkbun.com`, so the new
+SPF needs a merged value like `v=spf1 include:_spf.porkbun.com
+include:amazonses.com ~all` rather than a second TXT record), then
+revert `bafb478` (one-line change to `WELCOME_FROM` /
+`WELCOME_REPLY_TO`). No urgency — current setup is fully functional.
+
+### Diagnostic hygiene note
+
+Future smoke-tests against the waitlist endpoint should use a real
+email shape (without `website_url`) to actually exercise the env-var
++ Resend path, or this kind of false-200 misdiagnosis will recur.
+The honeypot bypass is a feature, not a bug — but it makes
+honeypot-trip requests useless as health checks.
