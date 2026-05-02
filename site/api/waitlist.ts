@@ -11,6 +11,17 @@
 // quota protection against a single-IP flood, NOT a hard guarantee. For
 // a hard guarantee, swap the in-memory Map for Upstash Redis REST (the
 // surface is identical; see `bumpRateLimit()`).
+//
+// #9 timing-oracle defense is response-padding (TIMING_TARGET_MS) plus
+// per-request jitter (TIMING_JITTER_MS), not just always-parse-r.json().
+// All 200-ok branches past body-parse — honeypot-trip, form-fill-drop,
+// duplicate, and new-signup (which does +1 Resend round-trip for the
+// welcome email) — return inside the same uniform [TARGET, TARGET+JITTER]
+// envelope. Jitter smears the fast-path cluster so it overlaps the
+// slow-path natural tail, killing sample-mean statistical separation.
+// Residual leak: paths that exceed (TARGET + JITTER) return at natural
+// time (bounded by Resend p99). 4xx/5xx paths are NOT padded; the
+// status code is already the signal.
 export const config = { runtime: 'edge' };
 
 // ---------------------------------------------------------------------------
@@ -53,6 +64,48 @@ const RATE_LIMIT_MAX_ENTRIES = 5_000;
  *  rather than a hard reject (avoids false positives on autocomplete
  *  power-users). */
 const MIN_FORM_FILL_MS = 1_500;
+
+/** Welcome email — sent on first-time signup (after audience-add success).
+ *  hello@agenomics.xyz must be a verified sender on the Resend account.
+ *  Send is best-effort: a Resend send-failure here does NOT fail the signup
+ *  (the contact is already on the audience). Send is awaited (not detached)
+ *  so it completes inside the TIMING_TARGET_MS response pad — Vercel edge
+ *  can terminate floating promises after the response returns. */
+const WELCOME_FROM = 'Agenomics <hello@agenomics.xyz>';
+const WELCOME_REPLY_TO = 'hello@agenomics.xyz';
+const WELCOME_SUBJECT = "You're on the Agenomics waitlist";
+const WELCOME_TEXT = [
+  "You're in.",
+  '',
+  "Thanks for joining the Agenomics waitlist. You'll hear from us as we open early",
+  'access to the coordination layer for a machine-speed economy.',
+  '',
+  'In the meantime, the open thesis lives at https://agenomics.xyz/.',
+  '',
+  '— Agenomics',
+].join('\n');
+const WELCOME_HTML = [
+  '<!doctype html>',
+  '<html><body style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#111;line-height:1.55;max-width:560px;margin:0 auto;padding:24px">',
+  "<p>You're in.</p>",
+  "<p>Thanks for joining the <strong>Agenomics</strong> waitlist. You'll hear from us as we open early access to the coordination layer for a machine-speed economy.</p>",
+  '<p>In the meantime, the open thesis lives at <a href="https://agenomics.xyz/" style="color:#5b6cff">agenomics.xyz</a>.</p>',
+  '<p style="color:#666;margin-top:32px">— Agenomics</p>',
+  '</body></html>',
+].join('');
+
+/** Wall-clock target for every 200-ok response past the body-parse step
+ *  (cycle-4 #9 reinforcement). Set above the typical p95 of the slowest
+ *  happy path: audience POST (~150ms) + welcome email (~150ms) ≈ 300ms.
+ *  500ms gives headroom for normal-jitter Resend latencies. */
+const TIMING_TARGET_MS = 500;
+/** Per-request randomized addition to TIMING_TARGET_MS. Smears the fast-path
+ *  cluster into a uniform [TARGET, TARGET+JITTER] band so it overlaps the
+ *  slow-path natural tail — kills sample-mean statistical separation between
+ *  honeypot/duplicate (clustered at TARGET) and new-signup (which can spill
+ *  toward TARGET+JITTER). Math.random() is adequate; this isn't crypto, it's
+ *  histogram-flattening. */
+const TIMING_JITTER_MS = 150;
 
 // ---------------------------------------------------------------------------
 // In-memory rate-limit table (per-isolate; warms across invocations)
@@ -139,6 +192,25 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
+/** Pads to TIMING_TARGET_MS + uniform[0, TIMING_JITTER_MS) measured from
+ *  `start`. No-op if the branch already exceeded the (jittered) target —
+ *  that's the documented residual leak. */
+async function padTo(start: number): Promise<void> {
+  const target = TIMING_TARGET_MS + Math.floor(Math.random() * TIMING_JITTER_MS);
+  const remaining = target - (Date.now() - start);
+  if (remaining > 0) {
+    await new Promise<void>((resolve) => setTimeout(resolve, remaining));
+  }
+}
+
+/** All accepted-for-processing 200-ok branches return through here so the
+ *  honeypot-trip / form-fill-drop / duplicate / new-signup paths are all
+ *  timing-indistinguishable to an external observer (cycle-4 #9). */
+async function paddedOk(start: number): Promise<Response> {
+  await padTo(start);
+  return json({ ok: true });
+}
+
 // ---------------------------------------------------------------------------
 // Handler
 // ---------------------------------------------------------------------------
@@ -193,7 +265,7 @@ export default async function handler(req: Request): Promise<Response> {
   // subscribe them. The form-loaded-at check below is the second arm
   // catching bots that POST sub-1.5s.
   if (typeof body.website_url === 'string' && body.website_url.length > 0) {
-    return json({ ok: true });
+    return paddedOk(now);
   }
 
   // Form-load timestamp (cycle-4 #10 second arm). A real human takes ≥1.5s
@@ -203,7 +275,7 @@ export default async function handler(req: Request): Promise<Response> {
   if (typeof body.form_loaded_at === 'number' && Number.isFinite(body.form_loaded_at)) {
     const fillMs = now - body.form_loaded_at;
     if (fillMs >= 0 && fillMs < MIN_FORM_FILL_MS) {
-      return json({ ok: true });
+      return paddedOk(now);
     }
   }
 
@@ -243,11 +315,44 @@ export default async function handler(req: Request): Promise<Response> {
   // success the new-signup path returns.
   const data = (await r.json().catch(() => null)) as { message?: string } | null;
 
-  if (r.ok) return json({ ok: true });
+  if (r.ok) {
+    // First-time signup. Welcome email is best-effort (any send failure
+    // is swallowed — contact is already on the audience) and awaited so
+    // it completes inside the response pad below. The pad equalizes
+    // wall-clock with the duplicate path (cycle-4 #9), so the extra
+    // Resend round-trip for the welcome email isn't observer-visible.
+    await sendWelcomeEmail(apiKey, email);
+    return paddedOk(now);
+  }
   if (r.status === 422 || r.status === 409) {
     if (data?.message && /exist|already/i.test(data.message)) {
-      return json({ ok: true });
+      return paddedOk(now);
     }
   }
   return json({ ok: false, error: 'provider_error' }, 502);
+}
+
+async function sendWelcomeEmail(apiKey: string, to: string): Promise<void> {
+  try {
+    await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'authorization': `Bearer ${apiKey}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: WELCOME_FROM,
+        to,
+        reply_to: WELCOME_REPLY_TO,
+        subject: WELCOME_SUBJECT,
+        text: WELCOME_TEXT,
+        html: WELCOME_HTML,
+      }),
+    });
+    // Intentionally not inspecting the response — best-effort send.
+    // If hello@agenomics.xyz is unverified, Resend returns 403 and
+    // the contact still keeps their audience seat.
+  } catch {
+    // Network error during send — swallow. Signup already succeeded.
+  }
 }
