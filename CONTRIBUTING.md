@@ -30,13 +30,19 @@ the drift, you just don't get the local guard.
 │   ├── agent-registry/
 │   └── settlement/
 ├── idl/                   Committed IDL baseline (ci gate vs. anchor build)
-├── mcp-server/            MCP server exposing 24 AEP actions to AI agents
+├── mcp-server/            MCP server exposing 27 AEP actions to AI agents
+├── sdk/                   SDK packages (consumers + types + runtime)
+│   ├── idl/                            ADR-099 — Anchor IDL re-export
+│   ├── client/                         ADR-098 — Anchor client wrapper
+│   └── action-runtime/                 ADR-088 — Result + defineAction
 ├── packages/              Publishable TS libraries
 │   ├── capability-manifest-validator/   ADR-060
 │   └── sas-resolver/                    ADR-061 + ADR-065
 ├── src/
 │   ├── indexer/           Off-chain event indexer
 │   └── x402-relay/        HTTP-402 payment relay
+├── dashboard/             React + Vite + Tailwind browser UI
+├── site/                  agenomics.xyz landing page (Vercel edge)
 ├── tests/                 Anchor integration tests (live validator)
 ├── scripts/               Sync / deploy / smoke-test helpers
 └── docs/adr/              Architecture Decision Records
@@ -87,8 +93,12 @@ All blocking unless noted.
 | mcp-server unit tests | `npm test` (node:test + tsx) |
 | TypeScript Check (capability-manifest-validator) | `tsc --noEmit` + `npm test` |
 | TypeScript Check (sas-resolver) | `tsc --noEmit` + `npm test` |
+| TypeScript Check (sdk/idl) | `tsc --noEmit` + `npm test` |
+| TypeScript Check (sdk/action-runtime) | `tsc --noEmit` + `npm test` |
+| TypeScript Check (sdk/client) | builds `@agenomics/idl` first, then `tsc --noEmit` + `npm test` |
 | TypeScript Check (indexer) | `tsc --noEmit` in `src/indexer/` |
 | TypeScript Check (x402-relay) | `tsc --noEmit` in `src/x402-relay/` |
+| Dashboard build (vite) | `vite build` in `dashboard/` (catches JSX import / wire errors) |
 
 ## ADR conventions
 
