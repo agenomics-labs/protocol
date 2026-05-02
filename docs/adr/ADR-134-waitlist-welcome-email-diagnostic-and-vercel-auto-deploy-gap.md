@@ -74,6 +74,23 @@ env vars set locally in `.vercel/.env.production.local` but never
 pushed, or an out-of-band edit. Diagnostic step: `cd site && vercel
 env ls production`.
 
+**2026-05-02 update (sharpened diagnosis):** after reverting the
+diagnostic patch (working tree clean, identical to deployed
+`17dceb1`) and re-running `vercel --prod`, the new build STILL
+returns 503. This rules out the diagnostic patch as the cause and
+points strongly at **edge-runtime build-time env-var inlining**:
+`waitlist.ts` declares `export const config = { runtime: 'edge' }`,
+and edge functions inline `process.env.X` references at build time
+rather than reading them per-request. So the first `17dceb1` build
+captured env vars that were present at *that* build time; subsequent
+builds inline `undefined`. Implication: the env vars were never
+properly persisted on the Vercel project — likely uploaded build-
+time-only on the original deploy (e.g. via `vercel --build-env` or
+a since-deleted `.env.production.local`). The deployment
+`dpl_Af5uv36Da3adGA9Z2HxBiuvzL5sY` retains a working bundle and can
+be promoted via the Vercel dashboard for immediate recovery while
+the persistent env vars are added via `vercel env add`.
+
 ### Issue C — Vercel project has no GitHub integration
 
 Confirmed via two independent checks on 2026-05-02:
