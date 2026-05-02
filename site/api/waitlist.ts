@@ -66,13 +66,16 @@ const RATE_LIMIT_MAX_ENTRIES = 5_000;
 const MIN_FORM_FILL_MS = 1_500;
 
 /** Welcome email — sent on first-time signup (after audience-add success).
- *  hello@agenomics.xyz must be a verified sender on the Resend account.
+ *  Sender uses the `mail.agenomics.xyz` subdomain because that is what is
+ *  verified on Resend (the apex `agenomics.xyz` is not). Switching this to
+ *  the apex requires verifying the apex on Resend first; until then, sends
+ *  from `*@agenomics.xyz` get a 403 from Resend's /emails endpoint.
  *  Send is best-effort: a Resend send-failure here does NOT fail the signup
  *  (the contact is already on the audience). Send is awaited (not detached)
  *  so it completes inside the TIMING_TARGET_MS response pad — Vercel edge
  *  can terminate floating promises after the response returns. */
-const WELCOME_FROM = 'Agenomics <hello@agenomics.xyz>';
-const WELCOME_REPLY_TO = 'hello@agenomics.xyz';
+const WELCOME_FROM = 'Agenomics <hello@mail.agenomics.xyz>';
+const WELCOME_REPLY_TO = 'hello@mail.agenomics.xyz';
 const WELCOME_SUBJECT = "You're on the Agenomics waitlist";
 const WELCOME_TEXT = [
   "You're in.",
