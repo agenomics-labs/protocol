@@ -303,6 +303,25 @@ jobs:
       - name: Unit tests
         run: npm test --workspace @agenomics/client
 
+  # Dashboard is the only workspace member that's pure JSX (no .ts) and has
+  # no test suite. Gating on `vite build` is the cheapest signal that
+  # catches import errors, JSX syntax errors, and module-resolution breaks
+  # — all of which were silent before this gate. Build is fast (~500ms
+  # local) and produces no committed artifacts (dist/ is gitignored).
+  dashboard-build:
+    name: Dashboard build (vite)
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # pin v6 (AUD-406)
+        with:
+          node-version: "20"
+          cache: "npm"
+      - name: Install workspace deps (npm ci)
+        run: npm ci --no-audit --no-fund
+      - name: Vite production build
+        run: npm run build --workspace dashboard
+
   # mcp-server also has pipeline + action-shape tests under node:test + tsx
   # (see `test/*.test.ts`). The existing `typescript-check-mcp` job only runs
   # `npx tsc --noEmit`; add a separate `npm test` invocation so the 70+ unit
