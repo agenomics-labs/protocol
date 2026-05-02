@@ -241,6 +241,68 @@ jobs:
       - name: Unit tests
         run: npm test --workspace @agenomics/sas-resolver
 
+  # Three SDK packages (`sdk/idl`, `sdk/action-runtime`, `sdk/client`) ship
+  # their own `npm test` (node:test + tsx, self-contained — no validator,
+  # no anchor IDL artifacts needed). They were workspace members but had
+  # no CI gate, so a regression in any of the three could land silently.
+  # Added as three independent jobs so a failure in `idl` doesn't mask a
+  # failure in `client`. Mirror the validator/sas-resolver pattern.
+  typescript-check-sdk-idl:
+    name: TypeScript Check (sdk/idl)
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # pin v6 (AUD-406)
+        with:
+          node-version: "20"
+          cache: "npm"
+      - name: Install workspace deps (npm ci)
+        run: npm ci --no-audit --no-fund
+      - name: Type check
+        working-directory: sdk/idl
+        run: npx tsc --noEmit
+      - name: Unit tests
+        run: npm test --workspace @agenomics/idl
+
+  typescript-check-sdk-action-runtime:
+    name: TypeScript Check (sdk/action-runtime)
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # pin v6 (AUD-406)
+        with:
+          node-version: "20"
+          cache: "npm"
+      - name: Install workspace deps (npm ci)
+        run: npm ci --no-audit --no-fund
+      - name: Type check
+        working-directory: sdk/action-runtime
+        run: npx tsc --noEmit
+      - name: Unit tests
+        run: npm test --workspace @agenomics/action-runtime
+
+  typescript-check-sdk-client:
+    name: TypeScript Check (sdk/client)
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # pin v6 (AUD-406)
+        with:
+          node-version: "20"
+          cache: "npm"
+      - name: Install workspace deps (npm ci)
+        run: npm ci --no-audit --no-fund
+      # sdk/client depends on @agenomics/idl (PROGRAM_IDS export consumed
+      # by client.ts). Build idl first so its d.ts is on disk for the
+      # typecheck. Mirrors the validator → action-runtime build-first pattern.
+      - name: Build @agenomics/idl
+        run: npm run build --workspace @agenomics/idl
+      - name: Type check
+        working-directory: sdk/client
+        run: npx tsc --noEmit
+      - name: Unit tests
+        run: npm test --workspace @agenomics/client
+
   # mcp-server also has pipeline + action-shape tests under node:test + tsx
   # (see `test/*.test.ts`). The existing `typescript-check-mcp` job only runs
   # `npx tsc --noEmit`; add a separate `npm test` invocation so the 70+ unit
