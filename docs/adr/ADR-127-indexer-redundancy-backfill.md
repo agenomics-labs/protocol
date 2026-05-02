@@ -2,7 +2,7 @@
 
 ## Status
 
-**Superseded by ADR-128** (2026-04-27).
+Superseded by ADR-128 (2026-04-27)
 
 ADR-127 was bound by a now-lifted "what's already in the stack"
 constraint (SQLite + Redis only, no Postgres). With that constraint
