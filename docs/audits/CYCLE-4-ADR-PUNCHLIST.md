@@ -23,6 +23,12 @@ posture the protocol intends.
 |---|---|---|---|
 | 0 | 0 | 1 | 1 |
 
+**Closure status (2026-05-02 update):** both findings closed by
+commit `280d222` (CYCLE4-ADR-001 in `MAINNET_CHECKLIST.md` §1.5;
+CYCLE4-ADR-002 in `CONTRIBUTING.md` + scheduled routine
+`trig_0137qHig9jGrhmxB3EGsRXXq`). Punchlist Recommendation section
+below remains accurate; nothing else open.
+
 ## Findings
 
 ### CYCLE4-ADR-001 (Medium) — `MAINNET_CHECKLIST.md` does not surface ADR-132 transport defaults
@@ -117,7 +123,16 @@ Not Low because:
    surface" (currently the ADR has no such section — add one) so
    the runbook ↔ ADR loop is closed.
 
-**Status:** Open.
+**Status:** Closed by commit `280d222` (2026-04-29) — adds
+`MAINNET_CHECKLIST.md` §1.5 "MCP transport posture (ADR-083,
+ADR-132)" with all enumerated env-var and posture items. The §1.5
+checklist also captures the cycle-4 `AEP_MCP_TRUSTED_PROXY_HOPS`
+hardening that was not in this finding's original suggested-closure
+template. The ADR-132 ↔ checklist cross-reference (suggested closure
+step 3) was deferred — the §1.5 footer references ADR-083 and
+ADR-132 by number, which closes the loop in the operator-runbook →
+ADR direction. The ADR → runbook direction can be added on the next
+ADR-132 revision; not blocking, no security impact.
 
 ---
 
@@ -172,7 +187,16 @@ Two of the five triggers are NOT covered by the scheduled agent:
    04-27.md`) covered the silence pattern but did not enumerate
    coverage of the specific transitive packages ADR-133 names.
 
-**Status:** Open.
+**Status:** Closed by commit `280d222` (2026-04-29) — adds
+CONTRIBUTING.md "Things worth flagging when opening a PR" entry
+covering the Kit-native-only-feature trigger, and schedules remote
+routine `trig_0137qHig9jGrhmxB3EGsRXXq` for 2027-10-29 to fire the
+18-month re-evaluation. Dependabot coverage of `bigint-buffer`
+verified independently by the cycle-4 dependabot triage agent
+(2026-05-02) — alert #1 is HIGH-severity `bigint-buffer`
+(GHSA-3gc7-fjrx-p6mg / CVE-2025-3194), explicitly named on the
+deferred-waiver list per ADR-012/ADR-133. The CVE trigger is
+therefore covered by the existing alert pipeline.
 
 ## Adjacent surfaces probed (no findings)
 
