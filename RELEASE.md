@@ -6,11 +6,35 @@ Programs + mcp-server do **not** ship through this flow — they deploy via
 
 ## Scope
 
-Today the release flow publishes **both** npm packages at the same
-version:
+There are two publish workflows in the repo, by design:
 
-- `@agenomics/capability-manifest-validator`
-- `@agenomics/sas-resolver`
+1. **`.github/workflows/publish.yml` (active, version-checked, this
+   document):** publishes the two `packages/*` packages at the same
+   version, with strict tag-version match. Has shipped releases.
+   - `@agenomics/capability-manifest-validator`
+   - `@agenomics/sas-resolver`
+
+2. **`.github/workflows/npm-publish.yml` (dormant; broader successor):**
+   covers all 5 SDK packages once each `package.json`'s
+   `"private": true` is flipped to `"private": false` in a separate
+   deliberate commit. Skips per-package via `jq -r .private` so it
+   no-ops cleanly on tag pushes until the flips happen.
+   - `@agenomics/idl`
+   - `@agenomics/client`
+   - `@agenomics/action-runtime`
+   - `@agenomics/capability-manifest-validator`
+   - `@agenomics/sas-resolver`
+
+The two coexist: until the `sdk/*` packages are de-private'd, only
+`publish.yml` actually publishes on a tag push. After the flips,
+both fire on the same tag — that's intentional; `publish.yml`
+provides the strict version-match guard for the already-public
+packages and `npm-publish.yml` adds the three new ones.
+
+The procedure below documents the **`publish.yml` (2-package)** flow.
+For the broader 5-package flow, see the comment block at the top of
+`.github/workflows/npm-publish.yml` (covers the one-time
+`private: false` flip + post-flip `npm view` verification).
 
 If independent versioning becomes necessary later, split into
 per-package tag prefixes (e.g., `validator-v*`, `resolver-v*`) and
