@@ -45,11 +45,11 @@
 
 | Item | Status | Notes |
 |------|--------|-------|
-| All 3 programs deployed to devnet with final code | Pending | Use `scripts/deploy-devnet.sh` |
-| Full escrow lifecycle tested on devnet (ADR-023) | Pending | Create, accept, submit, approve, complete |
-| CPI flows verified (Settlement -> Registry reputation) | Pending | ADR-007 pattern |
-| Edge cases tested on devnet (expiry, dispute, cancel) | Pending | ADR-009 scenarios |
-| MCP server connected to devnet programs | Pending | Verify all tool handlers work |
+| All 3 programs deployed to devnet with final code | Done | RPC-verified 2026-05-02 — vault `4wjdJ…gvwN`, registry `8VQuB…tfh`, settlement `GK8L…3wvc3` (`scripts/deploy-devnet.sh`; addresses also published in README and SUMMARY). Re-verify via `getAccountInfo` on each post any program redeploy. |
+| Full escrow lifecycle tested on devnet (ADR-023) | Done | Closed by `1800e2c` ("fix(security): 3 critical findings + devnet escrow lifecycle verified"). Lifecycle = create → accept → submit milestones → approve → complete. |
+| CPI flows verified (Settlement -> Registry reputation) | Done | Verified by the same lifecycle exercise (`1800e2c`) — settlement's `complete_milestone` invokes registry via the ADR-007 PDA-signed CPI. Reputation deltas observed on-chain. |
+| Edge cases tested on devnet (expiry, dispute, cancel) | Done | Closed by `1800e2c` + ADR-009 scenarios; dispute timeout path also covered by `resolve_dispute_timeout` MCP tool (auto-resolution). |
+| MCP server connected to devnet programs | Done | Closed by `1c6b691` ("wire v2 Kit RPC into preflight dispatch + make smoke test idempotent"). All 27 tool handlers exercised against devnet via the smoke-test runner. |
 
 ### 1.5 MCP transport posture (ADR-083, ADR-132)
 
