@@ -86,9 +86,9 @@ let the platform do the marketing.
 - Twilio comparable: market cap ~$10B, primarily
   developer-free + enterprise-paid model.
 
-## Anticipated objection + response
+## Anticipated objections + responses
 
-**Objection:** "What stops Anthropic from shipping their own
+**Objection 1:** "What stops Anthropic from shipping their own
 financial-primitives MCP server and obviating you?"
 
 **Response:** The on-chain settlement layer can't sit inside any
@@ -99,6 +99,32 @@ own bank: possible, but the conflict-of-interest is the reason
 the neutral layer exists. The defensibility is exactly that we
 DON'T have a foundation-model business — we're the protocol that
 sits between them.
+
+**Objection 2:** "What if MCP itself loses to a competing standard
+— OpenAI ships something incompatible, the market splits?"
+
+**Response:** Real risk, and the answer is the protocol layer is
+transport-agnostic. The 27 tools, the on-chain state, the
+reputation graph — all of that lives below the wire format. If
+OpenAI's standard wins, we ship an OpenAI-format adapter on top
+of the same Anchor programs. If MCP wins (currently more likely
+given Cursor + Block + Sourcegraph + Replit adoption), we keep
+shipping there. The protocol is the moat; the wire format is a
+fungible adapter.
+
+**Objection 3:** "MCP servers are getting commoditized — there
+are already dozens of them on registries like Smithery. How
+defensible is being one more?"
+
+**Response:** Most MCP servers are wrappers around existing
+SaaS APIs — they're a thin layer over Stripe, Notion, Linear,
+etc. Theirs is the SaaS company's defensibility, not the MCP
+shim's. We're different shape: we ship the underlying
+infrastructure, not a wrapper. Our 27 tools are backed by
+three Anchor programs that we wrote, deployed, and own the
+upgrade authority on. The differentiator is "MCP server backed
+by purpose-built on-chain primitives," not "MCP wrapper around
+$existing_service."
 
 ---
 

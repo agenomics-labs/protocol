@@ -92,9 +92,9 @@ integration is one MCP config line.
   shipped, signup form on agenomics.xyz routing through the
   same hardened backend the protocol describes.
 
-## Anticipated objection + response
+## Anticipated objections + responses
 
-**Objection:** "The human-in-the-loop tax is a feature, not a
+**Objection 1:** "The human-in-the-loop tax is a feature, not a
 bug. Companies want a human approving agent payments because
 of liability and compliance."
 
@@ -107,6 +107,33 @@ on token Y." The Anchor program enforces that on-chain.
 Humans set the rails; agents run on them. Same shift Stripe
 made: the bank still owns the rails, but the developer doesn't
 talk to the bank for every transaction.
+
+**Objection 2:** "Where's the actual demand? Who's BUILDING agents
+that need to pay each other right now, vs. it being a 2027
+problem?"
+
+**Response:** Three concrete demand signals as of today:
+(1) Cursor's background agents already orchestrate sub-agents —
+internal payments are the next step; (2) ElizaOS trader bots
+already manage funds and could trivially pay other ElizaOS
+agents for signal-data; (3) Anthropic's MCP-enabled agents are
+shipping enterprise integrations where the agent makes API calls
+to paid services — those calls are payments waiting for a
+better rail. The honest framing: 2026 is the wedge year, 2027
+is the inflection. Investing now is buying the position before
+the inflection.
+
+**Objection 3:** "If the human-in-the-loop tax is so painful,
+why hasn't an agent platform built this themselves?"
+
+**Response:** Because every agent platform's core competence is
+agent reasoning, not on-chain settlement infrastructure. Cursor,
+ElizaOS, AutoGPT — all of them outsource their LLM, their auth,
+their hosting. Building Anchor programs + cryptographic settlement
+is two-quarters of focused work for a team that doesn't think in
+PDAs. They'll outsource this layer to the same kind of vendor
+they outsource Stripe and Auth0 to today — which is the position
+we're occupying.
 
 ---
 

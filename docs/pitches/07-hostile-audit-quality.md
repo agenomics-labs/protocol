@@ -97,9 +97,9 @@ the tooling is reusable).
   Mango Markets ($114M, 2022). Each has a corresponding
   defense pattern in our ADR set.
 
-## Anticipated objection + response
+## Anticipated objections + responses
 
-**Objection:** "Internal audits aren't external audits. Real
+**Objection 1:** "Internal audits aren't external audits. Real
 funds want a Trail of Bits or OtterSec sign-off."
 
 **Response:** Agreed — and that's on the use-of-funds for the
@@ -109,6 +109,33 @@ that they price by hours-of-finding; a codebase that already
 self-identifies its own vulnerabilities through hostile
 internal review is a 2-week engagement, not a 12-week one.
 The internal work compounds into external-audit ROI.
+
+**Objection 2:** "Quality posture is necessary but not sufficient.
+Plenty of well-tested protocols still get exploited via novel
+attack classes."
+
+**Response:** Two layers of response. First, the protocol surface
+is intentionally narrow — we don't ship governance tokens, we
+don't have admin keys on the programs, we don't custody funds in
+any centralized way. Smaller surface = fewer novel attack classes
+to discover. Second, the design assumes adversarial composability:
+the four audit cycles weren't checking "did the developer write
+correct code," they were checking "what does an adversarial
+caller do." That's the same posture an external auditor takes,
+just run continuously by the maintainer.
+
+**Objection 3:** "Security is a cost center, not a moat. How do you
+turn this into a competitive advantage that judges or LPs care
+about?"
+
+**Response:** Two ways. First, regulated agent operators (financial
+agents, healthcare agents, anything touching PII or money) need
+the audit posture as a procurement requirement — security IS the
+sales motion at the enterprise tier. Second, when an exploit
+inevitably happens to a less-hardened competitor, our procurement
+flips from "sales pipeline" to "incoming inquiries." The
+hostile-audit work is insurance that pays out at exactly the
+moment the category gets scary.
 
 ---
 

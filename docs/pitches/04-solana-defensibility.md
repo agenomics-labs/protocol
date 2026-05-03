@@ -87,9 +87,9 @@ typically structure crypto-infra deals.
   CPI to Registry — the on-chain mutation IS the network
   effect.
 
-## Anticipated objection + response
+## Anticipated objections + responses
 
-**Objection:** "Solana has had multiple multi-hour outages.
+**Objection 1:** "Solana has had multiple multi-hour outages.
 Agent infrastructure can't tolerate that."
 
 **Response:** True historically, with the last major outage in
@@ -101,6 +101,32 @@ escrow funds are held in PDAs (not custodial), and
 governance-set window. The chain going down is an availability
 problem, not a correctness problem. Worth diligence-ing further
 with you.
+
+**Objection 2:** "EVM L2s solved the latency problem. Base, Arbitrum,
+Optimism do sub-second blocks now. Why not just ship there?"
+
+**Response:** L2 sub-second is L2-internal. The moment you bridge
+to L1 — or to ANOTHER L2 — you eat 7-day withdrawal windows or
+optimistic-rollup challenge periods. Agent-to-agent transactions
+spanning multiple platforms can't tolerate either. Solana's
+single-state-machine architecture means an agent on one program
+transacts with an agent on another program in the same slot, no
+bridging. Ethereum's modularity is great for human-speed defi.
+It's wrong for machine-clock coordination.
+
+**Objection 3:** "Solana's regulatory posture is messier than
+Ethereum's. SOL was named in SEC filings. Doesn't that risk the
+stack?"
+
+**Response:** The SEC's framing has softened materially through
+2025 — that's public record. Our protocol holds no token, custodies
+no funds in any centralized way (vaults are PDA-controlled, the
+chain is the custodian), and operates as protocol infrastructure
+rather than as a securities issuer. The regulatory risk in our
+specific shape sits with the chain itself, not the protocol on
+top. If a fund needs the protocol to be portable to another L1
+as a hedge, the Anchor programs are 6-8 weeks of porting work to
+Sui or Aptos — same shape, different runtime.
 
 ---
 

@@ -72,10 +72,10 @@ fee surface grows linearly.
 - 547+ tests passing in CI; ADR governance with 134 decisions
   documented.
 
-## Anticipated objection + response
+## Anticipated objections + responses
 
-**Objection:** "Agent transactions are still a small percentage of
-the agent market — most of that $236B is enterprise agent SaaS."
+**Objection 1:** "Agent transactions are still a small percentage
+of the agent market — most of that $236B is enterprise agent SaaS."
 
 **Response:** Right — *today*. The Stripe of 2008 was also a small
 slice of total e-commerce. The thesis is that as agents take on
@@ -83,6 +83,29 @@ multi-step economic work — buying compute, paying contractors,
 licensing data — the percentage that flows through programmatic
 settlement grows from ~0% to a meaningful share. We're positioning
 for that shift, not for the current state.
+
+**Objection 2:** "These market-size projections are notoriously
+inflated. Why should I weight them at all?"
+
+**Response:** Discount the absolute numbers — the *direction* and
+*growth rate* are what matter, and those align across three
+independent analyst firms (Precedence, MarketsAndMarkets, plus
+Gartner's separate agentic-AI commentary). Even if you halve the
+TAM, 45% CAGR for a category that didn't exist three years ago
+is the signal. We're a play on the rate-of-change, not the
+absolute level.
+
+**Objection 3:** "What's the kill-zone — what could happen in the
+next 18 months that makes this pitch wrong?"
+
+**Response:** Three explicit kill-zones: (1) MCP gets supplanted
+by a foundation-provider-controlled standard (OpenAI ships
+something incompatible and the market splits); (2) Solana suffers
+a multi-week outage that breaks the agent-economy timing thesis
+(unlikely post-Firedancer but real); (3) regulatory framework
+forces every agent transaction through human approval (kills the
+core value-prop). All three have pre-defined responses in our
+risk register; happy to walk through them.
 
 ---
 
