@@ -212,9 +212,15 @@ Expected log line shapes:
 
 ## Revisions
 
-### 2026-05-02 (same-day): Issues A & B resolved; Issue C still open
+### 2026-05-02 (same-day): all three issues resolved
 
 The "defer all three" decision was lifted within the same session.
+Issues A & B were resolved first; Issue C followed after the user
+disclosed that the Vercel ↔ GitHub integration is gated to Pro+ for
+org repos and they are on the free tier (the originally-suggested
+fix is therefore structurally blocked, but a Deploy Hook workaround
+is fully equivalent and free-tier-available).
+
 Final state of the waitlist after resolution:
 
 - **Issue B (503 unavailable) — RESOLVED.** Root cause confirmed via
@@ -251,13 +257,33 @@ Final state of the waitlist after resolution:
   19:10 local time with sender `Agenomics <hello@mail.agenomics.xyz>`
   and full body intact.
 
-- **Issue C (Vercel auto-deploy gap) — STILL OPEN.** No code change;
-  the `vercel` GitHub App still isn't installed on `agenomics-labs`
-  org and the Vercel project still has no `link` to a Git repo.
-  Every push to `main` continues to require a manual
-  `cd site && vercel --prod`. Documented as a foot-gun; defer until
-  a multi-author or CI-driven workflow makes manual deploys
-  untenable.
+- **Issue C (Vercel auto-deploy gap) — RESOLVED via Deploy Hook
+  workaround (2026-05-02 second update).** The originally-suggested
+  fix (install `vercel` GitHub App on `agenomics-labs` org + connect
+  project in Vercel dashboard) is **structurally blocked** by the
+  Vercel free tier — Vercel ↔ GitHub integration on org repos
+  requires Vercel Pro+. Upgrading the plan is out of scope for now.
+  Workaround: a GitHub Actions workflow at
+  `.github/workflows/vercel-deploy-site.yml` curls a Vercel Deploy
+  Hook (free-tier-available) on every push that touches `site/**`.
+  This achieves the same outcome (push → production deploy of HEAD)
+  without the GitHub-integration requirement.
+
+  One-time setup (must be done once before the workflow becomes
+  effective):
+    1. Vercel dashboard → site → Settings → Git → Deploy Hooks →
+       "Create Hook". Name: `github-main`. Branch: `main`. Copy URL.
+    2. GitHub repo → Settings → Secrets and variables → Actions →
+       "New repository secret". Name: `VERCEL_DEPLOY_HOOK_URL`.
+       Value: the URL from step 1.
+    3. Push any change under `site/**` → workflow fires → Vercel
+       enqueues a production build of HEAD.
+
+  If the secret is missing, the workflow fails fast with an explicit
+  message rather than a confusing curl error — making the missing
+  setup obvious on the first push that touches site/**. Path-filter
+  on `site/**` prevents unrelated commits from burning Vercel
+  builds.
 
 ### Future apex-verification follow-up
 

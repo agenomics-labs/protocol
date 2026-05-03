@@ -99,6 +99,7 @@ All blocking unless noted.
 | TypeScript Check (indexer) | `tsc --noEmit` in `src/indexer/` |
 | TypeScript Check (x402-relay) | `tsc --noEmit` in `src/x402-relay/` |
 | Dashboard build (vite) | `vite build` in `dashboard/` (catches JSX import / wire errors) |
+| Vercel Deploy (site) | curls `VERCEL_DEPLOY_HOOK_URL` on push to `site/**` (free-tier alternative to Vercel↔GitHub integration; one-time setup in workflow header) |
 
 ## ADR conventions
 
