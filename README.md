@@ -38,18 +38,19 @@ npm run dev
 
 ### Connect to Claude Desktop
 
-Add to your Claude Desktop MCP config:
+Add to your Claude Desktop MCP config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS, `%APPDATA%\Claude\claude_desktop_config.json` on Windows):
 ```json
 {
   "mcpServers": {
-    "aep": {
+    "agenomics": {
       "command": "node",
       "args": ["dist/index.js"],
-      "cwd": "/path/to/AEP/mcp-server"
+      "cwd": "/absolute/path/to/your/clone/of/protocol/mcp-server"
     }
   }
 }
 ```
+Restart Claude Desktop after editing. The 27 tools (`create_vault`, `register_agent`, `create_escrow`, etc) become available to any agent in the conversation.
 
 ## MCP Tools (27)
 
