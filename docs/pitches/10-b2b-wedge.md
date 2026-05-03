@@ -95,9 +95,9 @@ line and the value-prop ("your agents can pay each other in
 - 547+ tests passing in CI; ADR-governed decisions; four
   hostile-audit cycles closed.
 
-## Anticipated objection + response
+## Anticipated objections + responses
 
-**Objection:** "Agent platforms don't have budget for $25K
+**Objection 1:** "Agent platforms don't have budget for $25K
 integrations. They're mostly venture-funded with 18-month
 runway and no revenue."
 
@@ -109,6 +109,35 @@ the conversion path is "your agent volume crossed the
 threshold; here's an invoice." Same self-serve-up-to-paid
 shape Twilio used to convert single-developer hobbyists into
 Fortune 500 contracts.
+
+**Objection 2:** "What's the competitive landscape — who else is
+shipping agent payment infrastructure today?"
+
+**Response:** Three categories of competitor: (1) Stripe-Privy
+post-acquisition, but they're focused on human-end-user wallets
+that agents BORROW, not agent-native wallets — different shape;
+(2) Crossmint and similar wallet-as-a-service plays, but they're
+NFT-and-collectibles-first, not transactional-first; (3) various
+crypto-native agent frameworks (ElizaOS, SendAI) shipping their
+own one-off settlement, which validates demand but doesn't compete
+on the neutral-protocol axis. We're the only team shipping
+purpose-built on-chain primitives + neutral-protocol positioning +
+MCP-native distribution as a unified play.
+
+**Objection 3:** "Land-and-expand only works if NRR > 130%. What's
+the actual expansion path mechanic?"
+
+**Response:** Each of the three primitives has a distinct
+expansion trigger. Vault → Reputation flips when the platform
+has >100 active vaults (operators want a "trustworthy
+counterparty" filter). Reputation → Multi-vault SaaS flips when
+audit/compliance requirements arrive (typically a Series B
+event for the platform). Multi-vault SaaS → Premium audit
+services flips when the platform handles regulated funds or
+hits an exploit and needs hardening. Each trigger is observable
+in the platform's growth metrics, which means our expansion is
+predictable from the outside — modeled at 140-160% NRR for
+design-partner cohort year-2.
 
 ---
 

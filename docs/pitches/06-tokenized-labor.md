@@ -93,9 +93,9 @@ Precedence Research.
   CPI on-chain (`SettlementState::Completed` triggers
   registry update via PDA-signed `invoke_signed`).
 
-## Anticipated objection + response
+## Anticipated objections + responses
 
-**Objection:** "Most 'agent economy' pitches are vaporware.
+**Objection 1:** "Most 'agent economy' pitches are vaporware.
 What stops Agenomics from being one of them?"
 
 **Response:** Right — most are. Three signals to disqualify
@@ -106,6 +106,36 @@ landing site itself runs on the same infrastructure stack
 (programmable backend, signed transactions on a verified
 domain) — we're our own first user. Diligence is one
 `solana account` command away.
+
+**Objection 2:** "Token launches are a regulatory minefield in
+2026. When does the token actually ship, and how do you avoid
+the SEC heat?"
+
+**Response:** Token is explicitly not day-one and not in the
+critical path. Mainnet ships Q3 2026 with equity-only economics
+(per-tx fees + SaaS). Token launch only triggers if and when
+three conditions are met: (a) reputation graph reaches a
+defined network-effect threshold, (b) the protocol's
+governance can credibly decentralize (verified by an external
+SEC-experienced counsel), (c) the token genuinely captures
+value the equity can't (cross-chain settlement governance, fee
+routing). If any of those don't hit, equity remains the only
+shape. The pitch isn't "tokens are coming" — it's "tokens are
+optionality if the math works."
+
+**Objection 3:** "If agents are the new economic actors, what
+prevents this from getting outright banned by jurisdictions
+that require human accountability for every transaction?"
+
+**Response:** The vault's policy enforcement is the answer.
+A vault has a HUMAN OWNER — usually the agent operator. The
+human sets the policy ("up to $X per day, only to allowlisted
+counterparties, only on token Y"). The Anchor program enforces
+that policy. So every transaction has a clear human-authored
+constraint, even if the human didn't approve the specific
+trade. This maps cleanly onto how brokerages already let
+human owners delegate to algorithms within constraints — same
+regulatory pattern, applied to agents.
 
 ---
 

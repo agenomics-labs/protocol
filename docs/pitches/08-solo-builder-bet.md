@@ -23,10 +23,10 @@ presentation, four hostile-audit cycles, self-deploying CI.
 sending welcome emails through a verified domain.
 
 [0:42]
-The capital-efficiency math is what matters. Pre-seed shape:
-$200K runway buys 18 months of execution at this velocity.
-Compare to a 4-person team burning $80K/month on the same
-roadmap. Same shipped surface, four times the runway.
+The capital-efficiency math is what matters. $250K SAFE buys
+18 months of execution at this velocity. Compare to a 4-person
+team burning $80K a month on the same roadmap — they're out of
+runway in three. Same shipped surface, four times the cushion.
 
 [1:02]
 Monetization is per-transaction settlement fee at 15 to 30
@@ -89,9 +89,9 @@ the builder is also the design lead.
 - Cal.com (single-founder ARR run): public statements ~$4M ARR
   before scaling team, ~2022.
 
-## Anticipated objection + response
+## Anticipated objections + responses
 
-**Objection:** "Solo founders bottleneck on themselves. What
+**Objection 1:** "Solo founders bottleneck on themselves. What
 happens when you get hit by a bus / burn out / take a break?"
 
 **Response:** Real concern. Three mitigations: (1) the codebase
@@ -103,6 +103,31 @@ are immutable on the chain, the registry and reputation graph
 keep updating, settled escrows keep settling; (3) the use-of-funds
 explicitly includes hiring an engineer at the $50K MRR mark.
 Solo today is capital efficiency, not solo forever.
+
+**Objection 2:** "What's the hiring plan, specifically? Solo-now
+without a credible scaling story is fragile."
+
+**Response:** Two key hires post-Series A — a protocol engineer
+(focus: mainnet ops, multi-region indexer) and a developer-
+relations lead (focus: design-partner onboarding, MCP-ecosystem
+relationships). Both come from the existing Solana / Anchor
+contributor pool, not blind sourcing — there's a known network
+of ex-Helius, ex-Magic Eden, ex-Drift engineers who are looking
+for the next protocol play. Pre-Series A, no hires; the
+$250K runway funds two design partners through to mainnet plus
+the external audit (Trail of Bits or OtterSec).
+
+**Objection 3:** "Solo means design-by-committee-of-one. How do
+you avoid building something only you would use?"
+
+**Response:** The waitlist + welcome-email loop is already
+shipping; signups in the first week test the landing-page-level
+problem-clarity. Beyond that, the design-partner program (first
+ten platforms at $25K each) IS the product-validation loop. If
+no platform pays the integration fee, the wedge is wrong and
+we pivot before mainnet. The $250K covers TWO failed wedge
+attempts plus the successful one — the funding shape assumes
+the first wedge guess might miss.
 
 ---
 

@@ -10,12 +10,13 @@ spelled out and the unit economics legible.
 
 ```
 [0:00]
-When commerce moved online, Stripe ate the world by making
-"accept a card" a single API call instead of a six-week bank
-integration. Stripe is now worth 91 billion dollars. The same
-unbundling is about to happen for AI agents — and the integration
-is harder, not easier, because you also need identity, reputation,
-and dispute resolution baked in.
+Stripe acquired Privy this year. Privy made programmable wallets
+for end-users. Read the move: Stripe — a 91-billion-dollar
+company — sees programmable-wallet-as-API as the next layer of
+its empire. We're betting the same shape repeats one level up,
+for AI agents instead of human end-users. And the integration is
+harder there, not easier — because agents also need identity,
+reputation, and dispute resolution baked in.
 
 [0:22]
 Agenomics is the Stripe shape for AI agents. One MCP server
@@ -73,6 +74,10 @@ density per customer is much higher.
 ## Validation
 
 - Stripe valuation $91.5B (March 2025 tender offer reporting).
+- **Stripe acquired Privy in 2025** — Privy.io now reads "a Stripe
+  company" in its footer. Privy was the leading programmable-wallet-
+  as-API for human end-users. Stripe paying for that thesis at one
+  level up validates the thesis at the next level (agents).
 - Agentic AI market: $7.06B (2025) → $93.20B (2032), 44.6% CAGR
   (MarketsAndMarkets). See `README.md` table.
 - Solana block time ~400ms; mainnet TPS capacity ~65,000.
@@ -80,9 +85,9 @@ density per customer is much higher.
   `README.md` lines 41-55 — judges/investors can wire it up in
   <5 minutes.
 
-## Anticipated objection + response
+## Anticipated objections + responses
 
-**Objection:** "Stripe won because cards were already standardized.
+**Objection 1:** "Stripe won because cards were already standardized.
 What's the agent equivalent of the card network?"
 
 **Response:** MCP. The Model Context Protocol is the closest thing
@@ -92,6 +97,28 @@ shipped MCP support within months. We're betting that MCP becomes
 to agent-tool-calling what HTTP became to documents. Our 27 tools
 ship behind that interface — every new MCP-compatible agent
 client is automatic distribution.
+
+**Objection 2:** "What stops Stripe from building this themselves
+now that they've absorbed Privy?"
+
+**Response:** Stripe builds in walled gardens by design — they need
+the counterparty to be a Stripe-merchant. The agent-to-agent
+settlement layer can't sit inside any single payment processor's
+wall, by definition. Even if Stripe ships agent wallets through
+Privy's surface, they'll need a neutral on-chain settlement layer
+for cross-platform agent transactions. We're a complement to
+Stripe-Privy, not a competitor — and we're chain-native, which
+they can't be without becoming a chain themselves.
+
+**Objection 3:** "If MCP is so standard, why hasn't Anthropic just
+shipped these primitives themselves?"
+
+**Response:** Because foundation-model providers have a structural
+conflict with neutral settlement infrastructure — same reason
+Visa isn't owned by any one bank. Anthropic SHIPPING the wallet
++ settlement layer means every non-Anthropic agent is a
+second-class citizen on it. The neutral-protocol position is the
+only stable one, and that's the one we're occupying.
 
 ---
 

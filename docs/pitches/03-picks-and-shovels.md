@@ -80,9 +80,9 @@ on which agent wins.
 - Solana mainnet finality ~400ms; native programmability via
   Anchor (no L2 trust assumptions).
 
-## Anticipated objection + response
+## Anticipated objections + responses
 
-**Objection:** "If agents are going to be infrastructure, won't
+**Objection 1:** "If agents are going to be infrastructure, won't
 the foundation models — Anthropic, OpenAI — just bundle this in
 and own it?"
 
@@ -92,6 +92,30 @@ foundation provider's wall — by definition it's the thing that
 lets agents from DIFFERENT providers transact with each other.
 That's a neutral-protocol problem, and protocols are the answer.
 Same reason DNS isn't owned by any one ISP.
+
+**Objection 2:** "Auth0 took eight years to reach a $6.5B exit.
+The agent economy doesn't have eight years."
+
+**Response:** Auth0 was selling to the long tail of long-cycle
+B2B procurement — banks, hospitals, governments. Agent platforms
+are venture-funded, fast-deciding, and integrating new infra in
+days not quarters. The comp is shape (picks-and-shovels infra),
+not timeline. Cursor went from $0 to $200M ARR in 18 months once
+the product was right; the same compression applies to the
+infrastructure layer one tier down.
+
+**Objection 3:** "What stops one of the big agent platforms —
+Cursor, Anthropic — from building this themselves and giving
+it away?"
+
+**Response:** Two structural blockers: (1) building it requires
+on-chain protocol expertise that's outside the core competence
+of foundation-model and IDE companies — they're staffed for ML
+and editor UX, not Anchor / Solana / cryptographic settlement;
+(2) giving it away creates the conflict-of-interest problem we
+just discussed — a Cursor-built settlement layer can't credibly
+serve non-Cursor agents. The neutral position is the sustainable
+position, and we're occupying it.
 
 ---
 
