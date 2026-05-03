@@ -3,7 +3,9 @@
    Editorial-meets-terminal, dark navy, oklch palette
    ========================================================= */
 
-@import url('https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;0,6..72,700;1,6..72,400;1,6..72,500&family=JetBrains+Mono:wght@300;400;500;600&family=Geist:wght@300;400;500;600;700&display=swap');
+/* Fonts are self-hosted via /fonts.css (linked separately from the HTML
+   `<head>` so the browser fetches it in parallel with this stylesheet).
+   See site/fonts.css for the @font-face block + regeneration recipe. */
 
 :root {
   --bg:        oklch(0.16 0.012 255);
