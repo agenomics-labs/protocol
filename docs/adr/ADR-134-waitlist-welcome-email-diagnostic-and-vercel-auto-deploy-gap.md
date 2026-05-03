@@ -257,33 +257,54 @@ Final state of the waitlist after resolution:
   19:10 local time with sender `Agenomics <hello@mail.agenomics.xyz>`
   and full body intact.
 
-- **Issue C (Vercel auto-deploy gap) — RESOLVED via Deploy Hook
-  workaround (2026-05-02 second update).** The originally-suggested
-  fix (install `vercel` GitHub App on `agenomics-labs` org + connect
-  project in Vercel dashboard) is **structurally blocked** by the
-  Vercel free tier — Vercel ↔ GitHub integration on org repos
-  requires Vercel Pro+. Upgrading the plan is out of scope for now.
-  Workaround: a GitHub Actions workflow at
-  `.github/workflows/vercel-deploy-site.yml` curls a Vercel Deploy
-  Hook (free-tier-available) on every push that touches `site/**`.
-  This achieves the same outcome (push → production deploy of HEAD)
-  without the GitHub-integration requirement.
+- **Issue C (Vercel auto-deploy gap) — RESOLVED via Vercel CLI from
+  GitHub Actions (2026-05-02 third update).** The originally-
+  suggested fix (install `vercel` GitHub App on `agenomics-labs` org
+  + connect project in Vercel dashboard) is **structurally blocked**
+  by the Vercel free tier — Vercel ↔ GitHub integration on org repos
+  requires Vercel Pro+. Upgrading is out of scope for now. The
+  initially-proposed Deploy Hook fallback ALSO requires a connected
+  Git project (Deploy Hooks are branch-scoped — without a connected
+  repo, the "branch: main" parameter is undefined), so they're
+  blocked too.
+
+  Working approach: GitHub Actions workflow at
+  `.github/workflows/vercel-deploy-site.yml` invokes Vercel CLI
+  (`npm i -g vercel; vercel pull && vercel build && vercel deploy
+  --prebuilt --prod`) with a scoped API token. This is exactly what
+  `cd site && vercel --prod` does locally — uploads the working tree
+  directly via the Vercel API. No Git connection needed on the
+  Vercel side.
 
   One-time setup (must be done once before the workflow becomes
   effective):
-    1. Vercel dashboard → site → Settings → Git → Deploy Hooks →
-       "Create Hook". Name: `github-main`. Branch: `main`. Copy URL.
+    1. Vercel dashboard → Account Settings → Tokens → "Create Token".
+       Name: `github-actions-site`. Scope: `k2jac9's projects` (the
+       team owning the site project). Expiration: per security
+       posture (1 year is reasonable; rotate via the same UI).
     2. GitHub repo → Settings → Secrets and variables → Actions →
-       "New repository secret". Name: `VERCEL_DEPLOY_HOOK_URL`.
-       Value: the URL from step 1.
-    3. Push any change under `site/**` → workflow fires → Vercel
-       enqueues a production build of HEAD.
+       "New repository secret". Name: `VERCEL_TOKEN`. Value: the
+       token from step 1.
+    3. Push any change under `site/**` → workflow fires → Vercel CLI
+       deploys the working tree to production.
 
-  If the secret is missing, the workflow fails fast with an explicit
-  message rather than a confusing curl error — making the missing
-  setup obvious on the first push that touches site/**. Path-filter
-  on `site/**` prevents unrelated commits from burning Vercel
-  builds.
+  Project IDs (`VERCEL_PROJECT_ID`, `VERCEL_ORG_ID`) are hardcoded
+  in the workflow's env block — they're public identifiers (visible
+  in dashboard URLs), not secrets. Sourced from
+  `site/.vercel/project.json` which is gitignored.
+
+  If the token secret is missing, the workflow fails fast with an
+  explicit message rather than a confusing CLI error — making the
+  missing setup obvious on the first push that touches site/**.
+  Path-filter on `site/**` prevents unrelated commits from burning
+  GitHub Actions minutes or Vercel build minutes.
+
+  Lesson learned (added to "Diagnostic hygiene note" below): the
+  initial revision of this workflow incorrectly claimed Deploy Hooks
+  were free-tier-compatible without verifying. They're not — they
+  inherit the Git-connection prerequisite. Verify Vercel feature-
+  tier compatibility against actual product behavior, not surface
+  documentation, before recommending a workflow.
 
 ### Future apex-verification follow-up
 

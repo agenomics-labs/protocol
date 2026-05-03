@@ -3,33 +3,45 @@ name: Vercel Deploy (site)
 # ADR-134 Issue C — auto-deploy of `site/**` on push to main, bypassing
 # the Vercel ↔ GitHub integration requirement. That integration is
 # gated to Vercel Pro+ for org repos, which is incompatible with our
-# current free tier. Vercel Deploy Hooks are free-tier-available and
-# achieve the same outcome (push → production deploy of HEAD) via a
-# per-project URL we curl from CI.
+# current free tier. Deploy Hooks (the simpler workaround) ALSO
+# require a connected Git project, so they're blocked too.
+#
+# Working approach: invoke Vercel CLI from GitHub Actions with a
+# scoped API token. This is exactly what `cd site && vercel --prod`
+# does locally — uploads the working tree directly to Vercel. No Git
+# connection needed on the Vercel side.
 #
 # One-time setup (do this once, then `git push` deploys):
-#   1. Vercel dashboard → site project → Settings → Git → Deploy Hooks
-#      → "Create Hook". Name: `github-main`. Branch: `main`.
-#      Copy the resulting URL — it looks like
-#      https://api.vercel.com/v1/integrations/deploy/<id>/<token>
+#   1. Vercel dashboard → Account Settings → Tokens → "Create Token"
+#      - Name: `github-actions-site`
+#      - Scope: `k2jac9's projects` (the team that owns the site)
+#      - Expiration: choose what you're comfortable with (1 year is
+#        a reasonable default; rotate via this same UI)
+#      Copy the token immediately — Vercel only shows it once.
 #   2. GitHub repo → Settings → Secrets and variables → Actions →
-#      "New repository secret". Name: VERCEL_DEPLOY_HOOK_URL.
-#      Value: the Deploy Hook URL from step 1.
-#   3. Push any change under `site/**` → this workflow fires → Vercel
-#      enqueues a production build of HEAD with `source: "deploy-hook"`.
+#      "New repository secret". Name: VERCEL_TOKEN. Value: the token
+#      from step 1.
+#   3. Push any change under `site/**` → this workflow fires →
+#      Vercel CLI deploys the working tree to production.
 #
 # If the secret is not set, the workflow fails fast with an explicit
-# message (rather than a confusing curl error). That makes the missing
+# message rather than a confusing CLI error. That makes the missing
 # setup obvious on the first push.
 #
-# Path-filtered: only fires when site/** (or this workflow itself)
-# changes, so unrelated commits (indexer, mcp-server, docs) don't burn
-# a Vercel build.
+# Project identifiers (VERCEL_PROJECT_ID, VERCEL_ORG_ID) are NOT
+# secrets — they're public identifiers visible in Vercel dashboard
+# URLs. They live in `site/.vercel/project.json` locally (which is
+# gitignored), so we hardcode them in the env block below to avoid a
+# `vercel link` step in CI.
 #
-# Runs on `ubuntu-latest` (not the self-hosted runner) by design — this
-# is a 1-second curl with no AEP toolchain dependency. Independence
+# Path-filtered: only fires when site/** (or this workflow itself)
+# changes, so unrelated commits (indexer, mcp-server, docs) don't
+# burn a Vercel build.
+#
+# Runs on `ubuntu-latest` (not the self-hosted runner) by design —
+# this is `npx vercel`, no AEP toolchain dependency. Independence
 # from the self-hosted runner means deploys still fire even if that
-# runner is offline. Cost on GitHub-hosted minutes is negligible.
+# runner is offline. Negligible GitHub-hosted minute cost.
 
 on:
   push:
@@ -39,46 +51,56 @@ on:
       - '.github/workflows/vercel-deploy-site.yml'
   workflow_dispatch: {}
 
+env:
+  # From site/.vercel/project.json. Not secrets — public identifiers.
+  VERCEL_PROJECT_ID: prj_67FRSC0Yyill3zqFUX0z44593l3c
+  VERCEL_ORG_ID: team_nOESbCSr6hh3fTEXR6Zaoesz
+
 jobs:
-  trigger-vercel-deploy:
-    name: Trigger Vercel deploy hook
+  deploy:
+    name: Deploy site/ to Vercel production
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 10
     steps:
-      - name: Verify VERCEL_DEPLOY_HOOK_URL secret is set
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # pin v6 (AUD-406)
+        with:
+          node-version: "20"
+
+      - name: Verify VERCEL_TOKEN secret is set
         env:
-          HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK_URL }}
+          TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
-          if [ -z "${HOOK:-}" ]; then
-            echo "::error::VERCEL_DEPLOY_HOOK_URL repo secret is not set."
+          if [ -z "${TOKEN:-}" ]; then
+            echo "::error::VERCEL_TOKEN repo secret is not set."
             echo "::error::See the comment block at the top of"
             echo "::error::.github/workflows/vercel-deploy-site.yml for"
-            echo "::error::one-time setup instructions (Vercel Deploy Hook"
-            echo "::error::+ GitHub Actions secret)."
+            echo "::error::one-time setup instructions (Vercel token + GitHub secret)."
             exit 1
           fi
-          echo "Secret present (URL length: ${#HOOK} chars)"
+          echo "Secret present (token length: ${#TOKEN} chars)"
 
-      - name: Trigger Vercel deploy
-        env:
-          HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK_URL }}
+      - name: Install Vercel CLI
+        run: npm install --global vercel@latest
+
+      - name: Pull Vercel project environment
+        working-directory: site
+        run: vercel pull --yes --environment=production --token="${{ secrets.VERCEL_TOKEN }}"
+
+      - name: Build site for production
+        working-directory: site
+        run: vercel build --prod --token="${{ secrets.VERCEL_TOKEN }}"
+
+      - name: Deploy prebuilt to Vercel production
+        working-directory: site
         run: |
           set -euo pipefail
-          # Vercel's Deploy Hook returns 201 with a small JSON payload
-          # containing the new deployment ID. Anything outside 2xx means
-          # the hook itself failed (bad URL, revoked, project deleted).
-          response=$(curl -sS -X POST -w "\nHTTP_STATUS:%{http_code}\n" "$HOOK")
-          status=$(echo "$response" | awk -F: '/^HTTP_STATUS:/ {print $2}')
-          body=$(echo "$response" | sed '/^HTTP_STATUS:/d')
-          echo "Vercel response status: $status"
-          echo "Vercel response body: $body"
-          if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
-            echo "::error::Deploy Hook returned non-2xx status $status"
-            echo "::error::Most likely causes: hook URL revoked or project moved."
-            echo "::error::Recreate the hook in Vercel dashboard and update the secret."
-            exit 1
-          fi
-          # Surface the new deployment URL/id in the run summary if the
-          # response contained one (Vercel returns {job: {id, ...}}).
-          echo "::notice::Vercel deploy enqueued successfully (HTTP $status)"
-          echo "::notice::Track the build at https://vercel.com/k2jac9s-projects/site/deployments"
+          # `vercel deploy --prebuilt --prod` uploads the .vercel/output
+          # directory produced by the build step above and aliases the
+          # production domains. Captures the deployment URL for the run
+          # summary so the operator can click through to verify.
+          DEPLOY_URL=$(vercel deploy --prebuilt --prod --token="${{ secrets.VERCEL_TOKEN }}")
+          echo "Deployment URL: $DEPLOY_URL"
+          echo "::notice::Vercel deploy completed: $DEPLOY_URL"
+          echo "::notice::Production aliases: https://agenomics.xyz, https://www.agenomics.xyz"
