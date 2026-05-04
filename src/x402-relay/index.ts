@@ -2,7 +2,7 @@
 import express, { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import * as crypto from "node:crypto";
-import { Connection, LAMPORTS_PER_SOL } from "@solana/web3.js";
+import { createSolanaRpc, type Signature } from "@solana/kit";
 import { logger } from "./logger.js";
 import {
   createRedisDedup,
@@ -113,10 +113,11 @@ let draining = false;
 //   - a comma-separated subnet list (e.g. "10.0.0.0/8,192.168.0.0/16")
 //   - "true" — trust every hop (DANGEROUS; only for tests)
 const TRUST_PROXY = process.env.TRUST_PROXY || "loopback";
-// Finding #16: Use "finalized" — the highest Solana commitment level — so
-// the relay never grants access on a transaction that could still be dropped
-// by a fork. "confirmed" (the old default) is ~2/3 stake and can reorg.
-const connection = new Connection(RPC_URL, "finalized");
+// Finding #16: Use "finalized" commitment per-call (in @solana/kit v2, commitment
+// is per-request rather than at connection creation time). The "finalized"
+// level guarantees the tx is past the fork-choice window; "confirmed" (~2/3
+// stake) can reorg and would allow a reorged tx to issue a JWT.
+const rpc = createSolanaRpc(RPC_URL);
 
 // Finding #16: Track each redeemed signature together with the timestamp at
 // which it becomes safe to evict (the JWT TTL window + a small grace buffer).
@@ -302,12 +303,12 @@ async function verifyPaymentOnChain(
   minAmountSol: number
 ): Promise<PaymentVerification> {
   try {
-    // Finding #16: "finalized" guarantees the tx is past the fork-choice
-    // window. Accepting "confirmed" here would let a reorged tx issue a JWT.
-    const tx = await connection.getTransaction(txSignature, {
+    // Finding #16: "finalized" per-call (see `rpc` declaration above).
+    const tx = await rpc.getTransaction(txSignature as Signature, {
       commitment: "finalized",
       maxSupportedTransactionVersion: 0,
-    });
+      encoding: "json",
+    }).send();
 
     if (!tx) {
       return { valid: false, sender: "", recipient: "", amountSol: 0, slot: 0, error: "Transaction not found" };
@@ -317,38 +318,42 @@ async function verifyPaymentOnChain(
       return { valid: false, sender: "", recipient: "", amountSol: 0, slot: 0, error: "Transaction failed on-chain" };
     }
 
-    // Check pre/post balances for a SOL transfer to the expected recipient
-    const accountKeys = tx.transaction.message.getAccountKeys();
-    const recipientIndex = accountKeys.staticAccountKeys.findIndex(
-      (key) => key.toBase58() === expectedRecipient
+    // In @solana/kit v2, accountKeys are Address[] (string-branded) in the message.
+    // encoding:"json" exposes static account keys. For SOL transfers all participants
+    // (sender, recipient, system program) are static — no lookup-table resolution needed.
+    const accountKeys = tx.transaction.message.accountKeys;
+    const recipientIndex = accountKeys.findIndex(
+      (key) => key === expectedRecipient
     );
 
     if (recipientIndex === -1) {
-      return { valid: false, sender: "", recipient: expectedRecipient, amountSol: 0, slot: tx.slot, error: "Recipient not found in transaction" };
+      return { valid: false, sender: "", recipient: expectedRecipient, amountSol: 0, slot: Number(tx.slot), error: "Recipient not found in transaction" };
     }
 
-    const preBalance = tx.meta?.preBalances[recipientIndex] || 0;
-    const postBalance = tx.meta?.postBalances[recipientIndex] || 0;
+    // preBalances / postBalances are Lamports (bigint) in @solana/kit v2.
+    // Use ?? rather than || so a genuine 0-lamport balance does not trigger the fallback.
+    const preBalance: bigint = tx.meta?.preBalances[recipientIndex] ?? 0n;
+    const postBalance: bigint = tx.meta?.postBalances[recipientIndex] ?? 0n;
     const transferredLamports = postBalance - preBalance;
-    const transferredSol = transferredLamports / LAMPORTS_PER_SOL;
+    const transferredSol = Number(transferredLamports) / 1_000_000_000;
 
     if (transferredSol < minAmountSol) {
       return {
         valid: false,
-        sender: accountKeys.staticAccountKeys[0].toBase58(),
+        sender: accountKeys[0] as string,
         recipient: expectedRecipient,
         amountSol: transferredSol,
-        slot: tx.slot,
+        slot: Number(tx.slot),
         error: `Insufficient payment: ${transferredSol} SOL < ${minAmountSol} SOL`,
       };
     }
 
     return {
       valid: true,
-      sender: accountKeys.staticAccountKeys[0].toBase58(),
+      sender: accountKeys[0] as string,
       recipient: expectedRecipient,
       amountSol: transferredSol,
-      slot: tx.slot,
+      slot: Number(tx.slot),
     };
   } catch (err) {
     return { valid: false, sender: "", recipient: "", amountSol: 0, slot: 0, error: `Verification error: ${err}` };
