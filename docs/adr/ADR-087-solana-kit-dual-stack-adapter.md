@@ -1,7 +1,7 @@
 # ADR-087: `@solana/kit` v1+v2 dual-stack adapter pattern in `@agenomics/mcp-server`
 
 ## Status
-Accepted
+Accepted — Phase A target #1 shipped (2026-05-04)
 
 ## Date
 2026-04-23 (backfill — decision is live in production via PRs #4, #22, #23)
@@ -62,8 +62,30 @@ At that point a follow-up ADR captures the v2-only end-state and supersedes this
 - Migration progress is visible in `git log` via the `handlers-v2/` directory growth and the `handlers/` directory shrinkage; no separate tracking is needed.
 - The dispatcher is stack-agnostic — it routes by action name, not by stack. Adding new actions does not touch the dispatcher.
 
+## Migration Progress
+
+### Phase A — Production runtime packages
+
+| Target | Status | Notes |
+|--------|--------|-------|
+| `src/x402-relay/` | **Shipped** (2026-05-04) | `Connection`+`LAMPORTS_PER_SOL` → `createSolanaRpc`; 62/62 tests pass; `@solana/web3.js` removed from package dep |
+| `src/indexer/` | Pending | WebSocket subscription migration; larger surface |
+| `sdk/client/` | Pending | Published package; requires semver-minor API break for Address→string |
+
+### Phase B — mcp-server v1 handler migration
+
+Blocked on `@coral-xyz/anchor` npm shipping a v2-internal client. npm latest: 0.32.1
+(cargo-only `anchor-lang@1.0.1` does not satisfy this). The 4 remaining v1 handlers
+(`handlers/registry.ts`, `handlers/settlement.ts`, and related) stay on v1 until
+the npm Anchor unblocks.
+
+### Phase C / D — Dev surface + spl-token removal
+
+See `docs/audits/SOLANA-V2-MIGRATION-PLAN-2026-05-04.md` for the full plan.
+
 ## References
 - `docs/adr/ADR-012-web3js-v2-migration.md` — original v1→v2 migration commitment
+- `docs/audits/SOLANA-V2-MIGRATION-PLAN-2026-05-04.md` — Phase A/B/C/D sequencing plan
 - PR #4, commit `d5dc764` — `feat(mcp-server): ADR-012 PR2 — introduce @solana/kit (v2) surface + v1 adapter`
 - PR #22, commit `1c6b691` — `fix(mcp-server): wire v2 Kit RPC into preflight dispatch + make smoke test idempotent`
 - PR #23, commit `a2f1eb7` — `feat(mcp-server): wire v2 vault_transfer sendAndConfirm to Kit factory`
