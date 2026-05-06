@@ -103,6 +103,7 @@ All blocking unless noted.
 | Lockfile determinism check | confirms `package-lock.json` is in sync with `package.json` files; rejects PRs with un-regenerated lockfiles |
 | Tool parity check | `scripts/check-tools-parity.sh` — confirms the 27 MCP tool names match across `mcp-server/src/tools/index.ts allTools[]`, `dashboard/src/data/programs.js MCP_TOOLS`, and `README.md ## MCP Tools`. Source of truth is `allTools[]`. |
 | License parity check | `scripts/check-license-parity.sh` — confirms every workspace `package.json` and every `programs/*/Cargo.toml` declares `Apache-2.0`, matching the repo-root `LICENSE` file (ADR-136). |
+| Doc-commands lint | `scripts/check-doc-commands.sh` — rejects user-facing docs (`README`, `SUBMISSION`, `JUDGE_RUNBOOK`, `CONTRIBUTING`, `RELEASE`, `docs/*.md`, `scripts/*.sh\|ts` headers) that contain known-broken executable instructions. Currently denylists: `npm install` / `npm i` / `npx` against the `@agenomics` scope (source-only release per ADR-136 deferred clause), and `npx ts-node` (not a workspace dep — `tsx` is). Patterns + reasons live in the script. Allowlist: `docs/audits/`, `docs/adr/` (history). |
 | Vercel Deploy (site) | runs `vercel pull && vercel build && vercel deploy --prebuilt --prod` from `site/` on push to `site/**`, authenticated via `VERCEL_TOKEN` secret (free-tier alternative to Vercel↔GitHub integration, which is Pro+; one-time setup in workflow header) |
 
 ## ADR conventions
