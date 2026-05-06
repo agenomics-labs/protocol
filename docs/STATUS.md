@@ -108,12 +108,38 @@ Execute ADR-063. Progress:
 3. ✅ Hand-built SAS ix encoders (`createCredential`, `createSchema`) in `scripts/bootstrap-sas-credential-devnet.ts` — byte layouts traced against sas-lib@1.0.10 Codama codegen.
 4. ✅ `AEP_AGENT_REPUTATION_v1` schema PDA `CTJevNKpYeBAfG6r5CJHb2HuwV4obJeWGeqHQVCKiUVT` live (layout `[1,2,1,8]` = U16/U32/U16/I64).
 5. ✅ `AEP_PROTOCOL` credential PDA `GvDdPwwqV9wfEaRh1LjLYhjDRFkMxCDRdepVeHGMfRhS` live, signed via 2-of-3 multisig.
-6. ⏳ Issue one test attestation (next PR: `bootstrap-sas-attestation-devnet.ts`).
-7. ⏳ Update `scripts/smoke-test-devnet.ts` Steps 11-13 to use the real PDAs (`AEP_SAS_SCHEMA_PDA`, `AEP_SAS_ALLOWED_CREDENTIALS`).
-8. ⏳ Re-run full smoke to prove resolver's on-chain path.
-9. ⏳ Update ADR-063 status to Accepted; document the live PDAs in the ADR itself.
 
-Authoritative SAS bootstrap record: `scripts/.sas-devnet.json`.
+**Above: complete on devnet. Below: code committed in `3ebd02f`; execution requires the signing machine.**
+
+6. ✅ Code / ⏳ Run: `scripts/bootstrap-sas-attestation-devnet.ts` (commit `3ebd02f`). Issues one test attestation under `AEP_PROTOCOL` with deterministic reputation (`score=8500, completed_tasks=42, dispute_ratio_bps=200, last_updated=1714867200`) and a fixed test-subject keypair persisted at `.keys/sas-test-subject-devnet.json` (gitignored). Multisig-wrapped (2-of-3 propose-approve-execute); idempotent (no-ops if attestation PDA already live AND record matches).
+7. ✅ Code / ⏳ Run: `scripts/smoke-test-devnet.ts` Steps 11-13 now actually exercise `@agenomics/sas-resolver` against the live PDAs — env-var dance (`AEP_SAS_SCHEMA_PDA` / `AEP_SAS_ALLOWED_CREDENTIALS`) dropped; single source of truth is `scripts/.sas-devnet.json`. Asserts six fields (score, completed_tasks, dispute_ratio_bps, last_updated, credential, signer). Committed in `3ebd02f`.
+8. ⏳ Re-run full smoke; PASS criterion is final line `SAS resolver round-trip: PASS`. (Folds into running step 7b.)
+9. ⏳ Update ADR-063 status to Accepted; document the live PDAs (credential, schema, test attestation) in the ADR itself.
+
+**Resume runbook (signing machine):**
+
+```sh
+# 1. Sync the new scripts
+git checkout main && git pull origin main          # fetches 3ebd02f
+
+# 2. Re-install if needed (lockfile not committed)
+npm install                                        # root; postinstall builds workspace
+
+# 3. Verify keys are present (signer 1 = id.json, signer 2 in .keys/)
+solana-keygen pubkey ~/.config/solana/id.json     # must be a Squads member
+ls .keys/squads-signer-2.json                      # must exist
+
+# 4. Issue the test attestation (multisig prompts auto-driven)
+npx tsx scripts/bootstrap-sas-attestation-devnet.ts
+
+# 5. Full smoke; final line should be "SAS resolver round-trip: PASS"
+npx tsx scripts/smoke-test-devnet.ts
+
+# 6. After PASS — ping back; the ADR-063→Accepted update + chore(release): v0.1.0
+#    privacy-flip commit + release notes are the next agent task.
+```
+
+Authoritative SAS bootstrap record: `scripts/.sas-devnet.json` (the script writes a `testAttestation` block on success). Test-subject keypair: `.keys/sas-test-subject-devnet.json` (gitignored — `bootstrap-sas-attestation-devnet.ts` generates it on first run, reuses it on reruns for stable PDA derivation).
 
 ### B. Publish `v0.1.0`
 After (A) succeeds:
@@ -150,11 +176,13 @@ Workflow publishes both, creates GitHub Release. See `RELEASE.md`.
 ## 8. Wallet / funding state (devnet)
 
 - **Deployer + upgrade-auth wallet**: `BUdXA1FiWnV7ksXYodH3uEhDUhfBJ8g4UmmWdshWjTXL`
-- **Keypair path**: `~/.config/solana/id.json`
-- **Balance at session end**: ~22.24 SOL
-- **Squads signers 2/3**: tiny balances from the 0.02 SOL top-up
+- **Keypair path** (on the signing machine — see note below): `~/.config/solana/id.json`
+- **Balance** (verified 2026-05-06): **121.77 SOL**
+- **Squads signers 2/3**: 0.02 SOL each — pubkeys in `scripts/.squads-devnet.json`. Signer 2 keypair lives at `.keys/squads-signer-2.json` on the signing machine; signer 3 was a one-time top-up source and the keypair has been retired.
 
-Sufficient for: ADR-063 bootstrap ceremony, several dozen devnet smoke runs, a full program redeploy if needed. Monitor with `solana balance`.
+Sufficient for: ADR-063 bootstrap ceremony, hundreds of devnet smoke runs, a full program redeploy if needed. Monitor with `solana balance`.
+
+**Machine-specificity note (2026-05-06):** `~/.config/solana/id.json` is the *deployer* keypair only on the original signing machine. On other machines (e.g. fresh WSL checkout), that path holds whatever keypair Solana CLI was configured with — `solana-keygen pubkey ~/.config/solana/id.json` should return `BUdXA1Fi…jTXL` before running anything that signs as the deployer. If it doesn't, you're not on the signing machine, and the ADR-063 §5 ceremony (steps 6+) cannot proceed from here. See §7.A "Resume runbook" for the signing-machine checklist.
 
 ## 9. Resume checklist (after time away)
 
