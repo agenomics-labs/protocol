@@ -461,6 +461,21 @@ jobs:
       - name: Run doc-commands lint
         run: bash scripts/check-doc-commands.sh
 
+  # 2026-05-06: program-ID parity gate. The 3 on-chain program IDs appear
+  # in 6+ surfaces (Anchor.toml, README, SUBMISSION, SUMMARY, dashboard,
+  # JUDGE_RUNBOOK). Source of truth is `declare_id!` in each
+  # programs/*/src/lib.rs — that's what gets baked into the BPF binary.
+  # Drift between declare_id! and downstream surfaces means the published
+  # docs advertise a program that the deployed binary doesn't match.
+  # Highest-stakes possible drift; gate added prophylactically.
+  program-ids-parity:
+    name: Program-ID parity check (declare_id! ↔ docs ↔ dashboard)
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - name: Run program-ID parity check
+        run: bash scripts/check-program-ids.sh
+
   # S-xcut-05: mandatory secret-scan gate. A leaked on-chain private key
   # has direct blast radius against the protocol's authorities, so this
   # is blocking (no `continue-on-error`). Full-history scan on push to
