@@ -2,6 +2,7 @@
   "name": "@agenomics/indexer",
   "version": "0.1.0",
   "description": "Off-chain event indexer for AEP Solana programs",
+  "license": "Apache-2.0",
   "main": "index.ts",
   "scripts": {
     "start": "ts-node index.ts",

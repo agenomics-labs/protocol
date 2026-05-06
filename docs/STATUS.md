@@ -4,17 +4,20 @@ Point-in-time map of where the codebase, devnet deployment, and governance
 stand. Update when shipping meaningful PRs; see the **Resume checklist**
 at the bottom for restarting work after time away.
 
-_Last updated: 2026-04-22 (§4 multisig re-bootstrapped; §7.A steps 1-5 complete)_
+_Last updated: 2026-05-06 (5 days to Colosseum deadline; PR #76 + PR #77 closed 4 of 6 submission-readiness gaps from issue #73)_
 
 ## 1. Codebase / main
 
 | Surface | Version / branch | Notes |
 |---|---|---|
-| `main` tip | `aa399f3` | 25 PRs merged this session |
-| On-chain programs | Current with main binaries | see §3 |
+| `main` tip | `6d66cf6` | submission-readiness sweep merged 2026-05-06 |
+| On-chain programs | Current with main binaries | see §3 — devnet deploy unchanged |
 | TS packages | `0.1.0` unpublished | see §5 |
-| CI | All 11 jobs green | incl. Anchor Integration (99/99 tests) |
-| Tests | ~191 across packages | 96 mcp-server + 12 validator + 56 sas-resolver + 99 Anchor integration + 9 Squads config |
+| Workspace licenses | All `Apache-2.0` | repo-root `LICENSE` + 6 workspace `package.json` aligned (PR #76) |
+| `npm audit --omit=dev` | **0 vulnerabilities** | uuid + ip-address scoped overrides shipped (PR #77, see `docs/audits/DEPENDABOT-3-UUID-IPADDR-CLOSURE.md`) |
+| CI | 16 jobs gated | all green on the two 2026-05-06 PRs; Anchor Integration job is self-hosted-runner-only |
+| Tests | **547+ across packages** | 164 Anchor (51 settlement + 60 registry + 44 vault + 9 cpi-failures; 3 intentional pendings per AUD-203) + 383 mcp-server (`node:test`; gated by `pretest` workspace build hook) |
+| Submission docs | `SUBMISSION.md` live on main | two `[TODO upload]` placeholders for video URLs remain |
 
 ## 2. Acronym / brand
 
@@ -78,18 +81,23 @@ Holding until the SAS bootstrap ceremony (§6) proves the resolver's full real-c
 
 ## 6. ADR status (as of session end)
 
-| Status | Count | ADRs |
-|---|---|---|
-| Accepted | 33 | 001–060 (except 057), 061 |
-| Proposed | 2 | 063 (SAS governance), 065 (caching — implementation merged but ADR text still Proposed) |
-| Not written | 3 | 062 (MPP wire-format), 066 (on-chain governance migration), 067 (cross-protocol credential trust) |
+134 ADR files on main (numeric range ADR-001 .. ADR-134; ADR-TEMPLATE.md excluded). Per the 2026-05-03 backlog review (issue #71):
 
-Recent ADR trail:
-- ADR-058/059/060 — MCP architecture track (Action shape, tx pipeline, manifest)
-- ADR-061 — SAS integration model (Accepted, option B: manifest-references-SAS)
-- ADR-063 — SAS credential authority governance (Proposed; bootstrap partially complete — credential + schema live, attestation pending)
-- ADR-064 — `@agenomics/sas-resolver` TS package (implemented in PR #12)
-- ADR-065 — Caching strategy (implemented in PR #15; ADR text still Proposed)
+| Bucket | Count | Notes |
+|---|---|---|
+| Accepted (shipped) | majority | bulk of ADR-001..ADR-134, see individual files |
+| Proposed — implementation evidence found, banner stale | 2 | ADR-126 (x402-relay redis), ADR-128 (indexer PG); regression tests exist for OFF-201/203/205/206 + OFF-200/202/204/207 but no closing commits — verify each finding closed before flipping |
+| Proposed — promote to Accepted | 1 | ADR-129 (EVO memory backbone); full adapter shipped, actively maintained |
+| Proposed — hold pre-hackathon | 8 | ADR-106..113 reputation/identity cluster; zero implementation evidence |
+| Proposed — DX overhaul wave (PR #68) | 7 | ADR-134..140 sequenced; ADR-136 (Apache-2.0) effectively shipped via PR #76 even though that PR isn't merged |
+
+Recent ADR trail (post-hackathon-prep):
+- ADR-130 — artifact provenance (cosign)
+- ADR-131 — Sybil cost calibration
+- ADR-132 — MCP HTTP origin gate + container default (cycle-3 transport hardening)
+- ADR-133 — handlers-v2 wave deferral
+- ADR-134 — waitlist welcome-email diagnostic (closed 2026-05-02 via `8336300`)
+- ADR-134..140 (PR #68) — DX overhaul wave (Codama codegen, Zod schemas, Apache-2.0 license flip [shipped via PR #76], llms.txt, `@agenomics/react`, `create-agenomics-app`, sample gallery)
 
 ## 7. Outstanding work (priority order)
 

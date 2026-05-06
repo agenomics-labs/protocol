@@ -2,6 +2,7 @@
   "name": "@agenomics/x402-relay",
   "version": "0.1.0",
   "description": "x402 HTTP Payment Relay for AEP agent-to-agent payments",
+  "license": "Apache-2.0",
   "main": "index.ts",
   "scripts": {
     "start": "ts-node index.ts",
