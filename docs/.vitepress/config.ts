@@ -3,7 +3,17 @@ import { defineConfig } from 'vitepress';
 export default defineConfig({
   title: 'Agenomics Documentation',
   description: 'Agenomics Protocol on Solana',
-  srcExclude: ['ARCHITECTURE.md', 'SECURITY_AUDIT.md', 'MAINNET_CHECKLIST.md', 'AUDIT_SCOPE.md', 'WEB3_V2_MIGRATION.md', 'adr/ADR-0*.md'],
+  srcExclude: [
+    'ARCHITECTURE.md',
+    'SECURITY_AUDIT.md',
+    'MAINNET_CHECKLIST.md',
+    'AUDIT_SCOPE.md',
+    'WEB3_V2_MIGRATION.md',
+    'adr/ADR-0*.md',
+    'ARCHITECTURE_REAUDIT_*.md',
+    'adr/ARCHITECTURE-AUDIT-*.md',
+    'audits/**',
+  ],
   themeConfig: {
     nav: [
       { text: 'Home', link: '/' },
