@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted
 
 ## Date
 
@@ -705,3 +705,8 @@ blocking launch.
   runbook.
 - Post-launch: `docs/INCIDENT_RESPONSE.md` §3.X — degraded-feature
   playbook for `AEP_EVO_ENABLED=false` fallback.
+
+## Revisions
+
+- 2026-05-06 — Status changed `Proposed` → `Accepted` (post-hackathon-prep
+  audit; full adapter shipped, actively maintained per issue #71).

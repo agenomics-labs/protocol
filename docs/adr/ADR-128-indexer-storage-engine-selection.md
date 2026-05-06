@@ -6,6 +6,23 @@ Proposed (supersedes ADR-127's storage-engine choice; ADR-127's
 cold-spare *mechanism* remains the documented constrained-scope
 alternative)
 
+*Re-evaluation needed (2026-05-06, per issue #71 post-hackathon-prep
+audit).* Implementation work appears to address the cycle-3 cutover
+gates listed below — regression-test files exist covering each
+blocking finding (`src/indexer/test/aud-200-dual-write-tx.test.ts`
+and `aud-200-dual-write-tx-real-pg.test.ts` for OFF-200,
+`aud-202-migration-embedded.test.ts` for OFF-202,
+`off-204-pg-pool-hardening.test.ts` for OFF-204, and
+`off-208-215-bundle.test.ts` covers adjacent OFF-* work) — but no
+commits in the history reference OFF-200 / OFF-202 / OFF-204 / OFF-207
+as closed, and the "do not flip" production banner below is unchanged.
+**Do not flip status to Accepted on the basis of test files alone.**
+A human reviewer must verify each OFF-* finding is actually closed
+against the cycle-3 punchlist
+(`docs/audits/CYCLE-3-OFFCHAIN-PUNCHLIST.md`) and that the ADR-127
+reconciler has shipped, then update Status and remove the production
+banner in a single commit.
+
 ## Date
 
 2026-04-27
