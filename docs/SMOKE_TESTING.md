@@ -147,13 +147,13 @@ A local gateway beats a public one (`ipfs.io`) for this test because:
 
 ```bash
 SOLANA_RPC_URL=https://api.devnet.solana.com \
-  npx ts-node scripts/smoke-test-devnet.ts
+  npx tsx scripts/smoke-test-devnet.ts
 
 # Or, if you picked non-default IPFS ports:
 SOLANA_RPC_URL=https://api.devnet.solana.com \
 AEP_IPFS_API_URL=http://localhost:5001 \
 AEP_IPFS_GATEWAY=http://localhost:8082 \
-  npx ts-node scripts/smoke-test-devnet.ts
+  npx tsx scripts/smoke-test-devnet.ts
 ```
 
 ### Expected pass criteria per step

@@ -191,7 +191,7 @@ Expected tail:
 ### Run the end-to-end devnet smoke (≈ 60s)
 
 ```bash
-SOLANA_RPC_URL=https://api.devnet.solana.com npx ts-node scripts/smoke-test-devnet.ts
+SOLANA_RPC_URL=https://api.devnet.solana.com npx tsx scripts/smoke-test-devnet.ts
 ```
 
 Probes program deployment, runs the manifest validator round-trip, dispatches a real MCP `tools/list` call, exercises the v2 vault-transfer path. See `docs/SMOKE_TESTING.md` for expected pass criteria.

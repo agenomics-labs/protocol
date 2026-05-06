@@ -115,7 +115,7 @@ The provider then calls `accept_task`, completes the work, and submits each mile
 End-to-end smoke test that exercises every program against the live devnet deployment:
 
 ```bash
-SOLANA_RPC_URL=https://api.devnet.solana.com npx ts-node scripts/smoke-test-devnet.ts
+SOLANA_RPC_URL=https://api.devnet.solana.com npx tsx scripts/smoke-test-devnet.ts
 ```
 
 The script probes program deployment, runs the manifest-validator round-trip, dispatches a real MCP `tools/list` call, exercises the v2 vault-transfer path, and reports pass/fail per step. See `docs/SMOKE_TESTING.md` for expected pass criteria.

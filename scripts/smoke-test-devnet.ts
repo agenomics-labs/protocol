@@ -20,7 +20,7 @@
  *       "SAS not bootstrapped on devnet — skipping" when absent.
  *
  * Usage:
- *   SOLANA_RPC_URL=https://api.devnet.solana.com npx ts-node scripts/smoke-test-devnet.ts
+ *   SOLANA_RPC_URL=https://api.devnet.solana.com npx tsx scripts/smoke-test-devnet.ts
  */
 
 import {

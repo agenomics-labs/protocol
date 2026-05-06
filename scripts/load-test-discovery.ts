@@ -5,7 +5,7 @@
  * with and without memcmp filters to measure performance characteristics.
  *
  * Usage:
- *   npx ts-node scripts/load-test-discovery.ts [N]
+ *   npx tsx scripts/load-test-discovery.ts [N]
  *   Default N = 100
  */
 
