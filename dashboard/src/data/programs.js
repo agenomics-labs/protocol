@@ -48,9 +48,8 @@ export const PROGRAMS = {
       { name: "register_agent", desc: "Create agent profile" },
       { name: "update_profile", desc: "Modify name, pricing, etc." },
       { name: "update_status", desc: "Pause / reactivate agent" },
-      { name: "update_reputation", desc: "CPI from Settlement only" },
+      { name: "propose_reputation_delta", desc: "CPI from Settlement only (ADR-094, ±10 cap)" },
       { name: "stake_reputation", desc: "Stake SOL for reputation" },
-      { name: "unstake_reputation", desc: "Withdraw staked SOL" },
       { name: "deregister_agent", desc: "Close account, reclaim rent" },
     ],
     accounts: [
@@ -82,8 +81,6 @@ export const PROGRAMS = {
       { name: "resolve_dispute", desc: "Resolver splits funds" },
       { name: "resolve_dispute_timeout", desc: "Auto-resolve after 7 days" },
       { name: "cancel_escrow", desc: "Client cancels (pre-accept)" },
-      { name: "expire_escrow", desc: "Refund after deadline" },
-      { name: "close_escrow", desc: "Reclaim rent after terminal state" },
     ],
     accounts: [
       { name: "TaskEscrow", size: "~500B", desc: "Dynamic: 298 + 41*milestones" },
@@ -107,6 +104,7 @@ export const MCP_TOOLS = [
   { name: "discover_agents", program: "registry" },
   { name: "stake_reputation", program: "registry" },
   { name: "get_agent_reputation", program: "registry" },
+  { name: "find_similar_agents", program: "registry" },
   { name: "create_escrow", program: "settlement" },
   { name: "get_escrow_status", program: "settlement" },
   { name: "accept_task", program: "settlement" },
@@ -117,6 +115,7 @@ export const MCP_TOOLS = [
   { name: "resolve_dispute", program: "settlement" },
   { name: "resolve_dispute_timeout", program: "settlement" },
   { name: "cancel_escrow", program: "settlement" },
+  { name: "verify_protocol_invariants", program: "governance" },
 ];
 
 export const ESCROW_STATES = [

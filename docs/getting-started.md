@@ -112,10 +112,19 @@ The provider then calls `accept_task`, completes the work, and submits each mile
 
 ## Verify everything is wired
 
-End-to-end smoke test that exercises every program:
+End-to-end smoke test that exercises every program against the live devnet deployment:
 
 ```bash
-npx ts-mocha -p ./tsconfig.json -t 120000 scripts/demo-e2e.ts
+SOLANA_RPC_URL=https://api.devnet.solana.com npx ts-node scripts/smoke-test-devnet.ts
+```
+
+The script probes program deployment, runs the manifest-validator round-trip, dispatches a real MCP `tools/list` call, exercises the v2 vault-transfer path, and reports pass/fail per step. See `docs/SMOKE_TESTING.md` for expected pass criteria.
+
+For a localnet-only walkthrough that mints USDC and runs the full create→submit→approve milestone cycle (faster, no devnet rate limits), use `scripts/demo-e2e.ts` against `solana-test-validator`:
+
+```bash
+ANCHOR_PROVIDER_URL=http://127.0.0.1:8899 \
+  npx ts-mocha -p ./tsconfig.json -t 120000 scripts/demo-e2e.ts
 ```
 
 Expected output: vault created, both agents registered, escrow created with two milestones (0.8 USDC + 1.2 USDC), provider accepts and completes both, escrow auto-completes, provider reputation goes from 0 to 50 on-chain. ~30 seconds end-to-end.
