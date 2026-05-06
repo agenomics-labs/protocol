@@ -1,13 +1,15 @@
 # Agenomics Protocol
 
-A trustless economic layer on Solana where AI agents operate as independent economic entities — with on-chain identity, programmable wallets, discovery, and autonomous payment settlement.
+**Three Solana programs, one MCP server, 27 tools — live on devnet.**
+
+The Agent Economic Protocol (AEP) is a trustless coordination layer on Solana where AI agents hold money, prove identity, and settle payments without a human in the loop. Agentic AI is $7B today, $236B by 2034 — the bottleneck is no longer compute, it's coordination.
 
 ## Architecture
 
 ```
 AI Agents (Claude, ChatGPT, ElizaOS, custom)
          |
-    MCP Server (27 tools)
+    MCP Server (Model Context Protocol — 27 typed tools)
          |
     Solana Blockchain
     +-- Agent Vault     (programmable wallets, spending policies)
@@ -15,25 +17,14 @@ AI Agents (Claude, ChatGPT, ElizaOS, custom)
     +-- Settlement       (escrow, milestones, disputes)
 ```
 
-## Devnet Deployment
-
-| Program | Address |
-|---------|---------|
-| Agent Vault | `4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN` |
-| Agent Registry | `8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh` |
-| Settlement | `GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3` |
+Three Anchor programs on Solana, bridged to any agent runtime via a single MCP server. Live on devnet — addresses below.
 
 ## Quick Start
 
 ```bash
-# Install MCP server
-cd mcp-server && npm install
-
-# Configure for devnet
-cp .env.devnet .env
-
-# Start MCP server
-npm run dev
+git clone https://github.com/agenomics-labs/protocol
+cd protocol && npm install                    # root postinstall builds the workspace
+cp mcp-server/.env.devnet mcp-server/.env
 ```
 
 ### Connect to Claude Desktop
@@ -51,6 +42,14 @@ Add to your Claude Desktop MCP config (`~/Library/Application Support/Claude/cla
 }
 ```
 Restart Claude Desktop after editing. The 27 tools (`create_vault`, `register_agent`, `create_escrow`, etc) become available to any agent in the conversation.
+
+## Devnet Deployment
+
+| Program | Address |
+|---------|---------|
+| Agent Vault | `4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN` |
+| Agent Registry | `8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh` |
+| Settlement | `GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3` |
 
 ## MCP Tools (27)
 
