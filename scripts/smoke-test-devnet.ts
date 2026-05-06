@@ -204,6 +204,152 @@ class McpStdioClient {
   }
 }
 
+/**
+ * Steps 11-13 of the smoke test: exercise @agenomics/sas-resolver
+ * end-to-end against the live devnet PDAs created by the
+ * bootstrap-sas-credential-devnet.ts + bootstrap-sas-attestation-devnet.ts
+ * scripts. STATUS.md §7.A.7-8.
+ *
+ * Reads scripts/.sas-devnet.json (the canonical devnet ledger). If that
+ * file is missing or its testAttestation block is absent, the step
+ * skips cleanly with operator instructions — the rest of the smoke
+ * test still runs.
+ *
+ * Pass criterion: resolver returns the same reputation values that
+ * bootstrap-sas-attestation-devnet.ts encoded on-chain. A drift
+ * between the two surfaces here as a per-field mismatch with both
+ * observed and expected values printed.
+ */
+async function runSasResolverRoundTrip(): Promise<void> {
+  const sasRecordPath = path.join(PROJECT_ROOT, "scripts", ".sas-devnet.json");
+  if (!fs.existsSync(sasRecordPath)) {
+    console.log("  No scripts/.sas-devnet.json — SAS not bootstrapped on this machine.");
+    console.log("  Run scripts/bootstrap-sas-credential-devnet.ts then bootstrap-sas-attestation-devnet.ts.");
+    return;
+  }
+  const record = JSON.parse(fs.readFileSync(sasRecordPath, "utf8")) as {
+    cluster: string;
+    sasProgramId: string;
+    multisigVaultPda: string;
+    credential: { pda: string };
+    schema: { pda: string; name: string; version: number };
+    testAttestation?: {
+      pda: string;
+      subject: string;
+      reputation: {
+        score: number;
+        completed_tasks: number;
+        dispute_ratio_bps: number;
+        last_updated: number;
+      };
+    };
+  };
+  if (record.cluster !== "devnet") {
+    console.log(`  scripts/.sas-devnet.json cluster=${record.cluster}, expected devnet — skipping.`);
+    return;
+  }
+  if (!record.testAttestation) {
+    console.log("  scripts/.sas-devnet.json present but testAttestation block missing.");
+    console.log("  ADR-063 §5 step 6 not yet executed — run scripts/bootstrap-sas-attestation-devnet.ts.");
+    return;
+  }
+  const { credential, schema, multisigVaultPda, sasProgramId, testAttestation } = record;
+  console.log(`  credential:  ${credential.pda}`);
+  console.log(`  schema:      ${schema.pda} (${schema.name} v${schema.version})`);
+  console.log(`  attestation: ${testAttestation.pda}`);
+  console.log(`  subject:     ${testAttestation.subject}`);
+
+  // Lazy-import: postinstall builds the workspace, but a fresh checkout
+  // without `npm install` shouldn't crash steps 1-10 of the smoke test.
+  let SasResolver: typeof import("@agenomics/sas-resolver").SasResolver;
+  let buildAllowlist: typeof import("@agenomics/sas-resolver").buildAllowlist;
+  let createSolanaRpc: typeof import("@solana/kit").createSolanaRpc;
+  try {
+    ({ SasResolver, buildAllowlist } = await import("@agenomics/sas-resolver"));
+    ({ createSolanaRpc } = await import("@solana/kit"));
+  } catch (e) {
+    console.log(`  Could not load resolver runtime: ${(e as Error).message}`);
+    console.log("  Run `npm install` at the repo root, then re-run smoke.");
+    throw new Error("SAS resolver round-trip aborted: import failure");
+  }
+
+  // Devnet RPC for the resolver. Step-level connection above uses
+  // @solana/web3.js (v1); resolver uses @solana/kit (v6). Both can
+  // share the same RPC URL.
+  const rpcUrl = process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com";
+  const rpc = createSolanaRpc(rpcUrl);
+
+  // Allowlist: bind credential to its sole signer (the multisig vault)
+  // and the v1 schema. ADR-076 §3 / ADR-101 require a non-empty signer
+  // list per credential — the resolver throws SignerHistoryMissingError
+  // otherwise. Our credential was created with signers=[] in SAS, so
+  // the only entity that can sign is the credential authority — i.e.,
+  // the multisig vault.
+  const allowedCredentials = buildAllowlist([
+    {
+      authority: credential.pda,
+      signers: [multisigVaultPda],
+      authorizedSchemas: [schema.pda],
+    },
+  ]);
+
+  let resolver: InstanceType<typeof SasResolver>;
+  try {
+    resolver = await SasResolver.create({
+      rpc,
+      allowedCredentials,
+      schemaPda: schema.pda,
+      sasProgramId,
+    });
+  } catch (e) {
+    console.log(`  Resolver init failed: ${(e as Error).message}`);
+    throw e;
+  }
+
+  const manifest = {
+    agent: {
+      pubkey: testAttestation.subject,
+      owner_attestation: testAttestation.pda,
+    },
+  };
+
+  const result = await resolver.resolve(manifest, testAttestation.subject);
+  if (!result.ok) {
+    console.log(`  Resolver returned error: ${result.error.code} — ${result.error.message}`);
+    throw new Error(`SAS resolver round-trip failed: ${result.error.code}`);
+  }
+  if (result.value.absent) {
+    console.log("  Resolver returned absent: true (expected concrete attestation).");
+    throw new Error("SAS resolver round-trip failed: attestation reported absent");
+  }
+  const att = result.value.attestation;
+  if (!att) {
+    throw new Error("SAS resolver round-trip failed: result.value.attestation undefined");
+  }
+
+  const expected = testAttestation.reputation;
+  const checks: Array<[string, unknown, unknown]> = [
+    ["score",            att.score,              expected.score],
+    ["completed_tasks",  att.completed_tasks,    expected.completed_tasks],
+    ["dispute_ratio_bps", att.dispute_ratio_bps, expected.dispute_ratio_bps],
+    ["last_updated",     att.last_updated,       expected.last_updated],
+    ["credential",       att.credential,         credential.pda],
+    ["signer",           att.signer,             multisigVaultPda],
+  ];
+
+  let allPass = true;
+  for (const [name, observed, want] of checks) {
+    const ok = observed === want;
+    console.log(`  ${ok ? "✓" : "✗"} ${name}: ${observed}${ok ? "" : ` (expected ${want})`}`);
+    if (!ok) allPass = false;
+  }
+
+  if (!allPass) {
+    throw new Error("SAS resolver round-trip: at least one field mismatched");
+  }
+  console.log("  SAS resolver round-trip: PASS");
+}
+
 async function main() {
   const rpcUrl = process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com";
   const connection = new Connection(rpcUrl, "confirmed");
@@ -614,22 +760,14 @@ async function main() {
     }
   }
 
-  // ==================== Step 11+: SAS bootstrap (conditional) ====================
-  console.log("\n--- Steps 11-13: SAS bootstrap on devnet ---");
-  const sasSchemaEnv = process.env.AEP_SAS_SCHEMA_PDA;
-  const sasAllowedEnv = process.env.AEP_SAS_ALLOWED_CREDENTIALS;
-  if (!sasSchemaEnv || !sasAllowedEnv) {
-    console.log("  SAS not bootstrapped on devnet — skipping steps 11-13.");
-    console.log("  To bootstrap, the following must exist on devnet:");
-    console.log("    - AEP_AGENT_REPUTATION_v1 schema PDA (ADR-061 §2)");
-    console.log("    - AEP_PROTOCOL / AEP_VALIDATORS credential PDAs (ADR-063)");
-    console.log("    - One attestation issued for the test agent authority");
-    console.log("  Then re-run with AEP_SAS_SCHEMA_PDA=... AEP_SAS_ALLOWED_CREDENTIALS=<csv>.");
-  } else {
-    console.log(`  SAS env detected: schema=${sasSchemaEnv}`);
-    console.log("  Full issue-attestation + resolver-exercise path is tracked as a");
-    console.log("  follow-up (depends on live SAS program on devnet).");
-  }
+  // ==================== Steps 11-13: SAS resolver round-trip ====================
+  // Reads scripts/.sas-devnet.json (produced by
+  // bootstrap-sas-credential-devnet.ts + bootstrap-sas-attestation-devnet.ts)
+  // and exercises @agenomics/sas-resolver against the live PDAs.
+  // STATUS.md §7.A.7-8 — proves the resolver's full real-chain path
+  // before v0.1.0 publish.
+  console.log("\n--- Steps 11-13: SAS resolver round-trip on devnet ---");
+  await runSasResolverRoundTrip();
 
   // Cleanup scratch wallet file.
   try { fs.unlinkSync(walletPath); } catch {}
