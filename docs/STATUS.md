@@ -116,28 +116,25 @@ Execute ADR-063. Progress:
 8. ⏳ Re-run full smoke; PASS criterion is final line `SAS resolver round-trip: PASS`. (Folds into running step 7b.)
 9. ⏳ Update ADR-063 status to Accepted; document the live PDAs (credential, schema, test attestation) in the ADR itself.
 
-**Resume runbook (signing machine):**
+**Resume runbook (signing machine) — one-shot, no return-channel needed:**
 
 ```sh
-# 1. Sync the new scripts
-git checkout main && git pull origin main          # fetches 3ebd02f
-
-# 2. Re-install if needed (lockfile not committed)
-npm install                                        # root; postinstall builds workspace
-
-# 3. Verify keys are present (signer 1 = id.json, signer 2 in .keys/)
-solana-keygen pubkey ~/.config/solana/id.json     # must be a Squads member
-ls .keys/squads-signer-2.json                      # must exist
-
-# 4. Issue the test attestation (multisig prompts auto-driven)
-npx tsx scripts/bootstrap-sas-attestation-devnet.ts
-
-# 5. Full smoke; final line should be "SAS resolver round-trip: PASS"
-npx tsx scripts/smoke-test-devnet.ts
-
-# 6. After PASS — ping back; the ADR-063→Accepted update + chore(release): v0.1.0
-#    privacy-flip commit + release notes are the next agent task.
+cd ~/dev/projects/protocol            # or wherever the checkout lives
+git checkout main && git pull
+./scripts/run-sas-ceremony.sh         # runs everything; auto-pushes status
 ```
+
+`scripts/run-sas-ceremony.sh` is the canonical driver. It:
+
+1. Pulls latest, runs `npm install`, verifies the two signer keypairs decode to two distinct Squads multisig members.
+2. Runs `bootstrap-sas-attestation-devnet.ts` (multisig propose-approve-execute, idempotent).
+3. Runs `smoke-test-devnet.ts` (full 13-step smoke; PASS criterion is `SAS resolver round-trip: PASS`).
+4. Writes `scripts/.sas-ceremony-status.json` with `PASS / BLOCKED_PRECONDITION / BOOTSTRAP_FAILED / SMOKE_FAILED`.
+5. `git commit && git push origin main` of the status file plus any updated `.sas-devnet.json`.
+
+After it runs, on any machine: `git pull origin main && cat scripts/.sas-ceremony-status.json` shows the outcome. On `PASS`, the next agent task (ADR-063 → Accepted, `chore(release): v0.1.0` privacy flip, release notes) is runnable purely from public on-chain state + the repo — no need to come back to the signing machine to fetch logs.
+
+Idempotent: re-running after PASS is a no-op (no new commit, no new chain ops).
 
 Authoritative SAS bootstrap record: `scripts/.sas-devnet.json` (the script writes a `testAttestation` block on success). Test-subject keypair: `.keys/sas-test-subject-devnet.json` (gitignored — `bootstrap-sas-attestation-devnet.ts` generates it on first run, reuses it on reruns for stable PDA derivation).
 
