@@ -120,4 +120,4 @@ cd dashboard && npm run dev
 
 ## License
 
-TBD
+Apache-2.0 — see [`LICENSE`](LICENSE).
