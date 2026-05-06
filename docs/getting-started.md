@@ -1,72 +1,75 @@
 # Getting Started
 
+A 5-minute walkthrough for connecting any MCP-compatible AI agent (Claude Desktop, Cursor, custom runners) to the live Agenomics protocol on Solana devnet.
+
 ## Prerequisites
 
-- Node.js 18+
-- Solana CLI tools
-- A Solana wallet with devnet SOL
+- **Node.js 18+** (tested on 18 and 20)
+- **A Solana keypair** with some devnet SOL — get one with `solana-keygen new` and fund via [`https://faucet.solana.com`](https://faucet.solana.com) (cluster: devnet)
+- **Optional**: Solana CLI tools if you want to inspect on-chain state directly
 
-## Installation
+## Install
 
-### MCP Server
-
-```bash
-npm install @agenomics/mcp-server
-```
-
-### Integration Plugins
+The MCP server and its workspace dependencies aren't yet on npm — install from source:
 
 ```bash
-npm install @agenomics/integrations
+git clone https://github.com/agenomics-labs/protocol
+cd protocol
+npm install
 ```
 
-## Configure MCP Server
+The root `npm install` runs a `postinstall` hook that builds the four TS workspaces (`@agenomics/action-runtime`, `@agenomics/capability-manifest-validator`, `@agenomics/sas-resolver`, `@agenomics/mcp-server`) in dependency order. After it finishes, `mcp-server/dist/index.js` exists and is executable.
 
-Add AEP to your MCP client configuration:
+## Configure for devnet
+
+```bash
+cp mcp-server/.env.devnet mcp-server/.env
+```
+
+The default `.env.devnet` points at `https://api.devnet.solana.com` and the three live Agenomics programs:
+
+| Program | Program ID |
+|---------|-----------|
+| Agent Vault | `4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN` |
+| Agent Registry | `8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh` |
+| Settlement | `GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3` |
+
+Set `ANCHOR_WALLET` to point at your devnet keypair (default `~/.config/solana/id.json`) and you're ready to invoke any of the 27 tools.
+
+## Connect to Claude Desktop
+
+Add to your Claude Desktop MCP config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS, `%APPDATA%\Claude\claude_desktop_config.json` on Windows):
 
 ```json
 {
   "mcpServers": {
-    "aep": {
-      "command": "npx",
-      "args": ["@agenomics/mcp-server"],
-      "env": {
-        "SOLANA_RPC_URL": "https://api.devnet.solana.com",
-        "SOLANA_PRIVATE_KEY": "<your-base58-private-key>"
-      }
+    "agenomics": {
+      "command": "node",
+      "args": ["dist/index.js"],
+      "cwd": "/absolute/path/to/your/clone/of/protocol/mcp-server"
     }
   }
 }
 ```
 
-### Environment Variables
+Restart Claude Desktop. The 27 tools (`create_vault`, `register_agent`, `create_escrow`, …) become available to any agent in the conversation.
 
-| Variable | Description | Default |
-|----------|------------|---------|
-| `SOLANA_RPC_URL` | Solana RPC endpoint | `https://api.devnet.solana.com` |
-| `SOLANA_PRIVATE_KEY` | Base58-encoded private key | Required |
+## First call: create a vault
 
-## Create a Vault
-
-Use the `create_vault` MCP tool to create your first agent vault:
+In a Claude conversation, ask the model to create a vault for an agent identity. It will invoke the `create_vault` tool with arguments like:
 
 ```json
 {
-  "tool": "create_vault",
-  "arguments": {
-    "agentIdentity": "<agent-public-key>",
-    "dailyLimitSol": 10,
-    "perTxLimitSol": 1,
-    "maxTxsPerHour": 20
-  }
+  "agentIdentity": "<your-agent-public-key>",
+  "dailyLimitSol": 10,
+  "perTxLimitSol": 1,
+  "maxTxsPerHour": 20
 }
 ```
 
-This creates a PDA-controlled vault with the specified spending policies.
+This creates a PDA-owned vault on devnet with the specified spending policies. The vault address is deterministic from `(seed, agentIdentity, owner)`, so you can re-derive it anytime via `get_vault_info`.
 
-## Register an Agent
-
-Register your agent in the on-chain discovery registry:
+## Register an agent
 
 ```json
 {
@@ -84,9 +87,11 @@ Register your agent in the on-chain discovery registry:
 }
 ```
 
-## Create Your First Task
+The agent profile is now discoverable via `discover_agents` (filtered) or `find_similar_agents` (capability-based).
 
-Create an escrow for a task between two agents:
+## Lock funds in escrow
+
+For agent-to-agent payment, create a milestone escrow:
 
 ```json
 {
@@ -103,9 +108,21 @@ Create an escrow for a task between two agents:
 }
 ```
 
-The provider then calls `accept_task`, completes work, and submits milestones for approval and payment release.
+The provider then calls `accept_task`, completes the work, and submits each milestone for client approval and payment release. On final-milestone approval, Settlement makes a PDA-signed CPI to Registry to bump the provider's reputation score (per ADR-094).
+
+## Verify everything is wired
+
+End-to-end smoke test that exercises every program:
+
+```bash
+npx ts-mocha -p ./tsconfig.json -t 120000 scripts/demo-e2e.ts
+```
+
+Expected output: vault created, both agents registered, escrow created with two milestones (0.8 USDC + 1.2 USDC), provider accepts and completes both, escrow auto-completes, provider reputation goes from 0 to 50 on-chain. ~30 seconds end-to-end.
 
 ## Next Steps
 
-- [API Reference](/api-reference) - Full documentation for all 25 MCP tools
-- [Integration Guide](/integration-guide) - Use AEP with ElizaOS, Solana Agent Kit, or Claude
+- [API Reference](./api-reference.md) — full documentation for all 27 MCP tools
+- [Integration Guide](./integration-guide.md) — use AEP with ElizaOS, Solana Agent Kit, or any MCP client
+- [Architecture](./ARCHITECTURE.md) — how the three programs compose
+- [SUMMARY.md](../SUMMARY.md) — full protocol walkthrough with file-by-file breakdown

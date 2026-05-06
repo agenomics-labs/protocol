@@ -4,6 +4,7 @@
   "description": "Agenomics Protocol - Anchor Workspace",
   "main": "target/types/index.ts",
   "private": true,
+  "license": "Apache-2.0",
   "workspaces": [
     "sdk/idl",
     "sdk/action-runtime",
@@ -17,7 +18,8 @@
   "scripts": {
     "build": "anchor build",
     "test": "anchor test",
-    "deploy": "anchor deploy"
+    "deploy": "anchor deploy",
+    "postinstall": "npm -w @agenomics/action-runtime -w @agenomics/capability-manifest-validator -w @agenomics/sas-resolver -w @agenomics/mcp-server run build --if-present"
   },
   "dependencies": {
     "@agenomics/capability-manifest-validator": "file:packages/capability-manifest-validator",
