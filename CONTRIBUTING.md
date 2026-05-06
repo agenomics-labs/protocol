@@ -99,6 +99,8 @@ All blocking unless noted.
 | TypeScript Check (indexer) | `tsc --noEmit` in `src/indexer/` |
 | TypeScript Check (x402-relay) | `tsc --noEmit` in `src/x402-relay/` |
 | Dashboard build (vite) | `vite build` in `dashboard/` (catches JSX import / wire errors) |
+| Workspace build-order check | confirms upstream TS workspaces (`action-runtime`, `validator`, `sas-resolver`, `mcp-server`) build cleanly in dependency order (matches root `postinstall`) |
+| Lockfile determinism check | confirms `package-lock.json` is in sync with `package.json` files; rejects PRs with un-regenerated lockfiles |
 | Vercel Deploy (site) | runs `vercel pull && vercel build && vercel deploy --prebuilt --prod` from `site/` on push to `site/**`, authenticated via `VERCEL_TOKEN` secret (free-tier alternative to Vercel↔GitHub integration, which is Pro+; one-time setup in workflow header) |
 
 ## ADR conventions
