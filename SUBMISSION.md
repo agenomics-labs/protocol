@@ -77,7 +77,9 @@ Restart Claude Desktop. All 27 tools (`create_vault`, `register_agent`, `create_
 
 ## Track + ask
 
-**Grand Champion track.** Solo builder: Alejandro. Pre-seed open — revenue model is per-transaction settlement fee at 15–30 bps, an order of magnitude under Stripe because the on-chain primitives do the work.
+**Grand Champion track.** Built by Alejandro Castellanos with AI pair-programming (Claude Code) — see `git log` for the breakdown. Pre-seed open — revenue model is per-transaction settlement fee at 15–30 bps, an order of magnitude under Stripe because the on-chain primitives do the work.
+
+> **Note on package distribution.** The `@agenomics/*` npm scope (`@agenomics/mcp-server`, `@agenomics/sas-resolver`, `@agenomics/capability-manifest-validator`, etc.) is a **source-only release** for v0.1.0 — packages are versioned and ready to publish, but the cut is gated on the SAS bootstrap ceremony documented in [`docs/STATUS.md` §5–§7.A](docs/STATUS.md). Install via `git clone` + `npm install` (the root `postinstall` builds the workspace). Future v0.1.0+ tag pushes will publish to npm via `.github/workflows/publish.yml`.
 
 ## License
 
