@@ -372,6 +372,37 @@ p.body {
 .btn .arrow { transition: transform .2s; }
 .btn:hover .arrow { transform: translateX(3px); }
 
+/* Judge fast-path CTA strip — surfaces demo + repo + pitch above the waitlist */
+.cta-judge-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 32px;
+  margin-bottom: 8px;
+  align-items: center;
+}
+.btn-judge {
+  background: transparent;
+  border: 1px solid var(--acc-2);
+  color: var(--acc-2);
+  font-family: var(--sans);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  padding: 11px 16px;
+}
+.btn-judge:hover {
+  background: var(--acc-2);
+  color: var(--bg);
+  border-color: var(--acc-2);
+  box-shadow: 0 0 0 6px oklch(0.78 0.16 175 / 0.10);
+}
+.btn-judge .label {
+  font-size: 11px;
+  opacity: 0.7;
+  margin-left: 2px;
+}
+
 /* Hero spec rail */
 .spec-rail {
   margin-top: 80px;
