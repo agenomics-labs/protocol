@@ -19,21 +19,26 @@ features:
   - title: Settlement Protocol
     details: Milestone-based SPL token escrow with submit/approve/reject cycles, dispute resolution, and CPI reputation updates.
   - title: MCP Server
-    details: 25 tools exposing all on-chain instructions via Model Context Protocol. Works with Claude, ChatGPT, and any MCP-compatible client.
+    details: 27 tools exposing all on-chain instructions via Model Context Protocol. Works with Claude, ChatGPT, and any MCP-compatible client.
 ---
 
 ## Quick Start
 
+The MCP server isn't on npm yet — install from source:
+
 ```bash
-# Install the MCP server
-npm install @agenomics/mcp-server
+# Clone and build the workspace (root postinstall builds all 4 TS packages)
+git clone https://github.com/agenomics-labs/protocol
+cd protocol && npm install
 
-# Or run directly
-npx @agenomics/mcp-server
+# Configure for devnet
+cp mcp-server/.env.devnet mcp-server/.env
 
-# Install integration plugins
-npm install @agenomics/integrations
+# Run the MCP server (or have your MCP client launch it via stdio)
+node mcp-server/dist/index.js
 ```
+
+See [Getting Started](./getting-started.md) for the full Claude Desktop / Cursor wiring.
 
 ## Architecture
 
@@ -48,5 +53,5 @@ AEP consists of three Solana programs connected via real CPI:
 ## Links
 
 - [Getting Started](/getting-started) - Installation and first steps
-- [API Reference](/api-reference) - All 25 MCP tools documented
+- [API Reference](/api-reference) - All 27 MCP tools documented
 - [Integration Guide](/integration-guide) - ElizaOS, Solana Agent Kit, Claude/ChatGPT

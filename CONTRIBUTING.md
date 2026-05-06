@@ -64,10 +64,10 @@ cargo test --workspace
 # Anchor build + IDL diff (matches the CI gate)
 anchor build && ./scripts/check-idl.sh
 
-# Anchor integration tests (local validator, 99 cases)
+# Anchor integration tests (local validator, 164 cases; 3 pendings per AUD-203)
 anchor test
 
-# mcp-server unit tests (node:test + tsx, ~75 cases)
+# mcp-server unit tests (node:test + tsx, 383 cases — root postinstall builds workspace deps; mcp-server pretest builds them again as defense-in-depth)
 cd mcp-server && npm install && npm test
 
 # Package-level tests
@@ -87,7 +87,7 @@ All blocking unless noted.
 | Rust Check & Test | `cargo check` + `cargo test --workspace` |
 | Security Audit | `cargo audit` (advisory) |
 | Anchor Build & IDL Diff | `anchor build` + IDL matches `idl/*.json` |
-| Anchor Integration | `anchor test` against local validator (99 cases) |
+| Anchor Integration | `anchor test` against local validator (164 cases; self-hosted runner, host-wide concurrency) |
 | Secret Scan | TruffleHog (PR diff or full history on main) |
 | TypeScript Check (mcp-server) | `tsc --noEmit` after building `@agenomics/*` packages first |
 | mcp-server unit tests | `npm test` (node:test + tsx) |
@@ -99,6 +99,8 @@ All blocking unless noted.
 | TypeScript Check (indexer) | `tsc --noEmit` in `src/indexer/` |
 | TypeScript Check (x402-relay) | `tsc --noEmit` in `src/x402-relay/` |
 | Dashboard build (vite) | `vite build` in `dashboard/` (catches JSX import / wire errors) |
+| Workspace build-order check | confirms upstream TS workspaces (`action-runtime`, `validator`, `sas-resolver`, `mcp-server`) build cleanly in dependency order (matches root `postinstall`) |
+| Lockfile determinism check | confirms `package-lock.json` is in sync with `package.json` files; rejects PRs with un-regenerated lockfiles |
 | Vercel Deploy (site) | runs `vercel pull && vercel build && vercel deploy --prebuilt --prod` from `site/` on push to `site/**`, authenticated via `VERCEL_TOKEN` secret (free-tier alternative to Vercel↔GitHub integration, which is Pro+; one-time setup in workflow header) |
 
 ## ADR conventions
