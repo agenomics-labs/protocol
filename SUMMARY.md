@@ -224,7 +224,7 @@ aep/
 │   └── test/
 │       └── mcp-handlers.test.ts      (724 lines, 21 tests)
 ├── scripts/
-│   └── demo-e2e.ts                   (399 lines — full lifecycle demo)
+│   └── demo-e2e.ts                   (426 lines — full lifecycle demo)
 ├── target/
 │   ├── idl/
 │   │   ├── agent_vault.json
