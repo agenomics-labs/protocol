@@ -2,6 +2,7 @@
   "name": "@agenomics/integrations",
   "version": "1.0.0",
   "description": "AEP framework integration plugins",
+  "license": "Apache-2.0",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "publishConfig": {
