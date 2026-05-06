@@ -172,6 +172,37 @@ Or browse them directly on Solana Explorer:
 
 ## Optional deeper verification
 
+### Verify the 27 tools register over the wire (≈ 5s)
+
+Goes one level deeper than Step 3's `actions_count: 27` log line — sends an actual MCP `tools/list` request and counts the tools in the JSON-RPC response. If a tool fails to register (broken Zod schema, import-time crash, etc.) it would be missing here even though the startup log is fine.
+
+```bash
+{
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}'
+  sleep 0.5
+  printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}'
+  sleep 0.3
+  printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
+  sleep 1
+} | timeout 5 node mcp-server/dist/index.js 2>/dev/null \
+  | grep -o '"name":"[a-z_]*"' | sort -u | wc -l
+```
+
+Expected:
+
+```
+27
+```
+
+To see the actual tool names:
+
+```bash
+# (replace `wc -l` with `cat`)
+… | grep -o '"name":"[a-z_]*"' | sort -u
+```
+
+Returns the canonical 27-tool list (9 vault + 6 registry + 1 reputation + 1 agent-memory + 10 settlement + 1 governance) — same set the dashboard's MCP_TOOLS array, README, and `mcp-server/src/tools/index.ts:91 allTools[]` advertise.
+
 ### Run the unit tests (≈ 30s)
 
 ```bash
