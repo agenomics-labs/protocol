@@ -2,6 +2,7 @@
   "name": "@agenomics/load-harness",
   "version": "0.1.0",
   "private": true,
+  "license": "Apache-2.0",
   "description": "Operator-driven devnet load-test harness for AEP. Phase 1 of B9 (PRE_MAINNET_ROADMAP §3).",
   "scripts": {
     "scenario:full-lifecycle": "tsx scenarios/full-lifecycle.ts",

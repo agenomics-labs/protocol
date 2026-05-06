@@ -435,6 +435,19 @@ jobs:
       - name: Run tool parity check
         run: bash scripts/check-tools-parity.sh
 
+  # 2026-05-06: license-parity gate. ADR-136 (Apache-2.0) shipped via PR #76,
+  # but completing the propagation across every workspace package.json + every
+  # on-chain program Cargo.toml took four follow-up PRs (#79, #82, #87, #88).
+  # Each fix only surfaced when a different audit looked at a different file.
+  # This gate makes a missing-license-field bug class non-recurring.
+  license-parity:
+    name: License parity check (Apache-2.0 across workspaces + programs)
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - name: Run license parity check
+        run: bash scripts/check-license-parity.sh
+
   # S-xcut-05: mandatory secret-scan gate. A leaked on-chain private key
   # has direct blast radius against the protocol's authorities, so this
   # is blocking (no `continue-on-error`). Full-history scan on push to
