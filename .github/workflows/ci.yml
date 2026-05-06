@@ -476,6 +476,21 @@ jobs:
       - name: Run program-ID parity check
         run: bash scripts/check-program-ids.sh
 
+  # 2026-05-06: ADR cross-reference gate. With 134+ ADRs and heavy
+  # cross-referencing, a typo'd ADR-NNN reference silently misdirects
+  # readers; a reference to a not-yet-merged ADR (proposed in a draft PR)
+  # silently breaks once the doc lands on main. The audit that built this
+  # gate found 4 real broken refs (ADR-138/139/140 from PR #68 wave,
+  # ADR-057 deliberately skipped) — the script's allowlist captures these
+  # as known-intentional, and any new broken ref fails CI.
+  adr-refs:
+    name: ADR cross-reference check
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - name: Run ADR cross-reference check
+        run: bash scripts/check-adr-refs.sh
+
   # S-xcut-05: mandatory secret-scan gate. A leaked on-chain private key
   # has direct blast radius against the protocol's authorities, so this
   # is blocking (no `continue-on-error`). Full-history scan on push to
