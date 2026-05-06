@@ -59,8 +59,8 @@ Programmable wallets that let agents hold and spend funds under configurable pol
 - Rate limiting with 1-hour sliding window
 - Daily spending resets based on Unix day boundaries
 
-**Source:** `programs/agent-vault/src/lib.rs` (848 lines)
-**Tests:** 26 passing (`tests/agent-vault.ts`, 1,017 lines)
+**Source:** `programs/agent-vault/src/lib.rs` (1,061 lines; module-split with `instructions.rs` 734, `state.rs` 150, `events.rs` 75 — 3,542 total)
+**Tests:** 44 passing (`tests/agent-vault.ts`, 2,513 lines)
 
 ---
 
@@ -83,8 +83,8 @@ On-chain discovery and reputation system where agents register profiles with cap
 - Status machine enforces: Retired is terminal, no reactivation allowed
 - Validation: name ≤ 64 bytes, description ≤ 256 bytes, 1–10 capabilities, 1–5 accepted tokens
 
-**Source:** `programs/agent-registry/src/lib.rs` (567 lines)
-**Tests:** 39 passing (`tests/agent-registry.ts`, 1,254 lines)
+**Source:** `programs/agent-registry/src/lib.rs` (2,404 lines; with `contexts.rs` 458, `state.rs` 212, `errors.rs` 127, `events.rs` 121 — 5,726 total)
+**Tests:** 60 passing (`tests/agent-registry.ts`, 2,513 lines)
 
 ---
 
@@ -111,8 +111,8 @@ Milestone-based escrow that locks SPL tokens and releases them as milestones are
 - Milestone amounts must sum exactly to total_amount; each must be > 0; total must be > 0
 - Deadline must be in the future at creation time
 
-**Source:** `programs/settlement/src/lib.rs` (1,039 lines)
-**Tests:** 28 passing (`tests/settlement.ts`, 1,357 lines)
+**Source:** `programs/settlement/src/lib.rs` (1,086 lines; with `contexts.rs` 943, `state.rs` 425, `errors.rs` 120, `events.rs` 124 — 3,784 total)
+**Tests:** 51 passing (`tests/settlement.ts`, 3,629 lines)
 
 ---
 
@@ -157,14 +157,15 @@ A TypeScript MCP server exposes all three programs as 27 tools that any AI agent
 
 ## Test Suite
 
-**114 / 114 tests passing**
+**547+ tests passing** — 164 Anchor (164 / 167 with 3 intentional `pending` per AUD-203) + 383 mcp-server (`node:test`)
 
 | Component | Tests | Source |
 |-----------|-------|--------|
-| Agent Registry | 39 | `tests/agent-registry.ts` |
-| Agent Vault | 26 | `tests/agent-vault.ts` |
-| Settlement Protocol | 28 | `tests/settlement.ts` |
-| MCP Server | 21 | `mcp-server/test/mcp-handlers.test.ts` |
+| Agent Registry | 60 | `tests/agent-registry.ts` |
+| Agent Vault | 44 | `tests/agent-vault.ts` |
+| Settlement Protocol | 51 | `tests/settlement.ts` |
+| Cross-program CPI failures | 9 | `tests/cpi-failures.test.ts` |
+| MCP Server | 383 | `mcp-server/test/*.test.ts` (gated by `pretest` workspace build) |
 
 **Test categories covered:**
 
@@ -208,9 +209,9 @@ A TypeScript MCP server exposes all three programs as 27 tools that any AI agent
 ```
 aep/
 ├── programs/
-│   ├── agent-vault/src/lib.rs        (848 lines)
-│   ├── agent-registry/src/lib.rs     (567 lines)
-│   └── settlement/src/lib.rs         (1,039 lines)
+│   ├── agent-vault/src/lib.rs        (1,061 lines + 959 in modules)
+│   ├── agent-registry/src/lib.rs     (2,404 lines + 918 in modules)
+│   └── settlement/src/lib.rs         (1,086 lines + 1,612 in modules)
 ├── tests/
 │   ├── agent-vault.ts                (1,017 lines, 26 tests)
 │   ├── agent-registry.ts             (1,254 lines, 39 tests)
