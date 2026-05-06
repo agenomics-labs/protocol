@@ -31,5 +31,22 @@
     ],
     "createdAt": "2026-04-22T19:06:46.150Z",
     "createTx": "5yftdh3R55nug7SFspiKhabr5QVDJGLy1aMZ4xFpQ7BXPLZYbJKW4Dx9mkxP22yzgeKB5ka7Tg8obvU2icV9annQ"
+  },
+  "authorizedSigners": [
+    "Exs7cm5dKZNr5c7rBAcq52EHUs7nxDWiZtHXzTEh3LPo"
+  ],
+  "testAttestation": {
+    "pda": "CLkPGEUuzcmC85xohwAECTRAJBpC6uKkyDfBSZvenXJu",
+    "subject": "4zEowCGQijBLKAP5UfhNx9ysb2WkcoE4NSQNPYZZs8L5",
+    "nonce": "4zEowCGQijBLKAP5UfhNx9ysb2WkcoE4NSQNPYZZs8L5",
+    "expiry": 0,
+    "reputation": {
+      "score": 8500,
+      "completed_tasks": 42,
+      "dispute_ratio_bps": 200,
+      "last_updated": 1714867200
+    },
+    "createdAt": "2026-05-06T19:40:38.465Z",
+    "createTx": "5q8fz5FKWyAkkPQrBxM5TUVt4MPs1PVdcLzYSyhDJivpUJut8qd3aDRgzR2oURyf1PAdTvQyiL4dNaEoLDYhM4KG"
   }
 }
