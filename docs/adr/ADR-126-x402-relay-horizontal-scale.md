@@ -4,6 +4,19 @@
 
 Proposed
 
+*Re-evaluation needed (2026-05-06, per issue #71 post-hackathon-prep
+audit).* Implementation work appears to address the cycle-3 cutover
+gates listed below — a regression-test file
+`src/x402-relay/test/off-201-203-205-206.test.ts` exists covering
+all four blocking findings (OFF-201 / OFF-203 / OFF-205 / OFF-206) —
+but no commits in the history reference those OFF numbers as closed,
+and the "do not flip" production banner below is unchanged. **Do not
+flip status to Accepted on the basis of test files alone.** A human
+reviewer must verify each OFF-* finding is actually closed against the
+cycle-3 punchlist (`docs/audits/CYCLE-3-OFFCHAIN-PUNCHLIST.md`) and
+that the ADR-127 reconciler has shipped, then update Status and
+remove the production banner in a single commit.
+
 ## Date
 
 2026-04-27
