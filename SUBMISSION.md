@@ -48,6 +48,8 @@ git clone https://github.com/agenomics-labs/protocol
 cd protocol/mcp-server && npm install && cp .env.devnet .env
 ```
 
+You'll need a Solana keypair at `~/.config/solana/id.json` (mode `0600`) — see [`JUDGE_RUNBOOK.md` Prerequisites](./JUDGE_RUNBOOK.md#prerequisites--60s) for one-line generation in either Solana CLI or pure Node.
+
 Then add to your Claude Desktop MCP config:
 
 ```json
