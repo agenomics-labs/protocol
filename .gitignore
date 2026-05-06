@@ -102,3 +102,5 @@ governance/attestation-log/
 .claude/scheduled_tasks.lock
 .claude/session-env/
 .claude/tasks/
+.vercel
+.env*.local
