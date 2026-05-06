@@ -1,7 +1,7 @@
 {
   "status": "SMOKE_FAILED",
   "detail": "smoke-test-devnet.ts exited non-zero \u2014 bootstrap landed but resolver round-trip or earlier step failed; see /tmp/aep-sas-ceremony.log and the testAttestation block in scripts/.sas-devnet.json",
-  "timestamp": "2026-05-06T21:09:15.684753Z",
+  "timestamp": "2026-05-06T21:12:22.525008Z",
   "logFile": "/tmp/aep-sas-ceremony.log",
   "host": "unknown"
 }
