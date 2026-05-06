@@ -2,6 +2,7 @@
   "name": "@agenomics-examples/register-agent",
   "version": "0.0.0",
   "private": true,
+  "license": "Apache-2.0",
   "type": "module",
   "description": "AEP first-agent quickstart — read-only example showing connect/derive/fetch/render against devnet. Not a workspace member; mirrors what an external consumer's repo looks like.",
   "scripts": {
