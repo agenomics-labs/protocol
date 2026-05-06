@@ -151,6 +151,17 @@ if ! npx tsx scripts/bootstrap-sas-attestation-devnet.ts; then
 fi
 
 # 5. ADR-063 §5 step 7-8: smoke test resolver round-trip + full smoke.
+# If a pre-funded smoke wallet exists, point the harness at it — devnet
+# airdrop is rate-limited and frequently fails Step 2 on fresh keypairs.
+# Generate + fund one off-band:
+#   solana-keygen new --outfile .keys/smoke-test-devnet.json --no-bip39-passphrase
+#   solana transfer --allow-unfunded-recipient --from ~/.config/solana/id.json \
+#     "$(solana-keygen pubkey .keys/smoke-test-devnet.json)" 1
+if [ -f .keys/smoke-test-devnet.json ]; then
+  export SMOKE_TEST_KEYPAIR_PATH=.keys/smoke-test-devnet.json
+  echo "using pre-funded smoke wallet at $SMOKE_TEST_KEYPAIR_PATH ($(solana-keygen pubkey "$SMOKE_TEST_KEYPAIR_PATH" 2>/dev/null))"
+fi
+
 echo "=== smoke-test-devnet.ts ==="
 if ! npx tsx scripts/smoke-test-devnet.ts; then
   set_status "SMOKE_FAILED" "smoke-test-devnet.ts exited non-zero — bootstrap landed but resolver round-trip or earlier step failed; see $LOG and the testAttestation block in scripts/.sas-devnet.json"
