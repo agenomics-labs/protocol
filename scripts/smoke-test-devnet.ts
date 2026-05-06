@@ -453,11 +453,12 @@ async function main() {
           new BN(1000),
           [testKp.publicKey],
         )
-        .accounts({
+        .accountsPartial({
           authority: testKp.publicKey,
           ownerNonce: ownerNoncePDA,
           agentProfile: profilePDA,
           vault: vaultPDA,
+          systemProgram: SystemProgram.programId,
         })
         .signers([testKp])
         .rpc();
@@ -487,12 +488,14 @@ async function main() {
           new BN(LAMPORTS_PER_SOL / 10),
           10,
         )
-        .accounts({
+        .accountsPartial({
           vault: vaultPDA,
           authority: testKp.publicKey,
           // AUD-008 / PR-J: vault init now sources `profile_nonce` from
           // the Registry's authoritative OwnerNonce PDA.
           ownerNonce: ownerNoncePDA,
+          instructionsSysvar: new PublicKey("Sysvar1nstructions1111111111111111111111111"),
+          systemProgram: SystemProgram.programId,
         })
         .signers([testKp])
         .rpc();
@@ -539,7 +542,9 @@ async function main() {
     // Profile doesn't exist yet — just use the default.
   }
   const manifest = fabricateManifest(testKp.publicKey, "SmokeTestAgent");
-  const canonicalBytes = validatorMod.canonicalBytes(manifest);
+  // v0.1.0 demoted `canonicalBytes` → `unstable_canonicalBytes`
+  // (see packages/capability-manifest-validator/src/index.ts header).
+  const canonicalBytes = validatorMod.unstable_canonicalBytes(manifest);
   const manifestHash = validatorMod.manifestHash(manifest); // 32 bytes
   const { ed25519 } = await dynImport<typeof import("@noble/curves/ed25519")>("@noble/curves/ed25519");
   const sigBytes = ed25519.sign(manifestHash, testKp.secretKey.slice(0, 32));
@@ -608,7 +613,7 @@ async function main() {
           MANIFEST_VERSION_V1_0,
           onChainCapabilities, // fetched live in Step 6; invariant: must be a superset of on-chain
         )
-        .accounts({
+        .accountsPartial({
           authority: testKp.publicKey,
           agentProfile: profilePDA,
           instructionsSysvar: new PublicKey("Sysvar1nstructions1111111111111111111111111"),
