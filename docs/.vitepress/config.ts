@@ -15,11 +15,9 @@ export default defineConfig({
     'SECURITY_AUDIT.md',
     'AUDIT_SCOPE.md',
     'audits/**',
-    // Note: this also drops the three ADRs the sidebar still links to
-    // (ADR-032/034/035). Those entries have already been 404 in
-    // production for 20+ days — broadening the exclusion to ADR-100+
-    // (ADR-123 has Vue-template-incompatible angle brackets) preserves
-    // current observable behavior. Track sidebar fix separately.
+    // ADRs are engineering records, not public docs surface. Some also
+    // contain Vue-template-incompatible markdown (e.g. ADR-123's
+    // unescaped <tag> text), which would crash the build if shipped.
     'adr/**',
     // Mainnet / release ops runbooks
     'MAINNET_CHECKLIST.md',
@@ -77,14 +75,6 @@ export default defineConfig({
         text: 'Integration Guide',
         items: [
           { text: 'Framework Integrations', link: '/integration-guide' },
-        ],
-      },
-      {
-        text: 'ADRs',
-        items: [
-          { text: 'ADR-032: npm Packages', link: '/adr/ADR-032-npm-packages' },
-          { text: 'ADR-034: Documentation Site', link: '/adr/ADR-034-documentation-site' },
-          { text: 'ADR-035: Dashboard Devnet', link: '/adr/ADR-035-dashboard-devnet' },
         ],
       },
     ],
