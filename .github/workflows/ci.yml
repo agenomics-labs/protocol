@@ -448,6 +448,19 @@ jobs:
       - name: Run license parity check
         run: bash scripts/check-license-parity.sh
 
+  # 2026-05-06: doc-commands lint. PRs #79, #80, #82 each fixed user-facing
+  # docs that told judges to `npm install @agenomics/...` (the scope is
+  # source-only — every install command 404s). PR #85 fixed `npx ts-node`
+  # references where `tsx` is the actual workspace dep. This gate catches
+  # both bug classes inline on every PR diff.
+  doc-commands-lint:
+    name: Doc-commands lint (executable instructions in user docs)
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - name: Run doc-commands lint
+        run: bash scripts/check-doc-commands.sh
+
   # S-xcut-05: mandatory secret-scan gate. A leaked on-chain private key
   # has direct blast radius against the protocol's authorities, so this
   # is blocking (no `continue-on-error`). Full-history scan on push to
