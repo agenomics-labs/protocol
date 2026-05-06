@@ -142,21 +142,30 @@ export function toAttestationReputation(
 // SAS attestation account layout (manual decoder — see SDK-dep note).
 // --------------------------------------------------------------------
 //
-// Fixed-size header followed by a length-prefixed data blob:
+// Mirrors `getAttestationDecoder` in `sas-lib@1.0.10`'s Codama codegen
+// at `node_modules/sas-lib/dist/src/generated/accounts/attestation.js`.
+// Variable-length `data` blob sits in the middle of the layout, so
+// `signer` / `expiry` / `tokenAccount` shift by N (= data length):
 //
-//   offset  field          bytes   type
-//   -------------------------------------------------
-//   0       discriminator  1       u8   (attestation tag = 2)
-//   1       nonce          32      Pubkey (per-credential uniqueness)
-//   33      credential     32      Pubkey
-//   65      schema         32      Pubkey
-//   97      subject        32      Pubkey
-//   129     signer         32      Pubkey
-//   161     expiry         8       i64  (0 = no expiry)
-//   169     data_len       4       u32  (LE)
-//   173     data           data_len bytes
+//   offset       field          bytes   type
+//   -----------------------------------------------------
+//   0            discriminator  1       u8   (attestation tag = 2)
+//   1            nonce          32      Pubkey
+//   33           credential     32      Pubkey
+//   65           schema         32      Pubkey
+//   97           data_len       4       u32  LE
+//   101          data           N       bytes
+//   101 + N      signer         32      Pubkey
+//   133 + N      expiry         8       i64  LE  (0 = no expiry)
+//   141 + N      tokenAccount   32      Pubkey
 //
-// Total fixed prefix: 173 bytes, then `data_len` bytes.
+// Fixed overhead = 173 bytes; total size = 173 + N. Earlier versions
+// of this decoder placed `subject` at offset 97 — the actual SAS
+// account has no separate subject field. Per ADR-061 §2 and our
+// bootstrap-sas-attestation-devnet.ts convention, the subject is
+// encoded as the `nonce`, and the resolver compares its
+// `subjectAuthority` parameter against `attestation.nonce` for
+// SUBJECT_MISMATCH detection.
 //
 // The 0-byte discriminator value at offset 0 (`2`) is a conservative
 // marker — if/when the real SAS layout adds more account types with
@@ -167,7 +176,12 @@ export function toAttestationReputation(
 // account fails fast rather than producing nonsense reputation data.
 
 const ATTESTATION_ACCOUNT_TAG = 2;
-const ATTESTATION_HEADER_SIZE = 173;
+/**
+ * Bytes contributed by everything in the layout except the variable
+ * `data` blob: disc(1) + nonce(32) + cred(32) + schema(32) + dataLen(4)
+ * + signer(32) + expiry(8) + tokenAccount(32) = 173.
+ */
+const ATTESTATION_FIXED_OVERHEAD = 173;
 
 /**
  * INTERNAL — not exported from `./index.js`. Returned by
@@ -177,18 +191,23 @@ const ATTESTATION_HEADER_SIZE = 173;
  * it (`signer`, `credential`, `expiry`).
  */
 interface RawAttestationAccount {
-  /** Per-credential nonce (as 32 base58 bytes, stored verbatim). */
+  /**
+   * Per-credential nonce (32 bytes verbatim). Per ADR-061 §2 / our
+   * bootstrap-sas-attestation-devnet.ts convention, AEP encodes the
+   * attestation subject as the nonce — the resolver treats it as
+   * such for the SUBJECT_MISMATCH check.
+   */
   nonce: Uint8Array;
   /** Referenced credential authority (32 bytes). */
   credential: Uint8Array;
   /** Referenced schema PDA (32 bytes). */
   schema: Uint8Array;
-  /** Subject pubkey (32 bytes) — the agent authority the claim is about. */
-  subject: Uint8Array;
   /** Signer pubkey (32 bytes). */
   signer: Uint8Array;
   /** Unix expiry (seconds), 0 = no expiry. */
   expiry: number;
+  /** Token-mode account pubkey (32 bytes); unused by AEP — read for completeness. */
+  tokenAccount: Uint8Array;
   /** Raw typed-schema data (caller passes to `parseReputationData`). */
   data: Uint8Array;
 }
@@ -198,9 +217,9 @@ interface RawAttestationAccount {
  * callers can route to the §4 skip-with-warn path.
  */
 export function parseAttestationAccount(bytes: Uint8Array): RawAttestationAccount {
-  if (bytes.length < ATTESTATION_HEADER_SIZE) {
+  if (bytes.length < ATTESTATION_FIXED_OVERHEAD) {
     throw new Error(
-      `SAS attestation account too short: got ${bytes.length} bytes, expected >= ${ATTESTATION_HEADER_SIZE}`,
+      `SAS attestation account too short: got ${bytes.length} bytes, expected >= ${ATTESTATION_FIXED_OVERHEAD}`,
     );
   }
   const discriminator = bytes[0];
@@ -215,10 +234,19 @@ export function parseAttestationAccount(bytes: Uint8Array): RawAttestationAccoun
   const nonce = bytes.slice(1, 33);
   const credential = bytes.slice(33, 65);
   const schema = bytes.slice(65, 97);
-  const subject = bytes.slice(97, 129);
-  const signer = bytes.slice(129, 161);
 
-  const expiry_big = view.getBigInt64(161, true);
+  const data_len = view.getUint32(97, true);
+  const dataStart = 101;
+  const dataEnd = dataStart + data_len;
+  if (bytes.length < dataEnd + 32 + 8 + 32) {
+    throw new Error(
+      `SAS attestation account truncated: header says data_len=${data_len} but total bytes=${bytes.length}`,
+    );
+  }
+  const data = bytes.slice(dataStart, dataEnd);
+
+  const signer = bytes.slice(dataEnd, dataEnd + 32);
+  const expiry_big = view.getBigInt64(dataEnd + 32, true);
   if (
     expiry_big > BigInt(Number.MAX_SAFE_INTEGER) ||
     expiry_big < BigInt(Number.MIN_SAFE_INTEGER)
@@ -226,16 +254,9 @@ export function parseAttestationAccount(bytes: Uint8Array): RawAttestationAccoun
     throw new Error(`SAS attestation expiry out of JS safe-int range: ${expiry_big}`);
   }
   const expiry = Number(expiry_big);
+  const tokenAccount = bytes.slice(dataEnd + 40, dataEnd + 72);
 
-  const data_len = view.getUint32(169, true);
-  if (bytes.length < ATTESTATION_HEADER_SIZE + data_len) {
-    throw new Error(
-      `SAS attestation account truncated: header says data_len=${data_len} but total bytes=${bytes.length}`,
-    );
-  }
-  const data = bytes.slice(ATTESTATION_HEADER_SIZE, ATTESTATION_HEADER_SIZE + data_len);
-
-  return { nonce, credential, schema, subject, signer, expiry, data };
+  return { nonce, credential, schema, signer, expiry, tokenAccount, data };
 }
 
 // encodeReputationData / encodeAttestationAccount previously lived here
@@ -252,5 +273,5 @@ export function parseAttestationAccount(bytes: Uint8Array): RawAttestationAccoun
 // round-trip assertions immediately.
 export const __INTERNAL_LAYOUT = {
   ATTESTATION_ACCOUNT_TAG,
-  ATTESTATION_HEADER_SIZE,
+  ATTESTATION_FIXED_OVERHEAD,
 } as const;

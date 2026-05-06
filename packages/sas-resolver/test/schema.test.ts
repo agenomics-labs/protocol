@@ -66,11 +66,13 @@ describe("AEP_AGENT_REPUTATION_v1 codec", () => {
 
 describe("SAS attestation account codec", () => {
   it("round-trips a full attestation account with reputation data", () => {
-    const subject = new Uint8Array(32).fill(0x11);
+    // SAS has no separate `subject` field on-chain (sas-lib codec
+    // 1.0.10) — the subject is encoded as the nonce per ADR-061 §2.
     const credential = new Uint8Array(32).fill(0x22);
     const schema = new Uint8Array(32).fill(0x33);
     const signer = new Uint8Array(32).fill(0x44);
     const nonce = new Uint8Array(32).fill(0x55);
+    const tokenAccount = new Uint8Array(32).fill(0x66);
     const data = encodeReputationData({
       score: 7500,
       completed_tasks: 42,
@@ -82,19 +84,19 @@ describe("SAS attestation account codec", () => {
       nonce,
       credential,
       schema,
-      subject,
       signer,
       expiry: 1_800_000_000,
       data,
+      tokenAccount,
     });
 
     const raw = parseAttestationAccount(bytes);
-    assert.deepEqual(raw.subject, subject);
+    assert.deepEqual(raw.nonce, nonce);
     assert.deepEqual(raw.credential, credential);
     assert.deepEqual(raw.schema, schema);
     assert.deepEqual(raw.signer, signer);
-    assert.deepEqual(raw.nonce, nonce);
     assert.equal(raw.expiry, 1_800_000_000);
+    assert.deepEqual(raw.tokenAccount, tokenAccount);
     assert.deepEqual(raw.data, data);
 
     const rep = toAttestationReputation(parseReputationData(raw.data), {
@@ -118,7 +120,6 @@ describe("SAS attestation account codec", () => {
       nonce: new Uint8Array(32),
       credential: new Uint8Array(32),
       schema: new Uint8Array(32),
-      subject: new Uint8Array(32),
       signer: new Uint8Array(32),
       expiry: 0,
       data: new Uint8Array(16),
@@ -132,14 +133,14 @@ describe("SAS attestation account codec", () => {
       nonce: new Uint8Array(32),
       credential: new Uint8Array(32),
       schema: new Uint8Array(32),
-      subject: new Uint8Array(32),
       signer: new Uint8Array(32),
       expiry: 0,
       data: new Uint8Array(16),
     });
-    // Rewrite data_len to claim 9999 bytes — past the actual buffer end.
+    // Rewrite data_len at offset 97 to claim 9999 bytes — past the
+    // actual buffer end. The decoder reports this as "truncated".
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    view.setUint32(169, 9_999, true);
+    view.setUint32(97, 9_999, true);
     assert.throws(() => parseAttestationAccount(bytes), /truncated/);
   });
 

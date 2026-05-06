@@ -86,7 +86,17 @@ interface AccountResponse {
   owner?: string;
 }
 
-/** Build a syntactically-correct attestation account blob. */
+/**
+ * Build a syntactically-correct attestation account blob.
+ *
+ * SAS attestation accounts have no separate `subject` field — per
+ * ADR-061 §2 the subject is encoded as the nonce. So `opts.subject`
+ * here drives the on-chain `nonce` field, which the resolver compares
+ * against `subjectAuthority` for SUBJECT_MISMATCH detection. The
+ * default is SUBJECT_AUTHORITY, matching the resolver's expectation
+ * in the happy path. SUBJECT_MISMATCH tests pass a different value
+ * (typically OTHER_AUTHORITY) to trigger row 4f.
+ */
 function makeAttestation(opts: {
   schema?: string;
   credential?: string;
@@ -103,11 +113,11 @@ function makeAttestation(opts: {
       dispute_ratio_bps: 150,
       last_updated: NOW - 7 * 86_400, // 7 days ago — fresh
     });
+  void NONCE;
   return encodeAttestationAccount({
-    nonce: base58Decode(NONCE),
+    nonce: base58Decode(opts.subject ?? SUBJECT_AUTHORITY),
     credential: base58Decode(opts.credential ?? ALLOWED_CREDENTIAL),
     schema: base58Decode(opts.schema ?? SCHEMA_PDA),
-    subject: base58Decode(opts.subject ?? SUBJECT_AUTHORITY),
     signer: base58Decode(opts.signer ?? SIGNER),
     expiry: opts.expiry ?? 0,
     data,

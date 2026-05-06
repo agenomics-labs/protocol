@@ -451,7 +451,11 @@ export class SasResolver {
     const schema = encodeBase58(raw.schema);
     const credential = encodeBase58(raw.credential);
     const signer = encodeBase58(raw.signer);
-    const accountSubject = encodeBase58(raw.subject);
+    // SAS attestation accounts have no separate `subject` field; the
+    // ADR-061 §2 convention encodes the subject as the per-attestation
+    // `nonce`. Compare the caller-supplied `subjectAuthority` against
+    // that for the row 4f SUBJECT_MISMATCH check below.
+    const accountSubject = encodeBase58(raw.nonce);
 
     // Row 4c — schema mismatch -> skip + warn.
     if (schema !== this.#schemaPda) {

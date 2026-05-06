@@ -70,11 +70,15 @@ function makeAttestation(opts: { last_updated?: number } = {}): Uint8Array {
     dispute_ratio_bps: 150,
     last_updated: opts.last_updated ?? NOW_SECONDS - 7 * 86_400,
   });
+  // SAS has no separate `subject` field on-chain (per ADR-061 §2):
+  // the subject is encoded as the attestation's `nonce`. We use
+  // SUBJECT_AUTHORITY as the nonce so the resolver's SUBJECT_MISMATCH
+  // check passes.
+  void NONCE;
   return encodeAttestationAccount({
-    nonce: base58Decode(NONCE),
+    nonce: base58Decode(SUBJECT_AUTHORITY),
     credential: base58Decode(ALLOWED_CREDENTIAL),
     schema: base58Decode(SCHEMA_PDA),
-    subject: base58Decode(SUBJECT_AUTHORITY),
     signer: base58Decode(SIGNER),
     expiry: 0,
     data,
