@@ -39,7 +39,7 @@
     "url": "https://github.com/agenomics-labs/protocol/issues"
   },
   "homepage": "https://github.com/agenomics-labs/protocol/tree/main/packages/sas-resolver#readme",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "private": true,
   "publishConfig": {
     "access": "public"
