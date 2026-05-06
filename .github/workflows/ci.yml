@@ -491,6 +491,19 @@ jobs:
       - name: Run ADR cross-reference check
         run: bash scripts/check-adr-refs.sh
 
+  # 2026-05-06: markdown-link gate. Judges clicking through user-facing
+  # docs hit immediate "this is unfinished" signals when links 404. The
+  # audit that built this script found 3 real broken links in
+  # docs/index.md (vitepress-style `/path` works on the live site but
+  # 404s on GitHub web view) — fixed in the PR that added this gate.
+  md-links:
+    name: Markdown link check (relative file paths)
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - name: Run markdown link check
+        run: bash scripts/check-md-links.sh
+
   # S-xcut-05: mandatory secret-scan gate. A leaked on-chain private key
   # has direct blast radius against the protocol's authorities, so this
   # is blocking (no `continue-on-error`). Full-history scan on push to

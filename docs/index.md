@@ -52,6 +52,6 @@ AEP consists of three Solana programs connected via real CPI:
 
 ## Links
 
-- [Getting Started](/getting-started) - Installation and first steps
-- [API Reference](/api-reference) - All 27 MCP tools documented
-- [Integration Guide](/integration-guide) - ElizaOS, Solana Agent Kit, Claude/ChatGPT
+- [Getting Started](./getting-started.md) - Installation and first steps
+- [API Reference](./api-reference.md) - All 27 MCP tools documented
+- [Integration Guide](./integration-guide.md) - ElizaOS, Solana Agent Kit, Claude/ChatGPT
