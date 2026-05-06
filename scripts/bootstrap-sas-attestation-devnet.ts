@@ -78,6 +78,13 @@ const SAS_ATTESTATION_SEED = Buffer.from('attestation');
 // createAttestation discriminator (sas-lib/dist/.../createAttestation.js:20).
 const IX_CREATE_ATTESTATION = 6;
 
+// changeAuthorizedSigners discriminator
+// (sas-lib/dist/.../changeAuthorizedSigners.js:20). The credential
+// authority signs this IX to populate the credential's signer list.
+// Without at least one entry, createAttestation fails with SAS error
+// 5 (SignerNotAuthorized).
+const IX_CHANGE_AUTHORIZED_SIGNERS = 3;
+
 // AEP_AGENT_REPUTATION_v1 layout — 16 bytes (ADR-061 §2):
 //   u16 score, u32 completed_tasks, u16 dispute_ratio_bps, i64 last_updated
 const REPUTATION_DATA_SIZE = 16;
@@ -128,6 +135,7 @@ interface SasBootstrapRecord {
   vaultIndex: number;
   credential: { pda: string; name: string };
   schema: { pda: string; name: string; version: number };
+  authorizedSigners?: string[];
   testAttestation?: TestAttestationRecord;
 }
 
@@ -271,6 +279,84 @@ function encodeCreateAttestationData(params: {
     encodeLenBytes(params.data),
     expiryBuf,
   ]);
+}
+
+/**
+ * changeAuthorizedSigners IX data
+ * (sas-lib/dist/.../changeAuthorizedSigners.js:24-30):
+ *
+ *   u8   discriminator = 3
+ *   u32  signers_len, [signers_len * 32B pubkey]
+ */
+function encodeChangeAuthorizedSignersData(signers: PublicKey[]): Buffer {
+  const out = Buffer.alloc(1 + 4 + signers.length * 32);
+  out.writeUInt8(IX_CHANGE_AUTHORIZED_SIGNERS, 0);
+  out.writeUInt32LE(signers.length, 1);
+  for (let i = 0; i < signers.length; i++) {
+    signers[i].toBuffer().copy(out, 5 + i * 32);
+  }
+  return out;
+}
+
+/**
+ * Build changeAuthorizedSigners IX. Account order traced against
+ * sas-lib/dist/.../changeAuthorizedSigners.js:62-67 (payer, authority,
+ * credential, systemProgram). Both `payer` and `authority` are the
+ * multisig vault PDA — vault funds any rent realloc AND is the
+ * credential's authority. Signing happens via vaultTransactionExecute.
+ */
+function buildChangeAuthorizedSignersInstruction(params: {
+  payer: PublicKey;
+  authority: PublicKey;
+  credential: PublicKey;
+  signers: PublicKey[];
+}): TransactionInstruction {
+  return new TransactionInstruction({
+    keys: [
+      { pubkey: params.payer, isSigner: true, isWritable: true },
+      { pubkey: params.authority, isSigner: true, isWritable: false },
+      { pubkey: params.credential, isSigner: false, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ],
+    programId: SAS_PROGRAM_ID,
+    data: encodeChangeAuthorizedSignersData(params.signers),
+  });
+}
+
+/**
+ * Read the credential account's authorized_signatures list off-chain.
+ *
+ * Layout (sas-lib `Credential` account):
+ *   u8   discriminator
+ *   32B  authority pubkey
+ *   u32  name_len, [name_len bytes]
+ *   u32  signer_count, [signer_count * 32B pubkey]
+ */
+async function readCredentialAuthorizedSigners(
+  connection: Connection,
+  credentialPda: PublicKey,
+): Promise<PublicKey[]> {
+  const info = await connection.getAccountInfo(credentialPda, 'confirmed');
+  if (!info) {
+    throw new Error(`Credential account ${credentialPda.toBase58()} not found`);
+  }
+  const data = info.data;
+  let off = 1 + 32; // disc + authority
+  const nameLen = data.readUInt32LE(off);
+  off += 4 + nameLen;
+  const signerCount = data.readUInt32LE(off);
+  off += 4;
+  if (off + signerCount * 32 > data.length) {
+    throw new Error(
+      `Credential signer list overruns account: off=${off}, count=${signerCount}, len=${data.length}`,
+    );
+  }
+  const out: PublicKey[] = [];
+  for (let i = 0; i < signerCount; i++) {
+    out.push(new PublicKey(data.subarray(off, off + 32)));
+    off += 32;
+  }
+  return out;
 }
 
 // -- PDA derivation ---------------------------------------------------------
@@ -566,12 +652,60 @@ async function main() {
     multisigPda,
     'confirmed',
   );
-  const nextIndex = BigInt(msAccount.transactionIndex.toString()) + 1n;
+  let currentIndex = BigInt(msAccount.transactionIndex.toString());
   console.log(
-    `Multisig transactionIndex: ${msAccount.transactionIndex.toString()}; next = ${nextIndex.toString()}`,
+    `Multisig transactionIndex: ${currentIndex.toString()}; next = ${(currentIndex + 1n).toString()}`,
   );
 
-  // 7. Build + execute attestation IX via multisig.
+  // 7. Ensure the credential's authorized_signatures list contains
+  // the multisig vault. Without this, createAttestation fails with
+  // SAS error 5 (SignerNotAuthorized). The original credential
+  // bootstrap created the credential with an empty signer list; we
+  // populate it here. Idempotent: skips if vault is already present.
+  const existingSigners = await readCredentialAuthorizedSigners(
+    connection,
+    credentialPda,
+  );
+  const vaultIsAuthorized = existingSigners.some((pk) =>
+    pk.equals(multisigVaultPda),
+  );
+  console.log(
+    `Authorized signers: ${existingSigners.length} on-chain; vault present: ${vaultIsAuthorized}`,
+  );
+
+  let authorizeSig: string | undefined;
+  if (!vaultIsAuthorized) {
+    console.log('\n--- changeAuthorizedSigners (add vault) ---');
+    const newSigners = [...existingSigners, multisigVaultPda];
+    const authIx = buildChangeAuthorizedSignersInstruction({
+      payer: multisigVaultPda,
+      authority: multisigVaultPda,
+      credential: credentialPda,
+      signers: newSigners,
+    });
+    currentIndex += 1n;
+    authorizeSig = await proposeApproveExecute({
+      connection,
+      multisigPda,
+      multisigVaultPda,
+      transactionIndex: currentIndex,
+      signer1,
+      signer2,
+      innerInstruction: authIx,
+      label: 'authorize',
+    });
+    const after = await readCredentialAuthorizedSigners(connection, credentialPda);
+    if (!after.some((pk) => pk.equals(multisigVaultPda))) {
+      throw new Error(
+        `changeAuthorizedSigners executed but vault ${multisigVaultPda.toBase58()} not in credential signer list (got ${after.length} entries).`,
+      );
+    }
+    console.log(
+      `Authorized signers after: ${after.map((pk) => pk.toBase58()).join(', ')}`,
+    );
+  }
+
+  // 8. Build + execute attestation IX via multisig.
   console.log('\n--- createAttestation (test reputation) ---');
   const ix = buildCreateAttestationInstruction({
     payer: multisigVaultPda,
@@ -583,11 +717,12 @@ async function main() {
     data,
     expiry: ATTESTATION_EXPIRY,
   });
+  currentIndex += 1n;
   const execSig = await proposeApproveExecute({
     connection,
     multisigPda,
     multisigVaultPda,
-    transactionIndex: nextIndex,
+    transactionIndex: currentIndex,
     signer1,
     signer2,
     innerInstruction: ix,
@@ -600,7 +735,8 @@ async function main() {
     );
   }
 
-  // 8. Persist record.
+  // 9. Persist record (including the authorized-signer list as it
+  // stands on-chain after this run, so future runs can audit drift).
   const record: TestAttestationRecord = {
     pda: attestationPda.toBase58(),
     subject: subjectPubkey.toBase58(),
@@ -610,8 +746,19 @@ async function main() {
     createdAt: new Date().toISOString(),
     createTx: execSig,
   };
-  const updated: SasBootstrapRecord = { ...sasRecord, testAttestation: record };
+  const finalSigners = await readCredentialAuthorizedSigners(
+    connection,
+    credentialPda,
+  );
+  const updated: SasBootstrapRecord = {
+    ...sasRecord,
+    authorizedSigners: finalSigners.map((pk) => pk.toBase58()),
+    testAttestation: record,
+  };
   writeSasRecord(updated);
+  if (authorizeSig) {
+    console.log(`Authorize tx: ${authorizeSig}`);
+  }
   console.log(
     `\nWrote testAttestation block to ${path.relative(REPO_ROOT, SAS_RECORD_PATH)}`,
   );
