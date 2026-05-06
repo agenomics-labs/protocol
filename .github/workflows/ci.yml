@@ -421,6 +421,20 @@ jobs:
           fi
           echo "Lockfile sha256 stable across npm ci: $after"
 
+  # 2026-05-06: tool-parity gate. The 27-tool inventory exists on three
+  # surfaces (mcp-server allTools[], dashboard MCP_TOOLS, README MCP Tools
+  # section); drift between them caused multiple PRs of fix-up work in the
+  # submission-readiness sweep (notably PR #80 where the dashboard had a
+  # stale 25-tool list with 5 names that didn't exist in mcp-server). This
+  # job ensures the bug class can't recur silently.
+  tool-parity:
+    name: Tool parity check (mcp-server ↔ dashboard ↔ README)
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - name: Run tool parity check
+        run: bash scripts/check-tools-parity.sh
+
   # S-xcut-05: mandatory secret-scan gate. A leaked on-chain private key
   # has direct blast radius against the protocol's authorities, so this
   # is blocking (no `continue-on-error`). Full-history scan on push to

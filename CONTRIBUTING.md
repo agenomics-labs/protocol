@@ -101,6 +101,7 @@ All blocking unless noted.
 | Dashboard build (vite) | `vite build` in `dashboard/` (catches JSX import / wire errors) |
 | Workspace build-order check | confirms upstream TS workspaces (`action-runtime`, `validator`, `sas-resolver`, `mcp-server`) build cleanly in dependency order (matches root `postinstall`) |
 | Lockfile determinism check | confirms `package-lock.json` is in sync with `package.json` files; rejects PRs with un-regenerated lockfiles |
+| Tool parity check | `scripts/check-tools-parity.sh` — confirms the 27 MCP tool names match across `mcp-server/src/tools/index.ts allTools[]`, `dashboard/src/data/programs.js MCP_TOOLS`, and `README.md ## MCP Tools`. Source of truth is `allTools[]`. |
 | Vercel Deploy (site) | runs `vercel pull && vercel build && vercel deploy --prebuilt --prod` from `site/` on push to `site/**`, authenticated via `VERCEL_TOKEN` secret (free-tier alternative to Vercel↔GitHub integration, which is Pro+; one-time setup in workflow header) |
 
 ## ADR conventions
