@@ -7,9 +7,12 @@
 import { describe, it } from "node:test";
 import * as assert from "node:assert/strict";
 import { ed25519 } from "@noble/curves/ed25519";
+import { sha256 } from "@noble/hashes/sha2";
 import {
   validateManifest,
   manifestHash,
+  taggedManifestHash,
+  MANIFEST_HASH_DOMAIN_PREFIX,
   unstable_canonicalJson,
   MANIFEST_SCHEMA_V1_URL,
   type CapabilityManifest,
@@ -46,8 +49,15 @@ function validManifest(): unknown {
   };
 }
 
-// Build the authority keypair + signature over the canonical hash of
-// the supplied manifest. Helper shared by the happy-path and tamper tests.
+// Build the authority keypair + signature over the *tagged* hash of the
+// supplied manifest (ADR-092). Helper shared by the happy-path and tamper
+// tests — mirrors what the on-chain `update_manifest` flow expects.
+//
+// `hash` is the raw canonical-JSON SHA-256 (what the registry stores as
+// `manifest_raw_hash` on the wire and what the validator's Stage 3 hash
+// check compares against). `signature` covers `taggedManifestHash(hash)`,
+// which is the value the ed25519 precompile pairing — and now the
+// off-chain validator's Stage 4 — verify against.
 function signManifest(manifest: unknown): {
   hash: Uint8Array;
   signature: Uint8Array;
@@ -60,7 +70,7 @@ function signManifest(manifest: unknown): {
   for (let i = 0; i < 32; i++) secret[i] = i + 1;
   const pubkey = ed25519.getPublicKey(secret);
   const hash = manifestHash(manifest);
-  const signature = ed25519.sign(hash, secret);
+  const signature = ed25519.sign(taggedManifestHash(hash), secret);
   return { hash, signature, pubkey, secret };
 }
 
@@ -217,6 +227,73 @@ describe("ADR-060 CapabilityManifest validator", () => {
       });
       assert.equal(result.ok, false);
       if (!result.ok) assert.equal(result.error.code, "SIGNATURE_MISMATCH");
+    });
+  });
+
+  describe("ADR-092 tagged-hash signing", () => {
+    it("accepts a manifest signed over the tagged hash", () => {
+      // Independent re-implementation of the sign step so we don't rely on
+      // signManifest() — this test is the contract that pins ADR-092
+      // signature semantics for the validator.
+      const manifest = validManifest();
+      const secret = new Uint8Array(32);
+      for (let i = 0; i < 32; i++) secret[i] = i + 1;
+      const pubkey = ed25519.getPublicKey(secret);
+      const rawHash = manifestHash(manifest);
+      const tagged = taggedManifestHash(rawHash);
+      const signature = ed25519.sign(tagged, secret);
+
+      const result = validateManifest({
+        manifest,
+        onChainHash: rawHash,
+        onChainSignature: signature,
+        authorityPubkey: pubkey,
+      });
+      assert.equal(result.ok, true);
+    });
+
+    it("rejects a manifest signed over the raw (untagged) hash", () => {
+      // Pre-ADR-092 behavior: signature over the raw SHA-256. The registry
+      // would refuse this on-chain (its precompile pairing covers the
+      // tagged hash), and the validator must agree to keep the two layers
+      // in lockstep.
+      const manifest = validManifest();
+      const secret = new Uint8Array(32);
+      for (let i = 0; i < 32; i++) secret[i] = i + 1;
+      const pubkey = ed25519.getPublicKey(secret);
+      const rawHash = manifestHash(manifest);
+      const rawSig = ed25519.sign(rawHash, secret);
+
+      const result = validateManifest({
+        manifest,
+        onChainHash: rawHash,
+        onChainSignature: rawSig,
+        authorityPubkey: pubkey,
+      });
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.equal(result.error.code, "SIGNATURE_MISMATCH");
+    });
+
+    it("taggedManifestHash matches sha256(domain || raw) computed independently", () => {
+      // Round-trip fixture: a known raw hash (deterministic, not derived
+      // from the manifestHash function so the dependency on canonical.ts
+      // is one-way) must equal sha256(MANIFEST_HASH_DOMAIN_PREFIX || raw)
+      // computed via a fresh sha256 instance.
+      const rawHash = new Uint8Array(32);
+      for (let i = 0; i < 32; i++) rawHash[i] = i;
+
+      const expected = sha256
+        .create()
+        .update(MANIFEST_HASH_DOMAIN_PREFIX)
+        .update(rawHash)
+        .digest();
+
+      const actual = taggedManifestHash(rawHash);
+
+      assert.deepEqual(actual, expected);
+      assert.equal(actual.length, 32);
+      // Sanity: the domain prefix is the documented 27-byte value.
+      assert.equal(MANIFEST_HASH_DOMAIN_PREFIX.length, 27);
     });
   });
 

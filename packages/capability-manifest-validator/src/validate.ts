@@ -12,7 +12,7 @@ import {
   CapabilityManifestSchema,
   type CapabilityManifest,
 } from "./schema.js";
-import { manifestHash } from "./canonical.js";
+import { manifestHash, taggedManifestHash } from "./canonical.js";
 
 /**
  * Known validation error codes.
@@ -74,8 +74,16 @@ export interface ValidateInput {
  *   1. Input shape: hash is 32 bytes, signature is 64 bytes,
  *      pubkey is 32 bytes.
  *   2. Schema: `manifest` conforms to ADR-060 §2 v1.0.
- *   3. Hash: SHA-256(RFC-8785(manifest)) === onChainHash.
- *   4. Signature: Ed25519.verify(onChainSignature, onChainHash, authorityPubkey) === true.
+ *   3. Hash: `manifestHash(manifest) === onChainHash`. The raw
+ *      domain-separated SHA-256 of canonical JSON (per ADR-092) must
+ *      equal the value the agent committed to and that the registry
+ *      received as the `manifest_raw_hash` instruction argument.
+ *   4. Signature: `Ed25519.verify(onChainSignature, taggedHash, authorityPubkey) === true`,
+ *      where `taggedHash = taggedManifestHash(onChainHash)` per ADR-092.
+ *      This matches what the on-chain `update_manifest` flow stores in
+ *      `AgentProfile.manifest_hash` and what the ed25519 precompile
+ *      pairing verifies — the signature covers the *tagged* hash, not
+ *      the raw one.
  *
  * Returns a typed `Result` so callers don't have to try/catch — the
  * crate is consumed by indexers and the MCP server where structured
@@ -126,11 +134,16 @@ export function validateManifest(input: ValidateInput): ValidationResult {
   }
 
   // Stage 4: Ed25519 signature.
+  // ADR-092: the registry stores and verifies against the *tagged* hash,
+  // so the off-chain verifier must do the same. Any signature produced
+  // over the raw hash is rejected as SIGNATURE_MISMATCH — that's the
+  // intended cross-protocol replay defense, not a false negative.
   // @noble/curves returns a boolean — any exception (bad encoding,
   // point-not-on-curve) is caught and mapped to a clean error.
+  const taggedHash = taggedManifestHash(onChainHash);
   let sigOk: boolean;
   try {
-    sigOk = ed25519.verify(onChainSignature, onChainHash, authorityPubkey);
+    sigOk = ed25519.verify(onChainSignature, taggedHash, authorityPubkey);
   } catch (e) {
     return fail(
       "SIGNATURE_MISMATCH",
@@ -167,7 +180,11 @@ function toHex(bytes: Uint8Array): string {
 }
 
 // Re-export types and helpers for consumer convenience.
-export { manifestHash, MANIFEST_HASH_DOMAIN_PREFIX } from "./canonical.js";
+export {
+  manifestHash,
+  taggedManifestHash,
+  MANIFEST_HASH_DOMAIN_PREFIX,
+} from "./canonical.js";
 
 // DEEP-AUDIT-2026-04-22 Audit 2: canonicalJson / canonicalBytes were
 // previously public. Demoted to `unstable_` prefixed aliases because

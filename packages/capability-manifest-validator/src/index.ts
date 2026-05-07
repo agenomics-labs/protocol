@@ -20,6 +20,7 @@
 export {
   validateManifest,
   manifestHash,
+  taggedManifestHash,
   MANIFEST_HASH_DOMAIN_PREFIX,
   CapabilityManifestSchema,
   MANIFEST_SCHEMA_V1_URL,

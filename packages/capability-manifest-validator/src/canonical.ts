@@ -70,3 +70,34 @@ export function manifestHash(obj: unknown): Uint8Array {
 export function canonicalBytes(obj: unknown): Uint8Array {
   return new TextEncoder().encode(canonicalJson(obj));
 }
+
+/**
+ * ADR-092: compute the domain-separated *tagged* manifest hash from a raw
+ * SHA-256 over canonical JSON. Mirrors the on-chain
+ * `tagged_manifest_hash(raw_hash)` in `programs/agent-registry/src/lib.rs`:
+ *
+ *   tagged_hash = SHA-256(MANIFEST_HASH_DOMAIN_PREFIX || raw_hash)
+ *
+ * The on-chain `update_manifest` instruction stores `manifest_hash =
+ * tagged_hash` and the ed25519 precompile pairing verifies the signature
+ * against `tagged_hash`. Off-chain verifiers therefore must check the
+ * signature against the same tagged hash, not the raw SHA-256.
+ *
+ * Note: the 27-byte domain prefix `b"AEP_CAPABILITY_MANIFEST_V1\0"` is
+ * deliberately reused here. It is the same string used by `manifestHash`
+ * to domain-separate the canonical-JSON preimage; the on-chain program
+ * also reuses it as the signature-verify domain tag. The two layers are
+ * independent — they domain-separate different preimages — but the
+ * literal bytes coincide, so we share the constant rather than introduce
+ * a second one that would have to be kept in lockstep.
+ */
+export function taggedManifestHash(rawHash: Uint8Array): Uint8Array {
+  if (!(rawHash instanceof Uint8Array) || rawHash.length !== 32) {
+    throw new Error("taggedManifestHash: rawHash must be a 32-byte Uint8Array");
+  }
+  return sha256
+    .create()
+    .update(MANIFEST_HASH_DOMAIN_PREFIX)
+    .update(rawHash)
+    .digest();
+}
