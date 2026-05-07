@@ -3,7 +3,7 @@ import { Shield, Users, Coins } from "lucide-react";
 export const PROGRAMS = {
   vault: {
     name: "Agent Vault",
-    id: "4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN",
+    id: "28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw",
     icon: Shield,
     color: "from-violet-500 to-purple-600",
     tagColor: "bg-violet-100 text-violet-800",
@@ -31,7 +31,7 @@ export const PROGRAMS = {
   },
   registry: {
     name: "Agent Registry",
-    id: "8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh",
+    id: "psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv",
     icon: Users,
     color: "from-blue-500 to-cyan-600",
     tagColor: "bg-blue-100 text-blue-800",
@@ -58,7 +58,7 @@ export const PROGRAMS = {
   },
   settlement: {
     name: "Settlement Protocol",
-    id: "GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3",
+    id: "9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95",
     icon: Coins,
     color: "from-emerald-500 to-teal-600",
     tagColor: "bg-emerald-100 text-emerald-800",

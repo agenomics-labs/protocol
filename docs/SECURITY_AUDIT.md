@@ -27,9 +27,9 @@
 
 | Program | Program ID | Instructions | Source |
 |---------|-----------|-------------|--------|
-| Agent Vault | `4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN` | 9 | `programs/agent-vault/src/lib.rs` |
-| Agent Registry | `8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh` | 5 | `programs/agent-registry/src/lib.rs` |
-| Settlement | `GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3` | 8 | `programs/settlement/src/lib.rs` |
+| Agent Vault | `28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw` | 9 | `programs/agent-vault/src/lib.rs` |
+| Agent Registry | `psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv` | 5 | `programs/agent-registry/src/lib.rs` |
+| Settlement | `9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95` | 8 | `programs/settlement/src/lib.rs` |
 
 **Agent Vault instructions**: `initialize_vault`, `update_policy`, `update_agent_identity`, `add_token_allowlist`, `remove_token_allowlist`, `add_program_allowlist`, `remove_program_allowlist`, `execute_transfer`, `execute_token_transfer`, `pause_vault`, `resume_vault`. (The `execute_program_call` instruction was removed by ADR-050; the vault has no cross-program-call surface and exposes only SOL transfers via `execute_transfer` and SPL transfers via `execute_token_transfer`.)
 

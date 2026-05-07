@@ -19,7 +19,7 @@
  *   import agentRegistryIdl from "./target/idl/agent_registry.json" assert { type: "json" };
  *
  *   const provider = AnchorProvider.env();
- *   const REGISTRY_PROGRAM_ID = new PublicKey("8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh");
+ *   const REGISTRY_PROGRAM_ID = new PublicKey("psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv");
  *   const registry = new AgentRegistryClient(
  *     provider, agentRegistryIdl as Idl, REGISTRY_PROGRAM_ID
  *   );

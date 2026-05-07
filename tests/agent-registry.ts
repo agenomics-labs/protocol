@@ -17,7 +17,7 @@ const OWNER_NONCE_SEED = "owner-nonce";
 // `[b"vault", authority]` under this program. No more caller-supplied
 // impostor vault addresses.
 const VAULT_PROGRAM_ID = new web3.PublicKey(
-  "4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN"
+  "28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw"
 );
 
 // ADR-097: owner-nonce PDA `[authority, b"owner-nonce"]`. Init_if_needed'd
@@ -2326,7 +2326,7 @@ describe("Agent Registry Program Tests", () => {
       // canonical address; the runtime rejection on the unsigned
       // signer slot is what proves the boundary refuses the call.
       const SETTLEMENT_PROGRAM_ID = new web3.PublicKey(
-        "GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3"
+        "9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95"
       );
       const [settlementAuthorityPDA] = web3.PublicKey.findProgramAddressSync(
         [Buffer.from("settlement_authority")],
@@ -2413,7 +2413,7 @@ describe("Agent Registry Program Tests", () => {
       const target = await registerFreshAgent("aud108-direct-0");
 
       const SETTLEMENT_PROGRAM_ID = new web3.PublicKey(
-        "GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3"
+        "9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95"
       );
       const [settlementAuthorityPDA] = web3.PublicKey.findProgramAddressSync(
         [Buffer.from("settlement_authority")],

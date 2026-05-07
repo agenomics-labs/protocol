@@ -8,7 +8,7 @@
  *   import agentRegistryIdl from "path/to/idl/agent_registry.json" assert { type: "json" };
  *   import { Idl } from "@coral-xyz/anchor";
  *
- *   const REGISTRY_PROGRAM_ID = new PublicKey("8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh");
+ *   const REGISTRY_PROGRAM_ID = new PublicKey("psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv");
  *   const client = new AgentRegistryClient(provider, agentRegistryIdl as Idl, REGISTRY_PROGRAM_ID);
  *
  *   const pda = client.profilePda(authority, 0n);

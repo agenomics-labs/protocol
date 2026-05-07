@@ -39,11 +39,11 @@ describe("Settlement Protocol Tests", () => {
   const connection = provider.connection;
 
   // Program IDs for CPI
-  const REGISTRY_PROGRAM_ID = new PublicKey("8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh");
-  const SETTLEMENT_PROGRAM_ID = new PublicKey("GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3");
+  const REGISTRY_PROGRAM_ID = new PublicKey("psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv");
+  const SETTLEMENT_PROGRAM_ID = new PublicKey("9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95");
   // Finding #9: register_agent now validates the vault argument matches the
   // canonical Agent Vault PDA seeded by `[b"vault", authority]`.
-  const VAULT_PROGRAM_ID = new PublicKey("4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN");
+  const VAULT_PROGRAM_ID = new PublicKey("28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw");
 
   // ADR-097: agent_profile PDA seeds = [authority, b"agent-profile", nonce-le].
   function deriveAgentProfilePDA(

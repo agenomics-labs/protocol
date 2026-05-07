@@ -18,16 +18,16 @@ Update `AEPDashboard.jsx` to:
 
 1. **Connect to devnet RPC** at `https://api.devnet.solana.com` using `@solana/web3.js`.
 2. **Fetch real vault balance** for a configured wallet address via `getBalance`.
-3. **Fetch agent profiles** from the registry program using `getProgramAccounts` with the registry program ID `8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh`.
-4. **Fetch escrow data** from the settlement program `GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3`.
+3. **Fetch agent profiles** from the registry program using `getProgramAccounts` with the registry program ID `psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv`.
+4. **Fetch escrow data** from the settlement program `9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95`.
 5. **Display a "Devnet" badge** to indicate the data source.
 6. **Use `useEffect` hooks** for data fetching with error handling and loading states.
 7. **Preserve existing UI** structure; only add data fetching and live data display.
 
 Program IDs:
-- Vault: `4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN`
-- Registry: `8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh`
-- Settlement: `GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3`
+- Vault: `28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw`
+- Registry: `psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv`
+- Settlement: `9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95`
 
 ## Consequences
 

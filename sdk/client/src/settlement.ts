@@ -8,7 +8,7 @@
  *   import settlementIdl from "path/to/idl/settlement.json" assert { type: "json" };
  *   import { Idl } from "@coral-xyz/anchor";
  *
- *   const SETTLEMENT_PROGRAM_ID = new PublicKey("GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3");
+ *   const SETTLEMENT_PROGRAM_ID = new PublicKey("9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95");
  *   const client = new SettlementClient(provider, settlementIdl as Idl, SETTLEMENT_PROGRAM_ID);
  *
  *   const pda = client.escrowPda(clientKey, providerKey, 1n);

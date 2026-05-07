@@ -90,13 +90,13 @@ describe("AUD-017: Settlement → Registry CPI failure paths", () => {
 
   // Program IDs (declared in Anchor.toml [programs.localnet]).
   const REGISTRY_PROGRAM_ID = new PublicKey(
-    "8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh",
+    "psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv",
   );
   const SETTLEMENT_PROGRAM_ID = new PublicKey(
-    "GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3",
+    "9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95",
   );
   const VAULT_PROGRAM_ID = new PublicKey(
-    "4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN",
+    "28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw",
   );
   // BPF Upgradeable Loader — owns ProgramData accounts for upgradeable
   // programs. AUD-005: `initialize_protocol_config` derives the Settlement

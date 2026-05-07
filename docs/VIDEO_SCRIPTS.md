@@ -37,7 +37,7 @@ that moment. `[VO]` is voice-over (speaking, off-camera or face-cam).
   2. https://agenomics.xyz/thesis (the "coming shortly" page is fine)
   3. https://app.agenomics.xyz (dashboard)
   4. https://docs.agenomics.xyz (docs)
-  5. https://explorer.solana.com/address/4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN?cluster=devnet
+  5. https://explorer.solana.com/address/28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw?cluster=devnet
      (Agent Vault on Solana Explorer — proves devnet liveness)
 - Have Claude Desktop already showing the `agenomics` MCP entry under
   Settings → Developer

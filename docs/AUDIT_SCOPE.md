@@ -15,9 +15,9 @@
 
 | Program | Program ID | Source Path | Lines of Code | Instructions |
 |---------|-----------|-------------|---------------|-------------|
-| Agent Vault | `4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN` | `programs/agent-vault/src/lib.rs` | 1,340 | 11 |
-| Agent Registry | `8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh` | `programs/agent-registry/src/lib.rs` | 1,034 | 5 |
-| Settlement | `GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3` | `programs/settlement/src/lib.rs` | 1,309 | 9 |
+| Agent Vault | `28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw` | `programs/agent-vault/src/lib.rs` | 1,340 | 11 |
+| Agent Registry | `psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv` | `programs/agent-registry/src/lib.rs` | 1,034 | 5 |
+| Settlement | `9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95` | `programs/settlement/src/lib.rs` | 1,309 | 9 |
 | **Total** | | | **3,683** | **25** |
 
 ### 1.2 Agent Vault Instructions

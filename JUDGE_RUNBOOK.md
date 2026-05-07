@@ -150,7 +150,7 @@ The protocol's three Solana programs are deployed to devnet at fixed addresses. 
 
 ```bash
 curl -s https://api.devnet.solana.com -X POST -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"getAccountInfo","params":["4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN",{"encoding":"jsonParsed"}]}' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"getAccountInfo","params":["28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw",{"encoding":"jsonParsed"}]}' \
   | python3 -c "import json,sys;a=json.load(sys.stdin)['result']['value'];print('executable:',a['executable'],'owner:',a['owner'])"
 ```
 
@@ -164,9 +164,9 @@ Same check works for the other two programs (`8VQuB…tfh` Registry and `GK8L…
 
 Or browse them directly on Solana Explorer:
 
-- [Vault `4wjdJ…gvwN`](https://explorer.solana.com/address/4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN?cluster=devnet)
-- [Registry `8VQuB…tfh`](https://explorer.solana.com/address/8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh?cluster=devnet)
-- [Settlement `GK8L…3wvc3`](https://explorer.solana.com/address/GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3?cluster=devnet)
+- [Vault `4wjdJ…gvwN`](https://explorer.solana.com/address/28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw?cluster=devnet)
+- [Registry `8VQuB…tfh`](https://explorer.solana.com/address/psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv?cluster=devnet)
+- [Settlement `GK8L…3wvc3`](https://explorer.solana.com/address/9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95?cluster=devnet)
 
 ---
 

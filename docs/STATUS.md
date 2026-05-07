@@ -30,9 +30,9 @@ _Last updated: 2026-05-06 (5 days to Colosseum deadline; PR #76 + PR #77 closed 
 
 | Program | Program ID | Binary matches main? | Upgrade authority |
 |---|---|---|---|
-| Agent Vault | `4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN` | ✓ | `BUdXA1Fi...jTXL` (single key) |
-| Agent Registry | `8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh` | ✓ | same |
-| Settlement | `GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3` | ✓ | same |
+| Agent Vault | `28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw` | ✓ | `BUdXA1Fi...jTXL` (single key) |
+| Agent Registry | `psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv` | ✓ | same |
+| Settlement | `9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95` | ✓ | same |
 
 - Upgrade authority transfer to Squads multisig: **deferred** (see §4). Single key keeps devnet iteration cheap.
 - ADR-060 (manifest fields, `update_manifest` IX) is live on all programs.
@@ -149,6 +149,8 @@ git tag v0.1.0 && git push origin v0.1.0
 ```
 Workflow publishes both, creates GitHub Release. See `RELEASE.md`.
 
+**Reflex coupling note:** `docs/aep-reflex-tech-spec.md` (the 14-day hackathon plan) builds Surface 2 by adding `pay_x402_service` to `@agenomics/mcp-server`, and Surface 4 wraps the MCP server through AgentCore Gateway. Until v0.1.0 publishes, Reflex consumers depend on the workspace `file:` resolution (which works for monorepo development). Public Reflex contributors who need the package from npm cannot start until A succeeds.
+
 ### C. Deferred-but-tracked
 
 - **v2 `vault_transfer` devnet parity**: env-gated (`AEP_USE_V2_VAULT_TRANSFER=1`), proven end-to-end in smoke Step 9b. Flipping the default from v1 to v2 needs (a) a period of shadow-running both, (b) removing the env gate, (c) deprecation notice. No hard blocker; cosmetic migration.
@@ -199,9 +201,9 @@ cd ../../mcp-server && npm install && npm run build
 # 3. Verify devnet state
 solana config get                                # should be devnet
 solana balance                                   # should be > 10 SOL for full smoke
-for id in 4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN \
-          8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh \
-          GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3; do
+for id in 28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw \
+          psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv \
+          9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95; do
   solana program show "$id" | head -6
 done
 

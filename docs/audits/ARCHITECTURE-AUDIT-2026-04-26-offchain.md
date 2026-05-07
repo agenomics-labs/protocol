@@ -170,9 +170,9 @@ Cycle-2 on-chain audit should pick the option; this finding owns the off-chain T
 
 ```ts
 const PROGRAM_IDS: Record<Cluster, ProgramIds> = {
-  devnet: { agentRegistry: "8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh", ... },
-  "mainnet-beta": { agentRegistry: "8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh", ... },
-  localnet: { agentRegistry: "8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh", ... },
+  devnet: { agentRegistry: "psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv", ... },
+  "mainnet-beta": { agentRegistry: "psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv", ... },
+  localnet: { agentRegistry: "psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv", ... },
 };
 ```
 

@@ -8,19 +8,19 @@ export interface ProgramIds {
 
 const PROGRAM_IDS: Record<Cluster, ProgramIds> = {
   devnet: {
-    agentRegistry: "8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh",
-    agentVault:    "4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN",
-    settlement:    "GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3",
+    agentRegistry: "psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv",
+    agentVault:    "28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw",
+    settlement:    "9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95",
   },
   "mainnet-beta": {
-    agentRegistry: "8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh",
-    agentVault:    "4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN",
-    settlement:    "GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3",
+    agentRegistry: "psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv",
+    agentVault:    "28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw",
+    settlement:    "9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95",
   },
   localnet: {
-    agentRegistry: "8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh",
-    agentVault:    "4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN",
-    settlement:    "GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3",
+    agentRegistry: "psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv",
+    agentVault:    "28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw",
+    settlement:    "9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95",
   },
 };
 

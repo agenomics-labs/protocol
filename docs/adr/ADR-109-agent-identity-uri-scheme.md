@@ -67,9 +67,9 @@ aep:<authority-base58>[@<manifest-hash-base58url-12>][?endpoint=<https-url>]
 Examples:
 
 ```
-aep:8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh
-aep:8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh@a1b2c3d4e5f6
-aep:8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh@a1b2c3d4e5f6?endpoint=https%3A%2F%2Fagent.example.com
+aep:psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv
+aep:psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv@a1b2c3d4e5f6
+aep:psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv@a1b2c3d4e5f6?endpoint=https%3A%2F%2Fagent.example.com
 ```
 
 ### Implementation surface

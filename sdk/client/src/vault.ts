@@ -8,7 +8,7 @@
  *   import agentVaultIdl from "path/to/idl/agent_vault.json" assert { type: "json" };
  *   import { Idl } from "@coral-xyz/anchor";
  *
- *   const VAULT_PROGRAM_ID = new PublicKey("4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN");
+ *   const VAULT_PROGRAM_ID = new PublicKey("28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw");
  *   const client = new AgentVaultClient(provider, agentVaultIdl as Idl, VAULT_PROGRAM_ID);
  *
  *   const pda = client.vaultPda(authority);

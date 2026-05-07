@@ -11,7 +11,7 @@ use errors::*;
 use events::*;
 use contexts::*;
 
-declare_id!("GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3");
+declare_id!("9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95");
 
 #[program]
 pub mod settlement {

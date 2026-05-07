@@ -46,9 +46,9 @@ AEP consists of three Solana programs connected via real CPI:
 
 | Program | Program ID | Purpose |
 |---------|-----------|---------|
-| Agent Vault | `4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN` | Programmable wallets with spending policies |
-| Agent Registry | `8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh` | Discovery and reputation |
-| Settlement | `GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3` | Milestone escrow and disputes |
+| Agent Vault | `28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw` | Programmable wallets with spending policies |
+| Agent Registry | `psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv` | Discovery and reputation |
+| Settlement | `9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95` | Milestone escrow and disputes |
 
 ## Links
 

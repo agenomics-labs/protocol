@@ -12,9 +12,9 @@ export const MONITORED_VAULT = import.meta.env.VITE_MONITORED_VAULT || null;
 export const connection = new Connection(RPC_URL, "confirmed");
 
 export const PROGRAM_IDS = {
-  vault: new PublicKey("4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN"),
-  registry: new PublicKey("8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh"),
-  settlement: new PublicKey("GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3"),
+  vault: new PublicKey("28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw"),
+  registry: new PublicKey("psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv"),
+  settlement: new PublicKey("9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95"),
 };
 
 export const NETWORK_LABEL = RPC_URL.includes("devnet")

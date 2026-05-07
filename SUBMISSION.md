@@ -30,9 +30,9 @@ The MCP server bridges all three programs to any MCP-compatible agent (Claude De
 
 **Devnet programs — RPC-verifiable right now:**
 
-- Vault: [`4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN`](https://explorer.solana.com/address/4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN?cluster=devnet)
-- Registry: [`8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh`](https://explorer.solana.com/address/8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh?cluster=devnet)
-- Settlement: [`GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3`](https://explorer.solana.com/address/GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3?cluster=devnet)
+- Vault: [`28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw`](https://explorer.solana.com/address/28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw?cluster=devnet)
+- Registry: [`psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv`](https://explorer.solana.com/address/psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv?cluster=devnet)
+- Settlement: [`9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95`](https://explorer.solana.com/address/9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95?cluster=devnet)
 
 ## Watch the videos
 
@@ -79,7 +79,7 @@ Restart Claude Desktop. All 27 tools (`create_vault`, `register_agent`, `create_
 
 ## Track + ask
 
-**Grand Champion track.** Built by Alejandro Castellanos with AI pair-programming (Claude Code) — see `git log` for the breakdown. Pre-seed open — revenue model is per-transaction settlement fee at 15–30 bps, an order of magnitude under Stripe because the on-chain primitives do the work.
+**Grand Champion track.** Built by Alejandro Castellanos an AI system Architect building intelligeence into systems that scale — see `git log` for the breakdown. Pre-seed open — revenue model is per-transaction settlement fee at 15–30 bps, an order of magnitude under Stripe because the on-chain primitives do the work.
 
 > **Note on package distribution.** The `@agenomics/*` npm scope (`@agenomics/mcp-server`, `@agenomics/sas-resolver`, `@agenomics/capability-manifest-validator`, etc.) is a **source-only release** for v0.1.0 — packages are versioned and ready to publish, but the cut is gated on the SAS bootstrap ceremony documented in [`docs/STATUS.md` §5–§7.A](docs/STATUS.md). Install via `git clone` + `npm install` (the root `postinstall` builds the workspace). Future v0.1.0+ tag pushes will publish to npm via `.github/workflows/publish.yml`.
 

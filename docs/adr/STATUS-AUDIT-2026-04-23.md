@@ -88,9 +88,9 @@ Protocol is not a research codebase; this section tracks the equivalent of publi
 
 | Artifact | Version / ID | State | Notes |
 |---|---|---|---|
-| `agent-vault` program (devnet) | `4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN` | Live, current with `main` | ADR-060 manifest fields + `update_manifest` IX live |
-| `agent-registry` program (devnet) | `8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh` | Live, current with `main` | SEC-1/4/7/8/11 reputation trust-boundary hardening live (#32) |
-| `settlement` program (devnet) | `GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3` | Live, current with `main` | same |
+| `agent-vault` program (devnet) | `28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw` | Live, current with `main` | ADR-060 manifest fields + `update_manifest` IX live |
+| `agent-registry` program (devnet) | `psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv` | Live, current with `main` | SEC-1/4/7/8/11 reputation trust-boundary hardening live (#32) |
+| `settlement` program (devnet) | `9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95` | Live, current with `main` | same |
 | `@agenomics/capability-manifest-validator` | `0.1.0` | **Unpublished** | npm org claimed, `NPM_TOKEN` + `.github/workflows/publish.yml` in place; holding per §7.A |
 | `@agenomics/sas-resolver` | `0.1.0` | **Unpublished** | same |
 | Mainnet deployment | — | **Blocked** | see §9 |

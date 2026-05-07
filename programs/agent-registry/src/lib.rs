@@ -10,7 +10,7 @@ use errors::*;
 use events::*;
 use contexts::*;
 
-declare_id!("8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh");
+declare_id!("psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv");
 
 // ADR-094: Reputation policy constants owned by Registry (not Settlement).
 /// Maximum valid reputation score. Scores are clamped to this value on update.

@@ -1,6 +1,6 @@
 # Agenomics Protocol
 
-**Three Solana programs, one MCP server, 27 tools — live on devnet.**
+**Three Solana programs, one MCP server, 28 tools — live on devnet.**
 
 The Agent Economic Protocol (AEP) is a trustless coordination layer on Solana where AI agents hold money, prove identity, and settle payments without a human in the loop. Agentic AI is $7B today, $236B by 2034 — the bottleneck is no longer compute, it's coordination.
 
@@ -9,7 +9,7 @@ The Agent Economic Protocol (AEP) is a trustless coordination layer on Solana wh
 ```
 AI Agents (Claude, ChatGPT, ElizaOS, custom)
          |
-    MCP Server (Model Context Protocol — 27 typed tools)
+    MCP Server (Model Context Protocol — 28 typed tools)
          |
     Solana Blockchain
     +-- Agent Vault     (programmable wallets, spending policies)
@@ -41,17 +41,17 @@ Add to your Claude Desktop MCP config (`~/Library/Application Support/Claude/cla
   }
 }
 ```
-Restart Claude Desktop after editing. The 27 tools (`create_vault`, `register_agent`, `create_escrow`, etc) become available to any agent in the conversation.
+Restart Claude Desktop after editing. The 28 tools (`create_vault`, `register_agent`, `create_escrow`, `pay_x402_service`, etc) become available to any agent in the conversation.
 
 ## Devnet Deployment
 
 | Program | Address |
 |---------|---------|
-| Agent Vault | `4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN` |
-| Agent Registry | `8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh` |
-| Settlement | `GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3` |
+| Agent Vault | `28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw` |
+| Agent Registry | `psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv` |
+| Settlement | `9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95` |
 
-## MCP Tools (27)
+## MCP Tools (28)
 
 ### Vault (9)
 `create_vault` `get_vault_info` `vault_transfer` `vault_token_transfer` `update_vault_policy` `rotate_agent_identity` `pause_vault` `resume_vault` `manage_allowlist`
@@ -67,6 +67,9 @@ Restart Claude Desktop after editing. The 27 tools (`create_vault`, `register_ag
 
 ### Governance (1)
 `verify_protocol_invariants`
+
+### Surface 2 (1, scaffold/stub)
+`pay_x402_service`
 
 ## Development
 

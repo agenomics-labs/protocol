@@ -37,9 +37,9 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # ==================== CONFIGURATION ====================
 
 # Program IDs (from Anchor.toml — keep in sync with the on-chain expected IDs).
-VAULT_PROGRAM_ID="4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN"
-REGISTRY_PROGRAM_ID="8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh"
-SETTLEMENT_PROGRAM_ID="GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3"
+VAULT_PROGRAM_ID="28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw"
+REGISTRY_PROGRAM_ID="psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv"
+SETTLEMENT_PROGRAM_ID="9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95"
 
 # Multi-sig address (REQUIRED — no in-script default; see ADR-080 §3).
 MULTISIG_ADDRESS="${MULTISIG_ADDRESS:-}"

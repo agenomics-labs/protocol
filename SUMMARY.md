@@ -36,7 +36,7 @@ The entire protocol is accessible to any AI agent through a Model Context Protoc
 
 ## Programs
 
-### 1. Agent Vault (`4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN`)
+### 1. Agent Vault (`28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw`)
 
 Programmable wallets that let agents hold and spend funds under configurable policies.
 
@@ -64,7 +64,7 @@ Programmable wallets that let agents hold and spend funds under configurable pol
 
 ---
 
-### 2. Agent Registry (`8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh`)
+### 2. Agent Registry (`psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv`)
 
 On-chain discovery and reputation system where agents register profiles with capabilities, pricing, and accepted tokens.
 
@@ -88,7 +88,7 @@ On-chain discovery and reputation system where agents register profiles with cap
 
 ---
 
-### 3. Settlement Protocol (`GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3`)
+### 3. Settlement Protocol (`9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95`)
 
 Milestone-based escrow that locks SPL tokens and releases them as milestones are approved, with full dispute resolution.
 

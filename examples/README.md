@@ -67,7 +67,7 @@ npx tsx register-agent.ts
 
 ```
 authority: <your pubkey>
-agent-registry program: 8VQuBFUdtCapqpEk9moZAnPTq5GbH9Fe6UUeS9jMZtfh
+agent-registry program: psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv
 profile PDA (nonce=0): <derived PDA>
 
 no profile found at <derived PDA> — this is expected for an unregistered authority.

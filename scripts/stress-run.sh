@@ -14,7 +14,7 @@ echo "launching $N concurrent flows -> $OUT"
 echo "wall clock start: $(date +%s.%N)" > "$OUT/timing"
 
 # Start the log subscriber
-solana logs GK8LBYz7LoSxqFPNYjo2hS6aQkRWE3x2GQGXWFu3wvc3 > "$OUT/settle.log" 2>&1 &
+solana logs 9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95 > "$OUT/settle.log" 2>&1 &
 echo $! > "$OUT/logger.pid"
 
 sleep 0.3

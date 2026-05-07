@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 use anchor_lang::solana_program::hash::hashv;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 
-declare_id!("4wjdJPbp59gjUcVsp7gcc8XmcAeWaGBDhNAPz2KKgvwN");
+declare_id!("28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw");
 
 pub mod state;
 pub mod errors;
