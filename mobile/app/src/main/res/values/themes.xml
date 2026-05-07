@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose owns colors at runtime; this just gives the activity
+         a Material3 splash before the ComposeView attaches. -->
+    <style name="Theme.AEPReflex" parent="android:Theme.Material.NoActionBar" />
+</resources>

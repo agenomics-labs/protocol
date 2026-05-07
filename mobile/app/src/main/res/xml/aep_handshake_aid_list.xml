@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  HCE AID group for the two-phone agent handshake described in Surface 1.
+  The AID below is a placeholder in the AEP-private range and MUST be
+  replaced with the canonical value once the protocol team locks it in.
+  See docs/aep-reflex-tech-spec.md, "NFC peer-to-peer flow".
+-->
+<host-apdu-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/app_name"
+    android:requireDeviceUnlock="true">
+    <aid-group
+        android:category="other"
+        android:description="@string/app_name">
+        <!-- AID = "AEP REFLEX" in hex -->
+        <aid-filter android:name="F041455052454C4558" />
+    </aid-group>
+</host-apdu-service>

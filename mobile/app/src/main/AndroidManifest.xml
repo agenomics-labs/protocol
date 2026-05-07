@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- AgentCore SSE + Solana RPC -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Biometric prompt is delegated to Seed Vault Wallet but the host
+         app must declare the permission so the system surfaces the
+         capability in the manifest report. -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+
+    <!-- NFC HCE for two-phone Seeker handshake (Surface 1 spec) -->
+    <uses-permission android:name="android.permission.NFC" />
+    <uses-feature
+        android:name="android.hardware.nfc.hce"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.nfc"
+        android:required="false" />
+
+    <!-- Camera fallback for QR-based agent handshake -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+
+    <!-- MWA 2.0 needs to query for installed wallet apps. -->
+    <queries>
+        <intent>
+            <action android:name="com.solana.mobilewalletadapter.WALLET_PROVIDER" />
+        </intent>
+    </queries>
+
+    <application
+        android:name=".ReflexApp"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.AEPReflex"
+        android:usesCleartextTraffic="false"
+        tools:targetApi="34">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.AEPReflex">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- NFC HCE service for two-phone agent handshake.
+             AID is a placeholder; the real one ships with the spec. -->
+        <service
+            android:name=".nfc.AgentHandshakeHceService"
+            android:exported="true"
+            android:permission="android.permission.BIND_NFC_SERVICE">
+            <intent-filter>
+                <action android:name="android.nfc.cardemulation.action.HOST_APDU_SERVICE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <meta-data
+                android:name="android.nfc.cardemulation.host_apdu_service"
+                android:resource="@xml/aep_handshake_aid_list" />
+        </service>
+    </application>
+</manifest>

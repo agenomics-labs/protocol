@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AEP Reflex</string>
+
+    <!-- Discover screen -->
+    <string name="discover_title">Discover services</string>
+    <string name="discover_prompt_hint">Describe what you want the agent to do…</string>
+    <string name="discover_submit">Run agent</string>
+    <string name="discover_connect_wallet">Connect Wallet</string>
+    <string name="discover_wallet_connected">Wallet connected: %1$s</string>
+    <string name="discover_log_empty">Live agent narration will appear here.</string>
+</resources>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Never back up wallet-derived material. -->
+    <exclude domain="sharedpref" path="reflex_session.xml" />
+    <exclude domain="database" path="reflex.db" />
+</full-backup-content>
