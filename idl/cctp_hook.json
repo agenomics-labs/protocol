@@ -1,0 +1,454 @@
+{
+  "address": "3yifMBDVChLzcihZWh4or9zxgzbmQVghdNZzpuP814vb",
+  "metadata": {
+    "name": "cctp_hook",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Reflex CCTP V2 Hook - post-mint Solana hook that auto-approves an AEP Settlement milestone after a Base->Solana CCTP V2 round-trip. Surface 3 of the AEP Reflex demo."
+  },
+  "instructions": [
+    {
+      "name": "auto_approve_milestone",
+      "docs": [
+        "Post-CCTP-mint hook. Called by Circle's CCTP V2 receiver (or, until that",
+        "integration is concrete, by the relayer fallback) after USDC has been",
+        "minted on Solana for the agent's session round-trip.",
+        "",
+        "On success:",
+        "- The replay-guard PDA is initialized (idempotent on the IC-4 triple).",
+        "- `settlement::approve_milestone` is invoked via CPI, signed by the",
+        "`hook_signer` PDA which the upstream escrow must list as its",
+        "`client`.",
+        "- A `MilestoneAutoApproved` event is emitted for the dashboard."
+      ],
+      "discriminator": [
+        16,
+        41,
+        118,
+        190,
+        11,
+        129,
+        216,
+        219
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "docs": [
+            "The transaction signer — typically the CCTP V2 receiver dispatcher or",
+            "(until that is wired) the relayer. The Hook does not authorize off",
+            "this signer's identity; the on-chain trust anchor is the",
+            "CCTP-attestation guarantee that already gated the mint, plus the",
+            "`hook_signer` PDA's exclusive ability to act as the escrow's `client`."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "agent_authority",
+          "docs": [
+            "The agent's external authority pubkey. The Hook's signer PDA is",
+            "derived from this key, and the upstream `create_escrow` MUST have",
+            "listed `hook_signer(agent_authority)` as the escrow's `client`.",
+            "`escrow.client == hook_signer.key()` inside the handler. This account",
+            "is read-only and not deserialized."
+          ]
+        },
+        {
+          "name": "hook_signer",
+          "docs": [
+            "PDA the Hook signs CPI calls with. Seeds: `[\"hook_signer\", agent]`.",
+            "Read-only here; passed as `client` (a Signer in Settlement's view) via",
+            "CPI signer seeds."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  111,
+                  111,
+                  107,
+                  95,
+                  115,
+                  105,
+                  103,
+                  110,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "agent_authority"
+              }
+            ]
+          }
+        },
+        {
+          "name": "replay_guard",
+          "docs": [
+            "Replay-guard PDA. `init` constraint = duplicate triples atomically",
+            "abort before any CPI runs. Closed lazily after a configurable TTL by",
+            "a separate, currently unscaffolded instruction (Q-S3-D)."
+          ],
+          "writable": true
+        },
+        {
+          "name": "escrow",
+          "docs": [
+            "AEP Settlement escrow being approved. We read `client` from the raw",
+            "data (offset 8..40) and pass-through to Settlement's CPI which fully",
+            "validates the account internally."
+          ],
+          "writable": true
+        },
+        {
+          "name": "escrow_token_account",
+          "docs": [
+            "Escrow's USDC token account. Mutable."
+          ],
+          "writable": true
+        },
+        {
+          "name": "provider_token_account",
+          "docs": [
+            "Provider's USDC token account (the session-pool PDA's ATA)."
+          ],
+          "writable": true
+        },
+        {
+          "name": "settlement_program",
+          "docs": [
+            "AEP Settlement program — target of the CPI. Address-pinned."
+          ]
+        },
+        {
+          "name": "registry_program",
+          "docs": [
+            "AEP Agent Registry program — required by Settlement's",
+            "`ApproveMilestone` for the reputation CPI sub-call."
+          ]
+        },
+        {
+          "name": "provider_authority",
+          "docs": [
+            "Provider authority (= escrow.provider). Plumbed for Settlement's",
+            "SEC-1 external-anchor constraint."
+          ]
+        },
+        {
+          "name": "provider_owner_nonce",
+          "docs": [
+            "Provider owner-nonce PDA (Registry-owned)."
+          ]
+        },
+        {
+          "name": "provider_profile",
+          "docs": [
+            "Provider profile PDA (Registry-owned)."
+          ],
+          "writable": true
+        },
+        {
+          "name": "settlement_authority",
+          "docs": [
+            "Settlement's signing-authority PDA — Settlement re-derives this from",
+            "its own ID, so we just pass the AccountInfo through."
+          ]
+        },
+        {
+          "name": "protocol_config",
+          "docs": [
+            "Settlement's ProtocolConfig PDA. Read-only."
+          ]
+        },
+        {
+          "name": "token_program",
+          "docs": [
+            "SPL Token program."
+          ]
+        },
+        {
+          "name": "system_program",
+          "docs": [
+            "System program — required by `init` on `replay_guard`."
+          ],
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "payload",
+          "type": {
+            "defined": {
+              "name": "ReflexHookPayload"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "ReplayRecord",
+      "discriminator": [
+        208,
+        145,
+        144,
+        224,
+        117,
+        234,
+        216,
+        165
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "MilestoneAutoApproved",
+      "discriminator": [
+        129,
+        62,
+        145,
+        220,
+        138,
+        191,
+        3,
+        46
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "PayloadEscrowMismatch",
+      "msg": "Payload escrow_pda does not match the escrow account passed in."
+    },
+    {
+      "code": 6001,
+      "name": "ZeroAmountReturned",
+      "msg": "Payload amount_returned_micros must be > 0."
+    },
+    {
+      "code": 6002,
+      "name": "InvalidBaseTxHash",
+      "msg": "Payload base_tx_hash must be non-zero (probable malformed CCTP message)."
+    },
+    {
+      "code": 6003,
+      "name": "EscrowClientMismatch",
+      "msg": "Escrow client field does not equal the hook_signer PDA derived from \\\n         agent_authority — upstream create_escrow must have used hook_signer \\\n         as the escrow's client."
+    },
+    {
+      "code": 6004,
+      "name": "InvalidRegistryProgram",
+      "msg": "registry_program account does not match the canonical Agent Registry program ID."
+    },
+    {
+      "code": 6005,
+      "name": "InvalidSettlementProgram",
+      "msg": "settlement_program account does not match the canonical Settlement program ID."
+    },
+    {
+      "code": 6006,
+      "name": "EscrowOwnerMismatch",
+      "msg": "Escrow account is not owned by the Settlement program."
+    },
+    {
+      "code": 6007,
+      "name": "EscrowAccountTooSmall",
+      "msg": "Escrow account data is too small to read TaskEscrow.client at offset 8."
+    }
+  ],
+  "types": [
+    {
+      "name": "MilestoneAutoApproved",
+      "docs": [
+        "Emitted from `auto_approve_milestone` after the CPI into Settlement",
+        "returns successfully.",
+        "",
+        "Spec verbatim (master §\"Hook program\"):",
+        "`MilestoneAutoApproved { escrow, milestone_index, base_tx_hash }`",
+        "",
+        "Two extra fields (`amount_returned_micros`, `agent_authority`) are",
+        "included for observability — they are derived from the on-chain payload",
+        "and the signer-PDA derivation, not new authoritative state."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "escrow",
+            "docs": [
+              "AEP Settlement escrow PDA."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "milestone_index",
+            "docs": [
+              "Milestone index that was auto-approved."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "base_tx_hash",
+            "docs": [
+              "Base-side settle / burn transaction hash (cross-chain link)."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "amount_returned_micros",
+            "docs": [
+              "Amount of USDC (micros) returned to Solana via the CCTP round-trip."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "agent_authority",
+            "docs": [
+              "Agent authority pubkey the `hook_signer` PDA was derived from."
+            ],
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ReflexHookPayload",
+      "docs": [
+        "IC-4 payload — verbatim layout from the master spec.",
+        "",
+        "```rust",
+        "pub struct ReflexHookPayload {",
+        "pub escrow_pda: Pubkey,           // AEP Settlement escrow",
+        "pub milestone_index: u8,          // which milestone to approve",
+        "pub base_tx_hash: [u8; 32],       // Base-side x402 settle tx",
+        "pub amount_returned_micros: u64,  // USDC returned to Solana",
+        "}",
+        "```",
+        "",
+        "Borsh-serialized size: 32 + 1 + 32 + 8 = **73 bytes**."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "escrow_pda",
+            "docs": [
+              "PDA of the AEP Settlement escrow whose milestone is being approved."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "milestone_index",
+            "docs": [
+              "Index of the milestone to approve. `u8` per IC-4 — note Settlement's",
+              "public `approve_milestone(milestone_index: u32, ...)` is wider; the",
+              "Hook handler widens at the CPI boundary."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "base_tx_hash",
+            "docs": [
+              "Hash of the Base-side x402 settle / CCTP burn transaction. Used as the",
+              "idempotency key together with `(escrow_pda, milestone_index)`."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "amount_returned_micros",
+            "docs": [
+              "Amount of USDC (in 6-decimal \"micros\") returned to Solana via the",
+              "CCTP V2 round-trip. Recorded for dashboard observability and replay",
+              "audit; the actual on-chain release amount is what `Settlement`",
+              "already records on the milestone — this field does not authorize a",
+              "different number."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ReplayRecord",
+      "docs": [
+        "Replay-guard PDA — initialized once per `(escrow, milestone_index,",
+        "base_tx_hash)` triple. The mere existence of this account is the",
+        "idempotency proof; the body is informational so the dashboard / off-chain",
+        "tooling can audit the historical round-trip without re-fetching the",
+        "CCTP message.",
+        "",
+        "Open Q-S3-D: a separate close instruction (TTL-driven, rent reclaim) is",
+        "not yet scaffolded. Suggested default: 30 days, anyone may close, rent",
+        "goes to a treasury PDA — but explicit owner sign-off needed."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "escrow",
+            "docs": [
+              "AEP Settlement escrow PDA from the IC-4 payload."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "milestone_index",
+            "docs": [
+              "Milestone index from the IC-4 payload."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "base_tx_hash",
+            "docs": [
+              "Base-side settle / burn transaction hash (idempotency key tail)."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "amount_returned_micros",
+            "docs": [
+              "Amount returned to Solana, in USDC micros."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "created_at",
+            "docs": [
+              "Unix timestamp the record was opened (= milestone auto-approval time)."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "docs": [
+              "PDA bump."
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    }
+  ]
+}

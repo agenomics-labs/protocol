@@ -1,0 +1,40 @@
+[package]
+name = "cctp-hook"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Reflex CCTP V2 Hook - post-mint Solana hook that auto-approves an AEP Settlement milestone after a Base->Solana CCTP V2 round-trip. Surface 3 of the AEP Reflex demo."
+
+[dependencies]
+# Pin Anchor versions exactly (=) for reproducible mainnet builds, matching
+# the rest of the workspace (see programs/settlement/Cargo.toml).
+anchor-lang = { version = "=0.31.1", features = ["init-if-needed"] }
+anchor-spl = "=0.31.1"
+
+# Surface 3 spec mandates "NOT modified" for `programs/agent-vault/`,
+# `programs/agent-registry/`, `programs/settlement/`. Typed CPI would require
+# adding a `cpi` Cargo feature to settlement (no source change, but a manifest
+# edit). Instead we issue the CPI via raw `solana_program::instruction::Instruction`
+# with the canonical Anchor 8-byte discriminator (sha256("global:approve_milestone")[..8])
+# and a little-endian Borsh body. This keeps the dependency footprint to
+# anchor-lang/anchor-spl only, and the on-disk Settlement program is unchanged.
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "cctp_hook"
+
+[features]
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+no-entrypoint = []
+no-idl = []
+cpi = ["no-entrypoint"]
+default = []
+
+[dev-dependencies]
+proptest = "1"
+
+[profile.release]
+overflow-checks = true
+lto = true
+codegen-units = 1
+opt-level = 3

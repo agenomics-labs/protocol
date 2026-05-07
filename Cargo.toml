@@ -3,6 +3,7 @@ members = [
     "programs/agent-vault",
     "programs/agent-registry",
     "programs/settlement",
+    "programs/cctp-hook",
 ]
 resolver = "2"
 

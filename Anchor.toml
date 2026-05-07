@@ -6,11 +6,13 @@ skip-lint = false
 agent_vault = "28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw"
 agent_registry = "psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv"
 settlement = "9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95"
+cctp_hook = "3yifMBDVChLzcihZWh4or9zxgzbmQVghdNZzpuP814vb"
 
 [programs.devnet]
 agent_vault = "28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw"
 agent_registry = "psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv"
 settlement = "9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95"
+cctp_hook = "3yifMBDVChLzcihZWh4or9zxgzbmQVghdNZzpuP814vb"
 
 [registry]
 url = "https://api.apr.dev"
@@ -42,4 +44,4 @@ upgradeable = true
 # (indexer, x402-relay) are plain unit suites whose deps (better-sqlite3,
 # express, jsonwebtoken) live in src/*/node_modules, not the workspace
 # root — sweeping them in via tests/**/*.ts fails at import time.
-test = "npx ts-mocha -p ./tsconfig.json -t 1000000 tests/settlement.ts tests/agent-registry.ts tests/agent-vault.ts tests/cpi-failures.test.ts"
+test = "npx ts-mocha -p ./tsconfig.json -t 1000000 tests/settlement.ts tests/agent-registry.ts tests/agent-vault.ts tests/cpi-failures.test.ts tests/cctp-hook.ts"

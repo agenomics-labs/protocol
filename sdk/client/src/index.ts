@@ -56,6 +56,16 @@ export {
   buildVaultIdentityBindInstruction,
 } from "./vault.js";
 export { SettlementClient } from "./settlement.js";
+export {
+  REFLEX_HOOK_PAYLOAD_LEN,
+  HOOK_REPLAY_SEED,
+  HOOK_SIGNER_SEED,
+  encodeReflexHookPayload,
+  decodeReflexHookPayload,
+  hookSignerPda,
+  hookReplayPda,
+  type ReflexHookPayload,
+} from "./cctp-hook.js";
 
 // ---------------------------------------------------------------------------
 // Re-export shared types
