@@ -155,8 +155,13 @@ describe("smoke/integration: capability-manifest-validator", () => {
     const agent = Keypair.generate();
     const m = makeManifest(agent.publicKey.toBase58(), "AgentA");
     const hash = V.manifestHash(m);
+    // ADR-092 (commit a16c8a1): signature must be over taggedManifestHash(rawHash),
+    // not the raw hash. The on-chain registry stores/verifies tagged_hash, so the
+    // off-chain validator does the same. Signing over raw_hash now yields
+    // SIGNATURE_MISMATCH — by design, as a cross-protocol replay defense.
+    const taggedHash = V.taggedManifestHash(hash);
     const res = V.validateManifest({
-      manifest: m, onChainHash: hash, onChainSignature: sign(agent, hash),
+      manifest: m, onChainHash: hash, onChainSignature: sign(agent, taggedHash),
       authorityPubkey: new Uint8Array(agent.publicKey.toBytes()),
     });
     assert.equal(res.ok, true);
@@ -452,9 +457,12 @@ describe("smoke/integration: validator + resolver composed", () => {
     const attPk = encodeBase58(rand32(601));
     const manifest = makeManifest(agent.publicKey.toBase58(), "AgentMerged", attPk);
     const hash = V.manifestHash(manifest);
+    // ADR-092 (commit a16c8a1): sign over taggedManifestHash(rawHash). See note
+    // on the "valid manifest" test above for the cross-protocol replay rationale.
+    const taggedHash = V.taggedManifestHash(hash);
 
     const vRes = V.validateManifest({
-      manifest, onChainHash: hash, onChainSignature: sign(agent, hash),
+      manifest, onChainHash: hash, onChainSignature: sign(agent, taggedHash),
       authorityPubkey: new Uint8Array(agent.publicKey.toBytes()),
     });
     assert.equal(vRes.ok, true);
