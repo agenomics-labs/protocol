@@ -1,0 +1,70 @@
+[project]
+name = "agentcore"
+version = "0.1.0"
+description = "Surface 4 — Strands agent on Bedrock AgentCore Runtime for AEP Reflex"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Agenomics" }]
+
+# NOTE: Master spec (docs/aep-reflex-tech-spec.md §Surface 4, lines 365-472)
+# does not pin a Strands SDK version. Picking the latest stable on PyPI as of
+# 2026-05-07: strands-agents==0.4.x. Bedrock AgentCore Runtime / Memory /
+# Gateway / Identity / Browser SDKs are still in preview at the time of this
+# scaffold and are referenced via boto3 (>=1.36) until dedicated client
+# packages stabilise (see open-questions.md OQ-S4-A and master line 580).
+dependencies = [
+    "strands-agents>=0.4.0,<0.5",
+    "boto3>=1.36.0",
+    "botocore>=1.36.0",
+    # MCP client over JSON-RPC for talking to AgentCore Gateway (which wraps
+    # the AEP MCP server, IC-2 in master).
+    "mcp>=1.2.0",
+    "httpx>=0.27.0",
+    "pydantic>=2.6.0",
+    # SSE emitter (placeholder transport until Surface 1 (IC-1) lands).
+    "sse-starlette>=2.1.0",
+    "anyio>=4.3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-mock>=3.12.0",
+    "ruff>=0.5.0",
+    "mypy>=1.10.0",
+]
+# Pulled in only when running on AgentCore (US-only Nova Act access — see
+# open-questions OQ-2). Kept optional so CI on non-US contributor machines
+# does not fail on resolve.
+nova = [
+    "nova-act>=0.1.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agentcore"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "live_aws: requires real AWS credentials + AgentCore session (skipped by default)",
+]
+filterwarnings = [
+    "error",
+    "ignore::DeprecationWarning",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_ignores = true
