@@ -33,6 +33,13 @@ yarn.lock
 *~
 .DS_Store
 
+# Claude Code / claude-flow tooling — local agent definitions, skills,
+# memory, learning metrics. Per-developer state, not part of the
+# repository's source-of-truth.
+.claude/
+.claude-flow/
+**/.claude-flow/
+
 # Compiled binaries
 *.so
 *.dylib
