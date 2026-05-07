@@ -15,14 +15,15 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 import uuid
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 from agentcore.gateway import MCPGatewayClient
-from agentcore.identity import AgentCoreIdentity
-from agentcore.memory import AgentCoreMemory
+from agentcore.identity import AgentCoreIdentity, InMemoryAgentCoreIdentity
+from agentcore.memory import AgentCoreMemory, InMemoryAgentCoreMemory
 from agentcore.nova_browser import NovaBrowser
 from agentcore.prompts import (
     ECONOMIC_REASONING_PROMPT,
@@ -131,6 +132,56 @@ class SessionDeps:
     browser: NovaBrowser
     llm: LLMClient
     sse: SSEEmitter
+
+
+# ----- Backend selection ----------------------------------------------------
+
+
+def _resolve_backend() -> str:
+    """Return the configured backend, defaulting to `fake`.
+
+    `AGENTCORE_BACKEND=aws`  -> use boto3-backed adapters in
+                                ``agentcore.memory_aws`` /
+                                ``agentcore.identity_aws``. Requires
+                                ``boto3`` and the relevant env vars
+                                (see README §AWS deployment).
+    `AGENTCORE_BACKEND=fake` (or unset) -> use the in-memory fakes.
+    """
+    return os.environ.get("AGENTCORE_BACKEND", "fake").lower()
+
+
+def build_memory(*, actor_id: str, session_id: str) -> AgentCoreMemory:
+    """Construct the AgentCoreMemory for this session per `AGENTCORE_BACKEND`.
+
+    Kept separate from `build_identity` because the AWS impl needs the
+    per-session ``session_id`` baked in (the boto3 calls require it on every
+    request) while Identity does not.
+    """
+    backend = _resolve_backend()
+    if backend == "aws":
+        # Lazy import: never load boto3 unless explicitly requested.
+        from agentcore.memory_aws import BedrockAgentCoreMemory
+
+        return BedrockAgentCoreMemory(actor_id=actor_id, session_id=session_id)
+    if backend == "fake":
+        return InMemoryAgentCoreMemory()
+    raise ValueError(
+        f"AGENTCORE_BACKEND={backend!r}; expected 'aws' or 'fake'"
+    )
+
+
+def build_identity() -> AgentCoreIdentity:
+    """Construct the AgentCoreIdentity per `AGENTCORE_BACKEND`."""
+    backend = _resolve_backend()
+    if backend == "aws":
+        from agentcore.identity_aws import BedrockAgentCoreIdentity
+
+        return BedrockAgentCoreIdentity()
+    if backend == "fake":
+        return InMemoryAgentCoreIdentity()
+    raise ValueError(
+        f"AGENTCORE_BACKEND={backend!r}; expected 'aws' or 'fake'"
+    )
 
 
 # ----- The loop --------------------------------------------------------------
@@ -266,6 +317,7 @@ async def run_session(req: SessionRequest, deps: SessionDeps) -> SessionResult:
                     "duration_ms": duration_ms,
                     "session_id": session_id,
                 },
+                kind="long",
             )
 
             await deps.sse.emit(

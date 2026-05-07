@@ -7,16 +7,21 @@ requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Agenomics" }]
 
-# NOTE: Master spec (docs/aep-reflex-tech-spec.md §Surface 4, lines 365-472)
-# does not pin a Strands SDK version. Picking the latest stable on PyPI as of
-# 2026-05-07: strands-agents==0.4.x. Bedrock AgentCore Runtime / Memory /
-# Gateway / Identity / Browser SDKs are still in preview at the time of this
-# scaffold and are referenced via boto3 (>=1.36) until dedicated client
-# packages stabilise (see open-questions.md OQ-S4-A and master line 580).
+# Strands SDK pin: as of 2026-05-07 the latest stable on PyPI is
+# strands-agents==1.38.0 (released since the AWS Strands GA in 2025). The
+# original scaffold pin (>=0.4,<0.5) was speculative — the project skipped
+# straight from 0.x preview to 1.x stable. We pin to >=1.38,<2 because:
+#   * 1.38 contains the Bedrock AgentCore Runtime entry point used by the
+#     loop (`strands.agent.Agent` + Bedrock model adapter).
+#   * Holding the upper bound at <2 protects against a 2.0 release that
+#     could rewrite the model-invocation contract; bump deliberately when
+#     it lands.
+# Master spec (docs/aep-reflex-tech-spec.md §Surface 4, lines 365-472) is
+# silent on the version; AWS sample repos use the latest 1.x throughout.
 dependencies = [
-    "strands-agents>=0.4.0,<0.5",
-    "boto3>=1.36.0",
-    "botocore>=1.36.0",
+    "strands-agents>=1.38.0,<2",
+    "boto3>=1.43.0",
+    "botocore>=1.43.0",
     # MCP client over JSON-RPC for talking to AgentCore Gateway (which wraps
     # the AEP MCP server, IC-2 in master).
     "mcp>=1.2.0",
@@ -34,6 +39,17 @@ dev = [
     "pytest-mock>=3.12.0",
     "ruff>=0.5.0",
     "mypy>=1.10.0",
+]
+# Real AWS-side wiring for Memory + Identity. Only required when running
+# `AGENTCORE_BACKEND=aws`; the in-memory fakes used by unit tests do not
+# need it. The `bedrock-agentcore` SDK is the official Python wrapper for
+# the Memory / Identity / Gateway data-plane operations (we only use it for
+# its boto3 service-name registration + type stubs; the impls in
+# `memory_aws.py` and `identity_aws.py` go through boto3 directly).
+aws = [
+    "boto3>=1.43.0",
+    "botocore>=1.43.0",
+    "bedrock-agentcore>=1.8.0,<2",
 ]
 # Pulled in only when running on AgentCore (US-only Nova Act access — see
 # open-questions OQ-2). Kept optional so CI on non-US contributor machines

@@ -16,6 +16,12 @@ test-ledger/
 # the spawned MCP subprocess can sign as the same agent. Never commit.
 .smoke-test-wallet.json
 
+# Python bytecode / venv state
+__pycache__/
+*.pyc
+.venv/
+.uv-cache/
+
 # Node
 node_modules/
 dist/

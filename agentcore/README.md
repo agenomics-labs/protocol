@@ -56,13 +56,102 @@ Live-AWS tests are marked `@pytest.mark.skip` with `live_aws` reason. Enable by 
 
 ## What is **not** in this scaffold (Day 3+ work)
 
-- Real `bedrock-agentcore` client wiring for Memory / Identity / Browser. All three are Python `Protocol`s with TODO docstrings citing master line numbers.
 - Real Strands LLM invocation — the loop calls a `LLMClient` protocol; tests inject a fake.
 - Real Nova Act `Browser` instance — the `NovaBrowser` stub returns a canned action result.
 - Real SSE transport — `sse.py` writes to an in-memory queue; Surface 1 (IC-1) wires the HTTP transport.
 - The AgentCore Gateway URL (`gateway.py` reads `AGENTCORE_GATEWAY_URL` from env; the canary call in AC-16 is a Day-2/3 task).
 - DNS / TLS / Lambda authorizer for `reflex.agenomics.xyz` and `agent.agenomics.xyz` (open question OQ-S4-A).
 - Self-monetized endpoint (AC-6) — separate CDK app, not scoped here.
+
+## AWS deployment
+
+The AgentCore Memory + Identity adapters in `memory.py` / `identity.py` are
+Python `Protocol`s with two implementations side-by-side:
+
+| Backend (env var `AGENTCORE_BACKEND=`) | Memory impl | Identity impl |
+|---|---|---|
+| `fake` (default) | `InMemoryAgentCoreMemory` | `InMemoryAgentCoreIdentity` |
+| `aws` | `BedrockAgentCoreMemory` (`memory_aws.py`) | `BedrockAgentCoreIdentity` (`identity_aws.py`) |
+
+`agent_loop.build_memory()` and `agent_loop.build_identity()` route on
+`AGENTCORE_BACKEND`. The unit suite runs entirely against the fakes; AWS
+deps are gated behind the `aws` extra.
+
+### Install with AWS extras
+
+```bash
+# uv
+uv sync --extra dev --extra aws
+
+# pip
+pip install -e '.[dev,aws]'
+```
+
+This pulls `boto3>=1.43`, `botocore>=1.43`, and the official
+`bedrock-agentcore` SDK.
+
+### Required env vars (when `AGENTCORE_BACKEND=aws`)
+
+| Var | Required by | Purpose |
+|---|---|---|
+| `AWS_REGION` | both adapters | e.g. `us-east-1`. Falls back to AWS SDK default chain if unset. |
+| `AGENTCORE_BACKEND=aws` | `agent_loop` | Switches both adapters to the boto3 impls. |
+| `AGENTCORE_MEMORY_ID` | Memory | The memory resource id created via the control plane (`bedrock-agentcore-control:CreateMemory`) at deploy time. |
+| `AGENTCORE_IDENTITY_WORKLOAD_NAME` | Identity (OAuth) | Workload identity name; the `GetWorkloadAccessToken` boto3 call uses this. |
+
+`actor_id` (the agent's Solana pubkey) and `session_id` (per-request UUID
+issued by IC-1) are passed at runtime by `run_session`, not via env.
+
+### Required IAM permissions
+
+The agent's runtime execution role needs:
+
+```jsonc
+{
+  "Effect": "Allow",
+  "Action": [
+    // AgentCore Memory data plane
+    "bedrock-agentcore:CreateEvent",
+    "bedrock-agentcore:GetEvent",
+    "bedrock-agentcore:ListEvents",
+    "bedrock-agentcore:DeleteEvent",
+    "bedrock-agentcore:GetMemoryRecord",
+    "bedrock-agentcore:ListMemoryRecords",
+    "bedrock-agentcore:RetrieveMemoryRecords",
+    // AgentCore Identity (OAuth vault)
+    "bedrock-agentcore:GetWorkloadAccessToken",
+    "bedrock-agentcore:GetResourceOauth2Token"
+  ],
+  "Resource": "arn:aws:bedrock-agentcore:<region>:<account>:memory/<memory-id>"
+},
+{
+  "Effect": "Allow",
+  "Action": ["secretsmanager:GetSecretValue"],
+  "Resource": "arn:aws:secretsmanager:<region>:<account>:secret:aep/cdp-wallet/*"
+}
+```
+
+Plus `bedrock:InvokeModel` for the Claude Sonnet 4 calls (LLM seam,
+separate from these two adapters).
+
+### Out-of-band provisioning (one-time, Day 3)
+
+These are **not** done by `run_session`; they are deploy-time CDK / console
+steps:
+
+1. **Create the Memory resource** via
+   `bedrock-agentcore-control:CreateMemory` (or the `bedrock_agentcore.memory.client.MemoryClient.create_memory_and_wait`
+   helper). Capture the returned `memoryId` into `AGENTCORE_MEMORY_ID`.
+   Configure long-term strategies (semantic / summary) here — the
+   `kind="long"` writes from the loop are tagged so the strategy extractor
+   picks them up.
+2. **Create the Workload Identity** via the control plane and store its
+   name in `AGENTCORE_IDENTITY_WORKLOAD_NAME`.
+3. **Register OAuth2 credential providers** for any web2 sites Nova Act
+   needs (Google, etc.) using `IdentityClient.create_oauth2_credential_provider`.
+4. **Provision the CDP wallet secret** at
+   `aep/cdp-wallet/<agent_address>` containing the opaque handle Surface 2
+   expects (per master open question OQ-5).
 
 ## Open questions deferred (not resolved in scaffold)
 

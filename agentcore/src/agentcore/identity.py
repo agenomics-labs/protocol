@@ -1,6 +1,10 @@
 """AgentCore Identity adapter.
 
-STUB ONLY for Day 1-2 — real bedrock-agentcore client wiring is Day 3+.
+The Protocol below is what the agent loop calls. Two implementations live
+side by side:
+  * `InMemoryAgentCoreIdentity`  in-process fake used by unit tests.
+  * `BedrockAgentCoreIdentity`   real boto3-backed impl in
+    `agentcore.identity_aws`. Selected at runtime by `AGENTCORE_BACKEND=aws`.
 
 Surface 4 uses Identity for two things (master lines 25, 192-194):
   1. OAuth token vault for Nova Act on web2 sites (AC-4, master line 469).
@@ -18,14 +22,19 @@ from typing import Protocol
 class AgentCoreIdentity(Protocol):
     """Protocol the agent loop calls."""
 
-    async def get_oauth_token(self, *, provider: str, agent_address: str) -> str | None:
+    async def get_oauth_token(
+        self,
+        *,
+        provider: str,
+        agent_address: str,
+        scopes: list[str] | None = None,
+    ) -> str | None:
         """Return a non-expired OAuth access token for `provider`, or None.
 
         Used by the Nova Act sub-agent (master line 192). AC-4 requires at
         least one OAuth token to be present in the vault for demo (master
-        line 469).
-
-        TODO(Day 3+): wire to bedrock-agentcore-identity get-credential.
+        line 469). `scopes` is optional and forwarded verbatim to the
+        AgentCore `GetResourceOauth2Token` call.
         """
         ...
 
@@ -36,9 +45,6 @@ class AgentCoreIdentity(Protocol):
         the Identity vault and is derived deterministically from
         `agent_address`. Surface 4 never sees the seed bytes themselves —
         only this handle, which is passed through to `pay_x402_service`.
-
-        TODO(Day 3+): confirm shape with Surface 2 owner; for now it is an
-        opaque string that round-trips through the pay_x402_service call.
         """
         ...
 
@@ -57,7 +63,13 @@ class InMemoryAgentCoreIdentity:
     def upsert_token(self, *, provider: str, agent_address: str, token: str) -> None:
         self._tokens[(provider, agent_address)] = token
 
-    async def get_oauth_token(self, *, provider: str, agent_address: str) -> str | None:
+    async def get_oauth_token(
+        self,
+        *,
+        provider: str,
+        agent_address: str,
+        scopes: list[str] | None = None,
+    ) -> str | None:
         return self._tokens.get((provider, agent_address))
 
     async def get_cdp_wallet_handle(self, *, agent_address: str) -> str:
