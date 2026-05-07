@@ -472,6 +472,12 @@ async function main() {
   // Idempotent: if the vault PDA is already initialized (prior smoke run with
   // the same wallet), skip `initializeVault` rather than surface an
   // "account already in use" error. Step 5 still verifies the on-chain state.
+  //
+  // ADR-124 / AUD-116: `initialize_vault` requires an Ed25519 proof-of-control
+  // over `vault_identity_bind_message(authority, agent_identity)` signed by
+  // `agent_identity`. Smoke uses `testKp` for both authority and agent_identity
+  // (single-keypair smoke flow), so the same key signs the binding. The
+  // ed25519 precompile must precede the program ix in the same transaction.
   console.log("\n--- Step 4: Vault Program ---");
   const vaultProgram = new Program(loadIdl("agent_vault"), provider);
   const existingVaultInfo = await connection.getAccountInfo(vaultPDA);
@@ -481,12 +487,38 @@ async function main() {
     );
   } else {
     try {
+      // Bind message: sha256("AEP_VAULT_IDENTITY_BIND_V1\x00" || authority || agent_identity).
+      // MUST stay in lockstep with `VAULT_IDENTITY_BIND_DOMAIN` in
+      // `programs/agent-vault/src/lib.rs` and `load/lib/agent-factory.ts`.
+      const bindDomain = Buffer.concat([
+        Buffer.from("AEP_VAULT_IDENTITY_BIND_V1", "utf8"),
+        Buffer.from([0]),
+      ]);
+      const bindMessage = crypto
+        .createHash("sha256")
+        .update(bindDomain)
+        .update(testKp.publicKey.toBuffer())
+        .update(testKp.publicKey.toBuffer())
+        .digest();
+      const { ed25519: ed25519Curve } = await dynImport<
+        typeof import("@noble/curves/ed25519")
+      >("@noble/curves/ed25519");
+      const bindSigBytes = ed25519Curve.sign(
+        bindMessage,
+        testKp.secretKey.slice(0, 32),
+      );
+      const bindPrecompileIx = Ed25519Program.createInstructionWithPublicKey({
+        publicKey: testKp.publicKey.toBuffer(),
+        message: bindMessage,
+        signature: Buffer.from(bindSigBytes),
+      });
       await vaultProgram.methods
         .initializeVault(
           testKp.publicKey,
           new BN(LAMPORTS_PER_SOL),
           new BN(LAMPORTS_PER_SOL / 10),
           10,
+          Array.from(bindSigBytes),
         )
         .accountsPartial({
           vault: vaultPDA,
@@ -497,6 +529,7 @@ async function main() {
           instructionsSysvar: new PublicKey("Sysvar1nstructions1111111111111111111111111"),
           systemProgram: SystemProgram.programId,
         })
+        .preInstructions([bindPrecompileIx])
         .signers([testKp])
         .rpc();
       console.log(`  Vault created: ${vaultPDA.toBase58()}`);
@@ -545,9 +578,20 @@ async function main() {
   // v0.1.0 demoted `canonicalBytes` → `unstable_canonicalBytes`
   // (see packages/capability-manifest-validator/src/index.ts header).
   const canonicalBytes = validatorMod.unstable_canonicalBytes(manifest);
-  const manifestHash = validatorMod.manifestHash(manifest); // 32 bytes
+  const manifestHash = validatorMod.manifestHash(manifest); // 32 bytes raw
+  // ADR-092: on-chain `update_manifest` applies a second domain-separator
+  // before passing to the ed25519 precompile verifier. Mirror it here so
+  // the signature covers `sha256(MANIFEST_HASH_DOMAIN_PREFIX || raw_hash)`,
+  // not the raw hash. Stays in lockstep with `tagged_manifest_hash` /
+  // `MANIFEST_HASH_DOMAIN` in `programs/agent-registry/src/lib.rs`.
+  const taggedManifestHash = crypto
+    .createHash("sha256")
+    .update(Buffer.from(validatorMod.MANIFEST_HASH_DOMAIN_PREFIX))
+    .update(manifestHash)
+    .digest();
   const { ed25519 } = await dynImport<typeof import("@noble/curves/ed25519")>("@noble/curves/ed25519");
-  const sigBytes = ed25519.sign(manifestHash, testKp.secretKey.slice(0, 32));
+  // `sigBytes` is over the ADR-092 tagged hash; both registry and validator verify against it.
+  const sigBytes = ed25519.sign(taggedManifestHash, testKp.secretKey.slice(0, 32));
 
   // Attempt to pin the canonical manifest bytes to a local IPFS daemon so
   // Step 8 can fetch the real bytes via AEP_IPFS_GATEWAY and the validator
@@ -601,7 +645,7 @@ async function main() {
   try {
     const ed25519Ix = Ed25519Program.createInstructionWithPublicKey({
       publicKey: testKp.publicKey.toBytes(),
-      message: manifestHash,
+      message: taggedManifestHash,
       signature: sigBytes,
     });
     const tx = new Transaction().add(ed25519Ix).add(
@@ -625,7 +669,10 @@ async function main() {
     const profile = await (registryProgram.account as any).agentProfile.fetch(profilePDA);
     const onHash = Uint8Array.from(profile.manifestHash as number[]);
     const onSig = Uint8Array.from(profile.manifestSignature as number[]);
-    const hashOk = Buffer.from(onHash).equals(Buffer.from(manifestHash));
+    // ADR-092: on-chain `manifest_hash` is the *tagged* hash, not the raw
+    // hash. The instruction takes raw_hash as an arg, then stores
+    // `tagged_manifest_hash(raw_hash)`.
+    const hashOk = Buffer.from(onHash).equals(Buffer.from(taggedManifestHash));
     const sigOk = Buffer.from(onSig).equals(Buffer.from(sigBytes));
     console.log(`  manifest_hash matches local:      ${hashOk}`);
     console.log(`  manifest_signature matches local: ${sigOk}`);
@@ -647,7 +694,7 @@ async function main() {
     onChainSignature: sigBytes,
     authorityPubkey: authorityBytes,
   });
-  console.log(`  clean manifest:   ok=${good.ok}`);
+  console.log(`  clean manifest:   ok=${good.ok}${good.ok ? "" : ` code=${good.error.code}`}`);
   const tampered = new Uint8Array(canonicalBytes);
   tampered[0] ^= 0x01;
   let tamperedObj: unknown;
