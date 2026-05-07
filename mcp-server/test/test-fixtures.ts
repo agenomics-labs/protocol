@@ -86,7 +86,18 @@ export function base64Decode(s: string): Uint8Array {
 
 export const AEP_AGENT_REPUTATION_V1_SIZE = 16;
 const ATTESTATION_ACCOUNT_TAG = 2;
-const ATTESTATION_HEADER_SIZE = 173;
+/**
+ * Fixed-overhead bytes in a SAS attestation account — the sum of every
+ * field that isn't the variable-length `data` blob, per sas-lib@1.0.10's
+ * `getAttestationDecoder`:
+ *
+ *   discriminator(1) + nonce(32) + credential(32) + schema(32)
+ *     + data_len(4) + data(N)
+ *     + signer(32) + expiry(8) + tokenAccount(32)
+ *
+ * Total account size = `ATTESTATION_FIXED_OVERHEAD + N`.
+ */
+const ATTESTATION_FIXED_OVERHEAD = 1 + 32 + 32 + 32 + 4 + 32 + 8 + 32;
 
 export interface ReputationDataFields {
   score: number;
@@ -113,34 +124,59 @@ export function encodeReputationData(fields: ReputationDataFields): Uint8Array {
   return buf;
 }
 
+/**
+ * Mirrors `packages/sas-resolver/test/fixtures.ts:encodeAttestationAccount`,
+ * which in turn matches `sas-lib@1.0.10`'s `getAttestationEncoder`.
+ *
+ * Layout:
+ *   0          discriminator (= 2)        u8
+ *   1          nonce                      Address(32)
+ *   33         credential                 Address(32)
+ *   65         schema                     Address(32)
+ *   97         data_len                   u32 LE
+ *   101        data                       N bytes
+ *   101 + N    signer                     Address(32)
+ *   133 + N    expiry                     i64 LE
+ *   141 + N    tokenAccount               Address(32)
+ *
+ * SAS has no separate `subject` field on-chain — per ADR-061 §2 the
+ * subject is encoded as the `nonce`. The resolver compares its
+ * `subjectAuthority` parameter against `attestation.nonce` for
+ * SUBJECT_MISMATCH detection. `tokenAccount` is unused by AEP and
+ * defaults to all-zeros if omitted.
+ */
 export function encodeAttestationAccount(params: {
   nonce: Uint8Array;
   credential: Uint8Array;
   schema: Uint8Array;
-  subject: Uint8Array;
   signer: Uint8Array;
   expiry: number;
   data: Uint8Array;
+  tokenAccount?: Uint8Array;
 }): Uint8Array {
   assertLen(params.nonce, 32, "nonce");
   assertLen(params.credential, 32, "credential");
   assertLen(params.schema, 32, "schema");
-  assertLen(params.subject, 32, "subject");
   assertLen(params.signer, 32, "signer");
+  const tokenAccount = params.tokenAccount ?? new Uint8Array(32);
+  assertLen(tokenAccount, 32, "tokenAccount");
 
-  const total = ATTESTATION_HEADER_SIZE + params.data.length;
+  const total = ATTESTATION_FIXED_OVERHEAD + params.data.length;
   const buf = new Uint8Array(total);
+  const view = new DataView(buf.buffer);
+
   buf[0] = ATTESTATION_ACCOUNT_TAG;
   buf.set(params.nonce, 1);
   buf.set(params.credential, 33);
   buf.set(params.schema, 65);
-  buf.set(params.subject, 97);
-  buf.set(params.signer, 129);
+  view.setUint32(97, params.data.length, true);
+  buf.set(params.data, 101);
 
-  const view = new DataView(buf.buffer);
-  view.setBigInt64(161, BigInt(params.expiry), true);
-  view.setUint32(169, params.data.length, true);
-  buf.set(params.data, ATTESTATION_HEADER_SIZE);
+  const signerOffset = 101 + params.data.length;
+  buf.set(params.signer, signerOffset);
+  view.setBigInt64(signerOffset + 32, BigInt(params.expiry), true);
+  buf.set(tokenAccount, signerOffset + 40);
+
   return buf;
 }
 

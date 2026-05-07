@@ -103,11 +103,13 @@ function buildAtt(a: AttArgs): Uint8Array {
   const data = encodeReputationData(
     a.data ?? { score: 8500, completed_tasks: 42, dispute_ratio_bps: 50, last_updated: Math.floor(Date.now() / 1000) },
   );
+  // SAS attestation accounts have no on-chain `subject` field — per
+  // ADR-061 §2, the subject is encoded as the `nonce`. Drive the
+  // resolver's SUBJECT_MISMATCH check via the nonce here.
   return encodeAttestationAccount({
-    nonce: rand32(7),
+    nonce: base58Decode(a.subject),
     credential: base58Decode(a.credential),
     schema: base58Decode(a.schemaPda),
-    subject: base58Decode(a.subject),
     signer: base58Decode(a.signer),
     expiry: a.expiry ?? 0,
     data,
