@@ -2,9 +2,14 @@
 
 Kotlin + Jetpack Compose Android app that runs on the Solana Seeker phone.
 Implements the mobile half of `docs/aep-reflex-tech-spec.md` (Surface 1).
-Day-1 scope: project skeleton plus a working **Discover services** screen
-that opens an AgentCore session over IC-1 and streams the agent's
-narration over SSE.
+
+- **Day-1 scope:** project skeleton plus a working **Discover services**
+  screen that opens an AgentCore session over IC-1 and streams the
+  agent's narration over SSE.
+- **Day 2-3 scope (this iteration):** NavHost + three new screens
+  (Onboarding, Agent Home, Live Session), Material 3 theme, Room-backed
+  session history, and a Hilt-driven Compose UI test for the Onboarding
+  → Agent Home navigation hop.
 
 ## Layout
 
@@ -21,15 +26,25 @@ mobile/
         ├── AndroidManifest.xml
         ├── java/xyz/agenomics/reflex/
         │   ├── ReflexApp.kt              (Hilt @HiltAndroidApp)
-        │   ├── MainActivity.kt           (Compose host)
-        │   ├── di/AppModule.kt           (OkHttp, JSON, clients)
+        │   ├── MainActivity.kt           (Compose host → NavHost)
+        │   ├── di/AppModule.kt           (OkHttp, JSON, clients, Room)
         │   ├── data/
         │   │   ├── AgentCoreClient.kt    (IC-1: POST /v1/sessions + SSE)
-        │   │   └── WalletClient.kt       (MWA 2.0 + Seed Vault wrapper)
+        │   │   ├── WalletClient.kt       (MWA 2.0 + Seed Vault wrapper)
+        │   │   ├── WalletPreferences.kt  (DataStore — cached pubkey)
+        │   │   ├── SolanaRpcClient.kt    (SOL/USDC balance — STUB)
+        │   │   ├── SessionRepository.kt  (Room wrapper)
+        │   │   └── db/                   (Room database, DAO, entity)
         │   ├── ui/
-        │   │   ├── DiscoverScreen.kt     (Compose UI)
-        │   │   └── DiscoverViewModel.kt  (State + AgentCore orchestration)
-        │   └── nfc/AgentHandshakeHceService.kt  (HCE stub)
+        │   │   ├── Navigation.kt         (NavHost + route guard)
+        │   │   ├── DiscoverScreen.kt     (Task-input surface)
+        │   │   ├── DiscoverViewModel.kt
+        │   │   ├── onboarding/           (OnboardingScreen + VM)
+        │   │   ├── home/                 (AgentHomeScreen + VM)
+        │   │   ├── session/              (LiveSessionScreen + VM)
+        │   │   ├── settings/             (SettingsScreen — STUB)
+        │   │   └── theme/                (Color, Type, Theme)
+        │   └── nfc/AgentHandshakeHceService.kt  (HCE stub — Day-1)
         └── res/                          (manifest XML, strings, icons)
 ```
 
@@ -73,6 +88,17 @@ dApp Store CLI then upload the AAB.
    - Or, drop a pre-built `seedvault-wallet-sdk-0.3.0.aar` into
      `mobile/app/libs/` and replace the dependency with
      `implementation(files("libs/seedvault-wallet-sdk-0.3.0.aar"))`.
+
+   Day 2-3 added the following Maven-Central dependencies (no special
+   resolution needed):
+
+   | Dep                                                      | Version |
+   |---------------------------------------------------------|---------|
+   | `androidx.room:room-runtime`                             | 2.6.1   |
+   | `androidx.room:room-ktx`                                 | 2.6.1   |
+   | `androidx.room:room-compiler` (ksp)                      | 2.6.1   |
+   | `androidx.navigation:navigation-testing` (androidTest)   | 2.7.7   |
+   | `com.google.dagger:hilt-android-testing` (androidTest)   | 2.51.1  |
 4. **AgentCore endpoint.** Override `reflex.agentcore.baseUrl` in
    `gradle.properties` (or per-machine `local.properties`) if you point
    at a staging deployment. Default is `https://reflex.agenomics.xyz`.
@@ -114,5 +140,44 @@ dApp Store CLI then upload the AAB.
 - **`AgentHandshakeHceService.processCommandApdu`** returns the
   "file not found" status for every APDU until the TLV protocol is
   implemented.
-- **Onboarding / Agent Home / Live Session / NFC / Settings** screens
-  from the spec table are not present yet — Day 2+ adds a NavHost.
+- **Onboarding / Agent Home / Live Session** are wired (Day 2-3) but
+  several pieces inside them are deliberately stubs:
+  - `SolanaRpcClient.fetchBalances` returns hard-coded zeros until Sava
+    JSON-RPC is wired (Day 4+). The Agent Home header shows a
+    "balances are stubbed" hint when this is the case.
+  - Onboarding does **not** yet read the Genesis Token NFT or call the
+    AEP `register_agent` instruction — it only authorises the wallet
+    against MWA. `register_agent` lands when `WalletClient
+    .signAndSendTransaction` is implemented.
+  - LiveSession's "Cancel" CTA closes the SSE connection client-side;
+    AgentCore IC-1 has no server-side cancel endpoint, so the agent
+    keeps running. Tracked as `TODO(reflex/IC-2)` in the view-model.
+- **Settings** is a "Coming soon" placeholder. Vault-policy editor /
+  allowlist / pause-vault UI lands in a later iteration.
+- **NFC two-phone handshake** is still the Day-1 stub.
+
+## Day 2-3 navigation graph
+
+```
+                +-----------------+
+   cold start →  |   Onboarding   |  (no wallet)
+                +-----------------+
+                        | authorize() OK
+                        v
+                +-----------------+    +-----------+
+                |   AgentHome    | →  |  Settings |
+                +-----------------+    +-----------+
+                        | "Start session"
+                        v
+                +-----------------+
+                |   Discover     |  (task input)
+                +-----------------+
+                        | submit() → sessionId
+                        v
+                +-----------------+
+                |  LiveSession   |  (3 panes + SSE)
+                +-----------------+
+```
+
+Cold-start guard in `ReflexNavHost` picks Onboarding vs. Agent Home
+based on whether `WalletPreferences.pubkey` already has a value.

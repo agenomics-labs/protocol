@@ -4,16 +4,10 @@ import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -25,8 +19,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -35,27 +29,41 @@ import kotlinx.coroutines.launch
 import xyz.agenomics.reflex.R
 import xyz.agenomics.reflex.data.WalletClient
 
+object DiscoverTestTags {
+    const val PROMPT_FIELD = "discover-prompt"
+    const val SUBMIT = "discover-submit"
+    const val CONNECT_WALLET = "discover-connect-wallet"
+}
+
+/**
+ * "Task Input" surface from the Surface 1 spec. Submitting opens an
+ * AgentCore session via [DiscoverViewModel] and bubbles the new
+ * sessionId up through [onSessionStarted] — the live narration is
+ * rendered by [xyz.agenomics.reflex.ui.session.LiveSessionScreen].
+ */
 @Composable
 fun DiscoverScreen(
+    onSessionStarted: (String) -> Unit = {},
     viewModel: DiscoverViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val activity = context as? ComponentActivity
 
-    // ActivityResultSender must be remembered against the host Activity so
-    // MWA's wallet sheet can deliver its result back to us.
     val resultSender = remember(activity) {
         activity?.let { ActivityResultSender(it) }
     }
-    val scope = rememberCoroutineScopeBridge()
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
 
     val walletClient = remember { activity?.let { WalletClient(it) } }
 
-    val listState = rememberLazyListState()
-    LaunchedEffect(state.log.size) {
-        if (state.log.isNotEmpty()) {
-            listState.animateScrollToItem(state.log.lastIndex)
+    // Bridge SharedFlow → callback so navigation lives in the screen.
+    LaunchedEffect(viewModel) {
+        viewModel.navigationEvents.collect { event ->
+            when (event) {
+                is DiscoverViewModel.DiscoverNavEvent.OpenLiveSession ->
+                    onSessionStarted(event.sessionId)
+            }
         }
     }
 
@@ -73,10 +81,12 @@ fun DiscoverScreen(
         OutlinedTextField(
             value = state.prompt,
             onValueChange = viewModel::onPromptChange,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag(DiscoverTestTags.PROMPT_FIELD),
             minLines = 3,
             label = { Text(stringResource(R.string.discover_prompt_hint)) },
-            enabled = !state.isStreaming,
+            enabled = !state.isOpening,
         )
 
         Row(
@@ -85,7 +95,8 @@ fun DiscoverScreen(
         ) {
             Button(
                 onClick = { viewModel.submit() },
-                enabled = state.prompt.isNotBlank() && !state.isStreaming,
+                enabled = state.prompt.isNotBlank() && !state.isOpening,
+                modifier = Modifier.testTag(DiscoverTestTags.SUBMIT),
             ) {
                 Text(stringResource(R.string.discover_submit))
             }
@@ -99,7 +110,8 @@ fun DiscoverScreen(
                         viewModel.onWalletConnected(pubkey)
                     }
                 },
-                enabled = !state.isStreaming,
+                enabled = !state.isOpening,
+                modifier = Modifier.testTag(DiscoverTestTags.CONNECT_WALLET),
             ) {
                 Text(
                     text = state.walletPubkey?.let {
@@ -107,42 +119,8 @@ fun DiscoverScreen(
                     } ?: stringResource(R.string.discover_connect_wallet),
                 )
             }
-            if (state.isStreaming) {
-                Spacer(Modifier.height(8.dp))
-                CircularProgressIndicator()
-            }
-        }
-
-        Card(modifier = Modifier.fillMaxSize()) {
-            if (state.log.isEmpty()) {
-                Text(
-                    text = stringResource(R.string.discover_log_empty),
-                    modifier = Modifier.padding(16.dp),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            } else {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    items(state.log) { entry ->
-                        Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
-                            Text(
-                                text = entry.kind.uppercase(),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary,
-                            )
-                            Text(
-                                text = entry.text,
-                                style = MaterialTheme.typography.bodySmall,
-                                fontFamily = FontFamily.Monospace,
-                            )
-                        }
-                    }
-                }
+            if (state.isOpening) {
+                CircularProgressIndicator(strokeWidth = 2.dp)
             }
         }
 
@@ -155,12 +133,3 @@ fun DiscoverScreen(
         }
     }
 }
-
-/**
- * Tiny shim around [androidx.compose.runtime.rememberCoroutineScope] so the
- * wallet-connect button can fire-and-forget MWA calls without leaking
- * the launch site into [DiscoverViewModel].
- */
-@Composable
-private fun rememberCoroutineScopeBridge(): kotlinx.coroutines.CoroutineScope =
-    androidx.compose.runtime.rememberCoroutineScope()

@@ -5,34 +5,60 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import xyz.agenomics.reflex.data.AgentCoreClient
-import xyz.agenomics.reflex.data.SessionEvent
+import xyz.agenomics.reflex.data.SessionRepository
+import xyz.agenomics.reflex.data.WalletPreferences
+import xyz.agenomics.reflex.ui.session.newSessionEntity
 
 data class DiscoverUiState(
     val prompt: String = "",
     val walletPubkey: String? = null,
-    val isStreaming: Boolean = false,
-    val log: List<LogEntry> = emptyList(),
+    val isOpening: Boolean = false,
     val errorMessage: String? = null,
-) {
-    data class LogEntry(val kind: String, val text: String)
-}
+)
 
+/**
+ * Day 2 redesign: this view-model now opens an AgentCore session and
+ * surfaces the resulting `sessionId` through [navigationEvents] so the
+ * navigation layer can hop into [xyz.agenomics.reflex.ui.session.LiveSessionScreen].
+ *
+ * The actual SSE streaming has moved to LiveSessionViewModel — Discover
+ * is back to being a "type a prompt and submit" surface, matching the
+ * "Task Input" row of the Surface 1 screens table.
+ */
 @HiltViewModel
 class DiscoverViewModel @Inject constructor(
     private val agentCore: AgentCoreClient,
+    private val sessions: SessionRepository,
+    private val walletPrefs: WalletPreferences,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(DiscoverUiState())
     val state: StateFlow<DiscoverUiState> = _state.asStateFlow()
 
-    private var streamJob: Job? = null
+    private val _navigationEvents = MutableSharedFlow<DiscoverNavEvent>(extraBufferCapacity = 1)
+    val navigationEvents: SharedFlow<DiscoverNavEvent> = _navigationEvents.asSharedFlow()
+
+    private var submitJob: Job? = null
+
+    init {
+        // Mirror the persisted pubkey into UI state so the "Connect" button
+        // shows the right copy on cold launch.
+        viewModelScope.launch {
+            walletPrefs.pubkey.collect { pubkey ->
+                _state.update { it.copy(walletPubkey = pubkey) }
+            }
+        }
+    }
 
     fun onPromptChange(value: String) {
         _state.update { it.copy(prompt = value) }
@@ -40,42 +66,24 @@ class DiscoverViewModel @Inject constructor(
 
     fun onWalletConnected(pubkey: String?) {
         _state.update { it.copy(walletPubkey = pubkey) }
+        viewModelScope.launch { walletPrefs.set(pubkey) }
     }
 
-    /**
-     * Day-1 happy path:
-     *   1. Call AgentCore createSession (IC-1).
-     *   2. Subscribe to the SSE stream.
-     *   3. Append every event to the on-screen log.
-     *
-     * The vault-session-signature and JWT are stubbed — Day 3+ pulls them
-     * from Seed Vault. Wired so the call shape matches IC-1 today.
-     */
     fun submit() {
         val current = _state.value
-        if (current.prompt.isBlank() || current.isStreaming) return
+        if (current.prompt.isBlank() || current.isOpening) return
 
-        streamJob?.cancel()
-        streamJob = viewModelScope.launch {
-            _state.update {
-                it.copy(
-                    isStreaming = true,
-                    errorMessage = null,
-                    log = it.log + DiscoverUiState.LogEntry(
-                        kind = "system",
-                        text = "Opening session…",
-                    ),
-                )
-            }
-
-            val agentJwt = current.walletPubkey?.let { "stub.$it.jwt" }
-                ?: "stub.unauthenticated.jwt"
+        submitJob?.cancel()
+        submitJob = viewModelScope.launch {
+            _state.update { it.copy(isOpening = true, errorMessage = null) }
+            val pubkey = walletPrefs.pubkey.first() ?: current.walletPubkey
+            val agentJwt = pubkey?.let { "stub.$it.jwt" } ?: "stub.unauthenticated.jwt"
 
             try {
-                val session = agentCore.createSession(
+                val response = agentCore.createSession(
                     agentJwt = agentJwt,
                     body = AgentCoreClient.CreateSessionRequest(
-                        agent_address = current.walletPubkey ?: "stub-pubkey",
+                        agent_address = pubkey ?: "stub-pubkey",
                         prompt = current.prompt,
                         budget_usdc_micros = DEFAULT_BUDGET_USDC_MICROS,
                         // Day 3+: real signature from Seed Vault over the
@@ -84,65 +92,31 @@ class DiscoverViewModel @Inject constructor(
                     ),
                 )
 
-                _state.update {
-                    it.copy(
-                        log = it.log + DiscoverUiState.LogEntry(
-                            kind = "system",
-                            text = "Streaming session ${session.session_id}",
-                        ),
-                    )
-                }
+                sessions.record(
+                    newSessionEntity(
+                        sessionId = response.session_id,
+                        prompt = current.prompt,
+                        agentAddress = pubkey ?: "stub-pubkey",
+                    ),
+                )
 
-                agentCore.streamSession(session.stream_url, agentJwt)
-                    .catch { throwable ->
-                        _state.update {
-                            it.copy(
-                                isStreaming = false,
-                                errorMessage = throwable.message,
-                                log = it.log + DiscoverUiState.LogEntry(
-                                    kind = "error",
-                                    text = throwable.message ?: "Stream failed",
-                                ),
-                            )
-                        }
-                    }
-                    .collect { event ->
-                        _state.update { it.copy(log = it.log + event.toLogEntry()) }
-                        if (event is SessionEvent.Done) {
-                            _state.update { it.copy(isStreaming = false) }
-                        }
-                    }
+                _state.update { it.copy(isOpening = false, prompt = "") }
+                _navigationEvents.tryEmit(DiscoverNavEvent.OpenLiveSession(response.session_id))
             } catch (t: Throwable) {
                 _state.update {
-                    it.copy(
-                        isStreaming = false,
-                        errorMessage = t.message,
-                        log = it.log + DiscoverUiState.LogEntry(
-                            kind = "error",
-                            text = t.message ?: "Session failed to open",
-                        ),
-                    )
+                    it.copy(isOpening = false, errorMessage = t.message ?: "Session failed to open")
                 }
             }
         }
     }
 
-    private fun SessionEvent.toLogEntry(): DiscoverUiState.LogEntry = when (this) {
-        is SessionEvent.Reasoning ->
-            DiscoverUiState.LogEntry(kind = "reasoning", text = raw)
-        is SessionEvent.Payment ->
-            DiscoverUiState.LogEntry(kind = "payment", text = raw)
-        is SessionEvent.Result ->
-            DiscoverUiState.LogEntry(kind = "result", text = raw)
-        is SessionEvent.Done ->
-            DiscoverUiState.LogEntry(kind = "done", text = raw)
-        is SessionEvent.Unknown ->
-            DiscoverUiState.LogEntry(kind = type, text = raw)
+    sealed interface DiscoverNavEvent {
+        data class OpenLiveSession(val sessionId: String) : DiscoverNavEvent
     }
 
     private companion object {
         // 0.50 USDC default daily budget. Real value comes from the
-        // Task Input screen (Day 2+) once the budget slider lands.
+        // Task Input budget slider once it lands.
         const val DEFAULT_BUDGET_USDC_MICROS = 500_000L
     }
 }

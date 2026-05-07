@@ -23,7 +23,9 @@ import okhttp3.sse.EventSources
  *
  * SSE event names per the spec: `reasoning`, `payment`, `result`, `done`.
  */
-class AgentCoreClient(
+// `open` so the instrumentation `TestAppModule` can subclass with a
+// deterministic stub. Production code does not extend it.
+open class AgentCoreClient(
     private val baseUrl: String,
     private val client: OkHttpClient,
     private val json: Json,
@@ -49,7 +51,7 @@ class AgentCoreClient(
      * Open a new session. The caller must already hold a Solana-wallet-signed
      * agent JWT (issued at install time per IC-1).
      */
-    suspend fun createSession(
+    open suspend fun createSession(
         agentJwt: String,
         body: CreateSessionRequest,
     ): CreateSessionResponse {
@@ -76,7 +78,7 @@ class AgentCoreClient(
      * [SessionEvent]. The flow stays open until the server emits `done`,
      * the connection drops, or the collector cancels.
      */
-    fun streamSession(streamUrl: String, agentJwt: String): Flow<SessionEvent> =
+    open fun streamSession(streamUrl: String, agentJwt: String): Flow<SessionEvent> =
         callbackFlow {
             val request = Request.Builder()
                 .url(streamUrl)

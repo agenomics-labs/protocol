@@ -32,6 +32,11 @@ android {
         // Vector drawable support for the launcher icon
         vectorDrawables.useSupportLibrary = true
 
+        // Hilt test runner for the instrumentation suite (see
+        // androidTest/.../HiltTestRunner.kt). Production smoke runs ignore
+        // this field — it only matters under `connectedAndroidTest`.
+        testInstrumentationRunner = "xyz.agenomics.reflex.HiltTestRunner"
+
         buildConfigField("String", "AGENTCORE_BASE_URL", "\"$agentCoreBaseUrl\"")
         buildConfigField("String", "SOLANA_CLUSTER", "\"$solanaCluster\"")
         buildConfigField("String", "SOLANA_RPC_URL", "\"$solanaRpcUrl\"")
@@ -128,10 +133,23 @@ dependencies {
     // ---------- DataStore ----------
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 
+    // ---------- Room ----------
+    // Local persistence for Day-2 session history on Agent Home.
+    // Pinned to 2.6.1 — the latest stable on Maven Central as of this scaffold.
+    implementation("androidx.room:room-runtime:2.6.1")
+    implementation("androidx.room:room-ktx:2.6.1")
+    ksp("androidx.room:room-compiler:2.6.1")
+
     // ---------- Test ----------
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    androidTestImplementation("androidx.navigation:navigation-testing:2.7.7")
+
+    // Hilt instrumentation testing — used by ReflexNavTest to inject
+    // fake AgentCoreClient / WalletClient into the running app graph.
+    androidTestImplementation("com.google.dagger:hilt-android-testing:2.51.1")
+    kspAndroidTest("com.google.dagger:hilt-android-compiler:2.51.1")
 }

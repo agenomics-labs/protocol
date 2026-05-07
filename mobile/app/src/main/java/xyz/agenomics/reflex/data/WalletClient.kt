@@ -20,7 +20,9 @@ import xyz.agenomics.reflex.BuildConfig
  * for `register_agent`, `update_vault_policy`, `create_escrow`,
  * `approve_milestone`, `pause_vault`, `update_vault_allowlist`.
  */
-class WalletClient(
+// `open` so the instrumentation `TestAppModule` can subclass with a
+// deterministic stub authorise result. Production code does not extend it.
+open class WalletClient(
     @Suppress("unused") private val appContext: Context,
 ) {
 
@@ -50,7 +52,7 @@ class WalletClient(
      * Activity result for the wallet handshake. The caller wires the
      * [ActivityResultSender] in their composable (see [DiscoverScreen]).
      */
-    suspend fun authorize(
+    open suspend fun authorize(
         @Suppress("UnusedParameter") activity: ComponentActivity,
         sender: ActivityResultSender,
     ): String? {

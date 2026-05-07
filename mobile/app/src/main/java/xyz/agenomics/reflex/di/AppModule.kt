@@ -1,5 +1,7 @@
 package xyz.agenomics.reflex.di
 
+import android.content.Context
+import androidx.room.Room
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -11,6 +13,8 @@ import okhttp3.logging.HttpLoggingInterceptor
 import xyz.agenomics.reflex.BuildConfig
 import xyz.agenomics.reflex.data.AgentCoreClient
 import xyz.agenomics.reflex.data.WalletClient
+import xyz.agenomics.reflex.data.db.ReflexDatabase
+import xyz.agenomics.reflex.data.db.SessionDao
 import java.util.concurrent.TimeUnit
 import javax.inject.Singleton
 
@@ -60,6 +64,20 @@ object AppModule {
     @Provides
     @Singleton
     fun provideWalletClient(
-        @ApplicationContext context: android.content.Context,
+        @ApplicationContext context: Context,
     ): WalletClient = WalletClient(context)
+
+    // ---------- Room ----------
+    @Provides
+    @Singleton
+    fun provideReflexDatabase(
+        @ApplicationContext context: Context,
+    ): ReflexDatabase = Room.databaseBuilder(
+        context,
+        ReflexDatabase::class.java,
+        "reflex.db",
+    ).fallbackToDestructiveMigration().build()
+
+    @Provides
+    fun provideSessionDao(db: ReflexDatabase): SessionDao = db.sessionDao()
 }

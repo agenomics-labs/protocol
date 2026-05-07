@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <application tools:replace="android:name"
+        android:name="dagger.hilt.android.testing.HiltTestApplication">
+
+        <!-- Activity used by ReflexNavTest to host the Compose tree. -->
+        <activity
+            android:name="xyz.agenomics.reflex.ui.HiltTestActivity"
+            android:exported="false"
+            android:theme="@style/Theme.AEPReflex" />
+
+    </application>
+
+</manifest>

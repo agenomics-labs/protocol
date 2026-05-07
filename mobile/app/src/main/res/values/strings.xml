@@ -9,4 +9,50 @@
     <string name="discover_connect_wallet">Connect Wallet</string>
     <string name="discover_wallet_connected">Wallet connected: %1$s</string>
     <string name="discover_log_empty">Live agent narration will appear here.</string>
+
+    <!-- Onboarding screen -->
+    <string name="onboarding_title">Reflex</string>
+    <string name="onboarding_welcome_heading">Bring your agent online.</string>
+    <string name="onboarding_welcome_body">
+        Reflex turns your Seeker into the home for an autonomous agent that
+        pays for services on your behalf, handshakes with other agents over
+        NFC, and posts a verifiable record to Solana. Authorise your Seed
+        Vault wallet to bind this agent to your identity.
+    </string>
+    <string name="onboarding_permissions_summary">
+        We will ask for NFC and biometric prompts only when you explicitly
+        run a flow that needs them.
+    </string>
+    <string name="onboarding_connect_seed_vault">Connect Seed Vault Wallet</string>
+
+    <!-- Agent home screen -->
+    <string name="agent_home_title">Your agent</string>
+    <string name="agent_home_settings_cd">Open settings</string>
+    <string name="agent_home_wallet_label">Wallet</string>
+    <string name="agent_home_wallet_unknown">No wallet connected</string>
+    <string name="agent_home_balance_sol">SOL</string>
+    <string name="agent_home_balance_usdc">USDC</string>
+    <string name="agent_home_balance_stub_note">Balances are stubbed — RPC reads land in Day 4.</string>
+    <string name="agent_home_start_session">Start session</string>
+    <string name="agent_home_recent_sessions">Recent sessions</string>
+    <string name="agent_home_no_sessions">No sessions yet. Tap “Start session” to run your first prompt.</string>
+
+    <!-- Live session screen -->
+    <string name="live_session_title">Live session</string>
+    <string name="live_session_elapsed_short">elapsed %1$s</string>
+    <string name="live_session_cancel_cd">Cancel session</string>
+    <string name="live_session_pane_reasoning">Reasoning</string>
+    <string name="live_session_pane_payments">Payments</string>
+    <string name="live_session_pane_result">Result</string>
+    <string name="live_session_pane_empty">Waiting for events…</string>
+    <string name="live_session_running_total">Spent: %1$s USDC</string>
+
+    <!-- Settings screen -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_back_cd">Back</string>
+    <string name="settings_coming_soon_heading">Coming soon</string>
+    <string name="settings_coming_soon_body">
+        Vault policy editor, allowlist toggles, and pause-vault land in a
+        later iteration. Each will be biometric-gated through Seed Vault.
+    </string>
 </resources>
