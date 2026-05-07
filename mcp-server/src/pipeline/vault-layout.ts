@@ -107,10 +107,19 @@ export interface TokenSpendRecordDecoded {
  * Full decoded Vault account, covering every field either on-state-gate
  * consumes. Gates should prefer `selectSolCap()` / `selectTokenCap()` so
  * their intent is visible — this struct is the union of both views.
+ *
+ * `perTxLimitLamports` was added by the Surface 2 follow-up so the x402
+ * pre-payment cap check (`adapters/vault-policy.ts`) can read the real
+ * per-tx limit instead of conflating it with the daily limit. The field
+ * lives at `VAULT_LAYOUT.POLICY_PER_TX_LIMIT_OFFSET` (89). For a USDC-only
+ * Surface 2 vault the on-chain unit is USDC micros even though the field
+ * name says "lamports" — same ADR-119 naming convention as the other cap
+ * fields.
  */
 export interface DecodedVaultState {
   spentTodayLamports: bigint;
   lastSpendDay: bigint;
+  perTxLimitLamports: bigint;
   dailyLimitLamports: bigint;
   tokenSpendRecords: TokenSpendRecordDecoded[];
 }
@@ -119,6 +128,26 @@ export interface SolCapView {
   spentTodayLamports: bigint;
   lastSpendDay: bigint;
   dailyLimitLamports: bigint;
+}
+
+/**
+ * Surface 2 — full-policy view consumed by `adapters/vault-policy.ts` to
+ * resolve both the per-tx and daily caps for an x402 pre-payment gate.
+ *
+ * Field naming mirrors `selectSolCap` (`*Lamports` for on-chain alignment)
+ * but the Surface 2 caller renames to `*_micros` once it's known to be a
+ * USDC vault — see `adapters/vault-policy.ts`.
+ */
+export interface FullPolicyView {
+  /** USDC micros (or lamports for SOL-only vaults). */
+  daily_limit_micros: bigint;
+  /** USDC micros (or lamports for SOL-only vaults). */
+  per_tx_limit_micros: bigint;
+  /** Spent so far today, in the same unit. Caller applies UTC-midnight
+   *  rollover (compare `last_spend_day` to `floor(now/86400)`). */
+  spent_today_micros: bigint;
+  /** Day index = floor(unix_ts / 86_400). */
+  last_spend_day: number;
 }
 
 export interface TokenCapView {
@@ -174,6 +203,7 @@ export function decodeVaultState(data: Buffer): DecodedVaultState {
 
   const spentTodayLamports = data.readBigUInt64LE(VAULT_LAYOUT.SPENT_TODAY_OFFSET);
   const lastSpendDay = data.readBigUInt64LE(VAULT_LAYOUT.LAST_SPEND_DAY_OFFSET);
+  const perTxLimitLamports = data.readBigUInt64LE(VAULT_LAYOUT.POLICY_PER_TX_LIMIT_OFFSET);
   const dailyLimitLamports = data.readBigUInt64LE(VAULT_LAYOUT.DAILY_LIMIT_OFFSET);
 
   // Walk the variable-length tail. If the blob is shorter than the policy
@@ -182,7 +212,13 @@ export function decodeVaultState(data: Buffer): DecodedVaultState {
   // mint as untracked, which is the same outcome the previous separate
   // decoder would have reached for a zero-record vault.
   if (data.length < VAULT_LAYOUT.POLICY_FIXED_END_OFFSET) {
-    return { spentTodayLamports, lastSpendDay, dailyLimitLamports, tokenSpendRecords: [] };
+    return {
+      spentTodayLamports,
+      lastSpendDay,
+      perTxLimitLamports,
+      dailyLimitLamports,
+      tokenSpendRecords: [],
+    };
   }
 
   let cursor: number = VAULT_LAYOUT.POLICY_FIXED_END_OFFSET;
@@ -222,7 +258,13 @@ export function decodeVaultState(data: Buffer): DecodedVaultState {
     });
   }
 
-  return { spentTodayLamports, lastSpendDay, dailyLimitLamports, tokenSpendRecords };
+  return {
+    spentTodayLamports,
+    lastSpendDay,
+    perTxLimitLamports,
+    dailyLimitLamports,
+    tokenSpendRecords,
+  };
 }
 
 // --------------------------------------------------------------------------
@@ -239,6 +281,31 @@ export function selectSolCap(state: DecodedVaultState): SolCapView {
 
 export function selectTokenCap(state: DecodedVaultState): TokenCapView {
   return { tokenSpendRecords: state.tokenSpendRecords };
+}
+
+/**
+ * Surface 2 (`adapters/vault-policy.ts::resolveVaultPolicy`): full-policy
+ * selector returning the per-tx + daily caps + today's spend in a single
+ * shape. Reads `policy.per_tx_limit_lamports` from offset 89 (8 bytes LE
+ * u64 — see `VAULT_LAYOUT.POLICY_PER_TX_LIMIT_OFFSET`) which `selectSolCap`
+ * intentionally does NOT expose.
+ *
+ * Unit note: for a USDC-only vault (the AEP Reflex demo configuration) the
+ * lamport-named on-chain field stores USDC micros directly (no scaling).
+ * The `*_micros` rename in the returned shape mirrors what Surface 2 calls
+ * the field downstream — there is no lamports → micros multiplication
+ * because the unit is already the same on-chain.
+ *
+ * `selectSolCap` is intentionally left unchanged so the SOL-cap state-gate
+ * path (`pipeline/state-gates.ts:97-102`) keeps the narrow view it consumes.
+ */
+export function selectFullPolicy(state: DecodedVaultState): FullPolicyView {
+  return {
+    daily_limit_micros: state.dailyLimitLamports,
+    per_tx_limit_micros: state.perTxLimitLamports,
+    spent_today_micros: state.spentTodayLamports,
+    last_spend_day: Number(state.lastSpendDay),
+  };
 }
 
 // --------------------------------------------------------------------------

@@ -31,6 +31,9 @@ import {
   __resetVaultStateCacheForTests,
   fetchVaultState,
   VAULT_LAYOUT,
+  decodeVaultState,
+  selectFullPolicy,
+  selectSolCap,
 } from "../src/pipeline/vault-layout.js";
 
 const REPO_ROOT = path.resolve(__dirname, "..", "..");
@@ -171,5 +174,78 @@ describe("MCP-314 — vault-state cache invalidation hook", () => {
         "nonexistent" as unknown as Parameters<typeof invalidateVaultStateCache>[0],
       ),
     );
+  });
+});
+
+describe("Surface 2 — selectFullPolicy reads per_tx + daily caps independently", () => {
+  // Build a synthetic vault buffer with KNOWN, distinct values for per_tx
+  // and daily so a regression to the "per_tx == daily" hack is caught
+  // immediately. The previous implementation in `adapters/vault-policy.ts`
+  // returned `daily_limit_lamports` for both fields; this test pins both
+  // independently so that drift surfaces here, not in production.
+  function buildVaultBuf(opts: {
+    spent: bigint;
+    lastDay: bigint;
+    perTx: bigint;
+    daily: bigint;
+  }): Buffer {
+    const buf = Buffer.alloc(VAULT_LAYOUT.SOL_MIN_BYTES);
+    buf.writeBigUInt64LE(opts.spent, VAULT_LAYOUT.SPENT_TODAY_OFFSET);
+    buf.writeBigUInt64LE(opts.lastDay, VAULT_LAYOUT.LAST_SPEND_DAY_OFFSET);
+    buf.writeBigUInt64LE(opts.perTx, VAULT_LAYOUT.POLICY_PER_TX_LIMIT_OFFSET);
+    buf.writeBigUInt64LE(opts.daily, VAULT_LAYOUT.DAILY_LIMIT_OFFSET);
+    return buf;
+  }
+
+  it("returns per_tx and daily caps as independent fields", () => {
+    const buf = buildVaultBuf({
+      spent: 1_000_000n,
+      lastDay: 20_000n,
+      perTx: 5_000_000n, // 5 USDC
+      daily: 25_000_000n, // 25 USDC — distinct from perTx
+    });
+    const state = decodeVaultState(buf);
+    const policy = selectFullPolicy(state);
+
+    assert.equal(policy.per_tx_limit_micros, 5_000_000n);
+    assert.equal(policy.daily_limit_micros, 25_000_000n);
+    assert.equal(policy.spent_today_micros, 1_000_000n);
+    assert.equal(policy.last_spend_day, 20_000);
+  });
+
+  it("does NOT collapse per_tx onto daily (regression guard against the prior hack)", () => {
+    const buf = buildVaultBuf({
+      spent: 0n,
+      lastDay: 0n,
+      perTx: 7n,
+      daily: 9_999_999n,
+    });
+    const state = decodeVaultState(buf);
+    const policy = selectFullPolicy(state);
+    assert.notEqual(
+      policy.per_tx_limit_micros,
+      policy.daily_limit_micros,
+      "per_tx must be read from offset 89, NOT aliased to daily_limit",
+    );
+    assert.equal(policy.per_tx_limit_micros, 7n);
+  });
+
+  it("selectSolCap remains unchanged (does NOT expose per_tx)", () => {
+    const buf = buildVaultBuf({
+      spent: 100n,
+      lastDay: 5n,
+      perTx: 999n,
+      daily: 7_000n,
+    });
+    const state = decodeVaultState(buf);
+    const sol = selectSolCap(state);
+    // selectSolCap MUST keep its three-field surface — adding perTx here
+    // would be a breaking change for state-gates.ts:97-102.
+    assert.deepEqual(Object.keys(sol).sort(), [
+      "dailyLimitLamports",
+      "lastSpendDay",
+      "spentTodayLamports",
+    ]);
+    assert.equal(sol.dailyLimitLamports, 7_000n);
   });
 });

@@ -84,6 +84,32 @@ export interface PricingHistoryUpdate {
   quality_signal: 0 | 1;
 }
 
+/**
+ * Surface 2 follow-up — payment-id idempotency cache (spec error-table
+ * row 6). `x402-fetch@1.2.0` does not surface a stable `payment_id`, so
+ * the action handler synthesizes one client-side off the request tuple +
+ * caller-supplied nonce (`sha256(agent_address || service_url || method
+ * || max_price_micros || nonce)`). The result is stored here keyed
+ * `idempotency_<payment_id>` so a retry with the same nonce returns the
+ * cached receipt instead of re-paying.
+ *
+ * The receipt shape mirrors the IC-3 `result` minus `decision_record_id`
+ * (which the action handler always re-derives or re-uses). Storing the
+ * full result (status, body, payment, duration_ms) lets a retry round-
+ * trip identically to the first call.
+ */
+export interface CachedX402Receipt {
+  status: number;
+  body: string;
+  payment: {
+    tx_hash: string;
+    amount_paid_micros: number;
+    network: "base-mainnet" | "base-sepolia";
+    facilitator: "cdp" | "kora";
+  };
+  duration_ms: number;
+}
+
 export interface AgentCoreMemoryWriter {
   /**
    * Persist the IC-3 decision audit record. Returns the
@@ -101,6 +127,34 @@ export interface AgentCoreMemoryWriter {
     agent_address: string,
     update: PricingHistoryUpdate,
   ): Promise<void>;
+
+  /**
+   * Look up a previously-cached x402 receipt by `payment_id`. Returns
+   * `null` on a cache miss. Used by the Surface 2 action handler before
+   * firing a payment so a retry with the same payment_id returns the
+   * cached receipt instead of re-paying (spec error-table row 6).
+   *
+   * The cache is in-memory by default (process-local); the EVO write that
+   * accompanies `storeIdempotencyReceipt` is best-effort durable audit
+   * but is not the read source — vector search isn't suited for exact
+   * key lookups. Process restarts therefore reset the cache, which is
+   * acceptable for the demo flow because `payment_id` is itself stable
+   * across restarts (deterministic on inputs + nonce) — a retry after a
+   * restart will simply re-pay using the same payment_id and EVO will
+   * have two attempts on record.
+   */
+  getIdempotencyReceipt(payment_id: string): Promise<CachedX402Receipt | null>;
+
+  /**
+   * Store a fresh x402 receipt under `payment_id`. Idempotent — storing
+   * the same payment_id twice replaces the previous entry. Returns once
+   * the in-memory write is durable; the EVO audit write is fired-and-
+   * forgotten (errors logged but swallowed).
+   */
+  storeIdempotencyReceipt(
+    payment_id: string,
+    receipt: CachedX402Receipt,
+  ): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -111,6 +165,63 @@ export interface AgentCoreMemoryWriter {
 // ---------------------------------------------------------------------------
 
 class EvoBackedAgentCoreMemory implements AgentCoreMemoryWriter {
+  // Process-local idempotency cache keyed by payment_id. EVO audit writes
+  // are best-effort additional durability; this Map is the source of
+  // truth for retry hits within a single MCP-server lifetime.
+  private readonly idempotencyCache = new Map<string, CachedX402Receipt>();
+
+  async getIdempotencyReceipt(
+    payment_id: string,
+  ): Promise<CachedX402Receipt | null> {
+    const hit = this.idempotencyCache.get(payment_id);
+    if (hit) {
+      log.info(
+        { payment_id, tx_hash: hit.payment.tx_hash },
+        "agent-core-memory: idempotency cache HIT — returning cached receipt",
+      );
+      return hit;
+    }
+    return null;
+  }
+
+  async storeIdempotencyReceipt(
+    payment_id: string,
+    receipt: CachedX402Receipt,
+  ): Promise<void> {
+    this.idempotencyCache.set(payment_id, receipt);
+
+    // Best-effort EVO audit. If EVO is disabled or the write fails, the
+    // in-memory cache is still authoritative for the current process.
+    const client = getEvoClient();
+    if (!client.enabled) return;
+
+    const content =
+      `kind=x402_idempotency\n` +
+      `payment_id=${payment_id}\n` +
+      `tx_hash=${receipt.payment.tx_hash}\n` +
+      `amount_paid_micros=${receipt.payment.amount_paid_micros}\n` +
+      `status=${receipt.status}`;
+    try {
+      await client.observe({
+        content,
+        metadata: {
+          kind: "x402_idempotency",
+          payment_id,
+          tx_hash: receipt.payment.tx_hash,
+          status: String(receipt.status),
+        },
+      });
+    } catch (e) {
+      log.warn(
+        {
+          err: e instanceof Error ? e.message : String(e),
+          payment_id,
+        },
+        "agent-core-memory: idempotency EVO audit write failed (swallowed; in-memory cache still authoritative)",
+      );
+    }
+  }
+
   async recordDecision(record: DecisionRecord): Promise<string> {
     const client = getEvoClient();
     if (!client.enabled) {

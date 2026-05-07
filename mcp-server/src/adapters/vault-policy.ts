@@ -37,7 +37,7 @@ import type { Address } from "@solana/kit";
 import { PublicKey } from "@solana/web3.js";
 import { deriveVaultPDA } from "../solana.js";
 import { createRpc } from "../solana-v2.js";
-import { fetchVaultState } from "../pipeline/vault-layout.js";
+import { fetchVaultState, selectFullPolicy } from "../pipeline/vault-layout.js";
 import { serverLogger } from "../util/logger.js";
 
 const log = serverLogger.child({ component: "vault-policy" });
@@ -80,11 +80,11 @@ class OnChainVaultPolicyReader implements VaultPolicyReader {
     const rpc = createRpc();
     const now = Date.now();
 
-    // `fetchVaultState` decodes the SOL-cap fields off the fixed prefix.
-    // The cap fields it returns (`spentTodayLamports`, `dailyLimitLamports`,
-    // `lastSpendDay`) are in the vault's base unit — for a USDC-only Surface
-    // 2 vault these are USDC micros even though the field name says
-    // "lamports". The naming is an ADR-119 convention, not a unit drift.
+    // `fetchVaultState` decodes both the SOL-cap fields AND the per-tx
+    // cap (offset 89) off the fixed prefix. The cap fields are in the
+    // vault's base unit — for a USDC-only Surface 2 vault these are USDC
+    // micros even though the field name says "lamports". The naming is an
+    // ADR-119 convention, not a unit drift.
     //
     // TODO(Surface 2 follow-up, open question): when a vault carries BOTH
     // SOL caps and USDC token-spend-records, Surface 2 must read the USDC
@@ -93,35 +93,28 @@ class OnChainVaultPolicyReader implements VaultPolicyReader {
     // USDC mint as its primary cap" — matches the AEP Reflex demo
     // configuration where each agent has a USDC-only vault. Spec §
     // "Open questions" Q5 still pending.
-    const state = await fetchVaultState(rpc as never, vaultAddress, now);
+    const fullState = await fetchVaultState(rpc as never, vaultAddress, now);
+    const policy = selectFullPolicy(fullState);
 
     const todayDay = BigInt(Math.floor(now / 1000 / SECONDS_PER_DAY));
     const effectiveSpent =
-      state.lastSpendDay < todayDay ? 0n : state.spentTodayLamports;
+      BigInt(policy.last_spend_day) < todayDay
+        ? 0n
+        : policy.spent_today_micros;
 
-    // Per-tx limit isn't surfaced from `fetchVaultState`'s SOL view; it's
-    // available in the full `DecodedVaultState` only when the byte layout
-    // includes it. The ADR-119 layout puts `policy.per_tx_limit_lamports`
-    // at offset 89; it is read directly via the same Buffer in a follow-up
-    // refactor that exposes a richer selector. For Day-3 we conservatively
-    // re-read the offset off the same fetch by going through the cache —
-    // but to avoid touching `vault-layout.ts` we approximate: the per-tx
-    // cap is derived from the daily cap (cap a single tx at the daily
-    // limit). This MATCHES the on-chain semantics for a vault whose
-    // `per_tx_limit == daily_limit` (the AEP devnet default for the demo).
-    //
-    // TODO(Surface 2 follow-up): expose a `selectFullPolicy` selector in
-    // `pipeline/vault-layout.ts` that returns `{perTxLimit, dailyLimit,
-    // spentToday, lastSpendDay}` so we don't conflate the two limits.
-    // Tracked in spec open-questions N5/N6.
-    const perTxLimit = state.dailyLimitLamports;
-    const dailyLimit = state.dailyLimitLamports;
+    // Per-tx and daily caps now read independently from the same byte
+    // layout via `selectFullPolicy` — the previous "perTx == daily" hack
+    // is gone. A vault whose on-chain per_tx_limit == daily_limit still
+    // produces the same effective gate behaviour, but a vault that
+    // configures them independently (the production case) is now honored.
+    const perTxLimit = policy.per_tx_limit_micros;
+    const dailyLimit = policy.daily_limit_micros;
 
     if (dailyLimit < effectiveSpent) {
       // Inconsistent on-chain state — do not underflow the subtraction.
       // Mirrors `pipeline/state-gates.ts:113-127`.
       throw new Error(
-        `vault-policy: on-chain spent_today (${state.spentTodayLamports}) > daily_limit (${dailyLimit})`,
+        `vault-policy: on-chain spent_today (${policy.spent_today_micros}) > daily_limit (${dailyLimit})`,
       );
     }
     const dailyRemaining = dailyLimit - effectiveSpent;
@@ -133,7 +126,7 @@ class OnChainVaultPolicyReader implements VaultPolicyReader {
         per_tx_limit: perTxLimit.toString(),
         daily_limit: dailyLimit.toString(),
         daily_remaining: dailyRemaining.toString(),
-        rolled_over: state.lastSpendDay < todayDay,
+        rolled_over: BigInt(policy.last_spend_day) < todayDay,
       },
       "vault-policy: resolved",
     );

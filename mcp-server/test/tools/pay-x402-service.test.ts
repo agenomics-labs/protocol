@@ -30,7 +30,21 @@ import {
   ToolError,
   STUB_PER_TX_LIMIT_MICROS,
   STUB_DAILY_LIMIT_MICROS,
+  synthesizePaymentId,
 } from "../../src/actions/pay-x402-service.js";
+import {
+  setX402CdpAdapter,
+  type X402CdpAdapter,
+  type X402CallRequest,
+  type X402CallResult,
+  parseQuoteFromJsonBody,
+  parseQuoteFromWwwAuth,
+} from "../../src/adapters/x402-cdp.js";
+import {
+  setAgentCoreMemory,
+  type AgentCoreMemoryWriter,
+  type CachedX402Receipt,
+} from "../../src/adapters/agent-core-memory.js";
 import type { ActionContext } from "../../src/types/action.js";
 import type { Capability } from "../../src/types/capability.js";
 
@@ -324,5 +338,400 @@ describe("Surface 2 pay_x402_service (scaffold)", () => {
         assert.equal(parsed.stub, true);
       }
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Surface 2 follow-up tests — selectFullPolicy, payment_id idempotency,
+// 402 pre-flight quote, 5xx-refund handling.
+// ---------------------------------------------------------------------------
+
+/**
+ * In-memory `AgentCoreMemoryWriter` test stub. Does NOT touch EVO. The
+ * idempotency cache is a Map; recordDecision returns a deterministic
+ * "decision-test-…" id so the action handler's IC-3 contract is honored.
+ */
+class TestMemoryWriter implements AgentCoreMemoryWriter {
+  public readonly idempotencyCache = new Map<string, CachedX402Receipt>();
+  public recordDecisionCalls = 0;
+  public pricingHistoryCalls = 0;
+
+  async recordDecision(): Promise<string> {
+    this.recordDecisionCalls++;
+    return "decision-test-" + this.recordDecisionCalls;
+  }
+  async updatePricingHistory(): Promise<void> {
+    this.pricingHistoryCalls++;
+  }
+  async getIdempotencyReceipt(
+    payment_id: string,
+  ): Promise<CachedX402Receipt | null> {
+    return this.idempotencyCache.get(payment_id) ?? null;
+  }
+  async storeIdempotencyReceipt(
+    payment_id: string,
+    receipt: CachedX402Receipt,
+  ): Promise<void> {
+    this.idempotencyCache.set(payment_id, receipt);
+  }
+}
+
+/**
+ * In-memory `X402CdpAdapter` test stub. Records every call and returns a
+ * caller-controlled response. Activated by setting `AEP_X402_LIVE=1` for
+ * the duration of the test (so the action handler routes through
+ * `callX402Live` which reads the injected adapter).
+ */
+class TestX402Adapter implements X402CdpAdapter {
+  public calls: X402CallRequest[] = [];
+  constructor(private readonly response: X402CallResult) {}
+  async pay(request: X402CallRequest): Promise<X402CallResult> {
+    this.calls.push(request);
+    return this.response;
+  }
+}
+
+function withLive<T>(fn: () => Promise<T>): Promise<T> {
+  const prev = process.env.AEP_X402_LIVE;
+  process.env.AEP_X402_LIVE = "1";
+  return fn().finally(() => {
+    if (prev === undefined) delete process.env.AEP_X402_LIVE;
+    else process.env.AEP_X402_LIVE = prev;
+  });
+}
+
+const FIXED_NONCE = "0123456789abcdef0123456789abcdef"; // 32-hex = 16 bytes
+
+describe("Surface 2 — payment_id idempotency (spec error-table row 6)", () => {
+  it("synthesizePaymentId is deterministic on (agent, url, method, max_price, nonce)", () => {
+    const id1 = synthesizePaymentId({
+      agent_address: VALID_AGENT,
+      service_url: VALID_URL,
+      method: "POST",
+      max_price_usdc_micros: 1_000_000,
+      nonce: FIXED_NONCE,
+    });
+    const id2 = synthesizePaymentId({
+      agent_address: VALID_AGENT,
+      service_url: VALID_URL,
+      method: "POST",
+      max_price_usdc_micros: 1_000_000,
+      nonce: FIXED_NONCE,
+    });
+    assert.equal(id1, id2, "same inputs → same payment_id");
+    assert.match(id1, /^[0-9a-f]{32}$/);
+  });
+
+  it("differs when ANY input changes", () => {
+    const base = {
+      agent_address: VALID_AGENT,
+      service_url: VALID_URL,
+      method: "POST",
+      max_price_usdc_micros: 1_000_000,
+      nonce: FIXED_NONCE,
+    };
+    const id0 = synthesizePaymentId(base);
+    assert.notEqual(
+      synthesizePaymentId({ ...base, agent_address: "22222222222222222222222222222222" }),
+      id0,
+    );
+    assert.notEqual(
+      synthesizePaymentId({ ...base, service_url: VALID_URL + "/v2" }),
+      id0,
+    );
+    assert.notEqual(synthesizePaymentId({ ...base, method: "GET" }), id0);
+    assert.notEqual(
+      synthesizePaymentId({ ...base, max_price_usdc_micros: 2_000_000 }),
+      id0,
+    );
+    assert.notEqual(
+      synthesizePaymentId({ ...base, nonce: "ffffffffffffffffffffffffffffffff" }),
+      id0,
+    );
+  });
+
+  it("rejects malformed nonce with INVALID_INPUT (32-hex required)", async () => {
+    const ctx = ctxWith(["pay:x402"]);
+    const result = await actionRouter.dispatch(
+      "pay_x402_service",
+      validInput({ nonce: "not-hex" }),
+      ctx,
+    );
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.error.code, "INVALID_INPUT");
+    }
+  });
+
+  it("retry with same nonce returns CACHED receipt, does NOT re-pay", async () => {
+    const memory = new TestMemoryWriter();
+    setAgentCoreMemory(memory);
+    const adapter = new TestX402Adapter({
+      status: 200,
+      body: '{"first":true}',
+      payment: {
+        tx_hash: "0xabc123" + "0".repeat(58),
+        amount_paid_micros: 500_000,
+        network: "base-sepolia",
+        facilitator: "cdp",
+      },
+      duration_ms: 42,
+    });
+    setX402CdpAdapter(adapter);
+    try {
+      await withLive(async () => {
+        const r1 = await payX402Service({
+          agent_address: VALID_AGENT,
+          service_url: VALID_URL,
+          max_price_usdc_micros: 1_000_000,
+          request: { method: "POST", body: "{}" },
+          reasoning: VALID_REASONING,
+          nonce: FIXED_NONCE,
+        });
+        const r2 = await payX402Service({
+          agent_address: VALID_AGENT,
+          service_url: VALID_URL,
+          max_price_usdc_micros: 1_000_000,
+          request: { method: "POST", body: "{}" },
+          reasoning: VALID_REASONING,
+          nonce: FIXED_NONCE,
+        });
+        assert.equal(adapter.calls.length, 1, "second call MUST hit cache, not re-pay");
+        assert.equal(r1.payment.tx_hash, r2.payment.tx_hash);
+        assert.equal(r2.body, '{"first":true}');
+        assert.equal(memory.recordDecisionCalls, 1, "recordDecision only on first call");
+      });
+    } finally {
+      setX402CdpAdapter(null);
+      setAgentCoreMemory(null);
+    }
+  });
+
+  it("different nonces → both calls fire (no false cache hit)", async () => {
+    const memory = new TestMemoryWriter();
+    setAgentCoreMemory(memory);
+    const adapter = new TestX402Adapter({
+      status: 200,
+      body: "{}",
+      payment: {
+        tx_hash: "0x" + "1".repeat(64),
+        amount_paid_micros: 100_000,
+        network: "base-sepolia",
+        facilitator: "cdp",
+      },
+      duration_ms: 1,
+    });
+    setX402CdpAdapter(adapter);
+    try {
+      await withLive(async () => {
+        await payX402Service({
+          agent_address: VALID_AGENT,
+          service_url: VALID_URL,
+          max_price_usdc_micros: 1_000_000,
+          request: { method: "POST" },
+          reasoning: VALID_REASONING,
+          nonce: FIXED_NONCE,
+        });
+        await payX402Service({
+          agent_address: VALID_AGENT,
+          service_url: VALID_URL,
+          max_price_usdc_micros: 1_000_000,
+          request: { method: "POST" },
+          reasoning: VALID_REASONING,
+          nonce: "ffffffffffffffffffffffffffffffff",
+        });
+        assert.equal(adapter.calls.length, 2);
+      });
+    } finally {
+      setX402CdpAdapter(null);
+      setAgentCoreMemory(null);
+    }
+  });
+});
+
+describe("Surface 2 — 402 pre-flight quote parsers", () => {
+  it("parseQuoteFromJsonBody extracts maxAmountRequired from accepts[0]", () => {
+    const body = JSON.stringify({
+      x402Version: 1,
+      accepts: [
+        { scheme: "exact", network: "base-sepolia", maxAmountRequired: "12345" },
+      ],
+    });
+    assert.equal(parseQuoteFromJsonBody(body), 12345);
+  });
+
+  it("parseQuoteFromJsonBody returns null on unparseable JSON", () => {
+    assert.equal(parseQuoteFromJsonBody("not json"), null);
+    assert.equal(parseQuoteFromJsonBody(""), null);
+    assert.equal(parseQuoteFromJsonBody("{}"), null);
+    assert.equal(parseQuoteFromJsonBody('{"accepts":[]}'), null);
+    assert.equal(
+      parseQuoteFromJsonBody('{"accepts":[{"maxAmountRequired":"abc"}]}'),
+      null,
+    );
+  });
+
+  it("parseQuoteFromWwwAuth handles key=value form", () => {
+    assert.equal(
+      parseQuoteFromWwwAuth("x402 maxAmountRequired=999, scheme=exact"),
+      999,
+    );
+    assert.equal(
+      parseQuoteFromWwwAuth('x402 maxAmountRequired="1500"'),
+      1500,
+    );
+  });
+
+  it("parseQuoteFromWwwAuth handles JSON-after-keyword form", () => {
+    assert.equal(
+      parseQuoteFromWwwAuth(
+        'x402 {"maxAmountRequired":"7000","scheme":"exact"}',
+      ),
+      7000,
+    );
+  });
+
+  it("parseQuoteFromWwwAuth returns null when no maxAmountRequired", () => {
+    assert.equal(parseQuoteFromWwwAuth(""), null);
+    assert.equal(parseQuoteFromWwwAuth("x402 scheme=exact"), null);
+    assert.equal(parseQuoteFromWwwAuth("Bearer realm=foo"), null);
+  });
+});
+
+describe("Surface 2 — 5xx + refund handling (spec error-table row 5)", () => {
+  it("upstream 503 with refund.requested → PROVIDER_5XX with refund_tx_hash", async () => {
+    const memory = new TestMemoryWriter();
+    setAgentCoreMemory(memory);
+    const adapter = new TestX402Adapter({
+      status: 503,
+      body: "service unavailable",
+      payment: {
+        tx_hash: "0x" + "9".repeat(64),
+        amount_paid_micros: 250_000,
+        network: "base-sepolia",
+        facilitator: "cdp",
+      },
+      duration_ms: 100,
+      refund: {
+        status: "requested",
+        refund_tx_hash: "0x" + "f".repeat(64),
+      },
+    });
+    setX402CdpAdapter(adapter);
+    try {
+      await withLive(async () => {
+        await assert.rejects(
+          () =>
+            payX402Service({
+              agent_address: VALID_AGENT,
+              service_url: VALID_URL,
+              max_price_usdc_micros: 1_000_000,
+              request: { method: "POST" },
+              reasoning: VALID_REASONING,
+              nonce: FIXED_NONCE,
+            }),
+          (e: unknown) => {
+            assert.ok(e instanceof ToolError, `not a ToolError: ${e}`);
+            const te = e as ToolError;
+            assert.equal(te.code, "PROVIDER_5XX");
+            assert.equal(te.details?.upstream_status, 503);
+            assert.equal(te.details?.refund_status, "requested");
+            assert.equal(te.details?.refund_tx_hash, "0x" + "f".repeat(64));
+            return true;
+          },
+        );
+      });
+    } finally {
+      setX402CdpAdapter(null);
+      setAgentCoreMemory(null);
+    }
+  });
+
+  it("upstream 502 with refund.not_supported → PROVIDER_5XX with refund_status flag", async () => {
+    const memory = new TestMemoryWriter();
+    setAgentCoreMemory(memory);
+    const adapter = new TestX402Adapter({
+      status: 502,
+      body: "bad gateway",
+      payment: {
+        tx_hash: "0x" + "a".repeat(64),
+        amount_paid_micros: 250_000,
+        network: "base-sepolia",
+        facilitator: "cdp",
+      },
+      duration_ms: 100,
+      refund: { status: "not_supported", reason: "facilitator returned 404" },
+    });
+    setX402CdpAdapter(adapter);
+    try {
+      await withLive(async () => {
+        await assert.rejects(
+          () =>
+            payX402Service({
+              agent_address: VALID_AGENT,
+              service_url: VALID_URL,
+              max_price_usdc_micros: 1_000_000,
+              request: { method: "POST" },
+              reasoning: VALID_REASONING,
+              nonce: FIXED_NONCE,
+            }),
+          (e: unknown) => {
+            assert.ok(e instanceof ToolError);
+            const te = e as ToolError;
+            assert.equal(te.code, "PROVIDER_5XX");
+            assert.equal(te.details?.refund_status, "not_supported");
+            // No refund_tx_hash field when facilitator doesn't support refunds.
+            assert.equal(te.details?.refund_tx_hash, undefined);
+            return true;
+          },
+        );
+      });
+    } finally {
+      setX402CdpAdapter(null);
+      setAgentCoreMemory(null);
+    }
+  });
+
+  it("router maps PROVIDER_5XX into INVALID_INPUT result with details.tool_error", async () => {
+    // The action layer wraps ToolError into a Result<INVALID_INPUT, …>
+    // pending an AepErrorCode union expansion. The structural promise to
+    // callers is `details.tool_error === "PROVIDER_5XX"`.
+    const memory = new TestMemoryWriter();
+    setAgentCoreMemory(memory);
+    const adapter = new TestX402Adapter({
+      status: 500,
+      body: "boom",
+      payment: {
+        tx_hash: "0x" + "b".repeat(64),
+        amount_paid_micros: 100_000,
+        network: "base-sepolia",
+        facilitator: "cdp",
+      },
+      duration_ms: 50,
+      refund: { status: "failed", reason: "network error: timeout" },
+    });
+    setX402CdpAdapter(adapter);
+    try {
+      await withLive(async () => {
+        const ctx = ctxWith(["pay:x402"]);
+        const result = await actionRouter.dispatch(
+          "pay_x402_service",
+          validInput({ nonce: FIXED_NONCE }),
+          ctx,
+        );
+        assert.equal(result.ok, false);
+        if (!result.ok) {
+          assert.equal(result.error.code, "INVALID_INPUT");
+          const details = result.error.details as
+            | { tool_error?: string; refund_status?: string }
+            | undefined;
+          assert.equal(details?.tool_error, "PROVIDER_5XX");
+          assert.equal(details?.refund_status, "failed");
+        }
+      });
+    } finally {
+      setX402CdpAdapter(null);
+      setAgentCoreMemory(null);
+    }
   });
 });

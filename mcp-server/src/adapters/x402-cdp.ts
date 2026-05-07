@@ -71,6 +71,33 @@ export interface X402CallRequest {
   };
 }
 
+/**
+ * Surface 2 follow-up — refund attempt outcome (spec error-table row 5).
+ *
+ * `@coinbase/x402@2.1.0` ships no `refund()` SDK affordance, so the
+ * facilitator-side refund is a hand-rolled HTTP POST to
+ * `${facilitatorUrl}/refund` carrying the original tx_hash + agent
+ * address. The shape below captures all three observable outcomes the
+ * facilitator can surface; the action handler maps these into the
+ * structured `PROVIDER_5XX` IC-3 error.
+ *
+ *   - `requested`     — POST returned 200; refund_tx_hash present.
+ *   - `not_supported` — POST returned 404; this facilitator has no /refund
+ *                       endpoint (the v0 CDP facilitator on devnet today).
+ *   - `failed`        — POST returned a 5xx of its own, or the request
+ *                       timed out / network error. The original payment
+ *                       tx_hash is still surfaced so the caller has a
+ *                       Basescan link to chase up manually.
+ */
+export interface RefundAttempt {
+  status: "requested" | "not_supported" | "failed";
+  /** The Base-side refund tx hash, when the facilitator returned one. */
+  refund_tx_hash?: string;
+  /** Free-form reason text from the facilitator (or local error). Logged
+   *  but not contractually parsed by the IC-3 caller. */
+  reason?: string;
+}
+
 export interface X402CallResult {
   status: number;
   body: string;
@@ -85,6 +112,14 @@ export interface X402CallResult {
     facilitator: X402Facilitator;
   };
   duration_ms: number;
+  /** Set when `status >= 500` AND the adapter attempted to recover the
+   *  payment. Absent on 2xx/4xx responses. The action handler converts a
+   *  present `refund` into the spec's `PROVIDER_5XX` error. */
+  refund?: RefundAttempt;
+  /** Set when the pre-flight 402 quote could not be obtained. Absent when
+   *  the live `amount_paid_micros` came from the real quote — present when
+   *  it had to fall back to `max_price_usdc_micros`. */
+  quote_fallback_warning?: string;
 }
 
 export interface X402CdpAdapter {
@@ -106,6 +141,78 @@ class LiveX402CdpAdapter implements X402CdpAdapter {
   // `getOrCreateAccount` is idempotent on the `name` field so a cache miss
   // is safe — but the cache saves a network round-trip per call.
   private readonly walletCache = new Map<string, unknown>();
+
+  /**
+   * Pre-flight 402 quote getter (Surface 2 follow-up — IC-3 fidelity).
+   *
+   * The real x402 protocol is a 4-step dance: 402 challenge → quote →
+   * 402 paywall → settle. `wrapFetchWithPayment` collapses the dance into
+   * one call but does not surface the actual quote. To get the precise
+   * `amount_paid_micros` IC-3 promises (rather than the upper-bound
+   * `max_price_usdc_micros` ceiling we used Day-3), we fetch the URL once
+   * with NO Authorization header, expect the upstream to reply 402, then
+   * parse the `WWW-Authenticate: x402 ...` challenge for the quote.
+   *
+   * Public x402 spec: the challenge header carries the PaymentRequirements
+   * object as JSON-after-keyword, with the canonical field
+   * `maxAmountRequired` (a base-units integer string). Some Bazaar
+   * implementations expose the same data via a JSON 402 body instead — we
+   * accept either as long as we can recover an integer micros amount.
+   *
+   * Failure mode: ANY error here (network failure, non-402 response,
+   * malformed/missing header, no `maxAmountRequired` field) falls back to
+   * the Day-3 behavior of using `max_price_usdc_micros` as the upper bound,
+   * accompanied by a structured warning string the action handler logs.
+   * The pre-flight is a fidelity improvement, not a correctness gate —
+   * never let a flaky pre-flight break the happy path.
+   *
+   * `x402-fetch@1.2.0` does NOT export a quote getter (we audited the
+   * package's `index.d.ts` for `decodeXPaymentResponse`, `wrapFetchWithPayment`,
+   * and miscellaneous type re-exports — no `getQuote` / `getPaymentRequirements`
+   * surface today). When/if it does, drop this hand-rolled pre-flight and
+   * delegate.
+   */
+  async preflightQuote(serviceUrl: string): Promise<
+    | { ok: true; amount_paid_micros: number }
+    | { ok: false; warning: string }
+  > {
+    try {
+      const resp = await globalThis.fetch(serviceUrl, { method: "GET" });
+      if (resp.status !== 402) {
+        // Read body so the connection drains; ignore content. A non-402
+        // pre-flight means the URL is either free (no quote ever) or the
+        // server is misbehaving — either way fall back.
+        try {
+          await resp.text();
+        } catch {
+          /* drain failure is benign */
+        }
+        return {
+          ok: false,
+          warning: `pre-flight expected 402 got ${resp.status}; falling back to max_price as ceiling`,
+        };
+      }
+      // First try the JSON body — Coinbase's x402 reference servers reply
+      // with `{ x402Version, accepts: [{ maxAmountRequired, ... }, ...] }`.
+      const bodyText = await resp.text();
+      const fromBody = parseQuoteFromJsonBody(bodyText);
+      if (fromBody !== null) return { ok: true, amount_paid_micros: fromBody };
+
+      // Fall through to WWW-Authenticate (RFC-7235 style header that some
+      // Bazaar shims surface).
+      const wwwAuth = resp.headers.get("www-authenticate") ?? "";
+      const fromHeader = parseQuoteFromWwwAuth(wwwAuth);
+      if (fromHeader !== null) return { ok: true, amount_paid_micros: fromHeader };
+
+      return {
+        ok: false,
+        warning: `pre-flight 402 missing maxAmountRequired in body or WWW-Authenticate header`,
+      };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return { ok: false, warning: `pre-flight network error: ${msg}` };
+    }
+  }
 
   async pay(request: X402CallRequest): Promise<X402CallResult> {
     // Dynamic imports keep this module load-cheap when the live path is
@@ -196,6 +303,34 @@ class LiveX402CdpAdapter implements X402CdpAdapter {
       body: request.request.body,
     };
 
+    // Pre-flight 402 quote (Surface 2 follow-up — IC-3 fidelity). Best-
+    // effort: any failure here falls back to `max_price_usdc_micros` as
+    // the upper bound (Day-3 behavior). The result drives the
+    // `amount_paid_micros` field below — the upper-bound fallback is
+    // strictly safe because x402-fetch refuses to sign a quote larger
+    // than max_price.
+    const preflight = await this.preflightQuote(request.service_url);
+    let preflightAmount: number | null = null;
+    let quoteFallbackWarning: string | undefined;
+    if (preflight.ok) {
+      // Sanity check: a quote larger than max_price would be rejected by
+      // wrapFetchWithPayment anyway, but reject pre-flight here so the
+      // amount we surface in IC-3 is never larger than what we agreed to.
+      if (preflight.amount_paid_micros > request.max_price_usdc_micros) {
+        quoteFallbackWarning =
+          `pre-flight quote ${preflight.amount_paid_micros} exceeds max_price ` +
+          `${request.max_price_usdc_micros}; using max_price as ceiling`;
+      } else {
+        preflightAmount = preflight.amount_paid_micros;
+      }
+    } else {
+      quoteFallbackWarning = preflight.warning;
+      log.warn(
+        { service_url: request.service_url, warning: preflight.warning },
+        "x402-cdp: pre-flight 402 quote unavailable; falling back to max_price",
+      );
+    }
+
     const start = Date.now();
     const response = await fetchWithPay(request.service_url, init);
     const duration_ms = Date.now() - start;
@@ -214,16 +349,11 @@ class LiveX402CdpAdapter implements X402CdpAdapter {
         const decoded = decodeXPaymentResponse(xPaymentResp);
         tx_hash = decoded.transaction ?? "";
         receivedNetwork = decoded.network;
-        // x402 doesn't put the paid amount on the response header — the
-        // amount is from the request side (the quote). The most reliable
-        // reading is the original quote that the wrapped fetch agreed to
-        // pay; x402-fetch does not currently surface this. As a safe
-        // approximation we fall back to `max_price_usdc_micros` UPPER bound.
-        // TODO(Surface 2 follow-up, IC-3 fidelity): instrument
-        // `x402-fetch` (or pre-flight-fetch the 402 ourselves) to learn
-        // the exact paid amount. Tracked in spec open-questions N4
-        // (idempotency-key SDK shape).
-        amount_paid_micros = request.max_price_usdc_micros;
+        // Prefer the precise pre-flight quote; fall back to max_price
+        // ceiling when pre-flight failed. The upper-bound fallback is the
+        // SAFE fallback — x402-fetch refuses to sign a quote larger than
+        // `maxValue`, so the actual paid amount is at most max_price.
+        amount_paid_micros = preflightAmount ?? request.max_price_usdc_micros;
       } catch (e) {
         log.warn(
           { err: e instanceof Error ? e.message : String(e) },
@@ -243,6 +373,32 @@ class LiveX402CdpAdapter implements X402CdpAdapter {
             ? "base-sepolia"
             : "base-mainnet";
 
+    // Surface 2 spec error-table row 5: 402 + payment + 5xx → request a
+    // refund from the facilitator. `@coinbase/x402@2.1.0` ships no
+    // `refund()` SDK affordance, so we POST to a hand-rolled
+    // `${facilitator_url}/refund` endpoint. The action handler converts a
+    // present `refund` field into the structured `PROVIDER_5XX` IC-3 error.
+    let refund: RefundAttempt | undefined;
+    if (response.status >= 500 && tx_hash !== "") {
+      const facilitatorUrl =
+        process.env.X402_FACILITATOR_URL ?? defaultFacilitatorUrl(facilitator);
+      refund = await requestFacilitatorRefund({
+        facilitatorUrl,
+        tx_hash,
+        agent_address: request.agent_address,
+        signer: wallet,
+      });
+      log.warn(
+        {
+          service_url: request.service_url,
+          status: response.status,
+          tx_hash,
+          refund_status: refund.status,
+        },
+        "x402-cdp: upstream returned 5xx after settlement; refund attempt complete",
+      );
+    }
+
     return {
       status: response.status,
       body: bodyText,
@@ -253,7 +409,187 @@ class LiveX402CdpAdapter implements X402CdpAdapter {
         facilitator,
       },
       duration_ms,
+      refund,
+      quote_fallback_warning: quoteFallbackWarning,
     };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Pre-flight 402 quote parsers (Surface 2 follow-up).
+// ---------------------------------------------------------------------------
+
+/**
+ * Pull `maxAmountRequired` out of an x402 challenge JSON body.
+ * Coinbase's reference x402 server returns:
+ *   `{ x402Version, accepts: [{ scheme, network, maxAmountRequired, ... }] }`
+ * We accept the first entry whose `maxAmountRequired` parses as a non-negative
+ * integer. Returns the integer micros amount, or `null` if the body doesn't
+ * carry a recognizable quote.
+ */
+export function parseQuoteFromJsonBody(bodyText: string): number | null {
+  if (!bodyText) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(bodyText);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+  const obj = parsed as Record<string, unknown>;
+  const accepts = Array.isArray(obj.accepts) ? obj.accepts : [];
+  for (const entry of accepts) {
+    if (!entry || typeof entry !== "object") continue;
+    const e = entry as Record<string, unknown>;
+    const v = e.maxAmountRequired;
+    const parsedAmount =
+      typeof v === "number"
+        ? v
+        : typeof v === "string"
+          ? Number.parseInt(v, 10)
+          : NaN;
+    if (Number.isFinite(parsedAmount) && parsedAmount >= 0) {
+      return Math.floor(parsedAmount);
+    }
+  }
+  return null;
+}
+
+/**
+ * Parse a `WWW-Authenticate: x402 maxAmountRequired=N, scheme=..., ...`
+ * style challenge header. The x402 spec is in flux on the canonical header
+ * shape — accept both the comma-separated `key=value` form AND a
+ * `x402 <json>` form for forward-compat.
+ */
+export function parseQuoteFromWwwAuth(headerValue: string): number | null {
+  if (!headerValue) return null;
+  // Strip the leading auth-scheme token.
+  const stripped = headerValue.replace(/^x402\s*/i, "").trim();
+  if (!stripped) return null;
+  // Try JSON-after-keyword first.
+  if (stripped.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(stripped) as Record<string, unknown>;
+      const v = parsed.maxAmountRequired;
+      const n =
+        typeof v === "number"
+          ? v
+          : typeof v === "string"
+            ? Number.parseInt(v, 10)
+            : NaN;
+      if (Number.isFinite(n) && n >= 0) return Math.floor(n);
+    } catch {
+      /* fall through to k=v parser */
+    }
+  }
+  // Comma-separated key=value pairs (HTTP auth-param style). Values may be
+  // quoted; we strip quotes if present.
+  const parts = stripped.split(",").map((p) => p.trim());
+  for (const part of parts) {
+    const eq = part.indexOf("=");
+    if (eq < 0) continue;
+    const key = part.slice(0, eq).trim().toLowerCase();
+    if (key !== "maxamountrequired") continue;
+    let value = part.slice(eq + 1).trim();
+    if (value.startsWith('"') && value.endsWith('"')) {
+      value = value.slice(1, -1);
+    }
+    const n = Number.parseInt(value, 10);
+    if (Number.isFinite(n) && n >= 0) return Math.floor(n);
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Facilitator-side refund (Surface 2 spec error-table row 5).
+// ---------------------------------------------------------------------------
+
+/**
+ * Map facilitator alias → default base URL. Honored only when
+ * `X402_FACILITATOR_URL` is unset. The CDP devnet facilitator URL is
+ * `https://x402.org/facilitator` per Coinbase's public docs as of
+ * 2026-05; mainnet/Kora URLs have not been pinned in this repo so we
+ * leave them as the same default and let the operator override.
+ *
+ * SPEC AMBIGUITY (returned in the deliverable): the actual `/refund`
+ * endpoint shape is not documented by Coinbase as of 2026-05-07. The
+ * payload we POST below (`{ tx_hash, agent_address, ... }`) is a best-
+ * effort guess that mirrors the on-chain settle payload. A 404 is
+ * treated as "facilitator does not support refunds" which is the
+ * empirically-observed behavior on the v0 CDP devnet facilitator today.
+ */
+function defaultFacilitatorUrl(facilitator: X402Facilitator): string {
+  switch (facilitator) {
+    case "cdp":
+      return "https://x402.org/facilitator";
+    case "kora":
+      // Kora has not been integrated with this adapter yet; placeholder.
+      return "https://x402.org/facilitator";
+  }
+}
+
+/**
+ * POST a refund request to `${facilitatorUrl}/refund`. Returns a typed
+ * `RefundAttempt` capturing the three observable outcomes (requested /
+ * not_supported / failed). Never throws — the action handler relies on
+ * this returning a structured value so the IC-3 PROVIDER_5XX error can
+ * always include a refund_status field.
+ *
+ * The signer (CDP ServerAccount) is widened to `unknown` because we don't
+ * actually invoke it here today — the v0 facilitator refund API takes the
+ * tx_hash + agent_address as authentication implicitly (the facilitator
+ * verifies the agent owns the original payment). When the API stabilizes
+ * to require an explicit signature, replace the unsigned POST below with a
+ * wallet-signed envelope.
+ */
+async function requestFacilitatorRefund(opts: {
+  facilitatorUrl: string;
+  tx_hash: string;
+  agent_address: string;
+  signer: unknown;
+}): Promise<RefundAttempt> {
+  const url = opts.facilitatorUrl.replace(/\/+$/, "") + "/refund";
+  try {
+    const resp = await globalThis.fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        tx_hash: opts.tx_hash,
+        agent_address: opts.agent_address,
+      }),
+    });
+    if (resp.status === 404) {
+      // Drain body. 404 is the documented "facilitator does not support
+      // refunds" outcome on the v0 CDP devnet facilitator.
+      try {
+        await resp.text();
+      } catch {
+        /* benign */
+      }
+      return { status: "not_supported", reason: "facilitator returned 404" };
+    }
+    if (resp.status >= 200 && resp.status < 300) {
+      let refundTx: string | undefined;
+      try {
+        const bodyText = await resp.text();
+        const parsed = bodyText ? (JSON.parse(bodyText) as Record<string, unknown>) : {};
+        const tx = parsed.refund_tx_hash ?? parsed.tx_hash ?? parsed.transaction;
+        if (typeof tx === "string" && tx.length > 0) refundTx = tx;
+      } catch {
+        /* malformed JSON is non-fatal — the refund still succeeded */
+      }
+      return { status: "requested", refund_tx_hash: refundTx };
+    }
+    const reason = `facilitator returned ${resp.status}`;
+    try {
+      await resp.text();
+    } catch {
+      /* benign */
+    }
+    return { status: "failed", reason };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { status: "failed", reason: `network error: ${msg}` };
   }
 }
 

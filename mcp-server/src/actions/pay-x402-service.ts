@@ -33,7 +33,7 @@
 // IC-3 contract surface is preserved verbatim from the scaffold — no
 // type changes; the wire shape is byte-identical.
 
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import type { Action } from "../types/action.js";
 import { ok, err } from "../types/action.js";
@@ -119,6 +119,29 @@ const payX402ServiceInput = {
       message:
         "reasoning is mandatory and must be non-empty (spec IC-3 line 136)",
     }),
+  /**
+   * Optional 16-byte hex nonce for payment-id idempotency (spec error-table
+   * row 6, "Network timeout post-payment"). When omitted, the action
+   * generates a fresh-random nonce. When provided, the synthesized
+   * `payment_id = sha256(agent_address || service_url || method ||
+   * max_price_micros || nonce)` becomes the idempotency key — a retry
+   * with the same nonce returns the cached receipt instead of re-paying.
+   *
+   * The nonce is OPTIONAL because the IC-3 wire shape promises to accept
+   * spec-conformant inputs WITHOUT this field (master spec line 109-134
+   * does not list a nonce). Callers that care about idempotency provide
+   * one; one-shot callers do not.
+   *
+   * Format: 32 lowercase hex chars (16 bytes). Validated here so a
+   * malformed nonce never silently degrades to "no idempotency" — the
+   * caller learns at parse time.
+   */
+  nonce: z
+    .string()
+    .regex(/^[0-9a-f]{32}$/, {
+      message: "nonce must be 32 lowercase hex chars (16 bytes)",
+    })
+    .optional(),
 } as const;
 
 type PayX402ServiceInput = z.infer<z.ZodObject<typeof payX402ServiceInput>>;
@@ -170,6 +193,7 @@ export type ToolErrorCode =
   | "EXCEEDS_VAULT_DAILY_LIMIT"
   | "QUOTE_EXCEEDS_MAX_PRICE"
   | "REFUND_FAILED"
+  | "PROVIDER_5XX"
   | "PAYMENT_TIMEOUT"
   | "INVALID_INPUT";
 
@@ -284,6 +308,48 @@ export async function payX402Service(
     );
   }
 
+  // ----- Step 1.5: payment_id idempotency (spec error-table row 6) -----
+  //
+  // `x402-fetch@1.2.0` doesn't expose a stable `payment_id`, so we
+  // synthesize one client-side. Same (agent, service, method, max_price,
+  // nonce) tuple → same payment_id → cache hit on retry. The nonce is
+  // either caller-supplied (caller wants idempotent retries) or fresh-
+  // random (one-shot call; payment_id is uncacheable in practice).
+  const nonce = input.nonce ?? randomBytes(16).toString("hex");
+  const payment_id = synthesizePaymentId({
+    agent_address: input.agent_address,
+    service_url: input.service_url,
+    method: input.request.method,
+    max_price_usdc_micros: input.max_price_usdc_micros,
+    nonce,
+  });
+
+  const memory = getAgentCoreMemory();
+  const cached = await memory.getIdempotencyReceipt(payment_id);
+  if (cached) {
+    // Idempotency HIT — a previous call with the same payment_id already
+    // settled. Return the cached receipt; do NOT re-pay; do NOT re-record
+    // the decision (the original call already wrote one). We DO re-derive
+    // the decision_record_id off the same inputs so IC-3's contract is
+    // satisfied without a memory write.
+    log.info(
+      {
+        agent_address: input.agent_address,
+        service_url: input.service_url,
+        payment_id,
+        cached_tx_hash: cached.payment.tx_hash,
+      },
+      "pay-x402-service: idempotency HIT — returning cached receipt without re-paying",
+    );
+    return {
+      status: cached.status,
+      body: cached.body,
+      payment: cached.payment,
+      duration_ms: cached.duration_ms,
+      decision_record_id: synthesizeDecisionId(input, cached.payment.tx_hash),
+    };
+  }
+
   // ----- Step 2-3: x402 + CDP call -----
   //
   // Branched by `AEP_X402_LIVE`: live path drives the real CDP Server
@@ -294,6 +360,17 @@ export async function payX402Service(
     ? await callX402Live(input)
     : callX402Stub(input);
 
+  // Persist the receipt under payment_id so a subsequent call with the
+  // same nonce returns the cached value instead of re-paying. Best-effort
+  // — a cache write failure does NOT roll back the upstream call (the
+  // payment is already settled). Logged inside the adapter.
+  await memory.storeIdempotencyReceipt(payment_id, {
+    status,
+    body,
+    payment,
+    duration_ms,
+  });
+
   // ----- Step 4: AgentCore Memory write (decision record) -----
   //
   // Returns the `decision_record_id` IC-3 surfaces back to the caller.
@@ -303,7 +380,7 @@ export async function payX402Service(
   // still satisfied and the caller can retry the memory write later.
   let decision_record_id: string;
   try {
-    decision_record_id = await getAgentCoreMemory().recordDecision({
+    decision_record_id = await memory.recordDecision({
       agent_address: input.agent_address,
       service_url: input.service_url,
       reasoning: input.reasoning,
@@ -328,7 +405,7 @@ export async function payX402Service(
   // Best-effort: failures here are swallowed inside `updatePricingHistory`
   // so they never break the IC-3 happy-path return. Spec §"Implementation"
   // step 5 (lines 263–268).
-  await getAgentCoreMemory().updatePricingHistory(input.agent_address, {
+  await memory.updatePricingHistory(input.agent_address, {
     service_url: input.service_url,
     paid_micros: payment.amount_paid_micros,
     quality_signal: status === 200 ? 1 : 0,
@@ -353,19 +430,14 @@ async function callX402Live(input: PayX402ServiceInput): Promise<{
   payment: PayX402ServiceResult["payment"];
   duration_ms: number;
 }> {
+  let result;
   try {
-    const result = await getX402CdpAdapter().pay({
+    result = await getX402CdpAdapter().pay({
       agent_address: input.agent_address,
       service_url: input.service_url,
       max_price_usdc_micros: input.max_price_usdc_micros,
       request: input.request,
     });
-    return {
-      status: result.status,
-      body: result.body,
-      payment: result.payment,
-      duration_ms: result.duration_ms,
-    };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     // Map x402-fetch's "max price exceeded" message into the spec's
@@ -385,6 +457,46 @@ async function callX402Live(input: PayX402ServiceInput): Promise<{
       { service_url: input.service_url },
     );
   }
+
+  // Surface 2 follow-up: surface the pre-flight quote-fallback warning
+  // (best-effort fidelity signal — see x402-cdp.ts pre-flight comment).
+  if (result.quote_fallback_warning) {
+    log.warn(
+      {
+        service_url: input.service_url,
+        warning: result.quote_fallback_warning,
+      },
+      "pay-x402-service: x402 pre-flight quote unavailable; amount_paid_micros uses max_price ceiling",
+    );
+  }
+
+  // Surface 2 spec error-table row 5: 402 + payment + 5xx → emit
+  // PROVIDER_5XX with the facilitator-side refund outcome embedded in
+  // details. The adapter never throws on a 5xx — it returns a populated
+  // `refund` so the action layer can return a structured error rather
+  // than a thrown exception.
+  if (result.refund) {
+    throw new ToolError(
+      "PROVIDER_5XX",
+      `upstream returned ${result.status} after settlement; refund_status=${result.refund.status}`,
+      {
+        upstream_status: result.status,
+        tx_hash: result.payment.tx_hash,
+        refund_status: result.refund.status,
+        ...(result.refund.refund_tx_hash
+          ? { refund_tx_hash: result.refund.refund_tx_hash }
+          : {}),
+        ...(result.refund.reason ? { refund_reason: result.refund.reason } : {}),
+      },
+    );
+  }
+
+  return {
+    status: result.status,
+    body: result.body,
+    payment: result.payment,
+    duration_ms: result.duration_ms,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -436,6 +548,37 @@ function synthesizeDecisionId(
   h.update("|");
   h.update(tx_hash);
   return "decision-fallback-" + h.digest("hex").slice(0, 32);
+}
+
+/**
+ * Synthesize a stable `payment_id` for x402 idempotency (spec error-table
+ * row 6). `x402-fetch@1.2.0` doesn't expose a stable id, so we derive one
+ * client-side off the request tuple plus a caller-supplied (or fresh-
+ * random) nonce. Same inputs → same id, so a retry-after-timeout with the
+ * same nonce hits the idempotency cache instead of double-paying.
+ *
+ * Format: 32 lowercase hex chars (truncated SHA-256). Visibility of the
+ * full 256-bit hash is unnecessary for collision resistance at the demo
+ * scale; truncation keeps log lines readable.
+ */
+export function synthesizePaymentId(input: {
+  agent_address: string;
+  service_url: string;
+  method: string;
+  max_price_usdc_micros: number;
+  nonce: string;
+}): string {
+  const h = createHash("sha256");
+  h.update(input.agent_address);
+  h.update("|");
+  h.update(input.service_url);
+  h.update("|");
+  h.update(input.method);
+  h.update("|");
+  h.update(String(input.max_price_usdc_micros));
+  h.update("|");
+  h.update(input.nonce);
+  return h.digest("hex").slice(0, 32);
 }
 
 // ---------- Action declaration ----------
