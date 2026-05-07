@@ -87,6 +87,96 @@
           }
         },
         {
+          "name": "agent_owner_nonce",
+          "docs": [
+            "Q-S3-A: the agent's `OwnerNonce` PDA in the Registry program. Used",
+            "to derive `agent_profile`'s 3-seed PDA per ADR-097",
+            "(`[authority, b\"agent-profile\", nonce-le]`). Read-only — we never",
+            "mutate Registry state from the Hook.",
+            "under the Registry program ID, plus `owner = ...` to ensure the",
+            "account is initialized and owned by Registry (not just an empty",
+            "PDA address that happens to satisfy seeds)."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "agent_authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114,
+                  45,
+                  110,
+                  111,
+                  110,
+                  99,
+                  101
+                ]
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                12,
+                67,
+                44,
+                97,
+                176,
+                134,
+                218,
+                125,
+                226,
+                228,
+                147,
+                82,
+                155,
+                182,
+                97,
+                232,
+                245,
+                247,
+                174,
+                112,
+                200,
+                200,
+                245,
+                158,
+                82,
+                184,
+                176,
+                71,
+                124,
+                211,
+                144,
+                137
+              ]
+            }
+          }
+        },
+        {
+          "name": "agent_profile",
+          "docs": [
+            "Q-S3-A: the agent's `AgentProfile` PDA in the Registry program. We",
+            "borrow its data, deserialize via `agent_registry::state::AgentProfile`,",
+            "and gate the auto-approval on `cdp_wallet == payload.cdp_recipient`.",
+            "Read-only.",
+            "",
+            "Address validation is done in the handler: it reads the nonce from",
+            "`agent_owner_nonce`, re-derives the 3-seed PDA, and asserts equality",
+            "with `agent_profile.key()`. The `owner` constraint here pins the",
+            "account ownership to Registry. Doing the seed-derivation check in",
+            "the handler (vs. the macro) lets us reuse the deserialized nonce",
+            "for the derivation without a second account-data borrow.",
+            "canonical 3-seed PDA; ownership pinned via `owner = ...`."
+          ]
+        },
+        {
           "name": "replay_guard",
           "docs": [
             "Replay-guard PDA. `init` constraint = duplicate triples atomically",
@@ -260,6 +350,21 @@
       "code": 6007,
       "name": "EscrowAccountTooSmall",
       "msg": "Escrow account data is too small to read TaskEscrow.client at offset 8."
+    },
+    {
+      "code": 6008,
+      "name": "AgentProfileDeserializeFailed",
+      "msg": "AgentProfile account data could not be deserialized as agent_registry::state::AgentProfile \\\n         — the Registry layout has drifted or the account is not a profile."
+    },
+    {
+      "code": 6009,
+      "name": "CdpWalletNotBound",
+      "msg": "agent_profile.cdp_wallet is None — Surface 4 must call \\\n         agent_registry::update_cdp_wallet to bind the agent's CDP wallet \\\n         before CCTP round-trips can auto-approve milestones."
+    },
+    {
+      "code": 6010,
+      "name": "CdpWalletMismatch",
+      "msg": "agent_profile.cdp_wallet does not match payload.cdp_recipient — the \\\n         Base-side x402 settle was delivered to a different EVM address than \\\n         the one bound to this agent."
     }
   ],
   "types": [
@@ -325,8 +430,9 @@
     {
       "name": "ReflexHookPayload",
       "docs": [
-        "IC-4 payload — verbatim layout from the master spec.",
+        "IC-4 payload — extended layout (Q-S3-A).",
         "",
+        "Master spec (frozen day 1):",
         "```rust",
         "pub struct ReflexHookPayload {",
         "pub escrow_pda: Pubkey,           // AEP Settlement escrow",
@@ -336,7 +442,17 @@
         "}",
         "```",
         "",
-        "Borsh-serialized size: 32 + 1 + 32 + 8 = **73 bytes**."
+        "Q-S3-A extension: `cdp_recipient: [u8; 20]` carries the Base-side EVM",
+        "address the burn message was destined for. The Hook compares this",
+        "value to the agent's on-chain `agent_profile.cdp_wallet` binding before",
+        "CPI'ing into Settlement. Adding the field is a coordinated change with",
+        "Surface 4 (which constructs the burn message on Base) — the master",
+        "spec's IC-4 freeze rule (master line 77) requires a written ADR + sign-",
+        "off from affected owners; this code is the Solana side of that ADR.",
+        "Until Surface 4 ships the matching encoder, the field is supplied by",
+        "the relayer fallback as the agent's CDP wallet bytes.",
+        "",
+        "Borsh-serialized size: 32 + 1 + 32 + 8 + 20 = **93 bytes**."
       ],
       "type": {
         "kind": "struct",
@@ -380,6 +496,21 @@
               "different number."
             ],
             "type": "u64"
+          },
+          {
+            "name": "cdp_recipient",
+            "docs": [
+              "Q-S3-A: the Base-side EVM address that received the x402 settle",
+              "payment. The Hook reads `agent_profile.cdp_wallet` from Registry",
+              "and requires it equals this value before approving the milestone.",
+              "20 bytes is the canonical EVM address width."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                20
+              ]
+            }
           }
         ]
       }

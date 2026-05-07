@@ -16,8 +16,15 @@ anchor-spl = "=0.31.1"
 # adding a `cpi` Cargo feature to settlement (no source change, but a manifest
 # edit). Instead we issue the CPI via raw `solana_program::instruction::Instruction`
 # with the canonical Anchor 8-byte discriminator (sha256("global:approve_milestone")[..8])
-# and a little-endian Borsh body. This keeps the dependency footprint to
-# anchor-lang/anchor-spl only, and the on-disk Settlement program is unchanged.
+# and a little-endian Borsh body. This keeps the Settlement on-disk binary
+# unchanged.
+#
+# Q-S3-A: the Hook reads `agent_profile.cdp_wallet` from Registry to gate
+# auto-approval. Pulling Registry in with `no-entrypoint` keeps Registry's
+# binary untouched (its `entrypoint!` is suppressed for the dependent build
+# only) while giving us the typed `AgentProfile` Borsh layout — far more
+# robust than chasing a hand-computed offset through Vec<String> fields.
+agent-registry = { path = "../agent-registry", features = ["no-entrypoint", "cpi"] }
 
 [lib]
 crate-type = ["cdylib", "lib"]
@@ -33,8 +40,7 @@ default = []
 [dev-dependencies]
 proptest = "1"
 
-[profile.release]
-overflow-checks = true
-lto = true
-codegen-units = 1
-opt-level = 3
+# Release profile is owned by the workspace root's `Cargo.toml` and tuned for
+# minimum BPF binary size (Q-S3 spec target 5–10 KB). Per-package
+# `[profile.*]` entries in workspace member crates are silently ignored by
+# Cargo; declaring one here would only mislead a reader.

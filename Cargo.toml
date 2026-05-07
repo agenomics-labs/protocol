@@ -8,10 +8,26 @@ members = [
 resolver = "2"
 
 [profile.release]
-overflow-checks = true
-lto = true
+# Surface 3 (Q-S3, "cctp_hook.so binary size"): the workspace release profile
+# is tuned for the smallest possible BPF binary on the Hook program (215 KB →
+# spec target 5–10 KB). The settings below are size-over-speed; for the AEP
+# programs the impact is negligible since their hot path is the runtime / SBF
+# VM, not the compiler-level micro-optimizations.
+#   - codegen-units = 1   : single LLVM unit lets cross-function inlining
+#                           and dead-code-elimination see the whole crate.
+#   - lto = true          : link-time optimization across the dep graph;
+#                           strips the bulk of unused Anchor / SPL helpers.
+#   - strip = "symbols"   : drops symbol names + debug info from the .so;
+#                           the BPF runtime needs neither.
+#   - opt-level = "z"     : optimize for size first, then speed second.
+#   - overflow-checks     : KEPT ON for security (see SEC-11 / ADR-075).
+#                           The size penalty is small relative to the
+#                           audit-bypass risk of disabling it.
 codegen-units = 1
-opt-level = 3
+lto = true
+strip = "symbols"
+opt-level = "z"
+overflow-checks = true
 
 [profile.release-with-logs]
 inherits = "release"

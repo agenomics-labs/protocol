@@ -23,11 +23,13 @@ pub const MIGRATION_HEADROOM: usize = 64;
 
 /// AgentProfile: The core account representing a registered agent.
 ///
-/// ADR-040: Account space is explicitly calculated as 1415 bytes
+/// ADR-040: Account space is explicitly calculated as 1436 bytes
 /// (1243 baseline + 162 bytes for the ADR-060 manifest fields:
 ///  manifest_cid 64 + manifest_hash 32 + manifest_signature 64 + manifest_version 2 = 162,
 ///  + 1 byte for ADR-096 version: u8 + 8 bytes for ADR-097 registration_nonce: u64
-///  + 1 byte for AUD-004 cleared_count: u8 = 1415).
+///  + 1 byte for AUD-004 cleared_count: u8 + 21 bytes for Q-S3-A
+///  cdp_wallet: Option<[u8; 20]> (1-byte discriminant + 20-byte EVM address)
+///  = 1436).
 ///
 /// AUD-007 (PR-Q): the legacy `total_tasks_completed: u64`, `total_earnings: u64`,
 /// and `avg_rating: u8` fields were removed. PR-G (AUD-001/002) had already
@@ -112,11 +114,27 @@ pub struct AgentProfile {
     // bumped from 0 → 1 → 2 → 3 (terminal Retired). Existing profiles default
     // to 0 via the `realloc::zero = true` migration constraint.
     pub cleared_count: u8,               // 1 byte
+    // Q-S3-A (Surface 3 / Surface 4 binding): on-chain pointer to the CDP
+    // (Coinbase Developer Platform) Server Wallet that this agent uses on
+    // Base for x402 settlements. The CCTP V2 Hook reads this field on the
+    // post-mint approval path and asserts it matches the IC-4 payload's
+    // recipient before CPIing into Settlement::approve_milestone. Until
+    // Surface 4 wires the binding writer, the field stays `None` and the
+    // Hook's binding check rejects (closed-by-default).
+    //
+    // Encoding: `Option<[u8; 20]>` serializes as a 1-byte Borsh
+    // discriminant (0x00 = None, 0x01 = Some) followed by a fixed 20-byte
+    // payload (the EVM address); total 21 bytes. New accounts zero-init
+    // via the discriminator-init path → `None`. Existing accounts cross
+    // `migrate_agent_profile(target_version=2)` → `realloc::zero = true`
+    // pads the new bytes with 0x00, which Borsh-decodes as `None`. No
+    // separate explicit zeroing is needed in the migration handler.
+    pub cdp_wallet: Option<[u8; 20]>,    // 1 + 20 = 21 bytes
 }
 
 impl AgentProfile {
-    /// ADR-040 / ADR-096 / ADR-097 / AUD-004 / AUD-007 explicit space calc.
-    /// Do NOT drift from the `space = ...` literal in
+    /// ADR-040 / ADR-096 / ADR-097 / AUD-004 / AUD-007 / Q-S3-A explicit
+    /// space calc. Do NOT drift from the `space = ...` literal in
     /// `contexts.rs::RegisterAgent`.
     ///
     /// Baseline (pre-ADR-060): 1243 bytes (see earlier history).
@@ -126,12 +144,24 @@ impl AgentProfile {
     /// AUD-004 addition: cleared_count u8 = 1 byte.
     /// AUD-007 (PR-Q): replaced 17 bytes (8 + 8 + 1) of dangling fields with a
     /// 17-byte `__padding_aud007: [u8; 17]` padding array. Net delta = 0.
-    /// Total SPACE: 1415 bytes (unchanged across PR-Q on purpose — the
-    /// padding preserves the on-disk layout for existing accounts).
+    /// Q-S3-A addition: cdp_wallet Option<[u8; 20]> = 1 + 20 = 21 bytes.
+    /// Total SPACE: 1436 bytes.
     ///
     /// RegisterAgent allocates 8 (discriminator) + SPACE + MIGRATION_HEADROOM
-    /// (64) = 1487 bytes total on-chain.
-    pub const SPACE: usize = 1415;
+    /// (64) = 1508 bytes total on-chain. Existing on-disk accounts allocated
+    /// at the pre-Q-S3-A 1487-byte size are picked up by
+    /// `migrate_agent_profile(target_version=2)`, whose `realloc = ...`
+    /// constraint resizes them to the new 1508-byte target with `realloc::zero
+    /// = true` zero-padding the appended bytes — which Borsh-decodes as
+    /// `cdp_wallet = None` for the new field.
+    pub const SPACE: usize = 1436;
+
+    /// ADR-096 / Q-S3-A: the schema version corresponding to the layout this
+    /// crate compiles. Bumped from `1` (post-AUD-007) to `2` to mark accounts
+    /// that have crossed the Q-S3-A `cdp_wallet` field addition. New
+    /// registrations stamp this value into `version`; legacy accounts cross
+    /// via `migrate_agent_profile(target_version = AgentProfile::CURRENT_VERSION)`.
+    pub const CURRENT_VERSION: u8 = 2;
 }
 
 /// ADR-097: Per-owner monotonic nonce counter.
@@ -209,4 +239,26 @@ pub fn assert_valid_profile(profile: &AgentProfile) -> Result<()> {
         AgentRegistryError::InvalidClearedCount
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod space_tests {
+    use super::*;
+
+    /// Q-S3-A: the new `cdp_wallet: Option<[u8; 20]>` field adds exactly 21
+    /// serialized bytes (1-byte Borsh discriminant + 20-byte payload). Net
+    /// SPACE = 1415 (pre-Q-S3-A) + 21 = 1436. This test pins the value so
+    /// any future refactor that reorders the field or changes its width
+    /// breaks the build, not the runtime account-init path.
+    #[test]
+    fn q_s3_a_space_includes_cdp_wallet_21_bytes() {
+        const PRE_Q_S3_A_SPACE: usize = 1415;
+        const CDP_WALLET_SERIALIZED: usize = 1 + 20;
+        assert_eq!(
+            AgentProfile::SPACE,
+            PRE_Q_S3_A_SPACE + CDP_WALLET_SERIALIZED,
+            "AgentProfile::SPACE must include 21 bytes for cdp_wallet (Q-S3-A)"
+        );
+        assert_eq!(AgentProfile::SPACE, 1436);
+    }
 }

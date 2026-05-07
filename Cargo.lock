@@ -542,6 +542,7 @@ dependencies = [
 name = "cctp-hook"
 version = "0.1.0"
 dependencies = [
+ "agent-registry",
  "anchor-lang",
  "anchor-spl",
  "proptest",

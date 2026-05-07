@@ -106,6 +106,19 @@ pub struct AgentMigrated {
     pub timestamp: i64,
 }
 
+/// Q-S3-A: emitted when `update_cdp_wallet` mutates the CDP-wallet binding
+/// read by the Surface-3 CCTP Hook. Indexers can use this to track the
+/// agent ↔ CDP-wallet mapping over time and surface rotations on the
+/// dashboard. `old_wallet` is `None` for the first binding; `new_wallet`
+/// is `None` when the binding is cleared (e.g. session end).
+#[event]
+pub struct CdpWalletUpdated {
+    pub authority: Pubkey,
+    pub old_wallet: Option<[u8; 20]>,
+    pub new_wallet: Option<[u8; 20]>,
+    pub timestamp: i64,
+}
+
 /// ADR-094: emitted when `propose_reputation_delta` successfully applies a
 /// validated delta. Subscribers (indexers, governance dashboards) can track
 /// every reputation change through this single event, regardless of the

@@ -13,8 +13,9 @@
 
 use anchor_lang::prelude::*;
 
-/// IC-4 payload — verbatim layout from the master spec.
+/// IC-4 payload — extended layout (Q-S3-A).
 ///
+/// Master spec (frozen day 1):
 /// ```rust
 /// pub struct ReflexHookPayload {
 ///     pub escrow_pda: Pubkey,           // AEP Settlement escrow
@@ -24,7 +25,17 @@ use anchor_lang::prelude::*;
 /// }
 /// ```
 ///
-/// Borsh-serialized size: 32 + 1 + 32 + 8 = **73 bytes**.
+/// Q-S3-A extension: `cdp_recipient: [u8; 20]` carries the Base-side EVM
+/// address the burn message was destined for. The Hook compares this
+/// value to the agent's on-chain `agent_profile.cdp_wallet` binding before
+/// CPI'ing into Settlement. Adding the field is a coordinated change with
+/// Surface 4 (which constructs the burn message on Base) — the master
+/// spec's IC-4 freeze rule (master line 77) requires a written ADR + sign-
+/// off from affected owners; this code is the Solana side of that ADR.
+/// Until Surface 4 ships the matching encoder, the field is supplied by
+/// the relayer fallback as the agent's CDP wallet bytes.
+///
+/// Borsh-serialized size: 32 + 1 + 32 + 8 + 20 = **93 bytes**.
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq, Eq)]
 pub struct ReflexHookPayload {
     /// PDA of the AEP Settlement escrow whose milestone is being approved.
@@ -45,11 +56,17 @@ pub struct ReflexHookPayload {
     /// already records on the milestone — this field does not authorize a
     /// different number.
     pub amount_returned_micros: u64,
+
+    /// Q-S3-A: the Base-side EVM address that received the x402 settle
+    /// payment. The Hook reads `agent_profile.cdp_wallet` from Registry
+    /// and requires it equals this value before approving the milestone.
+    /// 20 bytes is the canonical EVM address width.
+    pub cdp_recipient: [u8; 20],
 }
 
 impl ReflexHookPayload {
     /// Borsh-serialized byte length.
-    pub const SERIALIZED_LEN: usize = 32 + 1 + 32 + 8;
+    pub const SERIALIZED_LEN: usize = 32 + 1 + 32 + 8 + 20;
 }
 
 #[cfg(test)]
@@ -64,9 +81,12 @@ mod tests {
             milestone_index: 7,
             base_tx_hash: [0xAB; 32],
             amount_returned_micros: 80_000,
+            cdp_recipient: [0x11; 20],
         };
         let bytes = payload.try_to_vec().expect("serialize");
         assert_eq!(bytes.len(), ReflexHookPayload::SERIALIZED_LEN);
+        // Q-S3-A: extended payload is 93 bytes (32+1+32+8+20).
+        assert_eq!(ReflexHookPayload::SERIALIZED_LEN, 93);
     }
 
     #[test]
@@ -76,6 +96,7 @@ mod tests {
             milestone_index: 3,
             base_tx_hash: [0xCD; 32],
             amount_returned_micros: 42_000_000,
+            cdp_recipient: [0xEE; 20],
         };
         let bytes = original.try_to_vec().unwrap();
         let decoded = ReflexHookPayload::try_from_slice(&bytes).unwrap();

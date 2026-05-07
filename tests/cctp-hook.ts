@@ -113,11 +113,14 @@ describe("Surface 3 — cctp-hook program", () => {
   });
 
   // Build a minimal payload object matching the IDL `ReflexHookPayload`.
+  // Q-S3-A: payload now carries `cdp_recipient: [u8; 20]` (Base-side EVM
+  // address); test default is a non-zero placeholder.
   function buildPayload(overrides: Partial<{
     escrowPda: PublicKey;
     milestoneIndex: number;
     baseTxHash: number[];
     amountReturnedMicros: anchor.BN;
+    cdpRecipient: number[];
   }> = {}) {
     return {
       escrowPda: overrides.escrowPda ?? fakeEscrow.publicKey,
@@ -125,7 +128,31 @@ describe("Surface 3 — cctp-hook program", () => {
       baseTxHash: overrides.baseTxHash ?? Array(32).fill(0xab),
       amountReturnedMicros:
         overrides.amountReturnedMicros ?? new anchor.BN(80_000),
+      cdpRecipient: overrides.cdpRecipient ?? Array(20).fill(0xcc),
     };
+  }
+
+  // Q-S3-A: helpers for the Registry-derived accounts the Hook now reads.
+  // The OwnerNonce + AgentProfile PDAs live under the Registry program ID;
+  // we compute the addresses but do not initialize the accounts in the
+  // failure-path tests below — the Hook's `owner = REGISTRY_PROGRAM_ID`
+  // gate fires on the missing-account before the deserialize attempt.
+  function agentOwnerNoncePda(authority: PublicKey): [PublicKey, number] {
+    return PublicKey.findProgramAddressSync(
+      [authority.toBuffer(), Buffer.from("owner-nonce")],
+      REGISTRY_PROGRAM_ID,
+    );
+  }
+  function agentProfilePda(
+    authority: PublicKey,
+    nonce: bigint = 0n,
+  ): [PublicKey, number] {
+    const nonceBuf = Buffer.alloc(8);
+    nonceBuf.writeBigUInt64LE(nonce);
+    return PublicKey.findProgramAddressSync(
+      [authority.toBuffer(), Buffer.from("agent-profile"), nonceBuf],
+      REGISTRY_PROGRAM_ID,
+    );
   }
 
   // Build the standard accounts struct. Settlement / Registry / token-program
@@ -133,10 +160,15 @@ describe("Surface 3 — cctp-hook program", () => {
   // to short-circuit these tests.
   function buildAccounts(overrides: Record<string, PublicKey> = {}) {
     const [hookSigner] = hookSignerPda(agentAuthority.publicKey);
+    const [ownerNonce] = agentOwnerNoncePda(agentAuthority.publicKey);
+    const [profile] = agentProfilePda(agentAuthority.publicKey);
     return {
       payer: payer.publicKey,
       agentAuthority: agentAuthority.publicKey,
       hookSigner,
+      // Q-S3-A: Registry-derived read-only accounts.
+      agentOwnerNonce: overrides.agentOwnerNonce ?? ownerNonce,
+      agentProfile: overrides.agentProfile ?? profile,
       // replay_guard PDA is computed per-payload at the call site.
       escrow: overrides.escrow ?? fakeEscrow.publicKey,
       escrowTokenAccount: overrides.escrowTokenAccount ?? Keypair.generate().publicKey,
@@ -189,15 +221,18 @@ describe("Surface 3 — cctp-hook program", () => {
       // camelCase depending on the build path. Accept either; we only care
       // about set-equality on the IC-4 quartet.
       const fieldSet = new Set(fieldNames);
+      // Q-S3-A: the IC-4 quartet is now a quintet with `cdp_recipient`.
       const expectedSnake = [
         "amount_returned_micros",
         "base_tx_hash",
+        "cdp_recipient",
         "escrow_pda",
         "milestone_index",
       ];
       const expectedCamel = [
         "amountReturnedMicros",
         "baseTxHash",
+        "cdpRecipient",
         "escrowPda",
         "milestoneIndex",
       ];
@@ -253,7 +288,11 @@ describe("Surface 3 — cctp-hook program", () => {
           msg.includes("PayloadEscrowMismatch") ||
             msg.includes("EscrowOwnerMismatch") ||
             msg.includes("ConstraintSeeds") ||
-            msg.includes("ConstraintOwner"),
+            msg.includes("ConstraintOwner") ||
+            // Q-S3-A: with the agent_profile / agent_owner_nonce slots
+            // declared before the escrow slot, the Registry-owner gate now
+            // fires first when the OwnerNonce is uninitialized.
+            msg.includes("AgentProfileDeserializeFailed"),
           `unexpected error: ${msg}`,
         ).to.equal(true);
       }
@@ -284,7 +323,10 @@ describe("Surface 3 — cctp-hook program", () => {
         expect(
           msg.includes("InvalidBaseTxHash") ||
             msg.includes("EscrowOwnerMismatch") ||
-            msg.includes("ConstraintOwner"),
+            msg.includes("ConstraintOwner") ||
+            // Q-S3-A: the agent_profile / agent_owner_nonce gate may now
+            // fire first depending on Anchor's account-validation order.
+            msg.includes("AgentProfileDeserializeFailed"),
           `unexpected error: ${msg}`,
         ).to.equal(true);
       }
@@ -311,7 +353,8 @@ describe("Surface 3 — cctp-hook program", () => {
         expect(
           msg.includes("ZeroAmountReturned") ||
             msg.includes("EscrowOwnerMismatch") ||
-            msg.includes("ConstraintOwner"),
+            msg.includes("ConstraintOwner") ||
+            msg.includes("AgentProfileDeserializeFailed"),
           `unexpected error: ${msg}`,
         ).to.equal(true);
       }
@@ -349,7 +392,8 @@ describe("Surface 3 — cctp-hook program", () => {
           msg.includes("InvalidSettlementProgram") ||
             msg.includes("EscrowOwnerMismatch") ||
             msg.includes("ConstraintAddress") ||
-            msg.includes("ConstraintOwner"),
+            msg.includes("ConstraintOwner") ||
+            msg.includes("AgentProfileDeserializeFailed"),
           `unexpected error: ${msg}`,
         ).to.equal(true);
       }
@@ -380,7 +424,8 @@ describe("Surface 3 — cctp-hook program", () => {
           msg.includes("InvalidRegistryProgram") ||
             msg.includes("EscrowOwnerMismatch") ||
             msg.includes("ConstraintAddress") ||
-            msg.includes("ConstraintOwner"),
+            msg.includes("ConstraintOwner") ||
+            msg.includes("AgentProfileDeserializeFailed"),
           `unexpected error: ${msg}`,
         ).to.equal(true);
       }
@@ -411,7 +456,10 @@ describe("Surface 3 — cctp-hook program", () => {
           msg.includes("EscrowOwnerMismatch") ||
             msg.includes("ConstraintOwner") ||
             msg.includes("AccountNotInitialized") ||
-            msg.includes("AccountOwnedByWrongProgram"),
+            msg.includes("AccountOwnedByWrongProgram") ||
+            // Q-S3-A: agent_owner_nonce / agent_profile gate fires first
+            // when those Registry-derived accounts are uninitialized.
+            msg.includes("AgentProfileDeserializeFailed"),
           `unexpected error: ${msg}`,
         ).to.equal(true);
       }
@@ -450,5 +498,140 @@ describe("Surface 3 — cctp-hook program", () => {
     // base_tx_hash)-seeded PDA cannot be repeated — is provided by Anchor
     // and is exercised in `tests/cctp-hook-replay.ts` once the full
     // session-pool wiring lands (Day 4-7, see file header).
+  });
+
+  // -------------------------------------------------------------------------
+  // Q-S3-A — agent CDP-wallet binding gate
+  // -------------------------------------------------------------------------
+  //
+  // The Hook now reads `agent_profile.cdp_wallet` from the Registry and
+  // requires (a) it is `Some(_)` and (b) it equals the payload's
+  // `cdp_recipient`. The two failure paths below assert the rejection.
+  // The happy-path (matching binding) requires the full Settlement-owned
+  // escrow + session-pool wiring tracked in the file-header note (Q-S3-G);
+  // this suite covers the failure paths reachable without that wiring.
+
+  describe("Q-S3-A: CDP-wallet binding", () => {
+    it("derives the canonical Registry agent_profile + owner_nonce PDAs", () => {
+      // Exercises the helper used below; the addresses are deterministic
+      // under REGISTRY_PROGRAM_ID and the agent's authority.
+      const [oncePda1] = agentOwnerNoncePda(agentAuthority.publicKey);
+      const [oncePda2] = agentOwnerNoncePda(agentAuthority.publicKey);
+      expect(oncePda1.toBase58()).to.equal(oncePda2.toBase58());
+
+      const [profilePda1] = agentProfilePda(agentAuthority.publicKey, 0n);
+      const [profilePda2] = agentProfilePda(agentAuthority.publicKey, 0n);
+      expect(profilePda1.toBase58()).to.equal(profilePda2.toBase58());
+
+      // Different authority → different PDAs.
+      const other = Keypair.generate();
+      const [otherProfile] = agentProfilePda(other.publicKey, 0n);
+      expect(otherProfile.toBase58()).to.not.equal(profilePda1.toBase58());
+    });
+
+    it("rejects when agent_profile is not a Registry-owned account (any-of: Q-S3-A binding gate or earlier escrow gate)", async () => {
+      // The agent_profile slot is `owner = AGENT_REGISTRY_PROGRAM_ID`. We
+      // pass the canonical PDA address but the account doesn't exist on
+      // chain (no `register_agent` was called for this throwaway authority),
+      // so the `owner` constraint surfaces an account-not-initialized /
+      // wrong-owner error. The escrow-owner gate may fire first depending
+      // on Anchor's account-validation order. Either is an acceptable
+      // rejection — the test pins the negative outcome.
+      const payload = buildPayload();
+      const [replayGuard] = hookReplayPda(
+        payload.escrowPda,
+        payload.milestoneIndex,
+        Buffer.from(payload.baseTxHash),
+      );
+      const accounts = { ...buildAccounts(), replayGuard };
+
+      try {
+        await program.methods
+          .autoApproveMilestone(payload as any)
+          .accounts(accounts as any)
+          .signers([payer])
+          .rpc();
+        expect.fail("expected the Hook to reject when agent_profile is uninitialized");
+      } catch (err: any) {
+        const msg = JSON.stringify(err);
+        expect(
+          msg.includes("AgentProfileDeserializeFailed") ||
+            msg.includes("CdpWalletNotBound") ||
+            msg.includes("CdpWalletMismatch") ||
+            msg.includes("EscrowOwnerMismatch") ||
+            msg.includes("ConstraintOwner") ||
+            msg.includes("ConstraintSeeds") ||
+            msg.includes("AccountNotInitialized") ||
+            msg.includes("AccountOwnedByWrongProgram"),
+          `expected a Q-S3-A binding-gate or earlier escrow-gate rejection; got: ${msg}`,
+        ).to.equal(true);
+      }
+    });
+
+    it("rejects when agent_profile address does not match the canonical Registry PDA (any-of)", async () => {
+      // Pass a System-owned random keypair as agent_profile. The Hook's
+      // `owner = AGENT_REGISTRY_PROGRAM_ID` constraint must reject before
+      // any deserialize is attempted.
+      const payload = buildPayload();
+      const [replayGuard] = hookReplayPda(
+        payload.escrowPda,
+        payload.milestoneIndex,
+        Buffer.from(payload.baseTxHash),
+      );
+      const wrongProfile = Keypair.generate().publicKey;
+      const accounts = {
+        ...buildAccounts({ agentProfile: wrongProfile }),
+        replayGuard,
+      };
+
+      try {
+        await program.methods
+          .autoApproveMilestone(payload as any)
+          .accounts(accounts as any)
+          .signers([payer])
+          .rpc();
+        expect.fail("expected the Hook to reject a non-Registry agent_profile");
+      } catch (err: any) {
+        const msg = JSON.stringify(err);
+        expect(
+          msg.includes("AgentProfileDeserializeFailed") ||
+            msg.includes("EscrowOwnerMismatch") ||
+            msg.includes("ConstraintOwner") ||
+            msg.includes("AccountOwnedByWrongProgram") ||
+            msg.includes("AccountNotInitialized"),
+          `expected an owner / not-initialized rejection; got: ${msg}`,
+        ).to.equal(true);
+      }
+    });
+
+    it("declares CdpWalletNotBound and CdpWalletMismatch error variants on the IDL", () => {
+      // Pin the IDL surface so SDK consumers can string-match these
+      // rejections out of program logs even before the happy-path
+      // integration test (Q-S3-G) lands.
+      const idl: any = (program as any).idl;
+      const errs: Array<{ name: string }> = idl.errors ?? [];
+      const names = errs.map((e) => e.name);
+      const hasNotBound =
+        names.includes("CdpWalletNotBound") ||
+        names.includes("cdpWalletNotBound");
+      const hasMismatch =
+        names.includes("CdpWalletMismatch") ||
+        names.includes("cdpWalletMismatch");
+      const hasDeserFailed =
+        names.includes("AgentProfileDeserializeFailed") ||
+        names.includes("agentProfileDeserializeFailed");
+      expect(
+        hasNotBound,
+        `expected CdpWalletNotBound in IDL errors; got ${JSON.stringify(names)}`,
+      ).to.equal(true);
+      expect(
+        hasMismatch,
+        `expected CdpWalletMismatch in IDL errors; got ${JSON.stringify(names)}`,
+      ).to.equal(true);
+      expect(
+        hasDeserFailed,
+        `expected AgentProfileDeserializeFailed in IDL errors; got ${JSON.stringify(names)}`,
+      ).to.equal(true);
+    });
   });
 });

@@ -1100,6 +1100,137 @@
       ]
     },
     {
+      "name": "update_cdp_wallet",
+      "docs": [
+        "Q-S3-A (Surface 3 / Surface 4 binding): set or clear the on-chain",
+        "pointer to the agent's CDP (Coinbase Developer Platform) Server",
+        "Wallet on Base. The CCTP V2 Hook reads this field on the post-mint",
+        "approval path and asserts it matches the IC-4 payload's recipient",
+        "before CPIing into Settlement::approve_milestone.",
+        "",
+        "Authorization: only the agent's `authority` signer may set or clear",
+        "the binding. The seeds + `has_one = authority` constraints in",
+        "`UpdateCdpWallet` enforce this; an attacker cannot use a different",
+        "authority's `OwnerNonce` because the seeds bind both PDAs to the",
+        "signing authority.",
+        "",
+        "`wallet`:",
+        "- `Some([u8; 20])` → bind the agent to this 20-byte EVM address.",
+        "20 bytes is the canonical EVM address width",
+        "(Base ⊆ Ethereum); padding with leading zeros",
+        "is the caller's responsibility for the rare",
+        "case where the upstream representation is",
+        "shorter (e.g. an unhexed nibble string).",
+        "- `None`            → clear the binding. Subsequent Hook calls will",
+        "fail until a new wallet is bound.",
+        "",
+        "Q-S3-A intentionally does NOT cap re-bindings — Surface 4 may rotate",
+        "the CDP wallet per session if the Identity-vault custody policy",
+        "requires it. The replay-guard PDA in the Hook keys idempotency on",
+        "`(escrow, milestone_index, base_tx_hash)`, so a wallet rotation",
+        "never replays a previously-approved milestone.",
+        "",
+        "Emits `CdpWalletUpdated` for indexer / dashboard consumption."
+      ],
+      "discriminator": [
+        70,
+        177,
+        142,
+        54,
+        207,
+        89,
+        187,
+        32
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "agent_profile"
+          ]
+        },
+        {
+          "name": "owner_nonce",
+          "docs": [
+            "ADR-097: Read-only nonce account for `agent_profile` PDA seed."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114,
+                  45,
+                  110,
+                  111,
+                  110,
+                  99,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "agent_profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner_nonce.nonce",
+                "account": "OwnerNonce"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "wallet",
+          "type": {
+            "option": {
+              "array": [
+                "u8",
+                20
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "update_manifest",
       "docs": [
         "ADR-060: publish or rotate the off-chain capability manifest pointer.",
@@ -1722,6 +1853,19 @@
       ]
     },
     {
+      "name": "CdpWalletUpdated",
+      "discriminator": [
+        28,
+        1,
+        167,
+        192,
+        182,
+        131,
+        86,
+        182
+      ]
+    },
+    {
       "name": "ManifestUpdated",
       "discriminator": [
         105,
@@ -2007,11 +2151,13 @@
       "docs": [
         "AgentProfile: The core account representing a registered agent.",
         "",
-        "ADR-040: Account space is explicitly calculated as 1415 bytes",
+        "ADR-040: Account space is explicitly calculated as 1436 bytes",
         "(1243 baseline + 162 bytes for the ADR-060 manifest fields:",
         "manifest_cid 64 + manifest_hash 32 + manifest_signature 64 + manifest_version 2 = 162,",
         "+ 1 byte for ADR-096 version: u8 + 8 bytes for ADR-097 registration_nonce: u64",
-        "+ 1 byte for AUD-004 cleared_count: u8 = 1415).",
+        "+ 1 byte for AUD-004 cleared_count: u8 + 21 bytes for Q-S3-A",
+        "cdp_wallet: Option<[u8; 20]> (1-byte discriminant + 20-byte EVM address)",
+        "= 1436).",
         "",
         "AUD-007 (PR-Q): the legacy `total_tasks_completed: u64`, `total_earnings: u64`,",
         "and `avg_rating: u8` fields were removed. PR-G (AUD-001/002) had already",
@@ -2193,6 +2339,17 @@
           {
             "name": "cleared_count",
             "type": "u8"
+          },
+          {
+            "name": "cdp_wallet",
+            "type": {
+              "option": {
+                "array": [
+                  "u8",
+                  20
+                ]
+              }
+            }
           }
         ]
       }
@@ -2313,6 +2470,51 @@
             "type": {
               "defined": {
                 "name": "AgentStatus"
+              }
+            }
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CdpWalletUpdated",
+      "docs": [
+        "Q-S3-A: emitted when `update_cdp_wallet` mutates the CDP-wallet binding",
+        "read by the Surface-3 CCTP Hook. Indexers can use this to track the",
+        "agent ↔ CDP-wallet mapping over time and surface rotations on the",
+        "dashboard. `old_wallet` is `None` for the first binding; `new_wallet`",
+        "is `None` when the binding is cleared (e.g. session end)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "old_wallet",
+            "type": {
+              "option": {
+                "array": [
+                  "u8",
+                  20
+                ]
+              }
+            }
+          },
+          {
+            "name": "new_wallet",
+            "type": {
+              "option": {
+                "array": [
+                  "u8",
+                  20
+                ]
               }
             }
           },

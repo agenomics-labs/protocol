@@ -117,8 +117,22 @@ pub mod agent_registry {
         agent_profile.manifest_signature = [0u8; 64];
         agent_profile.manifest_version = 0;
 
-        // ADR-096: schema version starts at 0 (initial layout).
+        // ADR-096: schema version starts at 0 (initial layout). The
+        // migration counter exists for accounts that pre-date a layout-
+        // changing PR; fresh registrations are at the current layout
+        // already, but the version counter is intentionally kept at 0 to
+        // preserve the AUD-101 migration test suite's regression surface
+        // (which exercises 0 → N transitions). Operators that want to
+        // mark a fresh account as "current" can run
+        // `migrate_agent_profile(AgentProfile::CURRENT_VERSION)` which
+        // is a near-zero-cost no-op-but-version-bump.
         agent_profile.version = 0;
+        // Q-S3-A: cdp_wallet starts as None. Surface 4 binds the agent to its
+        // CDP Server Wallet via `update_cdp_wallet` after registration.
+        // Note this happens regardless of `version`: the on-disk byte layout
+        // is current, and the `version` counter is purely a migration
+        // bookkeeping value — not a layout selector.
+        agent_profile.cdp_wallet = None;
         // ADR-097: stamp the registration nonce from the owner_nonce account.
         // The nonce is part of the PDA seed so this value must match the seed
         // used to derive the account address (enforced by Anchor's seeds
@@ -724,6 +738,16 @@ pub mod agent_registry {
         // cannot accidentally read stale telemetry.
         profile.__padding_aud007 = [0u8; 17];
 
+        // Q-S3-A: cdp_wallet is a freshly-added Option<[u8; 20]> appended at
+        // the end of the struct. The `realloc::zero = true` constraint on
+        // `MigrateAgentProfile` already zero-pads the appended bytes
+        // (a leading 0x00 Borsh discriminant => `None`); the explicit
+        // assignment below is defense-in-depth so the migration's effect on
+        // Q-S3-A surfaces in code review and survives any future refactor
+        // that reorders the field. New registrations already initialize it
+        // via `register_agent`.
+        profile.cdp_wallet = None;
+
         // AUD-001 / AUD-002 (PR-G): the legacy `update_reputation` had no
         // upper bound on `reputation_score` — pre-migration profiles can
         // carry values up to u64::MAX. Clamp into the new policy range
@@ -753,6 +777,57 @@ pub mod agent_registry {
             old_version,
             new_version: profile.version,
             timestamp: Clock::get()?.unix_timestamp,
+        });
+        Ok(())
+    }
+
+    /// Q-S3-A (Surface 3 / Surface 4 binding): set or clear the on-chain
+    /// pointer to the agent's CDP (Coinbase Developer Platform) Server
+    /// Wallet on Base. The CCTP V2 Hook reads this field on the post-mint
+    /// approval path and asserts it matches the IC-4 payload's recipient
+    /// before CPIing into Settlement::approve_milestone.
+    ///
+    /// Authorization: only the agent's `authority` signer may set or clear
+    /// the binding. The seeds + `has_one = authority` constraints in
+    /// `UpdateCdpWallet` enforce this; an attacker cannot use a different
+    /// authority's `OwnerNonce` because the seeds bind both PDAs to the
+    /// signing authority.
+    ///
+    /// `wallet`:
+    ///   - `Some([u8; 20])` → bind the agent to this 20-byte EVM address.
+    ///                        20 bytes is the canonical EVM address width
+    ///                        (Base ⊆ Ethereum); padding with leading zeros
+    ///                        is the caller's responsibility for the rare
+    ///                        case where the upstream representation is
+    ///                        shorter (e.g. an unhexed nibble string).
+    ///   - `None`            → clear the binding. Subsequent Hook calls will
+    ///                        fail until a new wallet is bound.
+    ///
+    /// Q-S3-A intentionally does NOT cap re-bindings — Surface 4 may rotate
+    /// the CDP wallet per session if the Identity-vault custody policy
+    /// requires it. The replay-guard PDA in the Hook keys idempotency on
+    /// `(escrow, milestone_index, base_tx_hash)`, so a wallet rotation
+    /// never replays a previously-approved milestone.
+    ///
+    /// Emits `CdpWalletUpdated` for indexer / dashboard consumption.
+    pub fn update_cdp_wallet(
+        ctx: Context<UpdateCdpWallet>,
+        wallet: Option<[u8; 20]>,
+    ) -> Result<()> {
+        let agent_profile = &mut ctx.accounts.agent_profile;
+        require!(
+            agent_profile.status != AgentStatus::Retired,
+            AgentRegistryError::InvalidStatusTransition
+        );
+        let old_wallet = agent_profile.cdp_wallet;
+        agent_profile.cdp_wallet = wallet;
+        agent_profile.updated_at = Clock::get()?.unix_timestamp;
+
+        emit!(CdpWalletUpdated {
+            authority: agent_profile.authority,
+            old_wallet,
+            new_wallet: wallet,
+            timestamp: agent_profile.updated_at,
         });
         Ok(())
     }
@@ -1323,25 +1398,26 @@ mod tests {
         assert!(4u8 > MAX_CLEARED, "values above 3 must trip the invariant");
     }
 
-    /// AUD-004 + ADR-040 / ADR-096: explicit space calc bumped to 1415 to
-    /// accommodate the new `cleared_count: u8` field.
+    /// AUD-004 + ADR-040 / ADR-096 / Q-S3-A: explicit space calc.
+    /// 1414 (pre-AUD-004) + 1 (cleared_count u8) = 1415 (AUD-004 floor).
+    /// + 21 (Q-S3-A cdp_wallet Option<[u8; 20]>) = 1436 (current).
     #[test]
     fn aud_004_account_space_bumped_for_cleared_count() {
-        // 1414 (pre-AUD-004) + 1 (cleared_count u8) = 1415
-        assert_eq!(AgentProfile::SPACE, 1415);
+        assert_eq!(AgentProfile::SPACE, 1436);
     }
 
     // ================================================================
     // ADR-060: capability manifest fields + update_manifest
     // ================================================================
 
-    /// ADR-040 / ADR-096 / ADR-097 / AUD-004 invariant: explicit space calc
-    /// matches the serialized-size floor.
+    /// ADR-040 / ADR-096 / ADR-097 / AUD-004 / Q-S3-A invariant: explicit
+    /// space calc matches the serialized-size floor.
     /// Baseline 1243 + 162 (ADR-060) + 1 (ADR-096 version u8) + 8 (ADR-097
-    /// registration_nonce u64) + 1 (AUD-004 cleared_count u8) = 1415.
+    /// registration_nonce u64) + 1 (AUD-004 cleared_count u8)
+    /// + 21 (Q-S3-A cdp_wallet Option<[u8; 20]>) = 1436.
     #[test]
     fn adr_060_account_space_matches_explicit_total() {
-        assert_eq!(AgentProfile::SPACE, 1415);
+        assert_eq!(AgentProfile::SPACE, 1436);
     }
 
     /// ADR-060 §2: CID field is 64 bytes. M5 resolved [u8; 64] to fit
@@ -1521,14 +1597,15 @@ mod tests {
         assert_eq!(MIGRATION_HEADROOM, 64);
     }
 
-    /// ADR-096: space formula includes discriminator + SPACE + headroom.
+    /// ADR-096 / Q-S3-A: space formula includes discriminator + SPACE +
+    /// headroom.
     #[test]
     fn adr_096_total_allocated_space() {
         use crate::state::MIGRATION_HEADROOM;
         let total = 8 + AgentProfile::SPACE + MIGRATION_HEADROOM;
-        // 8 (discriminator) + 1415 (SPACE, post-AUD-004 cleared_count) +
-        // 64 (headroom) = 1487.
-        assert_eq!(total, 1487);
+        // 8 (discriminator) + 1436 (SPACE, post-Q-S3-A cdp_wallet) +
+        // 64 (headroom) = 1508.
+        assert_eq!(total, 1508);
     }
 
     // ================================================================
@@ -1824,6 +1901,10 @@ mod tests {
             version: 0,
             registration_nonce: 0,
             cleared_count: 0,
+            // Q-S3-A: fixtures default to None — `assert_valid_profile`
+            // does not read this field, so the value is irrelevant to the
+            // invariants this helper exercises.
+            cdp_wallet: None,
         }
     }
 
@@ -1978,15 +2059,17 @@ mod tests {
             "post-migration padding must be zero regardless of prior bytes");
     }
 
-    /// AUD-007 / ADR-040: the SPACE constant is unchanged at 1415 bytes
-    /// across PR-Q. The 17 bytes of removed fields are replaced 1:1 by 17
-    /// bytes of `__padding_aud007` padding. If this test fails after PR-Q,
-    /// the layout is no longer compatible with existing accounts.
+    /// AUD-007 / ADR-040 / Q-S3-A: the SPACE constant was 1415 bytes after
+    /// PR-Q (the 17 bytes of removed fields were replaced 1:1 by 17 bytes
+    /// of `__padding_aud007` padding). Q-S3-A appends a 21-byte
+    /// `cdp_wallet: Option<[u8; 20]>` at the end → 1436. The test pins the
+    /// post-Q-S3-A value; any future PR that drifts the layout breaks the
+    /// build, not the runtime account-init path.
     #[test]
     fn aud_007_space_constant_unchanged_across_pr_q() {
         // 1414 (pre-AUD-004) + 1 (cleared_count u8) = 1415 (post-AUD-004,
-        // unchanged by AUD-007 because the byte budget swap is even).
-        assert_eq!(AgentProfile::SPACE, 1415);
+        // unchanged across PR-Q). + 21 (Q-S3-A cdp_wallet) = 1436 (current).
+        assert_eq!(AgentProfile::SPACE, 1436);
     }
 
     // ================================================================

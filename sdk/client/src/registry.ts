@@ -185,4 +185,64 @@ export class AgentRegistryClient {
     // ADR-088: typed via `Program<AgentRegistry>.account.ownerNonce`.
     return this.program.account.ownerNonce.fetch(pda);
   }
+
+  /**
+   * Q-S3-A: read the CDP-wallet binding for an agent profile.
+   *
+   * Returns the 20-byte EVM address bound to this agent (via
+   * `update_cdp_wallet`), or `null` when no binding has been set. The
+   * Surface-3 CCTP Hook reads this same field and refuses to auto-approve
+   * milestones for an agent whose binding is `None` or does not match the
+   * IC-4 payload's `cdp_recipient`.
+   *
+   * @example
+   *   const wallet = await client.fetchCdpWallet(authority, 0n);
+   *   if (wallet === null) {
+   *     // no binding — Surface 4 has not yet bound this agent's CDP wallet
+   *   } else {
+   *     // wallet is a 20-byte Uint8Array (EVM address)
+   *   }
+   */
+  async fetchCdpWallet(
+    authority: PublicKey,
+    nonce: bigint,
+  ): Promise<Uint8Array | null> {
+    const profile = (await this.fetchProfile(authority, nonce)) as any;
+    const raw = profile.cdpWallet;
+    if (raw == null) return null;
+    // Anchor's TS coder decodes [u8; 20] as a Buffer or number[]; normalize
+    // to Uint8Array for a stable surface across Anchor versions.
+    return new Uint8Array(raw as ArrayLike<number>);
+  }
+
+  /**
+   * Q-S3-A: build a transaction that sets or clears the agent's CDP-wallet
+   * binding. Caller signs with the agent's `authority` keypair.
+   *
+   * @param authority - The agent's authority signer (must equal the
+   *                    profile's `authority` field on chain).
+   * @param nonce     - The agent's registration nonce (ADR-097); usually
+   *                    `0n` for first-time registrations. Use
+   *                    `fetchOwnerNonce` to read the current value if the
+   *                    profile has gone through a deregister cycle.
+   * @param wallet    - The 20-byte EVM address to bind, or `null` to clear
+   *                    the binding. Wallet must be exactly 20 bytes; passing
+   *                    a different length yields an Anchor coder error at
+   *                    `.rpc()` time.
+   * @returns         - The instruction builder; caller can `.rpc()`,
+   *                    `.transaction()`, or `.instruction()` per their
+   *                    transaction-construction needs.
+   */
+  updateCdpWalletIx(authority: PublicKey, nonce: bigint, wallet: Uint8Array | null) {
+    const profile = this.profilePda(authority, nonce);
+    const ownerNonce = this.ownerNoncePda(authority);
+    const arg = wallet === null ? null : Array.from(wallet);
+    return this.program.methods
+      .updateCdpWallet(arg as any)
+      .accounts({
+        authority,
+        ownerNonce,
+        agentProfile: profile,
+      } as any);
+  }
 }

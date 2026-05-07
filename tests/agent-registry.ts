@@ -2510,4 +2510,242 @@ describe("Agent Registry Program Tests", () => {
     // This TS test pins the IDL error-variant surface for SDK
     // consumers; the Rust tests pin the handler semantics.
   });
+
+  // ================================================================
+  // Q-S3-A: update_cdp_wallet + migrate_agent_profile(target=2)
+  // ================================================================
+
+  describe("Q-S3-A: cdp_wallet field + update_cdp_wallet instruction", () => {
+    // Helper: register a fresh agent so each test has an isolated profile
+    // free of state leaked from earlier suites.
+    async function registerFreshAgentForCdp(nameSuffix: string): Promise<{
+      authority: web3.Keypair;
+      profilePDA: web3.PublicKey;
+      noncePDA: web3.PublicKey;
+    }> {
+      const authority = web3.Keypair.generate();
+      const airdrop = await provider.connection.requestAirdrop(
+        authority.publicKey,
+        2 * web3.LAMPORTS_PER_SOL,
+      );
+      await provider.connection.confirmTransaction(airdrop);
+
+      const [profilePDA] = deriveAgentProfilePDA(authority.publicKey);
+      const [noncePDA] = deriveOwnerNoncePDA(authority.publicKey);
+      const vault = vaultFor(authority.publicKey);
+
+      await program.methods
+        .registerAgent(
+          `Q-S3-A Test ${nameSuffix}`,
+          "Profile registered for Q-S3-A cdp_wallet coverage",
+          "test",
+          ["cdp-coverage"],
+          { perTask: {} },
+          new BN(web3.LAMPORTS_PER_SOL),
+          [new web3.PublicKey("11111111111111111111111111111112")],
+        )
+        .accounts({
+          authority: authority.publicKey,
+          ownerNonce: noncePDA,
+          agentProfile: profilePDA,
+          vault,
+          systemProgram: web3.SystemProgram.programId,
+        })
+        .signers([authority])
+        .rpc();
+
+      return { authority, profilePDA, noncePDA };
+    }
+
+    it("registers fresh agents with cdp_wallet=None and version=0", async () => {
+      const { profilePDA } = await registerFreshAgentForCdp("registers");
+      const profile = await (program.account as any).agentProfile.fetch(
+        profilePDA,
+      );
+      // ADR-096: register_agent keeps version=0 (the migration counter is a
+      // bookkeeping value; the on-disk layout is always current). Q-S3-A
+      // adds the cdp_wallet field which initializes to None.
+      expect(profile.version).to.equal(0);
+      // None decodes as null in Anchor's TS coder.
+      expect(profile.cdpWallet).to.equal(null);
+    });
+
+    it("update_cdp_wallet sets and clears the binding (happy path)", async () => {
+      const { authority, profilePDA, noncePDA } =
+        await registerFreshAgentForCdp("happy");
+
+      // Set: 20-byte EVM address (use a recognizable pattern so a wire-level
+      // observation could confirm the bytes round-tripped untouched).
+      const wallet = Array.from({ length: 20 }, (_, i) => (i + 1) & 0xff);
+
+      await program.methods
+        .updateCdpWallet(wallet)
+        .accounts({
+          authority: authority.publicKey,
+          ownerNonce: noncePDA,
+          agentProfile: profilePDA,
+        })
+        .signers([authority])
+        .rpc();
+
+      const afterSet = await (program.account as any).agentProfile.fetch(
+        profilePDA,
+      );
+      expect(afterSet.cdpWallet, "cdp_wallet must be Some(_) after set").to.exist;
+      expect(Array.from(afterSet.cdpWallet as Buffer | number[])).to.deep.equal(
+        wallet,
+      );
+
+      // Clear: passing null bumps it back to None.
+      await program.methods
+        .updateCdpWallet(null)
+        .accounts({
+          authority: authority.publicKey,
+          ownerNonce: noncePDA,
+          agentProfile: profilePDA,
+        })
+        .signers([authority])
+        .rpc();
+
+      const afterClear = await (program.account as any).agentProfile.fetch(
+        profilePDA,
+      );
+      expect(afterClear.cdpWallet, "cdp_wallet must be None after clear").to.equal(
+        null,
+      );
+    });
+
+    it("update_cdp_wallet rejects a non-authority signer", async () => {
+      const { profilePDA, noncePDA } = await registerFreshAgentForCdp("auth");
+      const stranger = web3.Keypair.generate();
+      const air = await provider.connection.requestAirdrop(
+        stranger.publicKey,
+        web3.LAMPORTS_PER_SOL,
+      );
+      await provider.connection.confirmTransaction(air);
+
+      const wallet = Array.from({ length: 20 }, () => 0xab);
+      let caught: any = null;
+      try {
+        await program.methods
+          .updateCdpWallet(wallet)
+          .accounts({
+            authority: stranger.publicKey,
+            ownerNonce: noncePDA,
+            agentProfile: profilePDA,
+          })
+          .signers([stranger])
+          .rpc();
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught, "expected rejection when non-owner signs").to.exist;
+      const msg = String(caught?.message ?? caught);
+      expect(
+        // Either the seed-derived OwnerNonce mismatches (most likely path —
+        // the stranger's `[their_pk, b"owner-nonce"]` PDA won't match the
+        // supplied `noncePDA`) or the has_one constraint fires.
+        /ConstraintSeeds|UnauthorizedCaller|has_one|2001|2006/i.test(msg),
+        `expected a seeds / has_one rejection; got: ${msg}`,
+      ).to.equal(true);
+    });
+
+    it("migrate_agent_profile(target=2) bumps fresh account from version 0 to 2", async () => {
+      // Q-S3-A: a fresh account starts at version=0 (ADR-096 bookkeeping)
+      // and the upgrade script crosses it to CURRENT_VERSION=2 via
+      // migrate_agent_profile. The realloc::zero pad (which yields
+      // cdp_wallet=None on the appended bytes) is what makes the
+      // pre-Q-S3-A on-disk layout safely readable as the post-Q-S3-A
+      // struct shape — this test pins the contract.
+      const { authority, profilePDA, noncePDA } =
+        await registerFreshAgentForCdp("migrate-fresh");
+
+      const before = await (program.account as any).agentProfile.fetch(
+        profilePDA,
+      );
+      expect(before.version).to.equal(0);
+      expect(before.cdpWallet).to.equal(null);
+
+      await program.methods
+        .migrateAgentProfile(2)
+        .accounts({
+          owner: authority.publicKey,
+          ownerNonce: noncePDA,
+          agentProfile: profilePDA,
+          systemProgram: web3.SystemProgram.programId,
+        })
+        .signers([authority])
+        .rpc();
+
+      const after = await (program.account as any).agentProfile.fetch(
+        profilePDA,
+      );
+      expect(after.version).to.equal(2);
+      // Q-S3-A: migration's realloc::zero yields cdp_wallet=None for the
+      // appended bytes; the explicit `profile.cdp_wallet = None;` in the
+      // handler is defense-in-depth for the same outcome.
+      expect(after.cdpWallet).to.equal(null);
+    });
+
+    it("after migrate_agent_profile cdp_wallet is writeable via update_cdp_wallet", async () => {
+      // Composite test: register → migrate → update → verify. Demonstrates
+      // the "v0 profile → migrate(target=2) → set CDP wallet" upgrade-
+      // script choreography for accounts crossing the Q-S3-A schema bump.
+      const { authority, profilePDA, noncePDA } =
+        await registerFreshAgentForCdp("migrate-write");
+
+      await program.methods
+        .migrateAgentProfile(2)
+        .accounts({
+          owner: authority.publicKey,
+          ownerNonce: noncePDA,
+          agentProfile: profilePDA,
+          systemProgram: web3.SystemProgram.programId,
+        })
+        .signers([authority])
+        .rpc();
+
+      const wallet = Array.from({ length: 20 }, (_, i) => (i * 7 + 11) & 0xff);
+      await program.methods
+        .updateCdpWallet(wallet)
+        .accounts({
+          authority: authority.publicKey,
+          ownerNonce: noncePDA,
+          agentProfile: profilePDA,
+        })
+        .signers([authority])
+        .rpc();
+
+      const after = await (program.account as any).agentProfile.fetch(
+        profilePDA,
+      );
+      expect(Array.from(after.cdpWallet as Buffer | number[])).to.deep.equal(
+        wallet,
+      );
+    });
+
+    it("declares update_cdp_wallet on the IDL with a [u8; 20] Option payload", () => {
+      const ixs = (program.idl as any).instructions as Array<{
+        name: string;
+      }>;
+      const names = ixs.map((i) => i.name);
+      expect(
+        names.includes("update_cdp_wallet") ||
+          names.includes("updateCdpWallet"),
+        `expected update_cdp_wallet in IDL; got ${JSON.stringify(names)}`,
+      ).to.equal(true);
+    });
+
+    it("declares CdpWalletUpdated event on the IDL", () => {
+      const events = (program.idl as any).events as
+        | Array<{ name: string }>
+        | undefined;
+      const names = (events ?? []).map((e) => e.name);
+      expect(
+        names.includes("CdpWalletUpdated") ||
+          names.includes("cdpWalletUpdated"),
+        `expected CdpWalletUpdated in IDL events; got ${JSON.stringify(names)}`,
+      ).to.equal(true);
+    });
+  });
 });

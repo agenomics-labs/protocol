@@ -393,6 +393,33 @@ pub struct UpdateManifest<'info> {
     pub instructions_sysvar: UncheckedAccount<'info>,
 }
 
+/// Q-S3-A: Context for `update_cdp_wallet`. Only the registered agent's
+/// `authority` may set or clear the CDP-wallet binding read by the
+/// Surface-3 Hook. The 3-seed `agent_profile` derivation (ADR-097) and the
+/// `has_one = authority` constraint together prevent cross-account reuse —
+/// Bob cannot pass Alice's `OwnerNonce`, and even if he could the
+/// `agent_profile` would deserialize with a non-matching `authority` field
+/// and the constraint would reject before the handler runs.
+#[derive(Accounts)]
+pub struct UpdateCdpWallet<'info> {
+    pub authority: Signer<'info>,
+
+    /// ADR-097: Read-only nonce account for `agent_profile` PDA seed.
+    #[account(
+        seeds = [authority.key().as_ref(), b"owner-nonce"],
+        bump
+    )]
+    pub owner_nonce: Account<'info, OwnerNonce>,
+
+    #[account(
+        mut,
+        has_one = authority @ AgentRegistryError::UnauthorizedCaller,
+        seeds = [authority.key().as_ref(), b"agent-profile", &owner_nonce.nonce.to_le_bytes()],
+        bump = agent_profile.bump
+    )]
+    pub agent_profile: Account<'info, AgentProfile>,
+}
+
 /// ADR-096: Context for `migrate_agent_profile`.
 ///
 /// Resizes an existing `AgentProfile` to the current canonical size

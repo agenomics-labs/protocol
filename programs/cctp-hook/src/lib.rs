@@ -34,6 +34,12 @@ use anchor_lang::prelude::*;
 use anchor_lang::solana_program::instruction::{AccountMeta, Instruction};
 use anchor_lang::solana_program::program::invoke_signed;
 
+// Q-S3-A: pull the Registry's `AgentProfile` account type (with
+// `no-entrypoint` so Registry's `entrypoint!` is not redeclared in this
+// program's binary). The Registry crate is unchanged on disk; we only
+// inherit its struct layout for the typed read.
+use agent_registry::state::AgentProfile;
+
 pub mod errors;
 pub mod events;
 pub mod payload;
@@ -144,27 +150,72 @@ pub mod cctp_hook {
         let escrow_client = Pubkey::new_from_array(client_bytes);
         drop(escrow_data); // release borrow before CPI
 
-        // ---- 3. Agent CDP-wallet binding validation (placeholder) ----
+        // ---- 3. Agent CDP-wallet binding validation (Q-S3-A) ----
         //
-        // The full IC-4 contract requires verifying that the payload signer
-        // matches a registered agent's CDP wallet binding in AEP Registry.
-        // The on-chain location of that binding is **Open Question Q-S3-A**
-        // (Surface 3 ↔ Surface 4 interface, not in IC-1..IC-4).
+        // The IC-4 contract requires that the auto-approval only fires for an
+        // agent whose CDP Server Wallet on Base is registered on-chain. The
+        // Registry's `AgentProfile.cdp_wallet` field is the source of truth
+        // (set by Surface 4 via `update_cdp_wallet`); the Hook reads it here
+        // and (a) requires it is `Some(_)` — i.e. a binding exists, and (b)
+        // matches the payload's `cdp_recipient` — i.e. the address that the
+        // Base-side x402 settle was delivered to.
         //
-        // Until the binding writer is wired, we enforce that the
-        // `agent_authority` account passed in is the same key the Hook signer
-        // PDA was derived from — this is the address the upstream
-        // `create_escrow` used as the escrow's `client`, and the only address
-        // the `hook_signer` PDA can sign for. That is *not* yet equivalent to
-        // a CDP-wallet binding check, but it establishes the seam.
-        //
-        // TODO(surface-4): replace with a Registry profile lookup that
-        // validates `agent_profile.cdp_wallet_binding == payload.signer` (or
-        // the equivalent field name once Q-S3-A is resolved).
+        // Defense-in-depth: the existing escrow-client check below still
+        // gates that the upstream `create_escrow` listed `hook_signer
+        // (agent_authority)` as the escrow's `client`, so the
+        // `agent_authority` argument is bound to the escrow being approved
+        // — an attacker cannot pass an arbitrary agent_authority whose
+        // profile happens to carry a Some(cdp_wallet) and "approve" some
+        // other agent's escrow.
         require!(
             escrow_client == ctx.accounts.hook_signer.key(),
             HookError::EscrowClientMismatch
         );
+
+        // Typed read via Registry's `AgentProfile`.
+        //
+        // Address validation: `agent_owner_nonce` is pinned by the accounts
+        // struct's `seeds = [agent_authority, b"owner-nonce"]` constraint
+        // under `AGENT_REGISTRY_PROGRAM_ID`, so it must be the canonical
+        // OwnerNonce PDA for `agent_authority`. We read the `nonce: u64`
+        // (first field after the 8-byte Anchor discriminator), derive the
+        // expected 3-seed `agent_profile` PDA address, and require equality
+        // with the supplied account. The `owner` constraint already pinned
+        // ownership to Registry, so satisfying both means the bytes we
+        // deserialize below are the canonical profile.
+        let nonce_data = ctx.accounts.agent_owner_nonce.try_borrow_data()?;
+        require!(
+            nonce_data.len() >= 8 + 8,
+            HookError::AgentProfileDeserializeFailed
+        );
+        let mut nonce_bytes = [0u8; 8];
+        nonce_bytes.copy_from_slice(&nonce_data[8..16]);
+        drop(nonce_data);
+
+        let (expected_profile, _bump) = Pubkey::find_program_address(
+            &[
+                ctx.accounts.agent_authority.key().as_ref(),
+                b"agent-profile",
+                &nonce_bytes,
+            ],
+            &AGENT_REGISTRY_PROGRAM_ID,
+        );
+        require!(
+            ctx.accounts.agent_profile.key() == expected_profile,
+            HookError::AgentProfileDeserializeFailed
+        );
+
+        let profile_data = ctx.accounts.agent_profile.try_borrow_data()?;
+        let profile = AgentProfile::try_deserialize(&mut profile_data.as_ref())
+            .map_err(|_| error!(HookError::AgentProfileDeserializeFailed))?;
+        let bound_wallet = profile
+            .cdp_wallet
+            .ok_or_else(|| error!(HookError::CdpWalletNotBound))?;
+        require!(
+            bound_wallet == payload.cdp_recipient,
+            HookError::CdpWalletMismatch
+        );
+        drop(profile_data); // release borrow before CPI
 
         // ---- 4. Initialize the replay record (idempotency) ----
         //
@@ -285,6 +336,40 @@ pub struct AutoApproveMilestone<'info> {
         bump,
     )]
     pub hook_signer: UncheckedAccount<'info>,
+
+    /// Q-S3-A: the agent's `OwnerNonce` PDA in the Registry program. Used
+    /// to derive `agent_profile`'s 3-seed PDA per ADR-097
+    /// (`[authority, b"agent-profile", nonce-le]`). Read-only — we never
+    /// mutate Registry state from the Hook.
+    /// CHECK: address pinned by `seeds = [agent_authority, b"owner-nonce"]`
+    /// under the Registry program ID, plus `owner = ...` to ensure the
+    /// account is initialized and owned by Registry (not just an empty
+    /// PDA address that happens to satisfy seeds).
+    #[account(
+        owner = AGENT_REGISTRY_PROGRAM_ID @ HookError::AgentProfileDeserializeFailed,
+        seeds = [agent_authority.key().as_ref(), b"owner-nonce"],
+        bump,
+        seeds::program = AGENT_REGISTRY_PROGRAM_ID,
+    )]
+    pub agent_owner_nonce: UncheckedAccount<'info>,
+
+    /// Q-S3-A: the agent's `AgentProfile` PDA in the Registry program. We
+    /// borrow its data, deserialize via `agent_registry::state::AgentProfile`,
+    /// and gate the auto-approval on `cdp_wallet == payload.cdp_recipient`.
+    /// Read-only.
+    ///
+    /// Address validation is done in the handler: it reads the nonce from
+    /// `agent_owner_nonce`, re-derives the 3-seed PDA, and asserts equality
+    /// with `agent_profile.key()`. The `owner` constraint here pins the
+    /// account ownership to Registry. Doing the seed-derivation check in
+    /// the handler (vs. the macro) lets us reuse the deserialized nonce
+    /// for the derivation without a second account-data borrow.
+    /// CHECK: address validated in-handler against the OwnerNonce-derived
+    /// canonical 3-seed PDA; ownership pinned via `owner = ...`.
+    #[account(
+        owner = AGENT_REGISTRY_PROGRAM_ID @ HookError::AgentProfileDeserializeFailed,
+    )]
+    pub agent_profile: UncheckedAccount<'info>,
 
     /// Replay-guard PDA. `init` constraint = duplicate triples atomically
     /// abort before any CPI runs. Closed lazily after a configurable TTL by

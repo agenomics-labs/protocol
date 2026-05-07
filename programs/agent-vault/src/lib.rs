@@ -768,6 +768,8 @@ mod tests {
             version: 0,
             registration_nonce: 0,
             cleared_count: 0,
+            // Q-S3-A: irrelevant to the suspension-gate fixture under test.
+            cdp_wallet: None,
         };
         // Suspended agent must be rejected.
         let result = require_not_suspended(&profile);
@@ -879,6 +881,8 @@ mod tests {
             version: 0,
             registration_nonce: 0,
             cleared_count: 0,
+            // Q-S3-A: irrelevant to the suspension-gate fixture under test.
+            cdp_wallet: None,
         };
         for status in [AgentStatus::Active, AgentStatus::Paused, AgentStatus::Retired] {
             profile.status = status;
