@@ -11,6 +11,11 @@
 .env
 test-ledger/
 
+# Smoke-test artifacts — `.smoke-test-wallet.json` contains the test
+# wallet's secret key bytes, written by scripts/smoke-test-devnet.ts so
+# the spawned MCP subprocess can sign as the same agent. Never commit.
+.smoke-test-wallet.json
+
 # Node
 node_modules/
 dist/
