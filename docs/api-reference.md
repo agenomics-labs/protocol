@@ -1,6 +1,6 @@
 # API Reference
 
-All 25 MCP tools exposed by the AEP MCP server. Each tool maps directly to a Solana program instruction.
+All 26 MCP tools exposed by the AEP MCP server. Each tool maps directly to a Solana program instruction (or, for Surface 2 tools, to an off-chain payment relay).
 
 ## Vault Tools (9)
 
@@ -412,5 +412,39 @@ Resolve dispute by splitting funds between client and provider.
   "clientRefund": 400000,
   "providerPayment": 600000,
   "message": "Dispute resolved"
+}
+```
+
+## Surface 2 Tools (1)
+
+### pay_x402_service
+
+Make an authenticated payment to an x402-protected service URL on behalf of an AEP-registered agent. Wraps an x402 client, debits the agent's Vault, settles via CDP Facilitator on Base, and returns the response + receipt. The `reasoning` field is mandatory — it captures the agent's natural-language justification for auditability.
+
+**STATUS:** Surface 2 scaffold (stub). Real x402 / CDP integration lands per `docs/aep-reflex-tech-spec.md` §"Surface 2".
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `agent_address` | string | Yes | AEP-registered agent (the spender), base58 Solana pubkey |
+| `service_url` | string | Yes | x402-protected URL to call |
+| `max_price_usdc_micros` | integer | Yes | Hard cap on payment in USDC micros (10^-6 USDC) |
+| `request.method` | enum (`GET`\|`POST`) | Yes | HTTP method |
+| `request.headers` | object<string,string> | No | Request headers |
+| `request.body` | string | No | Request body |
+| `reasoning` | string | Yes | Mandatory natural-language justification (non-empty) |
+
+**Example response:**
+```json
+{
+  "status": 200,
+  "body": "{...}",
+  "payment": {
+    "tx_hash": "0x...",
+    "amount_paid_micros": 1000000,
+    "network": "base-sepolia",
+    "facilitator": "cdp"
+  },
+  "duration_ms": 142,
+  "decision_record_id": "decision-abc123"
 }
 ```

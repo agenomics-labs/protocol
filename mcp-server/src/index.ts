@@ -95,6 +95,12 @@ const ALL_CAPABILITIES: Capability[] = [
   // require a separate cap rotation.
   "read:agent-memory",
   "write:agent-memory",
+  // Surface 2 (Reflex / x402): granted in local-dev so the scaffold
+  // action's gating surface is exercisable without per-wallet cap
+  // rotation. The Day-3+ real implementation flips `requiresSigner` and
+  // adds vault-debit semantics — this claim is the MCP-boundary wall
+  // (default-deny per ADR-058 §4) once that lands.
+  "pay:x402",
 ];
 
 /**

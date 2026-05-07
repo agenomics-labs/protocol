@@ -29,9 +29,9 @@ function ctxWith(
 
 describe("ADR-058 Action pipeline", () => {
   describe("non-breaking tool set (ADR-058 §8)", () => {
-    it("exposes all 27 existing tool names", () => {
+    it("exposes all 28 existing tool names", () => {
       const names = allTools.map((t) => t.name).sort();
-      assert.equal(names.length, 27);
+      assert.equal(names.length, 28);
       assert.ok(names.includes("create_vault"));
       assert.ok(names.includes("register_agent"));
       assert.ok(names.includes("create_escrow"));
@@ -45,14 +45,18 @@ describe("ADR-058 Action pipeline", () => {
       // ADR-129 Phase 1 (cycle-3): find_similar_agents wraps the EVO L1
       // HNSW manifest-similarity primitive; tool count 26 → 27.
       assert.ok(names.includes("find_similar_agents"));
+      // Surface 2 (scaffold/stub): pay_x402_service wraps the x402 payment
+      // relay (debits vault, settles via CDP on Base). Tool count 27 → 28.
+      // See docs/aep-reflex-tech-spec.md §"Surface 2".
+      assert.ok(names.includes("pay_x402_service"));
     });
 
-    it("the ADR-058 router handles all 27 tools", () => {
+    it("the ADR-058 router handles all 28 tools", () => {
       const allNames = new Set(allTools.map((t) => t.name));
       for (const routed of actionRouter.names()) {
         assert.ok(allNames.has(routed), `routed action '${routed}' missing from allTools`);
       }
-      assert.equal(pilotActionNames.size, 27);
+      assert.equal(pilotActionNames.size, 28);
       assert.deepEqual(actionRouter.names().sort(), [...allNames].sort());
     });
   });

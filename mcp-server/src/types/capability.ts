@@ -34,13 +34,29 @@ export type GovernanceClaim = "gov:invariant:check";
  */
 export type AgentMemoryClaim = "read:agent-memory" | "write:agent-memory";
 
+/**
+ * Surface 2 (Reflex / x402) claims. `pay:x402` gates the `pay_x402_service`
+ * MCP action, which (in the real Day 3+ implementation) debits an on-chain
+ * Solana vault and settles a payment on Base via the CDP Facilitator. It is
+ * deliberately a separate, write-side claim — `read:vault` MUST NOT be
+ * conflated with spend authority. See docs/aep-reflex-tech-spec.md
+ * §"Surface 2 — pay_x402_service MCP tool" + IC-3 (lines 109–137).
+ *
+ * The scaffold action carries this claim today even though it doesn't
+ * actually settle anything yet — that way capability tests pin the gating
+ * surface from day one and Day-3 can flip `requiresSigner` + wire the real
+ * client without re-litigating the auth model.
+ */
+export type X402Claim = "pay:x402";
+
 export type Capability =
   | `read:${Domain}`
   | `sign:${Domain}`
   | `sign:cross_program:${ProgramSet}`
   | `admin:${Domain}`
   | GovernanceClaim
-  | AgentMemoryClaim;
+  | AgentMemoryClaim
+  | X402Claim;
 
 export type PreflightGate =
   | "cluster_health"

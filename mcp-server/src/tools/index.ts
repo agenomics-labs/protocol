@@ -41,6 +41,10 @@ export {
 // Re-export all governance tools
 export { verifyProtocolInvariantsTool } from "./governance.js";
 
+// Re-export Surface 2 tool (pay_x402_service) — see
+// docs/aep-reflex-tech-spec.md §"Surface 2".
+export { payX402ServiceTool } from "./pay-x402-service.js";
+
 // Import for aggregation
 import {
   createVaultTool,
@@ -78,15 +82,18 @@ import {
 } from "./settlement.js";
 
 import { verifyProtocolInvariantsTool } from "./governance.js";
+import { payX402ServiceTool } from "./pay-x402-service.js";
 
 /**
- * All 27 Agenomics MCP tools organized by domain:
+ * All 28 Agenomics MCP tools organized by domain:
  * - Vault (9): Agent wallet management with spending policies
  *   (includes `rotate_agent_identity` per ADR-069 / AUD-015)
  * - Registry (5) + reputation snapshot (1) + agent-memory (1): Agent
  *   discovery, reputation, and ADR-129 Phase 1 manifest similarity
  * - Settlement (10): Escrow lifecycle and milestone-based payments
  * - Governance (1): Protocol-wide invariant sweep (AUD-206 / roadmap §3 B2)
+ * - Surface 2 (1): `pay_x402_service` — x402 payment relay (scaffold/stub;
+ *   docs/aep-reflex-tech-spec.md §"Surface 2")
  */
 export const allTools: Tool[] = [
   // Vault
@@ -120,6 +127,8 @@ export const allTools: Tool[] = [
   resolveDisputeTimeoutTool,
   // Governance
   verifyProtocolInvariantsTool,
+  // Surface 2 (scaffold/stub) — see docs/aep-reflex-tech-spec.md §"Surface 2"
+  payX402ServiceTool,
 ];
 
 export type ToolName =
@@ -149,4 +158,5 @@ export type ToolName =
   | "raise_dispute"
   | "resolve_dispute"
   | "resolve_dispute_timeout"
-  | "verify_protocol_invariants";
+  | "verify_protocol_invariants"
+  | "pay_x402_service";

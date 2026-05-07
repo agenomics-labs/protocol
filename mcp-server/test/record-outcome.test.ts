@@ -538,13 +538,18 @@ describe("ADR-129 Phase 2 — wire vs. on-chain reason-code mapping (AUD-109/113
 });
 
 describe("ADR-129 Phase 2 — additive-only surface (no new MCP action)", () => {
-  it("tool count stays at 27 (Phase 2 wires inside existing handlers)", () => {
-    // Phase 1 (db52117) bumped the count 26 → 27 with find_similar_agents.
-    // Phase 2 must NOT add a new action: it adds best-effort wiring inside
-    // approve_milestone / resolve_dispute / resolve_dispute_timeout. If
-    // someone accidentally wires a new action this fails immediately.
-    assert.equal(allTools.length, 27, "Phase 2 must not add a new MCP tool");
-    assert.equal(pilotActions.length, 27, "Phase 2 must not add a new Action");
+  it("tool count is 28 (ADR-129 Phase 2 = 0 new; Reflex Surface 2 added pay_x402_service)", () => {
+    // Tool-count drift guard. ADR-129 Phase 1 (db52117) was 26→27
+    // (find_similar_agents). Phase 2 added 0 (best-effort wires inside
+    // approve_milestone / resolve_dispute / resolve_dispute_timeout).
+    // Reflex Surface 2 (docs/aep-reflex-tech-spec.md §"Surface 2") added
+    // pay_x402_service: 27→28.
+    //
+    // If a future PR bumps this count, the new contributor MUST update
+    // both this assertion AND the count callouts in README.md +
+    // docs/api-reference.md so the three sources stay in lockstep.
+    assert.equal(allTools.length, 28, "tool-count drift guard");
+    assert.equal(pilotActions.length, 28, "action-count drift guard");
   });
 
   it("the existing settlement actions are still registered with their unchanged shapes", () => {

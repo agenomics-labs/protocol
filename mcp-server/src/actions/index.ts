@@ -12,6 +12,12 @@
 // ADR-129 Phase 1 (cycle-3): `find_similar_agents` adds an EVO L1 HNSW-
 // backed manifest-similarity primitive, gated by `read:agent-memory`.
 // Tool count 26 → 27.
+//
+// Surface 2 (scaffold): `pay_x402_service` adds an x402 payment relay
+// that debits the agent's vault and settles via CDP Facilitator on Base.
+// See docs/aep-reflex-tech-spec.md §"Surface 2" (lines 220–305) and IC-3
+// (lines 109–137). Tool count 27 → 28. STUB only — real x402 / CDP
+// integration is the Day 3–7 owner's job.
 
 import type { Action } from "../types/action.js";
 import {
@@ -47,6 +53,7 @@ import {
   resolveDisputeTimeoutAction,
 } from "./settlement.js";
 import { verifyProtocolInvariantsAction } from "./governance.js";
+import { payX402ServiceAction } from "./pay-x402-service.js";
 
 export const allActions: Action<any, any>[] = [
   // Vault (9)
@@ -80,6 +87,8 @@ export const allActions: Action<any, any>[] = [
   resolveDisputeTimeoutAction,
   // Governance (1) — AUD-206
   verifyProtocolInvariantsAction,
+  // Surface 2 (1, SCAFFOLD/STUB) — docs/aep-reflex-tech-spec.md §"Surface 2"
+  payX402ServiceAction,
 ];
 
 export const allActionNames = new Set(allActions.map((a) => a.name));
