@@ -17,19 +17,30 @@ function NetworkBadge() {
   );
 }
 
-function IndexerStatus({ connected }) {
+function IndexerStatus({ connected, rpcReachable }) {
+  // Three states:
+  // - connected: indexer up — full live data (green)
+  // - !connected && rpcReachable: indexer down, RPC fallback working (amber)
+  // - !connected && !rpcReachable: both down (gray)
+  const state = connected ? "live" : rpcReachable ? "rpc" : "offline";
+  const styles = {
+    live:    { wrap: "bg-green-500/10 border-green-500/20 text-green-400",  dot: "bg-green-400",  label: "Live data" },
+    rpc:     { wrap: "bg-amber-500/10 border-amber-500/20 text-amber-300", dot: "bg-amber-400",  label: "RPC fallback" },
+    offline: { wrap: "bg-gray-500/10 border-gray-500/20 text-gray-400",    dot: "bg-gray-500",   label: "Backend offline" },
+  }[state];
   return (
     <span
-      className={`text-xs px-2 py-0.5 rounded-full border flex items-center gap-1.5 ${
-        connected
-          ? "bg-green-500/10 border-green-500/20 text-green-400"
-          : "bg-gray-500/10 border-gray-500/20 text-gray-400"
-      }`}
+      className={`text-xs px-2 py-0.5 rounded-full border flex items-center gap-1.5 ${styles.wrap}`}
+      title={
+        state === "live"
+          ? "Indexer connected — agents and events refresh in near-real-time."
+          : state === "rpc"
+          ? "Indexer is unreachable; on-chain reads are coming straight from Solana RPC. Aggregate stats may lag."
+          : "Both indexer and RPC are unreachable. Retrying automatically."
+      }
     >
-      <span
-        className={`w-1.5 h-1.5 rounded-full ${connected ? "bg-green-400" : "bg-gray-500"}`}
-      />
-      Indexer {connected ? "connected" : "offline"}
+      <span className={`w-1.5 h-1.5 rounded-full ${styles.dot}`} />
+      {styles.label}
     </span>
   );
 }
@@ -46,6 +57,7 @@ export default function App() {
     loading,
     error,
     indexerConnected,
+    rpcReachable,
     lastUpdated,
     refresh,
   } = useProtocolData();
@@ -67,7 +79,7 @@ export default function App() {
               Agenomics Protocol
             </h1>
             <NetworkBadge />
-            <IndexerStatus connected={indexerConnected} />
+            <IndexerStatus connected={indexerConnected} rpcReachable={rpcReachable} />
           </div>
           <p className="text-gray-400 mt-1 text-sm">
             Trustless economic layer for autonomous AI agents on Solana

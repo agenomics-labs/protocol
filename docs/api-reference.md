@@ -1,6 +1,6 @@
 # API Reference
 
-All 26 MCP tools exposed by the AEP MCP server. Each tool maps directly to a Solana program instruction (or, for Surface 2 tools, to an off-chain payment relay).
+All 28 MCP tools exposed by the AEP MCP server. Each tool maps directly to a Solana program instruction (or, for Surface 2 tools, to an off-chain payment relay).
 
 ## Vault Tools (9)
 
@@ -244,7 +244,7 @@ Search registry for agents by capability or reputation.
 }
 ```
 
-## Settlement Tools (9)
+## Settlement Tools (10)
 
 ### create_escrow
 
@@ -415,6 +415,26 @@ Resolve dispute by splitting funds between client and provider.
 }
 ```
 
+### resolve_dispute_timeout
+
+Auto-resolve a dispute that has not been resolved within the dispute timeout window (7 days, see ADR-030). Anyone can call this; the on-chain rule splits the escrow according to the milestones already approved at the time of dispute.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `escrowAddress` | string | Yes | Escrow public key |
+| `clientTokenAccount` | string | Yes | Client token account |
+| `providerTokenAccount` | string | Yes | Provider token account |
+
+**Example response:**
+```json
+{
+  "signature": "9iTu...",
+  "message": "Dispute resolved by timeout",
+  "clientRefund": 500000,
+  "providerPayment": 500000
+}
+```
+
 ## Surface 2 Tools (1)
 
 ### pay_x402_service
@@ -446,5 +466,22 @@ Make an authenticated payment to an x402-protected service URL on behalf of an A
   },
   "duration_ms": 142,
   "decision_record_id": "decision-abc123"
+}
+```
+
+## Governance Tools (1)
+
+### verify_protocol_invariants
+
+Run the on-chain invariant check across the three programs. Returns a list of any invariants currently violated, useful as a smoke check after upgrades or before relying on cross-program state in custom integrations.
+
+No parameters required.
+
+**Example response:**
+```json
+{
+  "ok": true,
+  "checkedAt": 287654321,
+  "violations": []
 }
 ```

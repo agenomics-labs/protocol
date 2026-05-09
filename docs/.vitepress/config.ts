@@ -50,6 +50,7 @@ export default defineConfig({
       { text: 'Home', link: '/' },
       { text: 'Getting Started', link: '/getting-started' },
       { text: 'API Reference', link: '/api-reference' },
+      { text: 'Integration Guide', link: '/integration-guide' },
     ],
     sidebar: [
       {

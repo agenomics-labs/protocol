@@ -17,6 +17,7 @@ export function useProtocolData() {
     loading: true,
     error: null,
     indexerConnected: false,
+    rpcReachable: false,
     lastUpdated: null,
   });
 
@@ -45,7 +46,14 @@ export function useProtocolData() {
   }, []);
 
   const fetchFromRpc = useCallback(async () => {
-    const result = { registryAccounts: [], settlementAccounts: [], vaultBalance: null };
+    const result = {
+      registryAccounts: [],
+      settlementAccounts: [],
+      vaultBalance: null,
+      // Set to true the moment any RPC call succeeds. Used to drive the
+      // "Live data | RPC fallback | Backend offline" badge in the header.
+      rpcReachable: false,
+    };
 
     try {
       const registryAccounts = await connection.getProgramAccounts(PROGRAM_IDS.registry, {
@@ -56,6 +64,7 @@ export function useProtocolData() {
         dataSize: account.account.data.length,
         lamports: account.account.lamports,
       }));
+      result.rpcReachable = true;
     } catch (err) {
       console.warn("Failed to fetch registry accounts:", err.message);
     }
@@ -69,6 +78,7 @@ export function useProtocolData() {
         dataSize: account.account.data.length,
         lamports: account.account.lamports,
       }));
+      result.rpcReachable = true;
     } catch (err) {
       console.warn("Failed to fetch settlement accounts:", err.message);
     }
@@ -77,6 +87,7 @@ export function useProtocolData() {
       try {
         const balance = await connection.getBalance(new PublicKey(MONITORED_VAULT));
         result.vaultBalance = balance / LAMPORTS_PER_SOL;
+        result.rpcReachable = true;
       } catch (err) {
         console.warn("Failed to fetch vault balance:", err.message);
       }
@@ -97,6 +108,7 @@ export function useProtocolData() {
         settlementAccounts: rpcData.settlementAccounts,
         vaultBalance: rpcData.vaultBalance,
         indexerConnected: !!indexerData.indexerConnected,
+        rpcReachable: !!rpcData.rpcReachable,
         loading: false,
         error: null,
         lastUpdated: new Date(),

@@ -1,5 +1,6 @@
 import { Shield, Users, Coins, Globe, Radio, Lock, AlertTriangle, Scale } from "lucide-react";
 import { NETWORK_LABEL } from "../config.js";
+import { MCP_TOOLS } from "../data/programs.js";
 import { useTriggerMetrics } from "../hooks/useTriggerMetrics.js";
 
 function StatCard({ label, value, icon: Icon, color }) {
@@ -140,7 +141,7 @@ export default function StatsBar({ agents, settlementAccounts, stats, vaultBalan
           icon={Radio}
           color="text-green-400"
         />
-        <StatCard label="MCP Tools" value="23" icon={Globe} color="text-cyan-400" />
+        <StatCard label="MCP Tools" value={MCP_TOOLS.length} icon={Globe} color="text-cyan-400" />
         <StatCard label="CPI Flows" value="2" icon={Shield} color="text-yellow-400" />
         <StatCard label="Network" value={NETWORK_LABEL} icon={Radio} color="text-green-400" />
       </div>

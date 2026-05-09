@@ -12,9 +12,9 @@ export default function EventFeed({ events, indexerConnected }) {
       <div className="bg-white/5 rounded-xl border border-white/10 p-6">
         <div className="text-center text-gray-400 text-sm py-8">
           <AlertTriangle className="w-8 h-8 mx-auto mb-3 text-gray-600" />
-          Event feed requires the indexer. Start it with:
+          Live event feed temporarily unavailable.
           <p className="text-xs text-gray-600 mt-2">
-            <code>cd src/indexer && npm start</code>
+            Refreshing automatically every 30s.
           </p>
         </div>
       </div>
