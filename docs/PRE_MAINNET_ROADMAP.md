@@ -926,6 +926,50 @@ alongside Phase A target #2/#3.
 **Phase D — remove `@solana/spl-token` root dep**: Gated on Phase C. Closes
 GHSA-3gc7-fjrx-p6mg definitively at the workspace level.
 
+### B14. LiteSVM test-harness migration (cycle-3 follow-up)
+
+**Status**: **Investigation complete** (2026-05-10). See
+`docs/audits/HARNESS-BANKRUN-INVESTIGATION-2026-05-10.md` for the full
+report. Implementation PRs are the next concrete step.
+
+**Why**: Three independent cycle-2 test-writing agents hit the same two
+`solana-test-validator` blockers — no `setAccount` escape hatch and no
+clock-warp primitive — leaving 4 confirmed `it.skip` paths and 1 TODO
+comment unresolved across `tests/cpi-failures.test.ts`, `tests/settlement.ts`,
+and `tests/agent-registry.ts`. The investigation brief named
+`solana-bankrun` + `anchor-bankrun`; the investigation found both are
+**deprecated** (last anchor-bankrun release: Oct 2024) and that
+`solana-bankrun` has an unfixed Ed25519 precompile bug (Issue #27) that
+would break the ADR-124 vault test suite. The correct target is
+**LiteSVM** (`litesvm` npm package).
+
+**Blocked paths (4 of 5 unblocked by LiteSVM)**:
+- AUD-101 `reputation_score` clamp → `context.setAccount()` state seed
+- AUD-101 `Suspended → slash_count = 3` → same state-seeding approach
+- AUD-117 `ResolveDisputeTimeout` → `context.setClock()` warp past 7-day timeout
+- AUD-105 deadline equality → `context.setClock()` deterministic boundary test
+- Forged `settlement_authority` (Case 5) → **stays blocked**; requires a
+  purpose-built spoofer Rust program (separate workstream)
+
+**Recommended path**: new-tests-only opt-in. Existing 156-test
+validator corpus untouched. LiteSVM tests live in `tests/bankrun/`
+with a separate `npm run test:bankrun` script and a new CI step.
+
+**Phase work breakdown** (from the investigation report):
+- Phase 1 PR (~250 LOC, low risk): add `litesvm`/`anchor-litesvm`
+  devDependencies, `tests/bankrun/setup.ts`, and
+  `tests/bankrun/dispute-timeout.test.ts` (AUD-117 Case 3 proof of
+  concept; the `it.skip` with the BANKRUN-TODO marker).
+- Phase 2 PR(s) (~300 LOC, low–medium risk): state-seeded AUD-101
+  Cases 1+2 and AUD-105 deadline-equality Case 4.
+- Phase 3 PR (~100 LOC): coexistence finalization + CI documentation.
+- Spoofer program (separate, cycle-4): Case 5 forged-PDA TS coverage.
+
+**Not a launch blocker** — the `it.skip` tests have Rust unit-test
+coverage (contexts.rs `aud_117_seeds_parity`; `lib.rs::tests` for
+AUD-101). LiteSVM adoption improves coverage depth and removes clock
+flakiness; it is not required for the `v*-mainnet` tag gate.
+
 ---
 
 ## 4. Track C — Operational readiness
