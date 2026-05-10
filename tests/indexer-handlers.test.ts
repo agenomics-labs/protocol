@@ -60,6 +60,8 @@ const DISC_AGENT_IDENTITY_UPDATED = "aa69af3aa3095577";
 const DISC_MANIFEST_UPDATED = "6941986a36affdb3";
 const DISC_PROTOCOL_CONFIG_INITIALIZED = "f3451bee6fa957e7";
 const DISC_PROTOCOL_CONFIG_UPDATED = "146320ed6f56c3c7";
+const DISC_CDP_WALLET_UPDATED = "1c01a7c0b68356b6";
+const DISC_MILESTONE_AUTO_APPROVED = "813e91dc8abf032e";
 
 // ============================================================================
 // AgentIdentityUpdated (agent-vault, ADR-069)
@@ -468,6 +470,34 @@ test("every newly-added discriminator round-trips through parseLogsForEvents wit
         encI64(0),
       ]),
     },
+    // CdpWalletUpdated (Q-S3-A): authority(32) + Option<[u8;20]> old_wallet
+    // + Option<[u8;20]> new_wallet + i64 timestamp. Both options Some, so the
+    // tag byte is 0x01 followed by 20 distinguishable bytes per option.
+    {
+      disc: DISC_CDP_WALLET_UPDATED,
+      expected: "CdpWalletUpdated",
+      payload: Buffer.concat([
+        encPubkey(Keypair.generate().publicKey),
+        Buffer.from([0x01]),                  // old_wallet = Some
+        encFixedBytes("aa".repeat(20), 20),
+        Buffer.from([0x01]),                  // new_wallet = Some
+        encFixedBytes("bb".repeat(20), 20),
+        encI64(1_700_000_000),
+      ]),
+    },
+    // MilestoneAutoApproved (CCTP V2): escrow(32) + milestone_index u8 +
+    // base_tx_hash [u8;32] + amount_returned_micros u64 + agent_authority(32).
+    {
+      disc: DISC_MILESTONE_AUTO_APPROVED,
+      expected: "MilestoneAutoApproved",
+      payload: Buffer.concat([
+        encPubkey(Keypair.generate().publicKey),
+        Buffer.from([7]),                     // milestone_index
+        encFixedBytes("cc".repeat(32), 32),   // base_tx_hash
+        encU64(1_000_000n),
+        encPubkey(Keypair.generate().publicKey),
+      ]),
+    },
   ];
   for (const { disc, expected, payload } of cases) {
     const events = parseLogsForEvents([makeLog(disc, payload)], "test");
@@ -478,4 +508,82 @@ test("every newly-added discriminator round-trips through parseLogsForEvents wit
       `${expected}: decoder should succeed on a valid payload, got ${JSON.stringify(events[0].data)}`
     );
   }
+});
+
+// ============================================================================
+// CdpWalletUpdated (agent-registry, Q-S3-A / feat/reflex/surface-3)
+// ============================================================================
+
+test("CdpWalletUpdated decodes authority / old_wallet / new_wallet / timestamp", () => {
+  const authority = Keypair.generate().publicKey;
+  const oldWalletHex = "aa".repeat(20);
+  const newWalletHex = "bb".repeat(20);
+  const payload = Buffer.concat([
+    encPubkey(authority),
+    Buffer.from([0x01]),                     // old_wallet = Some
+    encFixedBytes(oldWalletHex, 20),
+    Buffer.from([0x01]),                     // new_wallet = Some
+    encFixedBytes(newWalletHex, 20),
+    encI64(1_700_000_000),
+  ]);
+  const events = parseLogsForEvents(
+    [makeLog(DISC_CDP_WALLET_UPDATED, payload)],
+    "registry"
+  );
+  assert.equal(events.length, 1);
+  assert.equal(events[0].name, "CdpWalletUpdated");
+  assert.equal(events[0].data.authority, authority.toBase58());
+  assert.equal(events[0].data.old_wallet, oldWalletHex);
+  assert.equal(events[0].data.new_wallet, newWalletHex);
+  assert.equal(events[0].data.timestamp, 1_700_000_000);
+});
+
+test("CdpWalletUpdated honors Borsh Option None tag (old_wallet = None, new_wallet = Some)", () => {
+  const authority = Keypair.generate().publicKey;
+  const newWalletHex = "cd".repeat(20);
+  const payload = Buffer.concat([
+    encPubkey(authority),
+    Buffer.from([0x00]),                     // old_wallet = None (no payload bytes)
+    Buffer.from([0x01]),                     // new_wallet = Some
+    encFixedBytes(newWalletHex, 20),
+    encI64(1_700_000_001),
+  ]);
+  const events = parseLogsForEvents(
+    [makeLog(DISC_CDP_WALLET_UPDATED, payload)],
+    "registry"
+  );
+  assert.equal(events.length, 1);
+  assert.equal(events[0].name, "CdpWalletUpdated");
+  assert.equal(events[0].data.authority, authority.toBase58());
+  assert.equal(events[0].data.old_wallet, null);
+  assert.equal(events[0].data.new_wallet, newWalletHex);
+  assert.equal(events[0].data.timestamp, 1_700_000_001);
+});
+
+// ============================================================================
+// MilestoneAutoApproved (cctp-hook, feat/reflex/surface-3)
+// ============================================================================
+
+test("MilestoneAutoApproved decodes escrow / milestone_index / base_tx_hash / amount / agent_authority", () => {
+  const escrow = Keypair.generate().publicKey;
+  const agentAuthority = Keypair.generate().publicKey;
+  const baseTxHashHex = "cc".repeat(32);
+  const payload = Buffer.concat([
+    encPubkey(escrow),
+    Buffer.from([7]),                        // milestone_index
+    encFixedBytes(baseTxHashHex, 32),
+    encU64(1_000_000n),
+    encPubkey(agentAuthority),
+  ]);
+  const events = parseLogsForEvents(
+    [makeLog(DISC_MILESTONE_AUTO_APPROVED, payload)],
+    "cctp-hook"
+  );
+  assert.equal(events.length, 1);
+  assert.equal(events[0].name, "MilestoneAutoApproved");
+  assert.equal(events[0].data.escrow, escrow.toBase58());
+  assert.equal(events[0].data.milestone_index, 7);
+  assert.equal(events[0].data.base_tx_hash, baseTxHashHex);
+  assert.equal(events[0].data.amount_returned_micros, 1_000_000);
+  assert.equal(events[0].data.agent_authority, agentAuthority.toBase58());
 });
