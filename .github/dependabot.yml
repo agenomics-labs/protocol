@@ -29,7 +29,11 @@ updates:
       - "rust"
     reviewers:
       - "agenomics-labs/core"
-    versioning-strategy: "increase"
+    # GitHub's dependabot schema accepts only `auto` or `lockfile-only` for
+    # cargo (npm still accepts `increase`). `auto` keeps the spirit of
+    # ADR-114 (root workspace bumps Cargo.toml when a direct-dep range
+    # demands it) while satisfying the schema. See ADR-114 amendment.
+    versioning-strategy: "auto"
     # Direct-only — no transitive churn noise.
     allow:
       - dependency-type: "direct"
