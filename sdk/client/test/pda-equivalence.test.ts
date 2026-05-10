@@ -130,25 +130,25 @@ function canonicalProtocolConfigPda(): string {
 // ---------------------------------------------------------------------------
 const GOLDEN = {
   vault: {
-    A: "HjUi4gg8Dtnk2nKx2qaViPhZoQjfc8iYZnSKcJphcEGr",
-    B: "2ksRK5eTBEvzE1srGT3fVhCF442jCFzLKhgRt1zthwwq",
-    C: "4HMkGRPd41oLfcoCEACQyVEjFVTQ6r2LnXu5W1hPKxrK",
+    A: "DVbM5aCtrwQ1azFyQXxqV8Cmto8gXSLzArsWCSwQ1nfv",
+    B: "G2JuDSmLKaxheLELYMAcMMJKbYQpBadZLAeL5FNJqi4",
+    C: "ECzwNoHxRW4bJF5gNx7xBunsmbbCuqRuhKKuFmNa8ZfH",
   },
   ownerNonce: {
-    A: "HPPXozKCY4KQGkBF5sfDyqBZnqdwUa9evbP1DyTbTsdu",
-    B: "26d6iimNwsc83WwU6aAmspEWdGMdoK3rJzJ7adCWvFmN",
+    A: "BtgY59SDm6DWzMbBVZExnpE1esrUov5KXcVDPpmDkMH3",
+    B: "7CnVVYqJ1PhjNmfWgmt8SLPEMDF9SuMTr1rAVmtbwTVm",
   },
   profile: {
-    A0: "BSTS1g2RVn9gH1ReF9vYhQKYANhdKgbz7dJUDKGbGS6N",
-    A1: "HKN8a5URU5imexGLmu4e5GPcZ9amJHX7J9UXSrUJr4m1",
-    B42: "9FsyKZf1DCC2LHXFBbBXpDFVyrkE7adZkw5djBuB2YUY",
+    A0: "DnjqCXQQ9N7S2oET9nNMGBVas2gBuri6n6HV4FunwetH",
+    A1: "AQZHT9S9cEhqQdQLuukWHeAxYPrF9pMN92AC77zoruH7",
+    B42: "7o5XM9xxCuBve8Nr8mLm55Ma39yA7YreTrBkNwWvPiAH",
   },
   escrow: {
-    AB1: "E1L9bjqhgp3pMDeeYzzAd3pvchHa4sUHApciAEAGGZW6",
-    AB2: "8bJMW9BF6LCB5AUYHYT4zbWhe3VQ8VN69w4BX7BjE4PP",
-    BC99: "9x9BssudqayfQHTmxzNPL91nGWyNyDTecW43CYJ368dh",
+    AB1: "EggCDLpux6iLzCbZmRsJboWKEjufXCfyitWdpoLRbewC",
+    AB2: "357GbEhphWesFpsdXYxefm2xk6ntsuLtL6B1iPygX74F",
+    BC99: "891Ta3SwLsSChmDW6VSdpWFcqpqYq4KZecmaJ23hQKfa",
   },
-  protocolConfig: "8xqwnoHarhXxfz7j1AjHNnhqnboiqbirtrVnvuR1MMf8",
+  protocolConfig: "EEz7JfgdJ1nVYafjpzvtXtvnyC4yHF1mayAT5EUxz3oh",
 } as const;
 
 // ---------------------------------------------------------------------------
