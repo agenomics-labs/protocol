@@ -86,6 +86,24 @@ export const PROGRAMS = {
       { name: "TaskEscrow", size: "~500B", desc: "Dynamic: 298 + 41*milestones" },
     ],
   },
+  cctp_hook: {
+    name: "CCTP Hook",
+    id: "3yifMBDVChLzcihZWh4or9zxgzbmQVghdNZzpuP814vb",
+    icon: Coins,
+    color: "from-sky-500 to-blue-600",
+    tagColor: "bg-sky-100 text-sky-800",
+    description: "CCTP V2 hook — auto-approves Settlement milestones on cross-chain USDC completion",
+    features: [
+      "Validates ReflexHookPayload (93-byte Borsh wire format)",
+      "Verifies agent CDP wallet binding before milestone approval",
+      "CPIs into Settlement to release milestone funds",
+      "Emits MilestoneAutoApproved for indexer observability",
+    ],
+    instructions: [
+      { name: "process_hook", desc: "Validate CCTP payload and auto-approve milestone" },
+    ],
+    accounts: [],
+  },
 };
 
 export const MCP_TOOLS = [

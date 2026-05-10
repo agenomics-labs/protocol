@@ -38,8 +38,8 @@ for program in programs/*/src/lib.rs; do
   echo "Source of truth: $name → $id"
 done
 
-if [ "${#DECLARED_IDS[@]}" -ne 3 ]; then
-  echo "::error::Expected 3 programs in programs/, found ${#DECLARED_IDS[@]}"
+if [ "${#DECLARED_IDS[@]}" -ne 4 ]; then
+  echo "::error::Expected 4 programs in programs/, found ${#DECLARED_IDS[@]}"
   exit 1
 fi
 
@@ -104,4 +104,4 @@ if [ "$FAIL" -ne 0 ]; then
   exit 1
 fi
 
-echo "Program-ID parity check passed: all 3 IDs consistent across ${#REQUIRED_FILES[@]} surfaces."
+echo "Program-ID parity check passed: all 4 IDs consistent across ${#REQUIRED_FILES[@]} surfaces."

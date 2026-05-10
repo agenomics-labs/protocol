@@ -167,6 +167,7 @@ Or browse them directly on Solana Explorer:
 - [Vault `4wjdJ…gvwN`](https://explorer.solana.com/address/28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw?cluster=devnet)
 - [Registry `8VQuB…tfh`](https://explorer.solana.com/address/psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv?cluster=devnet)
 - [Settlement `GK8L…3wvc3`](https://explorer.solana.com/address/9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95?cluster=devnet)
+- [CCTP Hook `3yifM…4vb`](https://explorer.solana.com/address/3yifMBDVChLzcihZWh4or9zxgzbmQVghdNZzpuP814vb?cluster=devnet)
 
 ---
 
