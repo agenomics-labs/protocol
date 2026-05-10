@@ -38,10 +38,9 @@ echo "Existing ADR files: $EXISTING_COUNT"
 # allowlisted number do not fail the gate.
 cat > /tmp/adr-allowlist.$$.txt <<'EOF'
 ADR-057   intentionally-skipped per docs/STATUS.md "001–060 (except 057)"; referenced in ADR-120/129 as historical context
-ADR-135   proposed in PR #68's DX-overhaul wave (ADR-134..140); ADR-135 covers Zod schema mirroring and is held pending PR #68 merge
-ADR-138   proposed in PR #68 (@agenomics/react component library); referenced in ADR-136's Decision/Consequences blocks
-ADR-139   proposed in PR #68 (create-agenomics-app scaffold); referenced in ADR-136
-ADR-140   proposed in PR #68 (sample-app gallery); referenced in ADR-136
+ADR-138   deferred to v0.2 / parked on origin/claude/audit-project-state-gQC4Z (@agenomics/react component library); still referenced from ADR-141's Follow-ups and ADR-137's Follow-ups
+ADR-139   deferred to v0.2 / parked on origin/claude/audit-project-state-gQC4Z (create-agenomics-app scaffold); still referenced from ADR-141's Follow-ups and ADR-137's Follow-ups
+ADR-140   deferred to v0.2 / parked on origin/claude/audit-project-state-gQC4Z (sample-app gallery); still referenced from ADR-137's Follow-ups
 EOF
 trap 'rm -f /tmp/adr-existing.$$.txt /tmp/adr-refs.$$.txt /tmp/adr-broken.$$.txt /tmp/adr-allowlist.$$.txt' EXIT
 ALLOWLIST_NUMS=$( (grep -oE '^ADR-[0-9]+' /tmp/adr-allowlist.$$.txt || true) | sort -u)
