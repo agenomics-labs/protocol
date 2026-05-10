@@ -113,7 +113,7 @@ git pull origin main || { set_status "BLOCKED_PRECONDITION" "git pull failed"; e
 
 # 2. Precondition checks: keys present + pubkeys are real multisig members.
 if [ ! -f ~/.config/solana/id.json ]; then
-  set_status "BLOCKED_PRECONDITION" "~/.config/solana/id.json missing"
+  set_status "BLOCKED_PRECONDITION" "$HOME/.config/solana/id.json missing"
   exit 1
 fi
 if [ ! -f .keys/squads-signer-2.json ]; then

@@ -38,7 +38,12 @@ Key policy points:
   missing and the hook will no-op gracefully).
 - **Versioning strategy:** `increase` for the root workspace,
   `increase-if-necessary` for leaf services so lockfile pins are
-  preserved per ADR-089.
+  preserved per ADR-089. **(Amended 2026-05-09):** GitHub's dependabot
+  schema now accepts only `auto` or `lockfile-only` for the `cargo`
+  ecosystem (npm still accepts `increase` / `increase-if-necessary`).
+  Cargo at `/` therefore uses `auto`; the intent is preserved (root
+  workspace gets Cargo.toml bumps when direct-dep ranges demand it,
+  leaf workspaces inherit). npm entries unchanged.
 - **Auto-merge:** none at first. Every Dependabot PR goes through the
   normal CI gate. Once the CI wall is fully blocking (see ADR-115),
   consider auto-merging patch-level bumps that pass all gates.

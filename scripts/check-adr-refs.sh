@@ -25,7 +25,13 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # --- 1. Source of truth: which ADR numbers exist as files ---
-ls docs/adr/ADR-*.md 2>/dev/null \
+# Use a glob (not `ls | grep`) so non-alphanumeric filenames are safe and
+# the shellcheck SC2010 warning stays clean. nullglob ensures the array is
+# empty (not the literal pattern) when no ADR files exist.
+shopt -s nullglob
+adr_files=(docs/adr/ADR-*.md)
+shopt -u nullglob
+printf '%s\n' "${adr_files[@]}" \
   | grep -oE 'ADR-[0-9]+' \
   | sort -u > /tmp/adr-existing.$$.txt
 trap 'rm -f /tmp/adr-existing.$$.txt /tmp/adr-refs.$$.txt /tmp/adr-broken.$$.txt' EXIT
