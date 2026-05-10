@@ -128,6 +128,10 @@ function canonicalProtocolConfigPda(): string {
 // Pinned here so a regression in BOTH the SDK helper and the canonical
 // helper (e.g. a copy-paste typo in this file) still fails the gate.
 // ---------------------------------------------------------------------------
+// Golden vectors regenerated for program IDs rotated in chore(devnet) ee7d216.
+// Old IDs: vault=4wjdJP…, registry=8VQuB…, settlement=GK8L…
+// New IDs: vault=28Km3…, registry=psJT2…, settlement=9TRVB…
+// Recomputed with: PublicKey.findProgramAddressSync(seeds, NEW_ID)
 const GOLDEN = {
   vault: {
     A: "DVbM5aCtrwQ1azFyQXxqV8Cmto8gXSLzArsWCSwQ1nfv",
