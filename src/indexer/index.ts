@@ -344,6 +344,12 @@ const DISCRIMINATOR_MAP: Record<string, string> = {
   // ADR-096: AgentMigrated — emitted by migrate_agent_profile when the
   // schema version is successfully bumped. sha256("event:AgentMigrated")[0..8].
   "3afb734612e65fa4": "AgentMigrated",
+  // Q-S3-A: CdpWalletUpdated — emitted by update_cdp_wallet (Surface-3
+  // CDP-wallet binding). Pre-fix, the event surfaced on-chain but the
+  // indexer classified it as `event_<hex>` because no disc-map entry
+  // existed; the coverage gate caught this only after the on-chain
+  // event landed without a paired indexer decoder.
+  "1c01a7c0b68356b6": "CdpWalletUpdated",
 
   // agent-vault
   b42bcf021247034b: "VaultInitialized",
@@ -382,6 +388,13 @@ const DISCRIMINATOR_MAP: Record<string, string> = {
   // events. Both were silently invisible to dashboards before.
   f3451bee6fa957e7: "ProtocolConfigInitialized",
   "146320ed6f56c3c7": "ProtocolConfigUpdated",
+
+  // cctp-hook (Surface-3 CCTP V2 round-trip)
+  // MilestoneAutoApproved — emitted from auto_approve_milestone after
+  // the CPI into Settlement returns successfully. sha256("event:Milestone
+  // AutoApproved")[0..8]. Coverage gate flagged this as missing once the
+  // cctp-hook program landed without a paired indexer disc-map entry.
+  "813e91dc8abf032e": "MilestoneAutoApproved",
 };
 
 /**
@@ -491,6 +504,17 @@ function i64ToJson(v: bigint): number | string {
     : v.toString();
 }
 
+// Borsh `Option<[u8; n]>` — wire-encoded as a u8 tag (0=None, 1=Some)
+// followed by exactly `n` raw bytes when Some. Used by CdpWalletUpdated's
+// old_wallet / new_wallet (EVM 20-byte addresses). Returns null for None
+// and a hex string for Some so the JSON projection stays stable.
+function optionHexBytes(r: BorshReader, n: number): string | null {
+  const tag = r.u8();
+  if (tag === 0) return null;
+  if (tag === 1) return r.hexBytes(n);
+  throw new Error(`optionHexBytes: invalid Borsh Option tag ${tag} (expected 0|1)`);
+}
+
 type EventDecoder = (r: BorshReader) => Record<string, unknown>;
 
 // S-offchain-05 (2026-04 re-audit): this array MUST match the declaration
@@ -568,6 +592,24 @@ const EVENT_DECODERS: Record<string, EventDecoder> = {
     new_version: r.u8(),
     timestamp: i64ToJson(r.i64()),
   }),
+
+  // Q-S3-A: CdpWalletUpdated (agent-registry, Surface-3 CDP-wallet binding).
+  // Wire layout from programs/agent-registry/src/events.rs:
+  //   pub authority: Pubkey
+  //   pub old_wallet: Option<[u8; 20]>   // 1-byte Borsh tag + 20 raw bytes when Some
+  //   pub new_wallet: Option<[u8; 20]>   // same encoding; None on clear (session-end)
+  //   pub timestamp: i64
+  //
+  // old_wallet is None for the first binding; new_wallet is None when the
+  // binding is cleared. Block-body decoder so the two Option<> reads can be
+  // sequenced explicitly without inlining the tag-dispatch into every line.
+  CdpWalletUpdated: (r) => {
+    const authority = r.pubkey();
+    const old_wallet = optionHexBytes(r, 20);
+    const new_wallet = optionHexBytes(r, 20);
+    const timestamp = i64ToJson(r.i64());
+    return { authority, old_wallet, new_wallet, timestamp };
+  },
 
   // ADR-082 / item 6: AgentIdentityUpdated (agent-vault, ADR-069).
   // Wire layout from programs/agent-vault/src/events.rs:
@@ -983,6 +1025,27 @@ const EVENT_DECODERS: Record<string, EventDecoder> = {
     escrow: r.pubkey(),
     task_id: u64ToJson(r.u64()),
     refunded_amount: u64ToJson(r.u64()),
+  }),
+
+  // Surface-3 / cctp-hook: MilestoneAutoApproved.
+  // Wire layout from programs/cctp-hook/src/events.rs:
+  //   pub escrow: Pubkey
+  //   pub milestone_index: u8
+  //   pub base_tx_hash: [u8; 32]
+  //   pub amount_returned_micros: u64
+  //   pub agent_authority: Pubkey
+  //
+  // Note milestone_index is u8 here (the cctp-hook only auto-approves the
+  // final milestone of an escrow and the on-chain handler casts down from
+  // u32), unlike the settlement program's MilestoneSubmitted/Approved/
+  // Rejected which carry u32 milestone_index. base_tx_hash is the Base-
+  // side burn tx hash, surfaced as a hex string for the cross-chain link.
+  MilestoneAutoApproved: (r) => ({
+    escrow: r.pubkey(),
+    milestone_index: r.u8(),
+    base_tx_hash: r.hexBytes(32),
+    amount_returned_micros: u64ToJson(r.u64()),
+    agent_authority: r.pubkey(),
   }),
 };
 
