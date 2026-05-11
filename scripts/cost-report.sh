@@ -35,6 +35,10 @@ set -euo pipefail
 RATE=${RATE:-200}
 HPAD=${HPAD:-10}
 LOC_PER_DAY=${LOC_PER_DAY:-250}
+if (( LOC_PER_DAY <= 0 )); then
+  echo "error: LOC_PER_DAY must be a positive integer (got: $LOC_PER_DAY)" >&2
+  exit 2
+fi
 SINCE_ARG=()
 if [[ -n "${SINCE:-}" ]]; then
   SINCE_ARG=(--since="$SINCE")
