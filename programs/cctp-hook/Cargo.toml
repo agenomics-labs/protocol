@@ -8,7 +8,7 @@ description = "Reflex CCTP V2 Hook - post-mint Solana hook that auto-approves an
 [dependencies]
 # Pin Anchor versions exactly (=) for reproducible mainnet builds, matching
 # the rest of the workspace (see programs/settlement/Cargo.toml).
-anchor-lang = { version = "=0.31.1", features = ["init-if-needed"] }
+anchor-lang = { version = "=1.0.2", features = ["init-if-needed"] }
 anchor-spl = "=0.31.1"
 
 # Surface 3 spec mandates "NOT modified" for `programs/agent-vault/`,
