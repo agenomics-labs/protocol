@@ -63,7 +63,7 @@
   },
   "devDependencies": {
     "@solana/kit": "^6.8.0",
-    "@types/node": "^20.9.0",
+    "@types/node": "^25.7.0",
     "ioredis-mock": "^8.9.0",
     "tsx": "^4.21.0",
     "typescript": "^5.2.2"
