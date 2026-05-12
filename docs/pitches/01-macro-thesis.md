@@ -26,11 +26,11 @@ economy is running on training wheels nobody actually wants.
 We built Agenomics — three Solana programs and a Model Context
 Protocol server that fix exactly that gap. Programmable wallets
 with policy enforcement. On-chain identity and reputation.
-Milestone-based escrow with built-in dispute resolution. 27 tools
+Milestone-based escrow with built-in dispute resolution. 28 tools
 exposed to any MCP-compatible agent client.
 
 [1:00]
-Live on devnet right now — RPC-verifiable. 547 tests passing. Solo
+Live on devnet right now — RPC-verifiable. 580 tests passing. Solo
 builder, three months. Revenue model is per-transaction settlement
 fee at 15 to 30 basis points. That's an order of magnitude under
 Stripe and the on-chain primitives do the work.
@@ -69,7 +69,7 @@ fee surface grows linearly.
 - CAGR 45.82% (Precedence Research, Aug 2025).
 - 3 programs RPC-verified live on devnet (run
   `solana account 4wjdJ…gvwN --url devnet` for live proof).
-- 547+ tests passing in CI; ADR governance with 134 decisions
+- 580+ tests passing in CI; ADR governance with 134 decisions
   documented.
 
 ## Anticipated objections + responses

@@ -113,8 +113,9 @@ this.
       delivered work.
       Settlement — milestone-based escrow with built-in dispute
       resolution.
-      The MCP server makes all 27 tools available to any agent, today,
-      via Claude Desktop or any MCP-compatible client.
+      The MCP server makes all 28 tools available to any agent, today,
+      via Claude Desktop or any MCP-compatible client — or directly
+      from claude.ai via the hosted remote connector.
 ```
 
 ### Beat 4 — Live proof (1:00 – 1:50)
@@ -138,10 +139,10 @@ this.
 ```
 [ON SCREEN] Quick montage: README scroll, MAINNET_CHECKLIST scroll
             (showing all the green checkmarks), one ADR file, one
-            test-output terminal showing 547+ tests passing.
+            test-output terminal showing 580+ tests passing.
 
 [VO]  This was built solo over the hackathon window —
-      three Anchor programs, an MCP server with 27 tools,
+      three Anchor programs, an MCP server with 28 tools,
       a React dashboard, a landing page, a thesis presentation,
       a four-cycle audit framework, end-to-end self-deploying CI.
       The point isn't that one person built it.

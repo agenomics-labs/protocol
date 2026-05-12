@@ -45,7 +45,7 @@ re-read every pitch.
    decreasing.** AI-assisted development means small teams ship
    what used to require large ones. (Pitch 08.)
 5. **Quality compounds.** The hostile-audit work + ADR
-   governance + 547-test bar pays off when capital flows
+   governance + 580-test bar pays off when capital flows
    through agent infrastructure. (Pitch 07.)
 
 If you find yourself in a meeting where the investor explicitly
@@ -60,7 +60,7 @@ Memorize these. They're load-bearing across the deck:
 - **$7B → $236B** (agentic AI market 2025 → 2034; Precedence
   Research)
 - **45-47% CAGR** (multiple analyst-firm consensus)
-- **27 MCP tools, 547 tests, 3 programs live on devnet**
+- **28 MCP tools, 580 tests, 3 programs live on devnet**
   (Agenomics traction; verifiable by an investor in 5 minutes)
 
 If you blank on one, the meeting recovers. If you blank on two,

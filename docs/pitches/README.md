@@ -71,7 +71,7 @@ Solana network claims (general / well-established):
 
 Agenomics-specific traction (live as of 2026-05-02):
 - 3 programs live on devnet, RPC-verified executable
-- 27 MCP tools shipped, 547+ tests passing in CI
+- 28 MCP tools shipped, 580+ tests passing in CI
 - Live landing site at agenomics.xyz with end-to-end
   Resend-backed signup
 - Self-deploying CI pipeline

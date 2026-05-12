@@ -29,7 +29,7 @@ Three Anchor programs — vault with PDA-enforced spending policy,
 registry with PDA-signed CPI for trustless reputation updates,
 settlement with milestone state machine. All three deployed and
 RPC-verifiable on devnet right now. Six layers of security
-hardening through four hostile audit cycles. 547 tests passing.
+hardening through four hostile audit cycles. 580 tests passing.
 
 [1:08]
 Defensibility isn't the smart contracts — those compile from

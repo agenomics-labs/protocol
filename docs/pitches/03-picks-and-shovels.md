@@ -27,7 +27,7 @@ escrow. Wastefully and badly.
 [0:50]
 Agenomics ships all three as on-chain primitives — Agent Vault,
 Agent Registry, Settlement — plus an MCP server that exposes
-them as 27 tools. Live on Solana devnet, RPC-verifiable today.
+them as 28 tools. Live on Solana devnet, RPC-verifiable today.
 Any agent runner — Claude Desktop, Cursor, custom — picks up
 the wire-compatible interface for free.
 

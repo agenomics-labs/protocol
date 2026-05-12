@@ -28,13 +28,13 @@ real budgets in 2026.
 [0:48]
 Agenomics removes the tax. Three Solana programs handle
 identity, programmable spending, and milestone-based
-settlement with built-in dispute resolution. 27-tool MCP
+settlement with built-in dispute resolution. 28-tool MCP
 server. Any agent on any runtime — Claude, Cursor, ElizaOS,
 custom — pays another agent natively, in 400 milliseconds,
 with policy enforcement at the program level.
 
 [1:10]
-Live on devnet. RPC-verifiable. 547 tests. Solo-built, three
+Live on devnet. RPC-verifiable. 580 tests. Solo-built, three
 months. Revenue: per-transaction settlement fee at 15-30 bps
 plus enterprise SaaS for vault operators.
 
@@ -88,7 +88,7 @@ integration is one MCP config line.
   treasury-shape SaaS.
 - Agentic AI market growing 44.6%-47% CAGR per multiple
   analyst firms (see `README.md`).
-- Live demo: 3 programs RPC-verified on devnet, 27 MCP tools
+- Live demo: 3 programs RPC-verified on devnet, 28 MCP tools
   shipped, signup form on agenomics.xyz routing through the
   same hardened backend the protocol describes.
 

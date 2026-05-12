@@ -227,7 +227,7 @@ A new tool added to the AEP MCP server. Wraps an x402 client, debits the agent's
 
 ### Implementation
 
-TypeScript, lives in `@agenomics/mcp-server` alongside the existing 27 tools (see `docs/api-reference.md`). After this surface lands the count is 28.
+TypeScript, lives in `@agenomics/mcp-server` alongside the existing 27 real tools (see `docs/api-reference.md`); landing this stub took the public count to 28 (the real CDP-backed implementation is the Day 3-7 owner's job — ADR-087 Phase B).
 
 ```typescript
 // src/tools/pay-x402-service.ts

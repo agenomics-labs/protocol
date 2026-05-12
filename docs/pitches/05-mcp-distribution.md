@@ -22,9 +22,9 @@ owns distribution to every agent on every runtime. Not because
 they're locked in — because they're the default.
 
 [0:38]
-Agenomics ships 27 MCP tools today. Programmable wallets,
+Agenomics ships 28 MCP tools today. Programmable wallets,
 on-chain identity, reputation, milestone-based escrow with
-dispute resolution. Live on Solana devnet, RPC-verifiable, 547
+dispute resolution. Live on Solana devnet, RPC-verifiable, 580
 tests passing. Any MCP-compatible client gets the financial
 primitives by adding one config line.
 
@@ -58,7 +58,7 @@ the tools live.
 **Distribution-driven monetization** (the AI investor framing):
 
 - **Free at the agent layer** — every MCP-compatible client gets
-  the 27 tools at zero marginal cost. Drives adoption, builds
+  the 28 tools at zero marginal cost. Drives adoption, builds
   the reputation graph.
 - **Paid at the operator layer** — multi-vault management
   dashboards, compliance audit log retention, custom policy
@@ -81,7 +81,7 @@ let the platform do the marketing.
   Sourcegraph, Block, Replit, Goose, Continue.
 - Agentic AI market: $7B (2025) → $93B (2032), 44.6% CAGR
   (MarketsAndMarkets). See `README.md`.
-- 27 MCP tools shipped + tested in CI (action-shape.test.ts
+- 28 MCP tools shipped + tested in CI (action-shape.test.ts
   asserts the count).
 - Twilio comparable: market cap ~$10B, primarily
   developer-free + enterprise-paid model.
@@ -104,7 +104,7 @@ sits between them.
 — OpenAI ships something incompatible, the market splits?"
 
 **Response:** Real risk, and the answer is the protocol layer is
-transport-agnostic. The 27 tools, the on-chain state, the
+transport-agnostic. The 28 tools, the on-chain state, the
 reputation graph — all of that lives below the wire format. If
 OpenAI's standard wins, we ship an OpenAI-format adapter on top
 of the same Anchor programs. If MCP wins (currently more likely
@@ -120,7 +120,7 @@ defensible is being one more?"
 SaaS APIs — they're a thin layer over Stripe, Notion, Linear,
 etc. Theirs is the SaaS company's defensibility, not the MCP
 shim's. We're different shape: we ship the underlying
-infrastructure, not a wrapper. Our 27 tools are backed by
+infrastructure, not a wrapper. Our 28 tools are backed by
 three Anchor programs that we wrote, deployed, and own the
 upgrade authority on. The differentiator is "MCP server backed
 by purpose-built on-chain primitives," not "MCP wrapper around

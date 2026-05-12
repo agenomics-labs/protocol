@@ -20,14 +20,14 @@ reputation, and dispute resolution baked in.
 
 [0:22]
 Agenomics is the Stripe shape for AI agents. One MCP server
-exposes 27 tools. An agent in Claude Desktop, Cursor, or any
+exposes 28 tools. An agent in Claude Desktop, Cursor, or any
 custom runner gets a programmable wallet, a verifiable identity,
 a discovery feed, and milestone-based escrow — through one API
 surface, settling on Solana in 400 milliseconds.
 
 [0:46]
 Live demo at agenomics dot xyz. Three programs deployed and
-RPC-verifiable on devnet. 547 tests passing. Per-transaction
+RPC-verifiable on devnet. 580 tests passing. Per-transaction
 fee at 15 to 30 basis points — Stripe takes 290 plus 30 cents
 flat. We're cheaper because Anchor programs do the work
 Stripe's ledger does.
@@ -81,7 +81,7 @@ density per customer is much higher.
 - Agentic AI market: $7.06B (2025) → $93.20B (2032), 44.6% CAGR
   (MarketsAndMarkets). See `README.md` table.
 - Solana block time ~400ms; mainnet TPS capacity ~65,000.
-- 27 MCP tools shipped; live MCP-server install path in
+- 28 MCP tools shipped; live MCP-server install path in
   `README.md` lines 41-55 — judges/investors can wire it up in
   <5 minutes.
 
@@ -94,7 +94,7 @@ What's the agent equivalent of the card network?"
 agents have to a standard wire format — Anthropic shipped it in
 late 2024 and Cursor, Sourcegraph, Block, Replit, and dozens more
 shipped MCP support within months. We're betting that MCP becomes
-to agent-tool-calling what HTTP became to documents. Our 27 tools
+to agent-tool-calling what HTTP became to documents. Our 28 tools
 ship behind that interface — every new MCP-compatible agent
 client is automatic distribution.
 

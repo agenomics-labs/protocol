@@ -30,7 +30,7 @@ multi-vault management. We ship all three. Land-and-expand,
 clean.
 
 [1:08]
-Already-shipped surface: 27 MCP tools, 547 tests passing,
+Already-shipped surface: 28 MCP tools, 580 tests passing,
 four hostile audit cycles closed at zero open, self-deploying
 CI. Three Solana programs live on devnet. The wedge product
 is functional today; mainnet ships Q3.
@@ -83,16 +83,16 @@ line and the value-prop ("your agents can pay each other in
   2026: Cursor, ElizaOS, SendAI, Crew AI, AutoGPT, OpenAI
   Assistants, Anthropic MCP-enabled clients, Continue,
   Replit Agent. Each is a single conversation away.
-- 27 MCP tools shipped; complete catalog in `README.md`
+- 28 MCP tools shipped; complete catalog in `README.md`
   + `mcp-server/test/action-shape.test.ts:34` (snapshot
-  asserts count = 27).
+  asserts count = 28).
 - Live MCP install path documented in `README.md:41-55` —
   judges/investors can wire it up in <5 min.
 - Land-and-expand comparables: Plaid (link → ARR expansion),
   Snowflake (storage → compute → Snowpark), MongoDB Atlas
   (DB → search → vector). All shipped wedge first, expanded
   via NRR > 130%.
-- 547+ tests passing in CI; ADR-governed decisions; four
+- 580+ tests passing in CI; ADR-governed decisions; four
   hostile-audit cycles closed.
 
 ## Anticipated objections + responses

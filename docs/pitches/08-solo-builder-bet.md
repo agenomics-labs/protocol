@@ -17,9 +17,9 @@ the proof.
 
 [0:18]
 One person, three months, three Solana programs, an MCP server
-with 27 tools, a React dashboard, a landing page, a thesis
+with 28 tools, a React dashboard, a landing page, a thesis
 presentation, four hostile-audit cycles, self-deploying CI.
-547 tests passing. Live on devnet today. Live signup form
+580 tests passing. Live on devnet today. Live signup form
 sending welcome emails through a verified domain.
 
 [0:42]
@@ -83,7 +83,7 @@ the builder is also the design lead.
   diagnosis → end-to-end verification) shipped in <90 minutes.
 - Automated CI gates added in same session (4 new workspace
   test jobs + dashboard build).
-- All-time: 134 ADRs, 547 passing tests, 3 deployed programs,
+- All-time: 134 ADRs, 580 passing tests, 3 deployed programs,
   one verified-domain transactional-email pipeline, one
   self-deploying Vercel workflow.
 - Cal.com (single-founder ARR run): public statements ~$4M ARR

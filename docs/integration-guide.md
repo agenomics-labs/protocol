@@ -1,8 +1,20 @@
 # Integration Guide
 
-AEP exposes 27 MCP tools through a stdio-transport server. Any MCP-compatible client (Claude Desktop, Cursor, custom runners, ElizaOS via the AEP plugin, Solana Agent Kit) can invoke them. Until the npm packages publish, all integrations launch the server from a local clone.
+AEP exposes 28 MCP tools through two transports:
 
-## Build the server first
+- **stdio** — long-running local subprocess. Works with Claude Desktop, Cursor, custom runners, ElizaOS via the AEP plugin, and Solana Agent Kit. Requires a clone.
+- **Streamable HTTP** (ADR-083) — hosted at `https://aep-mcp-judge.fly.dev` (Fly.io), `https://aep-mcp.vercel.app` (Vercel), and `https://aep-mcp.up.railway.app` (Railway). Works with claude.ai (web + mobile) via custom connectors. No clone required.
+
+## Use the hosted endpoint from claude.ai (no clone)
+
+1. Open [claude.ai/settings/connectors](https://claude.ai/settings/connectors) → **Add custom connector**.
+2. Paste one of the URLs above.
+3. Paste the bearer token published on the [Colosseum submission page](../SUBMISSION.md) (rotated per judging cycle).
+4. **Add** → 28 tools become available. Ask Claude *"Run `verify_protocol_invariants` on agenomics"* to confirm.
+
+Server-side keypair is devnet-only; bearer token + per-IP rate limit + origin allowlist (`claude.ai`) is the abuse boundary.
+
+## Build the server locally (stdio path)
 
 ```bash
 git clone https://github.com/agenomics-labs/protocol
@@ -14,7 +26,7 @@ The root `postinstall` hook builds the 4 TS workspace packages in dependency ord
 
 ## ElizaOS
 
-The `@agenomics/integrations` package (in `src/integrations/`) wraps the 27 MCP tools as ElizaOS actions. Until that package publishes, point ElizaOS at the local clone.
+The `@agenomics/integrations` package (in `src/integrations/`) wraps the 28 MCP tools as ElizaOS actions. Until that package publishes, point ElizaOS at the local clone.
 
 ### Usage
 
@@ -28,14 +40,15 @@ const agent = new ElizaAgent({
 });
 ```
 
-### Available actions (27)
+### Available actions (28)
 
-The plugin registers 27 actions prefixed with `aep_`:
+The plugin registers 28 actions prefixed with `aep_`:
 
 - **Vault (9):** `aep_create_vault`, `aep_get_vault_info`, `aep_vault_transfer`, `aep_vault_token_transfer`, `aep_update_vault_policy`, `aep_rotate_agent_identity`, `aep_pause_vault`, `aep_resume_vault`, `aep_manage_allowlist`
 - **Registry + reputation + agent-memory (7):** `aep_register_agent`, `aep_get_agent_profile`, `aep_update_agent_profile`, `aep_discover_agents`, `aep_stake_reputation`, `aep_get_agent_reputation`, `aep_find_similar_agents`
 - **Settlement (10):** `aep_create_escrow`, `aep_accept_task`, `aep_submit_milestone`, `aep_approve_milestone`, `aep_reject_milestone`, `aep_get_escrow_status`, `aep_cancel_escrow`, `aep_raise_dispute`, `aep_resolve_dispute`, `aep_resolve_dispute_timeout`
 - **Governance (1):** `aep_verify_protocol_invariants`
+- **Surface 2 (1, stub):** `aep_pay_x402_service` — x402 payment relay; real CDP integration pending (ADR-087 Phase B)
 
 ## Solana Agent Kit
 

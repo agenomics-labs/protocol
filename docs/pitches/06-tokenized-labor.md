@@ -25,7 +25,7 @@ We just haven't given them the rails to act.
 Agenomics is the rails. Three Solana programs let an agent
 hold money under programmable policy, prove its identity to
 another agent, and settle work via milestone-based escrow with
-built-in dispute resolution. 27-tool MCP interface. Live on
+built-in dispute resolution. 28-tool MCP interface. Live on
 devnet, RPC-verifiable.
 
 [1:00]
@@ -100,7 +100,7 @@ What stops Agenomics from being one of them?"
 
 **Response:** Right — most are. Three signals to disqualify
 that risk: (1) the programs are LIVE on devnet, RPC-verifiable
-right now, not "coming Q3"; (2) 547 tests gate every CI run,
+right now, not "coming Q3"; (2) 580 tests gate every CI run,
 plus four hostile audit cycles closed at zero open; (3) the
 landing site itself runs on the same infrastructure stack
 (programmable backend, signed transactions on a verified
