@@ -11,7 +11,7 @@ jobs:
     name: Rust Check & Test
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # pin v5 (AUD-406)
 
       - name: Verify preinstalled Rust toolchain
         # ADR-105: self-hosted runner ships with stable + nightly toolchains
@@ -52,7 +52,7 @@ jobs:
     name: Security Audit
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # pin v5 (AUD-406)
 
       - name: Verify preinstalled Rust toolchain
         # ADR-105: self-hosted runner ships with stable + nightly toolchains
@@ -100,7 +100,7 @@ jobs:
     # under `target/types/` before running `tsc --noEmit`.
     needs: anchor-build
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # pin v5 (AUD-406)
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # pin v6 (AUD-406)
         with:
@@ -157,7 +157,7 @@ jobs:
     name: TypeScript Check (indexer)
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # pin v5 (AUD-406)
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # pin v6 (AUD-406)
         with:
           node-version: "20"
@@ -178,7 +178,7 @@ jobs:
     name: TypeScript Check + Tests (x402-relay)
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # pin v5 (AUD-406)
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # pin v6 (AUD-406)
         with:
           node-version: "20"
@@ -199,7 +199,7 @@ jobs:
     name: TypeScript Check (capability-manifest-validator)
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # pin v5 (AUD-406)
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # pin v6 (AUD-406)
         with:
           node-version: "20"
@@ -221,7 +221,7 @@ jobs:
     name: TypeScript Check (sas-resolver)
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # pin v5 (AUD-406)
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # pin v6 (AUD-406)
         with:
           node-version: "20"
@@ -251,7 +251,7 @@ jobs:
     name: TypeScript Check (sdk/idl)
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # pin v5 (AUD-406)
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # pin v6 (AUD-406)
         with:
           node-version: "20"
@@ -268,7 +268,7 @@ jobs:
     name: TypeScript Check (sdk/action-runtime)
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # pin v5 (AUD-406)
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # pin v6 (AUD-406)
         with:
           node-version: "20"
@@ -285,7 +285,7 @@ jobs:
     name: TypeScript Check (sdk/client)
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # pin v5 (AUD-406)
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # pin v6 (AUD-406)
         with:
           node-version: "20"
@@ -312,7 +312,7 @@ jobs:
     name: Dashboard build (vite)
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # pin v5 (AUD-406)
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # pin v6 (AUD-406)
         with:
           node-version: "20"
@@ -335,7 +335,7 @@ jobs:
     # resolves once `target/types/agent_registry.ts` is on disk.
     needs: anchor-build
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # pin v5 (AUD-406)
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # pin v6 (AUD-406)
         with:
           node-version: "20"
@@ -374,7 +374,7 @@ jobs:
     name: Workspace build-order check
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # pin v5 (AUD-406)
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # pin v6 (AUD-406)
         with:
           node-version: "20"
@@ -402,7 +402,7 @@ jobs:
     name: Lockfile determinism check
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # pin v5 (AUD-406)
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # pin v6 (AUD-406)
         with:
           node-version: "20"
@@ -431,7 +431,7 @@ jobs:
     name: Tool parity check (mcp-server ↔ dashboard ↔ README)
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # pin v5 (AUD-406)
       - name: Run tool parity check
         run: bash scripts/check-tools-parity.sh
 
@@ -444,7 +444,7 @@ jobs:
     name: License parity check (Apache-2.0 across workspaces + programs)
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # pin v5 (AUD-406)
       - name: Run license parity check
         run: bash scripts/check-license-parity.sh
 
@@ -457,7 +457,7 @@ jobs:
     name: Doc-commands lint (executable instructions in user docs)
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # pin v5 (AUD-406)
       - name: Run doc-commands lint
         run: bash scripts/check-doc-commands.sh
 
@@ -472,7 +472,7 @@ jobs:
     name: Program-ID parity check (declare_id! ↔ docs ↔ dashboard)
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # pin v5 (AUD-406)
       - name: Run program-ID parity check
         run: bash scripts/check-program-ids.sh
 
@@ -487,7 +487,7 @@ jobs:
     name: ADR cross-reference check
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # pin v5 (AUD-406)
       - name: Run ADR cross-reference check
         run: bash scripts/check-adr-refs.sh
 
@@ -500,7 +500,7 @@ jobs:
     name: Markdown link check (relative file paths)
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # pin v5 (AUD-406)
       - name: Run markdown link check
         run: bash scripts/check-md-links.sh
 
@@ -512,7 +512,7 @@ jobs:
     name: Secret Scan
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # pin v5 (AUD-406)
         with:
           # TruffleHog needs the commit history to diff against `base`.
           fetch-depth: 0
@@ -556,7 +556,7 @@ jobs:
       SOLANA_VERSION: v3.1.13
       ANCHOR_VERSION: 0.31.1
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # pin v5 (AUD-406)
 
       - name: Verify preinstalled Rust toolchain
         # ADR-105: self-hosted runner ships with stable + nightly toolchains
@@ -679,7 +679,7 @@ jobs:
       SOLANA_VERSION: v3.1.13
       ANCHOR_VERSION: 0.31.1
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # pin v5 (AUD-406)
 
       - name: Verify preinstalled Rust toolchain
         # ADR-105: self-hosted runner ships with stable + nightly toolchains
