@@ -10,7 +10,7 @@ license = "Apache-2.0"
 # the program's bytecode hash, invalidating the audit. Per
 # docs/MAINNET_CHECKLIST.md §1.1 #3.
 anchor-lang = "=0.31.1"
-anchor-spl = "=0.31.1"
+anchor-spl = "=1.0.2"
 # ADR-095: Depend on the registry crate for typed CPI. `features = ["cpi"]`
 # enables Anchor-generated CPI helpers; the transitive `no-entrypoint` feature
 # prevents the registry's cdylib entrypoint from colliding with this program's.
