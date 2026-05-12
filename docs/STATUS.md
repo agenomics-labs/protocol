@@ -16,7 +16,7 @@ _Last updated: 2026-05-06 (5 days to Colosseum deadline; PR #76 + PR #77 closed 
 | Workspace licenses | All `Apache-2.0` | repo-root `LICENSE` + 6 workspace `package.json` aligned (PR #76) |
 | `npm audit --omit=dev` | **0 vulnerabilities** | uuid + ip-address scoped overrides shipped (PR #77, see `docs/audits/DEPENDABOT-3-UUID-IPADDR-CLOSURE.md`) |
 | CI | 16 jobs gated | all green on the two 2026-05-06 PRs; Anchor Integration job is self-hosted-runner-only |
-| Tests | **547+ across packages** | 164 Anchor (51 settlement + 60 registry + 44 vault + 9 cpi-failures; 3 intentional pendings per AUD-203) + 383 mcp-server (`node:test`; gated by `pretest` workspace build hook) |
+| Tests | **580+ across packages** | 164 Anchor (51 settlement + 60 registry + 44 vault + 9 cpi-failures; 3 intentional pendings per AUD-203) + 416 mcp-server (`node:test`; gated by `pretest` workspace build hook) |
 | Submission docs | `SUBMISSION.md` live on main | two `[TODO upload]` placeholders for video URLs remain |
 
 ## 2. Acronym / brand

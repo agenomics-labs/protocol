@@ -17,7 +17,7 @@ The entire protocol is accessible to any AI agent through a Model Context Protoc
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                     MCP Server (TypeScript)                  │
-│           27 tools · Input validation · Error handling        │
+│           28 tools · Input validation · Error handling        │
 ├──────────────┬──────────────────┬────────────────────────────┤
 │  Agent Vault │  Agent Registry  │   Settlement Protocol      │
 │   (Anchor)   │    (Anchor)      │       (Anchor)             │
@@ -150,10 +150,10 @@ Per ADR-050, the vault has no cross-program-call surface. Transfers are SOL-only
 
 ## MCP Server
 
-A TypeScript MCP server exposes all three programs as 27 tools that any AI agent can invoke through the Model Context Protocol.
+A TypeScript MCP server exposes all three programs as 28 tools that any AI agent can invoke through the Model Context Protocol.
 
 **Source:** `mcp-server/src/index.ts` + `solana.ts` + `tools/*.ts` (per-tool descriptors)
-**Tests:** 383 passing via `cd mcp-server && npm test` (node:test + tsx; integration test `test/mcp-handlers.test.ts` requires a live local validator and is run separately).
+**Tests:** 416 passing via `cd mcp-server && npm test` (node:test + tsx; integration test `test/mcp-handlers.test.ts` requires a live local validator and is run separately).
 
 ### Tools
 
@@ -162,7 +162,10 @@ A TypeScript MCP server exposes all three programs as 27 tools that any AI agent
 | Agent Vault (9) | `create_vault`, `get_vault_info`, `vault_transfer`, `vault_token_transfer`, `update_vault_policy`, `rotate_agent_identity`, `manage_allowlist`, `pause_vault`, `resume_vault` |
 | Agent Registry (5) | `register_agent`, `get_agent_profile`, `update_agent_profile`, `discover_agents`, `stake_reputation` |
 | Reputation (1) | `get_agent_reputation` |
+| Agent Memory (1) | `find_similar_agents` (ADR-129 Phase 1) |
 | Settlement (10) | `create_escrow`, `get_escrow_status`, `accept_task`, `submit_milestone`, `approve_milestone`, `reject_milestone`, `raise_dispute`, `resolve_dispute`, `resolve_dispute_timeout`, `cancel_escrow` |
+| Governance (1) | `verify_protocol_invariants` (AUD-206) |
+| Surface 2 (1, stub) | `pay_x402_service` (x402 payment relay; real CDP integration pending) |
 
 **Features:**
 
@@ -175,7 +178,7 @@ A TypeScript MCP server exposes all three programs as 27 tools that any AI agent
 
 ## Test Suite
 
-**547+ tests passing** — 164 Anchor (164 / 167 with 3 intentional `pending` per AUD-203) + 383 mcp-server (`node:test`)
+**580+ tests passing** — 164 Anchor (164 / 167 with 3 intentional `pending` per AUD-203) + 416 mcp-server (`node:test`)
 
 | Component | Tests | Source |
 |-----------|-------|--------|
@@ -183,7 +186,7 @@ A TypeScript MCP server exposes all three programs as 27 tools that any AI agent
 | Agent Vault | 44 | `tests/agent-vault.ts` |
 | Settlement Protocol | 51 | `tests/settlement.ts` |
 | Cross-program CPI failures | 9 | `tests/cpi-failures.test.ts` |
-| MCP Server | 383 | `mcp-server/test/*.test.ts` (gated by `pretest` workspace build) |
+| MCP Server | 416 | `mcp-server/test/*.test.ts` (gated by `pretest` workspace build) |
 
 **Test categories covered:**
 
@@ -309,4 +312,4 @@ aep/
 ---
 
 *Built by Alejandro for the Colosseum Frontier Hackathon (Apr 6 – May 11, 2026)*
-*3 programs · 27 MCP tools · Real CPI verified on-chain*
+*3 programs · 28 MCP tools · Real CPI verified on-chain*

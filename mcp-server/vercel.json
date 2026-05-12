@@ -1,0 +1,27 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "cd .. && npm ci && npm -w @agenomics/action-runtime -w @agenomics/capability-manifest-validator -w @agenomics/sas-resolver -w @agenomics/mcp-server run build",
+  "outputDirectory": "dist",
+  "functions": {
+    "api/mcp.ts": {
+      "runtime": "@vercel/node@5",
+      "maxDuration": 60,
+      "memory": 1024
+    }
+  },
+  "rewrites": [
+    { "source": "/healthz", "destination": "/api/mcp" },
+    { "source": "/", "destination": "/api/mcp" },
+    { "source": "/(.*)", "destination": "/api/mcp" }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "Strict-Transport-Security", "value": "max-age=63072000; includeSubDomains; preload" },
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "Referrer-Policy", "value": "no-referrer" }
+      ]
+    }
+  ]
+}

@@ -6,9 +6,28 @@ The point of this doc: a Colosseum judge can verify the protocol works in **unde
 
 ---
 
+## Step 0 — claude.ai connector (60 seconds, no clone needed)
+
+Judges who don't want to clone anything: the MCP server is hosted on three providers so you can verify from a browser.
+
+1. Open [**claude.ai/settings/connectors**](https://claude.ai/settings/connectors).
+2. **Add custom connector** → paste one of these URLs:
+   - **Fly.io** (primary): `https://aep-mcp-judge.fly.dev`
+   - **Vercel**: `https://aep-mcp.vercel.app`
+   - **Railway** (backup): `https://aep-mcp.up.railway.app`
+3. Paste the **auth token** from the Colosseum submission page (rotated per judging cycle; never committed to git).
+4. **Add** → the 28 tools register in the connector dialog.
+5. In any conversation, ask Claude: *"Run `verify_protocol_invariants` on agenomics and tell me the result."*
+
+Expected: Claude calls the tool and reports a clean invariant sweep (`ok: true`, with a per-program summary). If it errors, the message is actionable (bad token, rate-limited, etc.) — paste it into the project's GitHub Issues so it shows up in the judging record.
+
+The hosted endpoint runs against Solana devnet with a server-side keypair (~0.85 SOL, replenishable from the public faucet). The bearer token + per-IP rate limit (60 req/min) + origin allowlist (`claude.ai` only) is the abuse boundary. No local install required.
+
+---
+
 ## TL;DR
 
-**Three Solana programs (devnet-live, RPC-verifiable), one MCP server (27 typed tools), 547+ tests passing across the workspace, Apache-2.0 licensed.** Judges who only have 60 seconds: the [Devnet Deployment](./README.md#devnet-deployment) table is enough — every program ID is a Solana Explorer link. Judges who have 5 minutes: run the verification flow below.
+**Three Solana programs (devnet-live, RPC-verifiable), one MCP server (28 typed tools), 580+ tests passing across the workspace, Apache-2.0 licensed.** Judges who only have 60 seconds: the [Devnet Deployment](./README.md#devnet-deployment) table is enough — every program ID is a Solana Explorer link. Judges who have 5 minutes: run the verification flow below.
 
 ---
 
@@ -110,7 +129,7 @@ Expected on a clean run (4 log lines + an idle process; the server is now waitin
     agent_wallet: "<your wallet's base58 pubkey>"
     rpc_v1_endpoint: "https://api.devnet.solana.com"
     rpc_v2_endpoint: "https://api.devnet.solana.com"
-    actions_count: 27
+    actions_count: 28
     idempotency_backend: "memory"
     evo_enabled: false
 [metrics] Prometheus scrape endpoint on http://127.0.0.1:9101/metrics
@@ -120,7 +139,7 @@ Three things to verify in this output:
 
 | Field | Why it matters |
 |---|---|
-| `actions_count: 27` | Confirms the 27-tool surface is registered (matches README, SUBMISSION, dashboard, integration-guide) |
+| `actions_count: 28` | Confirms the 28-tool surface is registered (matches README, SUBMISSION, dashboard, integration-guide) |
 | `transport: "stdio"` | Subprocess-mode MCP, the standard Claude Desktop wiring |
 | `agent_wallet` is populated | Your keypair is loaded (the wallet doesn't need SOL for read tools) |
 
@@ -142,7 +161,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 }
 ```
 
-Restart Claude Desktop. In a new conversation, type `What tools are available from agenomics?` — Claude should list 27 tools (`create_vault`, `register_agent`, `create_escrow`, etc.).
+Restart Claude Desktop. In a new conversation, type `What tools are available from agenomics?` — Claude should list 28 tools (`create_vault`, `register_agent`, `create_escrow`, etc.).
 
 ### Step 5 — Verify the on-chain programs are live (≈ 30s)
 
@@ -173,9 +192,9 @@ Or browse them directly on Solana Explorer:
 
 ## Optional deeper verification
 
-### Verify the 27 tools register over the wire (≈ 5s)
+### Verify the 28 tools register over the wire (≈ 5s)
 
-Goes one level deeper than Step 3's `actions_count: 27` log line — sends an actual MCP `tools/list` request and counts the tools in the JSON-RPC response. If a tool fails to register (broken Zod schema, import-time crash, etc.) it would be missing here even though the startup log is fine.
+Goes one level deeper than Step 3's `actions_count: 28` log line — sends an actual MCP `tools/list` request and counts the tools in the JSON-RPC response. If a tool fails to register (broken Zod schema, import-time crash, etc.) it would be missing here even though the startup log is fine.
 
 ```bash
 {
@@ -192,7 +211,7 @@ Goes one level deeper than Step 3's `actions_count: 27` log line — sends an ac
 Expected:
 
 ```
-27
+28
 ```
 
 To see the actual tool names:
@@ -202,7 +221,7 @@ To see the actual tool names:
 … | grep -o '"name":"[a-z_]*"' | sort -u
 ```
 
-Returns the canonical 27-tool list (9 vault + 6 registry + 1 reputation + 1 agent-memory + 10 settlement + 1 governance) — same set the dashboard's MCP_TOOLS array, README, and `mcp-server/src/tools/index.ts:91 allTools[]` advertise.
+Returns the canonical 28-tool list (9 vault + 6 registry + 1 reputation + 1 agent-memory + 10 settlement + 1 governance + 1 surface-2 stub) — same set the dashboard's MCP_TOOLS array, README, and `mcp-server/src/tools/index.ts:91 allTools[]` advertise.
 
 ### Run the unit tests (≈ 30s)
 
@@ -213,11 +232,11 @@ cd mcp-server && npm test
 Expected tail:
 
 ```
-# tests 383
-# pass 383
+# tests 416
+# pass 416
 # fail 0
 # cancelled 0
-# duration_ms ~7,000
+# duration_ms ~64,000
 ```
 
 ### Run the end-to-end devnet smoke (≈ 60s)

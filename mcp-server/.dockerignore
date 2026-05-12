@@ -1,0 +1,55 @@
+# Generated artifacts (built fresh inside the image)
+**/node_modules
+**/dist
+**/.next
+**/.turbo
+
+# Local-only secrets and state
+.env
+.env.*
+!.env.devnet
+.keys
+target
+.anchor
+*.log
+
+# Tests, coverage, examples, mocks
+**/test
+**/tests
+**/coverage
+**/__mocks__
+**/__snapshots__
+
+# Editor / OS noise
+.vscode
+.idea
+.DS_Store
+*.swp
+
+# Git
+.git
+.gitignore
+.github
+
+# Docs (the runtime image doesn't need them)
+docs
+site
+*.md
+!README.md
+!mcp-server/README.md
+
+# Unrelated workspaces — keep their package.json (Dockerfile selectively
+# COPYs those) but drop their source so the build context stays small
+dashboard/src
+dashboard/public
+dashboard/dist
+src/indexer/src
+src/x402-relay/src
+sdk/client/src
+agentcore
+mobile
+programs
+fuzz
+load
+integrations
+migrations

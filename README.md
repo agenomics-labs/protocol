@@ -27,7 +27,19 @@ cd protocol && npm install                    # root postinstall builds the work
 cp mcp-server/.env.devnet mcp-server/.env
 ```
 
-### Connect to Claude Desktop
+### Connect to claude.ai (web + mobile) — fastest path for judges
+
+Hosted MCP endpoint, no local setup. claude.ai supports remote MCP servers via custom connectors:
+
+1. Open [claude.ai/settings/connectors](https://claude.ai/settings/connectors)
+2. Click **Add custom connector**
+3. Paste the URL: **`https://aep-mcp-judge.fly.dev`** (primary; mirrors at `https://aep-mcp.vercel.app` and `https://aep-mcp.up.railway.app`)
+4. Paste the auth token published on the [Colosseum submission page](./SUBMISSION.md) (rotated per judging cycle)
+5. Click **Add** → ask Claude *"Run `verify_protocol_invariants` on agenomics"* to confirm
+
+All 28 tools are immediately available in any conversation. The hosted endpoint runs against Solana devnet with a server-side keypair; the bearer token + per-IP rate limit + origin allowlist (`claude.ai` only) are the abuse boundary.
+
+### Connect to Claude Desktop (stdio, local clone)
 
 Add to your Claude Desktop MCP config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS, `%APPDATA%\Claude\claude_desktop_config.json` on Windows):
 ```json
@@ -81,7 +93,7 @@ anchor build --no-idl
 # Run unit tests
 cargo test
 
-# Run mcp-server unit tests (383 tests; node:test + tsx)
+# Run mcp-server unit tests (416 tests; node:test + tsx)
 cd mcp-server && npm test
 
 # Anchor integration tests (full lifecycle against local validator)
@@ -115,11 +127,23 @@ cd dashboard && npm run dev
 
 ## Security
 
-- 0 npm vulnerabilities
-- 0 open findings from internal audit cycles 1-3; external audit pending
-- PDA-signed CPI for cross-program reputation updates
-- Defense-in-depth: Anchor constraints + handler checks + economic barriers
-- Reputation deltas: +10 (complete) / -5 (dispute or timeout) / -3 (expiry); capped at ±10 per call, scores clamped to [0, 100] (ADR-094)
+Internal audit cycles are documented in [`docs/audits/`](docs/audits/) — every finding has a closing commit referenced in the punch-list.
+
+| Cycle | Scope | Status | Artifacts |
+|---|---|---|---|
+| Cycle 1 | Foundational audit | 0/open | [`ARCHITECTURE-AUDIT-2026-04-25.md`](docs/audits/ARCHITECTURE-AUDIT-2026-04-25.md), [`TEST-REPORT-2026-04-25.md`](docs/audits/TEST-REPORT-2026-04-25.md), [`REMEDIATION-PLAN.md`](docs/audits/REMEDIATION-PLAN.md) |
+| Cycle 2 | Re-audit + Dependabot sweep | 0/open | [`ARCHITECTURE-AUDIT-2026-04-26-{adr,onchain,offchain,tests-ci}.md`](docs/audits/), [`DEPENDABOT-2-CLOSURE-CHECK.md`](docs/audits/DEPENDABOT-2-CLOSURE-CHECK.md) |
+| Cycle 3 | Cross-cutting (Onchain 0/12 · Offchain 0/18 · MCP 0/20) | 0/open | [`CYCLE-3-{ONCHAIN,OFFCHAIN,MCP}-PUNCHLIST.md`](docs/audits/) |
+| Cycle 4 | Continuation + MCP transport hardening (ADR-083 + ADR-132) | 0/open | [`CYCLE-4-{ADR,ONCHAIN,OFFCHAIN,MCP}-PUNCHLIST.md`](docs/audits/) |
+| Re-audit 2026-05 | Runtime-validation sweep | 0/open | [`docs/ARCHITECTURE_REAUDIT_2026-05.md`](docs/ARCHITECTURE_REAUDIT_2026-05.md), [`ARCHITECTURE_REAUDIT_2026-05b-runtime-validation.md`](docs/ARCHITECTURE_REAUDIT_2026-05b-runtime-validation.md) |
+
+Threat model + invariants documented in [`docs/SECURITY_AUDIT.md`](docs/SECURITY_AUDIT.md). External audit pending — internal hostile-audit posture is the bridge.
+
+- **0 npm vulnerabilities** (`npm audit --omit=dev`); 5 deferred dev-only findings tracked in [`DEPENDABOT-3-UUID-IPADDR-CLOSURE.md`](docs/audits/DEPENDABOT-3-UUID-IPADDR-CLOSURE.md)
+- **PDA-signed CPI** for cross-program reputation updates (ADR-094)
+- **Defense-in-depth**: Anchor constraints + handler checks + economic barriers
+- **MCP transport security**: bearer auth + per-bucket rate limit + origin allowlist (ADR-083 + ADR-132); CI lint gate forbids unauthenticated `listen()` call sites
+- **Reputation deltas**: +10 (complete) / -5 (dispute or timeout) / -3 (expiry); capped at ±10 per call, scores clamped to [0, 100] (ADR-094)
 
 ## License
 

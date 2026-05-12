@@ -294,9 +294,9 @@ peers.
               right: cargo test --workspace
             Let both finish. Then briefly cd docs/adr && ls | wc -l.
 
-[VO]  Behind the demo there's 547+ passing tests —
+[VO]  Behind the demo there's 580+ passing tests —
       164 anchor unit and integration tests on the programs,
-      383 node:test cases on the MCP server.
+      416 node:test cases on the MCP server.
       All gated in CI. Both ran clean three times in a row before
       this recording.
       The architecture decisions behind every nontrivial choice

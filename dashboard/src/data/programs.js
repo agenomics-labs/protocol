@@ -134,6 +134,7 @@ export const MCP_TOOLS = [
   { name: "resolve_dispute_timeout", program: "settlement" },
   { name: "cancel_escrow", program: "settlement" },
   { name: "verify_protocol_invariants", program: "governance" },
+  { name: "pay_x402_service", program: "x402" },
 ];
 
 export const ESCROW_STATES = [

@@ -1,0 +1,97 @@
+name: Vercel Deploy (mcp-server)
+
+# Mirrors `vercel-deploy-site.yml` (ADR-134 Issue C — Vercel CLI from
+# GitHub Actions bypasses the Pro-tier-only GitHub integration). Deploys
+# the MCP server as a Vercel Function so judges can wire it into
+# claude.ai as a remote MCP connector with no local setup.
+#
+# One-time operator setup:
+#   1. From mcp-server/, run `vercel link` interactively to create the
+#      project and capture the project + org IDs into .vercel/project.json.
+#   2. Paste those IDs into the env block below (they are not secrets).
+#   3. Set the following Vercel ENV VARS (vercel dashboard → project →
+#      Settings → Environment Variables, Production scope):
+#        AEP_MCP_AUTH_TOKEN          = $(openssl rand -hex 32)
+#        SOLANA_WALLET_JSON          = $(cat .keys/smoke-test-devnet.json | tr -d '\n')
+#        AEP_MCP_HTTP_ALLOWED_ORIGINS = https://claude.ai,https://*.claude.ai
+#        SOLANA_RPC_URL              = https://api.devnet.solana.com
+#      AEP_MCP_AUTH_TOKEN must also be published in JUDGE_RUNBOOK.md so
+#      judges can paste it into the claude.ai connector dialog.
+#   4. Push any change under `mcp-server/**` or sdk/** or packages/** →
+#      this workflow fires and deploys.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'mcp-server/**'
+      - 'sdk/idl/**'
+      - 'sdk/action-runtime/**'
+      - 'packages/capability-manifest-validator/**'
+      - 'packages/sas-resolver/**'
+      - '.github/workflows/vercel-deploy-mcp.yml'
+  workflow_dispatch: {}
+
+env:
+  # From mcp-server/.vercel/project.json after `vercel link`. PASTE BEFORE
+  # FIRST RUN — both are public identifiers, safe to commit.
+  VERCEL_PROJECT_ID: PASTE_AFTER_VERCEL_LINK
+  VERCEL_ORG_ID: PASTE_AFTER_VERCEL_LINK
+
+jobs:
+  deploy:
+    name: Deploy mcp-server/ to Vercel production
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # pin v6 (AUD-406)
+        with:
+          node-version: "20"
+
+      - name: Verify VERCEL_TOKEN secret is set
+        env:
+          TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          if [ -z "${TOKEN:-}" ]; then
+            echo "::error::VERCEL_TOKEN repo secret is not set."
+            echo "::error::See header comment in this workflow file for setup."
+            exit 1
+          fi
+          if [ "${VERCEL_PROJECT_ID}" = "PASTE_AFTER_VERCEL_LINK" ]; then
+            echo "::error::VERCEL_PROJECT_ID placeholder still set."
+            echo "::error::Run \`vercel link\` in mcp-server/ and paste the IDs from"
+            echo "::error::mcp-server/.vercel/project.json into this workflow's env block."
+            exit 1
+          fi
+          echo "Secret present (token length: ${#TOKEN} chars)"
+
+      - name: Install Vercel CLI
+        run: npm install --global vercel@latest
+
+      - name: Pull Vercel project environment
+        working-directory: mcp-server
+        run: vercel pull --yes --environment=production --token="${{ secrets.VERCEL_TOKEN }}"
+
+      - name: Build mcp-server for production
+        working-directory: mcp-server
+        run: vercel build --prod --token="${{ secrets.VERCEL_TOKEN }}"
+
+      - name: Deploy prebuilt to Vercel production
+        working-directory: mcp-server
+        run: |
+          set -euo pipefail
+          DEPLOY_URL=$(vercel deploy --prebuilt --prod --token="${{ secrets.VERCEL_TOKEN }}")
+          echo "Deployment URL: $DEPLOY_URL"
+          echo "::notice::Vercel MCP deploy completed: $DEPLOY_URL"
+          echo "::notice::Smoke check: curl -s $DEPLOY_URL/healthz"
+
+      - name: Smoke-check the deployed endpoint
+        run: |
+          # Wait for propagation, then hit /healthz (auth-bypass) so a
+          # broken deploy is visible in the workflow log, not in claude.ai.
+          sleep 10
+          curl -sS --fail-with-body --max-time 15 \
+            "https://aep-mcp.vercel.app/healthz" \
+          || { echo "::warning::healthz check failed (deploy may still be propagating)"; }

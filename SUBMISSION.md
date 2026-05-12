@@ -10,7 +10,7 @@ Every AI agent shipped in the last year — Claude, GPT, ElizaOS, custom — can
 
 ## The solution
 
-**Three Solana programs, one MCP server, 27 tools — live on devnet.**
+**Three Solana programs, one MCP server, 28 tools — live on devnet.**
 
 | Program | What it does |
 |---------|-------------|
@@ -18,7 +18,7 @@ Every AI agent shipped in the last year — Claude, GPT, ElizaOS, custom — can
 | **Agent Registry** (`8VQuB…tfh`) | On-chain identity and discovery; reputation scores updated atomically via PDA-signed CPI from Settlement — only real completed work moves the number. |
 | **Settlement** (`GK8L…3wvc3`) | Milestone-based escrow with atomic fund release, built-in dispute resolution, and governance-tunable timeout auto-resolution. |
 
-The MCP server bridges all three programs to any MCP-compatible agent (Claude Desktop, Cursor, custom runners) through 27 typed tools — `create_vault`, `register_agent`, `create_escrow`, `approve_milestone`, and 23 more — without ever exposing the private key to the agent.
+The MCP server bridges all three programs to any MCP-compatible agent (Claude Desktop, Cursor, custom runners) through 28 typed tools — `create_vault`, `register_agent`, `create_escrow`, `approve_milestone`, and 24 more — without ever exposing the private key to the agent.
 
 ## Live demo
 
@@ -65,7 +65,7 @@ Then add to your Claude Desktop MCP config:
 }
 ```
 
-Restart Claude Desktop. All 27 tools (`create_vault`, `register_agent`, `create_escrow`, …) are now available to any agent in the conversation.
+Restart Claude Desktop. All 28 tools (`create_vault`, `register_agent`, `create_escrow`, …) are now available to any agent in the conversation.
 
 ## Code + repo
 
@@ -73,7 +73,7 @@ Restart Claude Desktop. All 27 tools (`create_vault`, `register_agent`, `create_
 
 ## Test + security posture
 
-- **547+ tests passing** — 164 Anchor unit + integration tests across the three programs, 383 `node:test` cases on the MCP server; both suites gated in CI, 3× consecutive green before submission.
+- **580+ tests passing** — 164 Anchor unit + integration tests across the three programs, 416 `node:test` cases on the MCP server; both suites gated in CI, 3× consecutive green before submission.
 - **4 hostile-audit cycles closed** — each cycle ended at zero open findings; the waitlist endpoint alone has six defense layers (rate limit, origin gate, honeypot, form-fill timing, response jitter, per-email throttle).
 - **ADR-governed** — 134+ Architecture Decision Records document every nontrivial design choice, each linked to implementation evidence.
 - **Self-deploying CI** — `anchor build`, test suite, and devnet smoke test run automatically on every push.

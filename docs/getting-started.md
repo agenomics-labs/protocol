@@ -34,7 +34,7 @@ The default `.env.devnet` points at `https://api.devnet.solana.com` and the thre
 | Agent Registry | `psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv` |
 | Settlement | `9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95` |
 
-Set `ANCHOR_WALLET` to point at your devnet keypair (default `~/.config/solana/id.json`) and you're ready to invoke any of the 27 tools.
+Set `ANCHOR_WALLET` to point at your devnet keypair (default `~/.config/solana/id.json`) and you're ready to invoke any of the 28 tools.
 
 ## Connect to Claude Desktop
 
@@ -52,7 +52,7 @@ Add to your Claude Desktop MCP config (`~/Library/Application Support/Claude/cla
 }
 ```
 
-Restart Claude Desktop. The 27 tools (`create_vault`, `register_agent`, `create_escrow`, …) become available to any agent in the conversation.
+Restart Claude Desktop. The 28 tools (`create_vault`, `register_agent`, `create_escrow`, …) become available to any agent in the conversation.
 
 ## First call: create a vault
 
@@ -131,7 +131,7 @@ Expected output: vault created, both agents registered, escrow created with two 
 
 ## Next Steps
 
-- [API Reference](./api-reference.md) — full documentation for all 27 MCP tools
+- [API Reference](./api-reference.md) — full documentation for all 28 MCP tools
 - [Integration Guide](./integration-guide.md) — use AEP with ElizaOS, Solana Agent Kit, or any MCP client
 - [Architecture](./ARCHITECTURE.md) — how the three programs compose
 - [SUMMARY.md](../SUMMARY.md) — full protocol walkthrough with file-by-file breakdown

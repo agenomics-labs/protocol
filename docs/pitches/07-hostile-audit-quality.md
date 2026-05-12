@@ -25,8 +25,8 @@ response-padding plus jitter, per-email throttle. That's
 defense-in-depth on a SIGNUP FORM.
 
 [0:42]
-547 tests passing in CI — 164 Anchor unit and integration on
-the on-chain programs, 383 node-test cases on the MCP server.
+580 tests passing in CI — 164 Anchor unit and integration on
+the on-chain programs, 416 node-test cases on the MCP server.
 134 architecture decisions documented as ADRs, every accepted
 decision linked to its implementation evidence. Self-deploying
 CI pipeline, hostile-audit punch-lists at zero open.
@@ -79,7 +79,7 @@ the tooling is reusable).
 
 ## Validation
 
-- 547+ tests passing in CI (164 anchor + 383 mcp-server) —
+- 580+ tests passing in CI (164 anchor + 416 mcp-server) —
   reproducible via `cd mcp-server && npm test` and
   `anchor test` from repo root.
 - Four hostile-audit cycles documented in `docs/audits/` —

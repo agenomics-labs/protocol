@@ -1,0 +1,45 @@
+# Fly.io deploy config for the Agenomics MCP server (hosted-mode).
+#
+# First-time setup (operator runs locally, once):
+#   fly launch --no-deploy --copy-config --name aep-mcp-judge
+#   fly secrets set \
+#     AEP_MCP_AUTH_TOKEN="$(openssl rand -hex 32)" \
+#     SOLANA_WALLET_JSON="$(cat .keys/smoke-test-devnet.json)"
+#   fly deploy
+#
+# The wallet is passed in as a single-line JSON secret, then materialized
+# at startup into /secrets/wallet.json (see scripts/entrypoint.sh).
+
+app = "aep-mcp-judge"
+primary_region = "iad"   # us-east, lowest avg-latency to most judges
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  AEP_MCP_TRANSPORT = "http"
+  AEP_MCP_HTTP_HOST = "0.0.0.0"
+  AEP_MCP_HTTP_PORT = "8080"
+  AEP_MCP_HTTP_ALLOWED_ORIGINS = "https://claude.ai,https://*.claude.ai"
+  SOLANA_RPC_URL = "https://api.devnet.solana.com"
+  SOLANA_KEYPAIR_PATH = "/secrets/wallet.json"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"     # free-tier-friendly; cold-start ~3s
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+  # MCP clients hold a request open while streaming responses; the default
+  # Fly idle timeout (60s) is enough for a devnet RPC round-trip.
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 25
+    hard_limit = 50
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+  cpus = 1

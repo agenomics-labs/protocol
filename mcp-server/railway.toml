@@ -1,0 +1,31 @@
+# Railway deploy config for the Agenomics MCP server.
+#
+# Setup (operator runs locally, once):
+#   railway login
+#   railway init --name aep-mcp-judge
+#   railway link
+#   railway variables \
+#     --set "AEP_MCP_AUTH_TOKEN=$(openssl rand -hex 32)" \
+#     --set "SOLANA_WALLET_JSON=$(cat .keys/smoke-test-devnet.json | tr -d '\n')"
+#   railway up
+#
+# Railway injects PORT at runtime; the entrypoint script maps it to
+# AEP_MCP_HTTP_PORT before exec'ing node.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "mcp-server/Dockerfile"
+
+[deploy]
+startCommand = "/app/mcp-server/scripts/entrypoint.sh"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+healthcheckPath = "/healthz"
+healthcheckTimeout = 30
+
+[deploy.envVars]
+AEP_MCP_TRANSPORT = "http"
+AEP_MCP_HTTP_HOST = "0.0.0.0"
+AEP_MCP_HTTP_ALLOWED_ORIGINS = "https://claude.ai,https://*.claude.ai"
+SOLANA_RPC_URL = "https://api.devnet.solana.com"
+SOLANA_KEYPAIR_PATH = "/secrets/wallet.json"

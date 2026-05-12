@@ -1,4 +1,4 @@
-// All 27 MCP Actions registered through the ADR-058 Action<I, O> shape.
+// All 28 MCP Actions registered through the ADR-058 Action<I, O> shape.
 // Legacy switch-case dispatch in src/index.ts is retired.
 //
 // AUD-015 / PR-U: `rotate_agent_identity` wraps the on-chain

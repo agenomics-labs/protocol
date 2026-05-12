@@ -58,7 +58,10 @@ import {
  * See `./pipeline/idempotency.ts` and `./pipeline/idempotency-redis.ts`.
  */
 
-const server = new Server(
+// Exported so hosted-mode adapters (Vercel Functions, Cloudflare Workers,
+// etc.) can build a `StreamableHTTPServerTransport` against the same wired
+// Server instance instead of duplicating the action-router setup.
+export const server = new Server(
   { name: "aep-mcp-server", version: "1.0.0" },
   { capabilities: { tools: {} } }
 );
@@ -291,7 +294,20 @@ async function startHttpTransport(posture: TransportPosture): Promise<void> {
   const wrapped = originGate.middleware(
     rateLimiter.middleware(authMiddleware(downstream)),
   );
-  const httpServer = http.createServer(wrapped);
+
+  // Liveness probe for hosted deploys (Fly / Railway / Render / Vercel).
+  // Bypasses every gate so a misconfigured token doesn't take the deploy
+  // red — the auth-gated MCP surface remains the security boundary.
+  // Body is intentionally minimal; no MCP state is revealed.
+  const handler: http.RequestListener = (req, res) => {
+    if (req.method === "GET" && req.url === "/healthz") {
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end("ready\n");
+      return;
+    }
+    wrapped(req, res);
+  };
+  const httpServer = http.createServer(handler);
 
   // Best-effort graceful shutdown: drop the pruner interval and clear the
   // bucket map. The interval is already `.unref()`d so process exit isn't
