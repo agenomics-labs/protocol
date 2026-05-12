@@ -42,7 +42,25 @@ The MCP server bridges all three programs to any MCP-compatible agent (Claude De
 
 Scripts at [`docs/VIDEO_SCRIPTS.md`](docs/VIDEO_SCRIPTS.md).
 
-## Try it now (3 commands)
+## Try it now in claude.ai (0 commands)
+
+The MCP server is hosted on three providers so judges can verify directly from the browser:
+
+| Provider | URL | Status |
+|----------|-----|--------|
+| Fly.io (primary) | `https://aep-mcp-judge.fly.dev` | iad region, devnet keypair |
+| Vercel | `https://aep-mcp.vercel.app` | Mirror; auto-redeploys from main |
+| Railway | `https://aep-mcp.up.railway.app` | Mirror |
+
+1. Open [claude.ai/settings/connectors](https://claude.ai/settings/connectors) → **Add custom connector**.
+2. Paste one of the URLs above.
+3. Paste the bearer auth token: **`<published here at submission time; rotated per judging cycle>`** — also surfaced via `mcp-server/scripts/deploy-set-secrets.sh` on the operator side.
+4. Click **Add** → all 28 tools register.
+5. Ask Claude: *"Run `verify_protocol_invariants` on agenomics and tell me the result."*
+
+The hosted endpoint runs against Solana devnet with a server-side keypair (~0.85 SOL, faucet-replenishable). The bearer token + per-IP rate limit (60 req/min) + origin allowlist (`claude.ai` only) is the abuse boundary. Full walkthrough in [JUDGE_RUNBOOK Step 0](./JUDGE_RUNBOOK.md#step-0--claudeai-connector-60-seconds-no-clone-needed).
+
+## Try it now via clone (3 commands)
 
 ```bash
 git clone https://github.com/agenomics-labs/protocol

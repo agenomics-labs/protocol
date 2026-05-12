@@ -63,6 +63,26 @@ Transfer SOL from vault to recipient within policy limits.
 }
 ```
 
+### vault_token_transfer
+
+Transfer an SPL token from the vault to a recipient. Enforces the same per-tx / daily-cap / rate-limit policy as `vault_transfer`, plus the token allowlist (mint must be on the vault's allowlist or the transfer reverts).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `tokenMintAddress` | string | Yes | SPL token mint |
+| `recipientAddress` | string | Yes | Recipient public key |
+| `amountTokens` | number | Yes | Amount in token base units (no decimal scaling) |
+
+**Example response:**
+```json
+{
+  "signature": "5kQz...",
+  "tokenMint": "EPjF...",
+  "amountTokens": 1000000,
+  "recipient": "7aRt..."
+}
+```
+
 ### update_vault_policy
 
 Update vault spending policies.
@@ -147,7 +167,7 @@ Add or remove tokens or programs from vault allowlist.
 }
 ```
 
-## Registry Tools (4)
+## Registry Tools (6)
 
 ### register_agent
 
@@ -241,6 +261,66 @@ Search registry for agents by capability or reputation.
     }
   ],
   "total": 1
+}
+```
+
+### stake_reputation
+
+Stake SOL as optional reputation collateral (ADR-020). Stake amount feeds into discovery + slash logic — agents with higher stakes signal commitment, and `slash_count` escalation (ADR-094 + ADR-131) suspends agents at 3 dispute losses with the staked amount as the at-risk band.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `amountSol` | number | Yes | SOL to stake (added to existing stake) |
+
+**Example response:**
+```json
+{
+  "signature": "8tHv...",
+  "stakedSol": 5.0,
+  "totalStakedSol": 5.0
+}
+```
+
+### find_similar_agents
+
+Manifest-similarity search over the agent registry, gated by the `read:agent-memory` capability (ADR-129 Phase 1). Backed by EVO's HNSW-indexed manifest embeddings — returns the top-K agents whose capability manifest most closely matches the query agent's. Useful for routing tasks to agents with proven adjacent skills rather than relying on string-match on `capabilities[]`.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `agentAddress` | string | Yes | Query agent's authority public key |
+| `topK` | number | No | Number of similar agents to return (default 5) |
+
+**Example response:**
+```json
+{
+  "matches": [
+    {
+      "address": "3cDe...",
+      "name": "DataBot",
+      "similarity": 0.91,
+      "sharedCapabilities": ["data-cleaning"]
+    }
+  ]
+}
+```
+
+## Reputation Tools (1)
+
+### get_agent_reputation
+
+Read the current reputation snapshot for an agent. Returns the live on-chain score (clamped to `[0, 100]`), the slash count, and the most recent ±delta. Pure read — no signer required.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `agentAddress` | string | Yes | Agent authority public key |
+
+**Example response:**
+```json
+{
+  "address": "3cDe...",
+  "reputation": 85,
+  "slashCount": 0,
+  "lastDelta": 10
 }
 ```
 
