@@ -37,7 +37,7 @@ env:
   # agenomics-labs Vercel team). VERCEL_PROJECT_ID comes from
   # mcp-server/.vercel/project.json after running `vercel link` once.
   # Both are public identifiers, safe to commit.
-  VERCEL_PROJECT_ID: PASTE_AFTER_VERCEL_LINK
+  VERCEL_PROJECT_ID: prj_ISKaLkDFybfgoKLCN4MmdX2Bm4UP
   VERCEL_ORG_ID: team_nOESbCSr6hh3fTEXR6Zaoesz
 
 jobs:
@@ -59,12 +59,6 @@ jobs:
           if [ -z "${TOKEN:-}" ]; then
             echo "::error::VERCEL_TOKEN repo secret is not set."
             echo "::error::See header comment in this workflow file for setup."
-            exit 1
-          fi
-          if [ "${VERCEL_PROJECT_ID}" = "PASTE_AFTER_VERCEL_LINK" ]; then
-            echo "::error::VERCEL_PROJECT_ID placeholder still set."
-            echo "::error::Run \`vercel link\` in mcp-server/ and paste the IDs from"
-            echo "::error::mcp-server/.vercel/project.json into this workflow's env block."
             exit 1
           fi
           echo "Secret present (token length: ${#TOKEN} chars)"
