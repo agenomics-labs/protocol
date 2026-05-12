@@ -17,7 +17,7 @@ Four surfaces. Two are protocol-adjacent (extend AEP); two are integrations (mob
 | 3 | **CCTP V2 Hook** (or relayer fallback) | Anchor program + TS hook payload | TBD | No (cinematic only) |
 | 4 | **AgentCore Runtime agent** | Strands SDK, Bedrock Claude, Nova Act, Gateway | TBD | Yes (gates demo) |
 
-The existing AEP devnet programs (Vault, Registry, Settlement) and the 27-tool MCP server are **inputs**, not work items. Don't modify the deployed programs unless absolutely required. Surface 2 adds one new tool (`pay_x402_service`) bringing the count to 28; current count is authoritative in `docs/api-reference.md` and `README.md`.
+The existing AEP devnet programs (Vault, Registry, Settlement) and the 27-real-tool MCP server are **inputs**, not work items. Don't modify the deployed programs unless absolutely required. Surface 2 added one new tool (`pay_x402_service`, stub) bringing the public count to 28 — the authoritative number lives in `docs/api-reference.md` and `README.md`.
 
 ---
 

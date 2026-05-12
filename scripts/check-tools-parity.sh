@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
-# Verifies that the canonical 27-tool set is consistent across three independent
+# Verifies that the canonical 28-tool set is consistent across three independent
 # surfaces. This bug class — drift between mcp-server's allTools[], dashboard's
 # MCP_TOOLS array, and the README's tool list — caused multiple PRs of fix-up
 # work in the 2026-05-06 submission-readiness sweep (notably PR #80, where the
 # dashboard had a stale 25-tool list).
 #
 # What's enforced:
-#   1. All three surfaces report the SAME COUNT (currently 27).
+#   1. All three surfaces report the SAME COUNT (currently 28; bumped from 27
+#      when the Surface 2 stub `pay_x402_service` shipped).
 #   2. mcp-server's tool names are EXACTLY the union of dashboard's MCP_TOOLS
 #      and README's tool list — no stale or unknown names anywhere.
 #
 # What's intentionally NOT enforced:
-#   - Per-program counts (Vault 9 / Registry 7 / Settlement 10 / Governance 1)
-#     are documented in the README header but reading them statically is
-#     fragile — the union check below catches the same drift class without
-#     coupling to the markdown structure.
+#   - Per-program counts (Vault 9 / Registry 6 / Reputation 1 / Settlement 10
+#     / Governance 1 / Surface 2 1) are documented in the README header but
+#     reading them statically is fragile — the union check below catches the
+#     same drift class without coupling to the markdown structure.
 #
 # Usage: bash scripts/check-tools-parity.sh
 
@@ -27,8 +28,10 @@ SERVER_TOOLS_FILE="mcp-server/src/tools/index.ts"
 
 # allTools[] entries look like:    foobarTool,
 # Convert FooBarTool → foo_bar (camelCase → snake_case, drop "Tool" suffix).
+# `[a-zA-Z0-9]+` accepts digits so identifiers like `payX402ServiceTool` (with
+# "402" in the name) match — previously the regex undercounted by 1 here.
 SERVER_NAMES=$(awk '/^export const allTools/,/^\];/' "$SERVER_TOOLS_FILE" \
-  | grep -oE '^\s+[a-zA-Z]+Tool,$' \
+  | grep -oE '^\s+[a-zA-Z0-9]+Tool,$' \
   | sed -E 's/^\s+//; s/Tool,$//; s/([a-z0-9])([A-Z])/\1_\2/g; s/([A-Z]+)([A-Z][a-z])/\1_\2/g' \
   | tr 'A-Z' 'a-z' \
   | sort -u)
@@ -39,8 +42,8 @@ SERVER_COUNT=$(echo "$SERVER_NAMES" | wc -l)
 DASH_FILE="dashboard/src/data/programs.js"
 
 DASH_NAMES=$(awk '/^export const MCP_TOOLS/,/^\];/' "$DASH_FILE" \
-  | grep -oE 'name:\s*"[a-z_]+"' \
-  | sed -E 's/name:\s*"([a-z_]+)"/\1/' \
+  | grep -oE 'name:\s*"[a-z_0-9]+"' \
+  | sed -E 's/name:\s*"([a-z_0-9]+)"/\1/' \
   | sort -u)
 
 DASH_COUNT=$(echo "$DASH_NAMES" | wc -l)
@@ -52,7 +55,7 @@ DASH_COUNT=$(echo "$DASH_NAMES" | wc -l)
 README_FILE="README.md"
 
 README_NAMES=$(awk '/^## MCP Tools/,/^## [^M]/' "$README_FILE" \
-  | grep -oE '`[a-z_]+`' \
+  | grep -oE '`[a-z_0-9]+`' \
   | tr -d '`' \
   | sort -u)
 
