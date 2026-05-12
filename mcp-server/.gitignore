@@ -34,3 +34,4 @@ Thumbs.db
 # Solana
 .config/solana/
 *.json.bak
+.vercel

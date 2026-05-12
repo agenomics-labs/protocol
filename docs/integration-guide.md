@@ -3,7 +3,7 @@
 AEP exposes 28 MCP tools through two transports:
 
 - **stdio** — long-running local subprocess. Works with Claude Desktop, Cursor, custom runners, ElizaOS via the AEP plugin, and Solana Agent Kit. Requires a clone.
-- **Streamable HTTP** (ADR-083) — hosted at `https://aep-mcp-judge.fly.dev` (Fly.io), `https://aep-mcp.vercel.app` (Vercel), and `https://aep-mcp.up.railway.app` (Railway). Works with claude.ai (web + mobile) via custom connectors. No clone required.
+- **Streamable HTTP** (ADR-083) — hosted at `https://aep-mcp-judge.fly.dev` (Fly.io, primary) and `https://aep-mcp.up.railway.app` (Railway, mirror). Works with claude.ai (web + mobile) via custom connectors. No clone required. (A Vercel mirror at `aep-mcp.vercel.app` is in progress — function deploys but cold-starts hang on the v1 Solana SDK; tracked under ADR-087 Phase B.)
 
 ## Use the hosted endpoint from claude.ai (no clone)
 

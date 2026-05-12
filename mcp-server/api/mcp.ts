@@ -51,58 +51,107 @@ process.env.AEP_MCP_HTTP_ALLOWED_ORIGINS =
 process.env.SOLANA_RPC_URL =
   process.env.SOLANA_RPC_URL ?? "https://api.devnet.solana.com";
 
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { server } from "../dist/index.js";
-import {
-  makeBearerAuthMiddleware,
-  MIN_TOKEN_BYTES,
-} from "../dist/transport/auth-gate.js";
-import {
-  makeRateLimiter,
-  readRateLimitConfig,
-} from "../dist/transport/rate-limit.js";
-import {
-  makeOriginGate,
-  readOriginGateConfig,
-} from "../dist/transport/origin-gate.js";
+// Lazy-init pattern: wrap every dynamic import in a try/catch so a module-load
+// failure surfaces as a 500 with a readable body instead of an opaque
+// FUNCTION_INVOCATION_FAILED page. The promise is memoised, so a successful
+// cold-start initialises once and warm invocations reuse the same transport.
 
-// Module-level singletons. Cold-start runs once; warm invocations reuse.
-const expectedToken = process.env.AEP_MCP_AUTH_TOKEN ?? "";
-if (Buffer.byteLength(expectedToken, "utf8") < MIN_TOKEN_BYTES) {
-  throw new Error(
-    `AEP_MCP_AUTH_TOKEN must be set (>=${MIN_TOKEN_BYTES} bytes). ` +
-      `Generate with: openssl rand -hex 32`,
-  );
-}
-
-const transport = new StreamableHTTPServerTransport({
-  sessionIdGenerator: undefined,
-});
-// Top-level await is allowed in Vercel Node.js runtime (ESM).
-await server.connect(transport);
-
-const originGate = makeOriginGate(readOriginGateConfig(process.env));
-const rateLimiter = makeRateLimiter(readRateLimitConfig(process.env));
-const authMiddleware = makeBearerAuthMiddleware({ expectedToken });
-
-const downstream = (req: IncomingMessage, res: ServerResponse): void => {
-  void transport.handleRequest(req, res);
+type InitState = {
+  handler: (req: IncomingMessage, res: ServerResponse) => void;
 };
 
-// origin → rate-limit → bearer-auth → downstream
-const wrapped = originGate.middleware(
-  rateLimiter.middleware(authMiddleware(downstream)),
-);
+let initPromise: Promise<InitState> | undefined;
+let initError: Error | undefined;
 
-export default function handler(
+async function init(): Promise<InitState> {
+  const { StreamableHTTPServerTransport } = await import(
+    "@modelcontextprotocol/sdk/server/streamableHttp.js"
+  );
+  const { server } = await import("../dist/index.js");
+  const { makeBearerAuthMiddleware, MIN_TOKEN_BYTES } = await import(
+    "../dist/transport/auth-gate.js"
+  );
+  const { makeRateLimiter, readRateLimitConfig } = await import(
+    "../dist/transport/rate-limit.js"
+  );
+  const { makeOriginGate, readOriginGateConfig } = await import(
+    "../dist/transport/origin-gate.js"
+  );
+
+  const expectedToken = process.env.AEP_MCP_AUTH_TOKEN ?? "";
+  if (Buffer.byteLength(expectedToken, "utf8") < MIN_TOKEN_BYTES) {
+    throw new Error(
+      `AEP_MCP_AUTH_TOKEN must be set (>=${MIN_TOKEN_BYTES} bytes). ` +
+        `Generate with: openssl rand -hex 32`,
+    );
+  }
+
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: undefined,
+  });
+  await server.connect(transport);
+
+  const originGate = makeOriginGate(readOriginGateConfig(process.env));
+  const rateLimiter = makeRateLimiter(readRateLimitConfig(process.env));
+  const authMiddleware = makeBearerAuthMiddleware({ expectedToken });
+
+  const downstream = (req: IncomingMessage, res: ServerResponse): void => {
+    void transport.handleRequest(req, res);
+  };
+
+  const wrapped = originGate.middleware(
+    rateLimiter.middleware(authMiddleware(downstream)),
+  );
+
+  return { handler: wrapped };
+}
+
+function getInit(): Promise<InitState> {
+  if (initError) return Promise.reject(initError);
+  if (!initPromise) {
+    initPromise = init().catch((err) => {
+      initError = err instanceof Error ? err : new Error(String(err));
+      throw initError;
+    });
+  }
+  return initPromise;
+}
+
+export default async function handler(
   req: IncomingMessage,
   res: ServerResponse,
-): void {
-  // Liveness probe — bypass all gates.
-  if (req.method === "GET" && (req.url === "/healthz" || req.url === "/api/healthz")) {
+): Promise<void> {
+  // Liveness probe — bypass ALL gates, including init. Lets the operator
+  // confirm the function deployed before the wallet/token wiring is correct.
+  if (
+    req.method === "GET" &&
+    (req.url === "/healthz" || req.url === "/api/healthz")
+  ) {
     res.writeHead(200, { "Content-Type": "text/plain" });
     res.end("ready\n");
     return;
   }
-  wrapped(req, res);
+
+  try {
+    const state = await getInit();
+    state.handler(req, res);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const stack =
+      err instanceof Error && process.env.AEP_DEBUG_INIT === "1" ? err.stack ?? "" : "";
+    res.writeHead(500, { "Content-Type": "application/json" });
+    res.end(
+      JSON.stringify(
+        {
+          error: "init_failed",
+          message,
+          stack: stack || undefined,
+          hint:
+            "Set AEP_DEBUG_INIT=1 in Vercel env to include the stack trace in this response.",
+        },
+        null,
+        2,
+      ),
+    );
+  }
 }

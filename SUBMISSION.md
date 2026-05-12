@@ -44,13 +44,13 @@ Scripts at [`docs/VIDEO_SCRIPTS.md`](docs/VIDEO_SCRIPTS.md).
 
 ## Try it now in claude.ai (0 commands)
 
-The MCP server is hosted on three providers so judges can verify directly from the browser:
+The MCP server is hosted so judges can verify directly from the browser:
 
 | Provider | URL | Status |
 |----------|-----|--------|
 | Fly.io (primary) | `https://aep-mcp-judge.fly.dev` | iad region, devnet keypair |
-| Vercel | `https://aep-mcp.vercel.app` | Mirror; auto-redeploys from main |
-| Railway | `https://aep-mcp.up.railway.app` | Mirror |
+| Railway (mirror) | `https://aep-mcp.up.railway.app` | Same code, second region |
+| Vercel (in progress) | `https://aep-mcp.vercel.app` | Function deploys + `/healthz` returns 200, but MCP `initialize` cold-starts hang (`@solana/web3.js@1.x` rpc-websockets chain). Tracked under ADR-087 Phase B. |
 
 1. Open [claude.ai/settings/connectors](https://claude.ai/settings/connectors) → **Add custom connector**.
 2. Paste one of the URLs above.

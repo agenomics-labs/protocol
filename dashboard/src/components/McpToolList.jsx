@@ -89,8 +89,7 @@ export default function McpToolList() {
                 JUDGE_RUNBOOK
               </a>
               {" · "}
-              Mirrors:{" "}
-              <code className="text-cyan-200/60">aep-mcp.vercel.app</code>,{" "}
+              Railway mirror:{" "}
               <code className="text-cyan-200/60">aep-mcp.up.railway.app</code>
             </p>
           </div>

@@ -8,13 +8,12 @@ The point of this doc: a Colosseum judge can verify the protocol works in **unde
 
 ## Step 0 — claude.ai connector (60 seconds, no clone needed)
 
-Judges who don't want to clone anything: the MCP server is hosted on three providers so you can verify from a browser.
+Judges who don't want to clone anything: the MCP server is hosted so you can verify directly from a browser.
 
 1. Open [**claude.ai/settings/connectors**](https://claude.ai/settings/connectors).
 2. **Add custom connector** → paste one of these URLs:
    - **Fly.io** (primary): `https://aep-mcp-judge.fly.dev`
-   - **Vercel**: `https://aep-mcp.vercel.app`
-   - **Railway** (backup): `https://aep-mcp.up.railway.app`
+   - **Railway** (mirror): `https://aep-mcp.up.railway.app`
 3. Paste the **auth token** from the Colosseum submission page (rotated per judging cycle; never committed to git).
 4. **Add** → the 28 tools register in the connector dialog.
 5. In any conversation, ask Claude: *"Run `verify_protocol_invariants` on agenomics and tell me the result."*
@@ -22,6 +21,8 @@ Judges who don't want to clone anything: the MCP server is hosted on three provi
 Expected: Claude calls the tool and reports a clean invariant sweep (`ok: true`, with a per-program summary). If it errors, the message is actionable (bad token, rate-limited, etc.) — paste it into the project's GitHub Issues so it shows up in the judging record.
 
 The hosted endpoint runs against Solana devnet with a server-side keypair (~0.85 SOL, replenishable from the public faucet). The bearer token + per-IP rate limit (60 req/min) + origin allowlist (`claude.ai` only) is the abuse boundary. No local install required.
+
+> **Vercel mirror** (`aep-mcp.vercel.app`) is published but currently returns 504 on the MCP `initialize` handshake — the `@solana/web3.js@1.x` → `rpc-websockets` chain doesn't cold-start cleanly in Vercel Functions. Use Fly or Railway. The Vercel path is tracked as v0.2 follow-up under ADR-087 Phase B.
 
 ---
 

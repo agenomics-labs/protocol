@@ -33,11 +33,13 @@ Hosted MCP endpoint, no local setup. claude.ai supports remote MCP servers via c
 
 1. Open [claude.ai/settings/connectors](https://claude.ai/settings/connectors)
 2. Click **Add custom connector**
-3. Paste the URL: **`https://aep-mcp-judge.fly.dev`** (primary; mirrors at `https://aep-mcp.vercel.app` and `https://aep-mcp.up.railway.app`)
+3. Paste the URL: **`https://aep-mcp-judge.fly.dev`** (primary) or **`https://aep-mcp.up.railway.app`** (mirror)
 4. Paste the auth token published on the [Colosseum submission page](./SUBMISSION.md) (rotated per judging cycle)
 5. Click **Add** → ask Claude *"Run `verify_protocol_invariants` on agenomics"* to confirm
 
 All 28 tools are immediately available in any conversation. The hosted endpoint runs against Solana devnet with a server-side keypair; the bearer token + per-IP rate limit + origin allowlist (`claude.ai` only) are the abuse boundary.
+
+> **Vercel mirror** (`aep-mcp.vercel.app`) is in progress — the function builds and serves `/healthz` but the MCP `initialize` handshake hangs during cold-start, likely due to `@solana/web3.js@1.x` → `rpc-websockets` + `ws` chain interaction with the Vercel Functions cold-start environment. Tracked under ADR-087 Phase B (v2 SDK migration) — using Fly or Railway in the meantime.
 
 ### Connect to Claude Desktop (stdio, local clone)
 
