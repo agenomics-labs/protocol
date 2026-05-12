@@ -33,10 +33,12 @@ on:
   workflow_dispatch: {}
 
 env:
-  # From mcp-server/.vercel/project.json after `vercel link`. PASTE BEFORE
-  # FIRST RUN — both are public identifiers, safe to commit.
+  # VERCEL_ORG_ID is the team id (same across all projects in the
+  # agenomics-labs Vercel team). VERCEL_PROJECT_ID comes from
+  # mcp-server/.vercel/project.json after running `vercel link` once.
+  # Both are public identifiers, safe to commit.
   VERCEL_PROJECT_ID: PASTE_AFTER_VERCEL_LINK
-  VERCEL_ORG_ID: PASTE_AFTER_VERCEL_LINK
+  VERCEL_ORG_ID: team_nOESbCSr6hh3fTEXR6Zaoesz
 
 jobs:
   deploy:
