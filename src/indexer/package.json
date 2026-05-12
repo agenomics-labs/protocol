@@ -12,7 +12,7 @@
     "test": "NODE_ENV=test tsx --test metrics-server.test.ts heartbeat.test.ts decoder.test.ts test/aud-128-postgres-store.test.ts test/aud-202-migration-embedded.test.ts test/aud-200-dual-write-tx.test.ts test/aud-200-dual-write-tx-real-pg.test.ts test/off-204-pg-pool-hardening.test.ts test/off-208-215-bundle.test.ts"
   },
   "dependencies": {
-    "@coral-xyz/anchor": "^0.31.1",
+    "@coral-xyz/anchor": "^0.32.1",
     "@solana/web3.js": "^1.95.0",
     "better-sqlite3": "^11.0.0",
     "express": "^4.21.0",
