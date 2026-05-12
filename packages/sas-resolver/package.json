@@ -67,7 +67,7 @@
     "@types/node": "^20.9.0",
     "ioredis-mock": "^8.9.0",
     "tsx": "^4.21.0",
-    "typescript": "^5.2.2"
+    "typescript": "^6.0.3"
   },
   "optionalDependencies": {
     "ioredis": "^5.10.1"
