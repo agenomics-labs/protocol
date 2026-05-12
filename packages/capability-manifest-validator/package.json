@@ -42,6 +42,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "prepare": "tsc",
     "test": "node --import tsx --test test/validate.test.ts test/golden-canonical.test.ts"
   },
   "dependencies": {

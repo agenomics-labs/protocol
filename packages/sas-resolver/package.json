@@ -46,6 +46,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "prepare": "tsc",
     "test": "node --import tsx --test test/resolver.test.ts test/schema.test.ts test/merge.test.ts test/cache.test.ts"
   },
   "dependencies": {
