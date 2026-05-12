@@ -116,6 +116,24 @@ Milestone-based escrow that locks SPL tokens and releases them as milestones are
 
 ---
 
+### 4. CCTP Hook (`3yifMBDVChLzcihZWh4or9zxgzbmQVghdNZzpuP814vb`)
+
+Cross-chain CCTP V2 hook program that auto-approves Settlement milestones when a CCTP burn-and-mint round-trip completes on the Base side (Reflex Surface 3 — IC-4 interface contract).
+
+**Instructions:**
+
+- `process_hook` — Validates CCTP V2 hook payload, verifies agent's CDP wallet binding, CPIs into Settlement to approve the milestone
+
+**Key implementation details:**
+
+- Validates `ReflexHookPayload` (Borsh, 93 bytes: escrow PDA + milestone index + base tx hash + USDC micros + EVM address)
+- Reads agent's `cdp_wallet` from Registry PDA and requires it matches the payload's `cdp_recipient` before approving
+- Emits `MilestoneAutoApproved` event for indexer observability
+
+**Source:** `programs/cctp-hook/src/lib.rs`
+
+---
+
 ## Cross-Program Invocations (CPI)
 
 The protocol uses real Solana `invoke()` for cross-program calls — not stubs or event-based patterns.

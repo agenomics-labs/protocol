@@ -2,7 +2,7 @@
 
 ## Status
 
-**Accepted (2026-05-06) — implementation landed via PR #76 + #82 + #79.**
+Accepted (2026-05-06) — implementation landed via PR #76 + #82 + #79.
 
 The license-adoption half of this ADR shipped without going through the implementation PR sequence originally planned in PR #68:
 

@@ -17,6 +17,7 @@ use anchor_lang::prelude::*;
 ///
 /// Master spec (frozen day 1):
 /// ```rust
+/// # use anchor_lang::prelude::*;
 /// pub struct ReflexHookPayload {
 ///     pub escrow_pda: Pubkey,           // AEP Settlement escrow
 ///     pub milestone_index: u8,          // which milestone to approve

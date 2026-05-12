@@ -832,8 +832,11 @@ mod tests {
         assert!(!(one_past <= max_deadline), "1s past cap must fail");
 
         // Pathological: i64::MAX is the original AUD-024 attack value.
-        // The lock-forever case must be rejected by the predicate.
-        assert!(!(i64::MAX <= max_deadline), "i64::MAX must be rejected");
+        // The lock-forever case must be rejected by the predicate. `<=` is
+        // semantically equivalent to `==` here (clippy's deny-by-default
+        // absurd_extreme_comparisons lint flags the redundant `<`); use the
+        // equality form directly so the workspace clippy gate stays green.
+        assert!(i64::MAX != max_deadline, "i64::MAX must be rejected");
 
         // The cap itself never overflows for any realistic Unix `now`.
         // (year ~3000 is ~3.25e10; cap ~3.15e7; sum fits trivially.)

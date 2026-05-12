@@ -1355,11 +1355,13 @@
       "docs": [
         "AgentProfile: The core account representing a registered agent.",
         "",
-        "ADR-040: Account space is explicitly calculated as 1415 bytes",
+        "ADR-040: Account space is explicitly calculated as 1436 bytes",
         "(1243 baseline + 162 bytes for the ADR-060 manifest fields:",
         "manifest_cid 64 + manifest_hash 32 + manifest_signature 64 + manifest_version 2 = 162,",
         "+ 1 byte for ADR-096 version: u8 + 8 bytes for ADR-097 registration_nonce: u64",
-        "+ 1 byte for AUD-004 cleared_count: u8 = 1415).",
+        "+ 1 byte for AUD-004 cleared_count: u8 + 21 bytes for Q-S3-A",
+        "cdp_wallet: Option<[u8; 20]> (1-byte discriminant + 20-byte EVM address)",
+        "= 1436).",
         "",
         "AUD-007 (PR-Q): the legacy `total_tasks_completed: u64`, `total_earnings: u64`,",
         "and `avg_rating: u8` fields were removed. PR-G (AUD-001/002) had already",
@@ -1541,6 +1543,17 @@
           {
             "name": "cleared_count",
             "type": "u8"
+          },
+          {
+            "name": "cdp_wallet",
+            "type": {
+              "option": {
+                "array": [
+                  "u8",
+                  20
+                ]
+              }
+            }
           }
         ]
       }
