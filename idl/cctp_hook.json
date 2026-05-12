@@ -433,7 +433,7 @@
         "IC-4 payload — extended layout (Q-S3-A).",
         "",
         "Master spec (frozen day 1):",
-        "```rust",
+        "```rust,ignore",
         "pub struct ReflexHookPayload {",
         "pub escrow_pda: Pubkey,           // AEP Settlement escrow",
         "pub milestone_index: u8,          // which milestone to approve",
