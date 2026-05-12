@@ -50,7 +50,7 @@
   },
   "dependencies": {
     "@agenomics/action-runtime": "*",
-    "zod": "^3.23.8"
+    "zod": "^4.4.3"
   },
   "peerDependencies": {
     "@solana/kit": "^6.8.0",
