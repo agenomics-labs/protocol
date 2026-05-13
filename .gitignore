@@ -122,3 +122,8 @@ governance/attestation-log/
 .claude/tasks/
 .vercel
 .env*.local
+
+# Recording artifacts from scripts/record-demo-video.sh — large binaries +
+# per-run temporary frames/logs. Demo infra (script + beat sheet) is
+# tracked; outputs are not.
+demo-output/
