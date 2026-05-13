@@ -1,0 +1,33 @@
+{
+  "database_version": null,
+  "generated_at": "2026-05-13",
+  "tool": "cargo audit",
+  "vulnerabilities": {
+    "count": 0,
+    "list": []
+  },
+  "warnings": {
+    "notice": [],
+    "unmaintained": [
+      {
+        "id": "RUSTSEC-2025-0141",
+        "package": "bincode",
+        "title": "Bincode is unmaintained",
+        "version": "1.3.3"
+      },
+      {
+        "id": "RUSTSEC-2025-0161",
+        "package": "libsecp256k1",
+        "title": "libsecp256k1 is unmaintained",
+        "version": "0.6.0"
+      }
+    ],
+    "unsound": [
+      {
+        "package": "rand",
+        "title": "Rand is unsound with a custom logger using `rand::rng()`"
+      }
+    ],
+    "yanked": []
+  }
+}

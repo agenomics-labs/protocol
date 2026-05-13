@@ -1,0 +1,398 @@
+{
+  "by_code": {
+    "clippy::assertions_on_constants": 2,
+    "clippy::assign_op_pattern": 3,
+    "clippy::clone_on_copy": 2,
+    "clippy::doc_lazy_continuation": 2,
+    "clippy::doc_overindented_list_items": 9,
+    "clippy::len_zero": 3,
+    "clippy::manual_contains": 1,
+    "clippy::manual_range_contains": 8,
+    "clippy::nonminimal_bool": 2,
+    "clippy::too_many_arguments": 10,
+    "clippy::useless_vec": 12
+  },
+  "generated_at": "2026-05-13",
+  "tool": "cargo clippy --workspace --all-targets",
+  "total": 54,
+  "warnings": [
+    {
+      "code": "clippy::too_many_arguments",
+      "file": "programs/agent-registry/src/lib.rs",
+      "line_end": 75,
+      "line_start": 66,
+      "message": "this function has too many arguments (8/7)"
+    },
+    {
+      "code": "clippy::too_many_arguments",
+      "file": "programs/agent-registry/src/lib.rs",
+      "line_end": 166,
+      "line_start": 157,
+      "message": "this function has too many arguments (8/7)"
+    },
+    {
+      "code": "clippy::clone_on_copy",
+      "file": "programs/agent-registry/src/lib.rs",
+      "line_end": 255,
+      "line_start": 255,
+      "message": "using `clone` on type `AgentStatus` which implements the `Copy` trait"
+    },
+    {
+      "code": "clippy::assign_op_pattern",
+      "file": "programs/agent-registry/src/lib.rs",
+      "line_end": 546,
+      "line_start": 546,
+      "message": "manual implementation of an assign operation"
+    },
+    {
+      "code": "clippy::too_many_arguments",
+      "file": "programs/agent-registry/src/lib.rs",
+      "line_end": 62,
+      "line_start": 62,
+      "message": "this function has too many arguments (8/7)"
+    },
+    {
+      "code": "clippy::too_many_arguments",
+      "file": "programs/agent-registry/src/lib.rs",
+      "line_end": 62,
+      "line_start": 62,
+      "message": "this function has too many arguments (8/7)"
+    },
+    {
+      "code": "clippy::too_many_arguments",
+      "file": "programs/agent-registry/src/lib.rs",
+      "line_end": 75,
+      "line_start": 66,
+      "message": "this function has too many arguments (8/7)"
+    },
+    {
+      "code": "clippy::too_many_arguments",
+      "file": "programs/agent-registry/src/lib.rs",
+      "line_end": 166,
+      "line_start": 157,
+      "message": "this function has too many arguments (8/7)"
+    },
+    {
+      "code": "clippy::clone_on_copy",
+      "file": "programs/agent-registry/src/lib.rs",
+      "line_end": 255,
+      "line_start": 255,
+      "message": "using `clone` on type `AgentStatus` which implements the `Copy` trait"
+    },
+    {
+      "code": "clippy::assign_op_pattern",
+      "file": "programs/agent-registry/src/lib.rs",
+      "line_end": 546,
+      "line_start": 546,
+      "message": "manual implementation of an assign operation"
+    },
+    {
+      "code": "clippy::too_many_arguments",
+      "file": "programs/agent-registry/src/lib.rs",
+      "line_end": 62,
+      "line_start": 62,
+      "message": "this function has too many arguments (8/7)"
+    },
+    {
+      "code": "clippy::too_many_arguments",
+      "file": "programs/agent-registry/src/lib.rs",
+      "line_end": 62,
+      "line_start": 62,
+      "message": "this function has too many arguments (8/7)"
+    },
+    {
+      "code": "clippy::nonminimal_bool",
+      "file": "programs/agent-registry/src/lib.rs",
+      "line_end": 1130,
+      "line_start": 1130,
+      "message": "this boolean expression can be simplified"
+    },
+    {
+      "code": "clippy::assign_op_pattern",
+      "file": "programs/agent-registry/src/lib.rs",
+      "line_end": 1242,
+      "line_start": 1242,
+      "message": "manual implementation of an assign operation"
+    },
+    {
+      "code": "clippy::assertions_on_constants",
+      "file": "programs/agent-registry/src/lib.rs",
+      "line_end": 1398,
+      "line_start": 1398,
+      "message": "this assertion has a constant value"
+    },
+    {
+      "code": "clippy::useless_vec",
+      "file": "programs/agent-registry/src/lib.rs",
+      "line_end": 1436,
+      "line_start": 1436,
+      "message": "useless use of `vec!`"
+    },
+    {
+      "code": "clippy::useless_vec",
+      "file": "programs/agent-registry/src/lib.rs",
+      "line_end": 1441,
+      "line_start": 1437,
+      "message": "useless use of `vec!`"
+    },
+    {
+      "code": "clippy::useless_vec",
+      "file": "programs/agent-registry/src/lib.rs",
+      "line_end": 1450,
+      "line_start": 1450,
+      "message": "useless use of `vec!`"
+    },
+    {
+      "code": "clippy::useless_vec",
+      "file": "programs/agent-registry/src/lib.rs",
+      "line_end": 1451,
+      "line_start": 1451,
+      "message": "useless use of `vec!`"
+    },
+    {
+      "code": "clippy::useless_vec",
+      "file": "programs/agent-registry/src/lib.rs",
+      "line_end": 1459,
+      "line_start": 1459,
+      "message": "useless use of `vec!`"
+    },
+    {
+      "code": "clippy::useless_vec",
+      "file": "programs/agent-registry/src/lib.rs",
+      "line_end": 1460,
+      "line_start": 1460,
+      "message": "useless use of `vec!`"
+    },
+    {
+      "code": "clippy::useless_vec",
+      "file": "programs/agent-registry/src/lib.rs",
+      "line_end": 1471,
+      "line_start": 1471,
+      "message": "useless use of `vec!`"
+    },
+    {
+      "code": "clippy::useless_vec",
+      "file": "programs/agent-registry/src/lib.rs",
+      "line_end": 1499,
+      "line_start": 1499,
+      "message": "useless use of `vec!`"
+    },
+    {
+      "code": "clippy::useless_vec",
+      "file": "programs/agent-vault/src/lib.rs",
+      "line_end": 581,
+      "line_start": 572,
+      "message": "useless use of `vec!`"
+    },
+    {
+      "code": "clippy::doc_overindented_list_items",
+      "file": "programs/settlement/src/state.rs",
+      "line_end": 79,
+      "line_start": 79,
+      "message": "doc list item overindented"
+    },
+    {
+      "code": "clippy::doc_overindented_list_items",
+      "file": "programs/settlement/src/state.rs",
+      "line_end": 80,
+      "line_start": 80,
+      "message": "doc list item overindented"
+    },
+    {
+      "code": "clippy::doc_lazy_continuation",
+      "file": "programs/settlement/src/contexts.rs",
+      "line_end": 73,
+      "line_start": 73,
+      "message": "doc list item without indentation"
+    },
+    {
+      "code": "clippy::len_zero",
+      "file": "programs/settlement/src/instructions/escrow.rs",
+      "line_end": 20,
+      "line_start": 20,
+      "message": "length comparison to zero"
+    },
+    {
+      "code": "clippy::too_many_arguments",
+      "file": "programs/settlement/src/instructions/cpi.rs",
+      "line_end": 67,
+      "line_start": 58,
+      "message": "this function has too many arguments (8/7)"
+    },
+    {
+      "code": "clippy::manual_range_contains",
+      "file": "programs/settlement/src/instructions/protocol_config.rs",
+      "line_end": 89,
+      "line_start": 89,
+      "message": "manual `RangeInclusive::contains` implementation"
+    },
+    {
+      "code": "clippy::manual_range_contains",
+      "file": "programs/settlement/src/instructions/protocol_config.rs",
+      "line_end": 98,
+      "line_start": 98,
+      "message": "manual `RangeInclusive::contains` implementation"
+    },
+    {
+      "code": "clippy::manual_range_contains",
+      "file": "programs/settlement/src/instructions/protocol_config.rs",
+      "line_end": 106,
+      "line_start": 106,
+      "message": "manual `RangeInclusive::contains` implementation"
+    },
+    {
+      "code": "clippy::doc_overindented_list_items",
+      "file": "programs/settlement/src/state.rs",
+      "line_end": 79,
+      "line_start": 79,
+      "message": "doc list item overindented"
+    },
+    {
+      "code": "clippy::doc_overindented_list_items",
+      "file": "programs/settlement/src/state.rs",
+      "line_end": 80,
+      "line_start": 80,
+      "message": "doc list item overindented"
+    },
+    {
+      "code": "clippy::doc_lazy_continuation",
+      "file": "programs/settlement/src/contexts.rs",
+      "line_end": 73,
+      "line_start": 73,
+      "message": "doc list item without indentation"
+    },
+    {
+      "code": "clippy::doc_overindented_list_items",
+      "file": "programs/settlement/src/contexts.rs",
+      "line_end": 722,
+      "line_start": 722,
+      "message": "doc list item overindented"
+    },
+    {
+      "code": "clippy::doc_overindented_list_items",
+      "file": "programs/settlement/src/contexts.rs",
+      "line_end": 723,
+      "line_start": 723,
+      "message": "doc list item overindented"
+    },
+    {
+      "code": "clippy::doc_overindented_list_items",
+      "file": "programs/settlement/src/contexts.rs",
+      "line_end": 724,
+      "line_start": 724,
+      "message": "doc list item overindented"
+    },
+    {
+      "code": "clippy::doc_overindented_list_items",
+      "file": "programs/settlement/src/contexts.rs",
+      "line_end": 725,
+      "line_start": 725,
+      "message": "doc list item overindented"
+    },
+    {
+      "code": "clippy::doc_overindented_list_items",
+      "file": "programs/settlement/src/contexts.rs",
+      "line_end": 726,
+      "line_start": 726,
+      "message": "doc list item overindented"
+    },
+    {
+      "code": "clippy::len_zero",
+      "file": "programs/settlement/src/instructions/escrow.rs",
+      "line_end": 20,
+      "line_start": 20,
+      "message": "length comparison to zero"
+    },
+    {
+      "code": "clippy::too_many_arguments",
+      "file": "programs/settlement/src/instructions/cpi.rs",
+      "line_end": 67,
+      "line_start": 58,
+      "message": "this function has too many arguments (8/7)"
+    },
+    {
+      "code": "clippy::manual_range_contains",
+      "file": "programs/settlement/src/instructions/protocol_config.rs",
+      "line_end": 89,
+      "line_start": 89,
+      "message": "manual `RangeInclusive::contains` implementation"
+    },
+    {
+      "code": "clippy::manual_range_contains",
+      "file": "programs/settlement/src/instructions/protocol_config.rs",
+      "line_end": 98,
+      "line_start": 98,
+      "message": "manual `RangeInclusive::contains` implementation"
+    },
+    {
+      "code": "clippy::manual_range_contains",
+      "file": "programs/settlement/src/instructions/protocol_config.rs",
+      "line_end": 106,
+      "line_start": 106,
+      "message": "manual `RangeInclusive::contains` implementation"
+    },
+    {
+      "code": "clippy::manual_range_contains",
+      "file": "programs/settlement/src/instructions/protocol_config.rs",
+      "line_end": 231,
+      "line_start": 231,
+      "message": "manual `RangeInclusive::contains` implementation"
+    },
+    {
+      "code": "clippy::manual_range_contains",
+      "file": "programs/settlement/src/instructions/protocol_config.rs",
+      "line_end": 238,
+      "line_start": 238,
+      "message": "manual `RangeInclusive::contains` implementation"
+    },
+    {
+      "code": "clippy::assertions_on_constants",
+      "file": "programs/settlement/src/lib.rs",
+      "line_end": 198,
+      "line_start": 198,
+      "message": "this assertion has a constant value"
+    },
+    {
+      "code": "clippy::len_zero",
+      "file": "programs/settlement/src/lib.rs",
+      "line_end": 208,
+      "line_start": 208,
+      "message": "length comparison to zero"
+    },
+    {
+      "code": "clippy::manual_contains",
+      "file": "programs/settlement/src/lib.rs",
+      "line_end": 506,
+      "line_start": 506,
+      "message": "using `contains()` instead of `iter().any()` is more efficient"
+    },
+    {
+      "code": "clippy::nonminimal_bool",
+      "file": "programs/settlement/src/lib.rs",
+      "line_end": 832,
+      "line_start": 832,
+      "message": "this boolean expression can be simplified"
+    },
+    {
+      "code": "clippy::useless_vec",
+      "file": "programs/settlement/src/lib.rs",
+      "line_end": 180,
+      "line_start": 177,
+      "message": "useless use of `vec!`"
+    },
+    {
+      "code": "clippy::useless_vec",
+      "file": "programs/settlement/src/lib.rs",
+      "line_end": 190,
+      "line_start": 187,
+      "message": "useless use of `vec!`"
+    },
+    {
+      "code": "clippy::useless_vec",
+      "file": "programs/settlement/src/lib.rs",
+      "line_end": 413,
+      "line_start": 409,
+      "message": "useless use of `vec!`"
+    }
+  ]
+}
