@@ -1,7 +1,7 @@
 # ADR-115: Flip clippy / cargo-audit / npm audit from advisory to blocking
 
 ## Status
-Proposed
+Accepted — Stage 1 shipped (2026-05-13); Stages 2 and 3 pending
 
 ## Date
 2026-04-24
@@ -28,12 +28,10 @@ sits on the same pile.
 Flip all four gates to blocking over three PRs, staged to keep the
 diff tractable:
 
-**Stage 1 (this PR):** documentation + one-time cleanup baseline.
-- Record the current clippy warning count as `scripts/clippy-baseline.json`.
-- Record `cargo audit` current advisories as
-  `scripts/cargo-audit-baseline.json`.
-- Neither file is used as a gate yet; they become the
-  regression-baseline for stage 2.
+**Stage 1 (shipped 2026-05-13):** documentation + one-time cleanup baseline.
+- Recorded the current clippy warnings as `scripts/clippy-baseline.json` (54 total, dominated by `clippy::useless_vec`, `clippy::too_many_arguments`, `clippy::doc_overindented_list_items`, `clippy::manual_range_contains`).
+- Recorded `cargo audit` advisories as `scripts/cargo-audit-baseline.json` (0 vulnerabilities, 3 unmaintained-package warnings: `bincode@1.3.3` RUSTSEC-2025-0141, `libsecp256k1@0.6.0` RUSTSEC-2025-0161 — both gated on Anchor 1.0 npm release per ADR-114; `rand` unsound — same Anchor gate).
+- Neither file is used as a gate yet; they are the regression-baseline for Stage 2.
 
 **Stage 2 (follow-up):** flip clippy and cargo-audit to blocking with
 explicit allowlists.
