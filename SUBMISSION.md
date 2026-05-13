@@ -37,10 +37,10 @@ The MCP server bridges all three programs to any MCP-compatible agent (Claude De
 
 ## Watch the videos
 
-- **Pitch video (≤3 min):** [TODO upload]
+- **Pitch video (≤3 min):** [agenomics-demo.mp4 — 1:46](https://github.com/agenomics-labs/protocol/releases/download/demo-v1-pitch/agenomics-demo.mp4) ([release page](https://github.com/agenomics-labs/protocol/releases/tag/demo-v1-pitch))
 - **Technical demo (6–10 min):** [TODO upload]
 
-Scripts at [`docs/VIDEO_SCRIPTS.md`](docs/VIDEO_SCRIPTS.md).
+Scripts at [`docs/VIDEO_SCRIPTS.md`](docs/VIDEO_SCRIPTS.md). The pitch recording is an MCP-driven walk through agent vault provisioning + on-chain policy enforcement (`PerTxLimitExceeded`, `VaultPaused`) against Solana devnet. The recording infra ([`scripts/record-demo-video.sh`](scripts/record-demo-video.sh) + [`scripts/demo-mcp-vault.mjs`](scripts/demo-mcp-vault.mjs)) is reproducible; the on-chain tx is verifiable from the release notes.
 
 ## Try it now in claude.ai (0 commands)
 
