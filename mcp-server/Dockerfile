@@ -13,6 +13,12 @@ FROM node:20-bookworm-slim AS build
 
 WORKDIR /app
 
+# 0) Pin npm to the version the lockfile was generated with. node:20-bookworm-slim
+#    ships npm 10.8.2; our package-lock.json is written by npm 11, and the
+#    cross-version `npm ci` strict-mode check rejects the lockfile shape
+#    (observed: "Missing: utf-8-validate@5.0.10 from lock file" on Render).
+RUN npm install -g npm@11.14.1
+
 # 1) Copy every workspace package.json so `npm ci` can resolve the full graph.
 #    We don't copy source yet — that lets the npm-ci layer cache hit on
 #    dependency-only changes.
