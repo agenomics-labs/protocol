@@ -1,7 +1,7 @@
 # ADR-087: `@solana/kit` v1+v2 dual-stack adapter pattern in `@agenomics/mcp-server`
 
 ## Status
-Accepted — Phase A target #1 shipped (2026-05-04)
+Accepted — Phase A targets #1 (2026-05-04) and #2 (2026-05-13) shipped
 
 ## Date
 2026-04-23 (backfill — decision is live in production via PRs #4, #22, #23)
@@ -69,7 +69,7 @@ At that point a follow-up ADR captures the v2-only end-state and supersedes this
 | Target | Status | Notes |
 |--------|--------|-------|
 | `src/x402-relay/` | **Shipped** (2026-05-04) | `Connection`+`LAMPORTS_PER_SOL` → `createSolanaRpc`; 62/62 tests pass; `@solana/web3.js` removed from package dep |
-| `src/indexer/` | Pending | WebSocket subscription migration; larger surface |
+| `src/indexer/` | **Shipped** (2026-05-13) | `Connection` split into `createSolanaRpc`+`createSolanaRpcSubscriptions(resolveWsUrl())`; `onLogs` callback → `logsNotifications` AsyncIterable + per-label `AbortController`; AUD-204/OFF-208/OFF-210/OFF-213 invariants preserved; 125/125 tests pass |
 | `sdk/client/` | Pending | Published package; requires semver-minor API break for Address→string |
 
 ### Phase B — mcp-server v1 handler migration
