@@ -200,6 +200,7 @@ test("script exits 1 and names the missing event when DISCRIMINATOR_MAP loses an
     execFileSync("git", ["init", "-q"], { cwd: tmp });
     execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tmp });
     execFileSync("git", ["config", "user.name", "test"], { cwd: tmp });
+    execFileSync("git", ["config", "commit.gpgsign", "false"], { cwd: tmp });
     execFileSync("git", ["add", "-A"], { cwd: tmp });
     execFileSync("git", ["commit", "-q", "-m", "test fixture"], { cwd: tmp });
     // Copy the script.

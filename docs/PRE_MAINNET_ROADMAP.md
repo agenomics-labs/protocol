@@ -883,6 +883,49 @@ instances.
 `test/admin-drain-endpoint.test.ts`; new env var + startup-log entry
 for `admin_token_configured` so operators see misconfig at boot.
 
+### B13. @solana/kit v2 migration — Phase A target #1 (x402-relay)
+
+**Status**: **Phase A target #1 shipped** (2026-05-04). Phase A targets #2 + #3
+pending; Phases B–D planned. Full plan: `docs/audits/SOLANA-V2-MIGRATION-PLAN-2026-05-04.md`.
+
+**Context**: ADR-087 (Solana Kit dual-stack adapter) committed AEP to migrating
+all production runtime packages from `@solana/web3.js` v1 → `@solana/kit`. The
+migration also eliminates GHSA-3gc7-fjrx-p6mg (`bigint-buffer` buffer overflow CVE)
+from the workspace by removing `@solana/spl-token`. This is multi-phase; Phase A
+migrates the three production runtime packages that have NO Anchor JS dependency
+(`src/x402-relay/`, `src/indexer/`, `sdk/client/`).
+
+**Phase A target #1 (this entry)**: `src/x402-relay/` migrated to `@solana/kit@6.8.0`.
+- Rewrites: `Connection` → `createSolanaRpc`, `LAMPORTS_PER_SOL` inline constant →
+  `1_000_000_000n`, `getAccountKeys().staticAccountKeys` → `accountKeys` (Address[]),
+  `.toBase58()` comparisons → direct string equality, bigint balance arithmetic.
+- `@solana/web3.js` removed from `src/x402-relay/package.json`. Package's subtree
+  no longer contains `@solana/web3.js`.
+- Test parity: 62/62 tests pass (tests inject mock verifiers; not affected by the
+  RPC client rewrite). `tsc` exits 0.
+- CVE scope: eliminates `@solana/web3.js` from x402-relay's production dep subtree.
+  `bigint-buffer` not in scope for this PR (entered via `@solana/spl-token`, which
+  x402-relay never imported). Full CVE closure requires Phase C + D.
+
+**Phase A target #2 — `src/indexer/`**: WebSocket subscription migration
+(`connection.onAccountChange` / `connection.onLogs` → Kit's `createSolanaRpcSubscriptions`
++ `accountNotifications`/`logsNotifications`). Pending.
+
+**Phase A target #3 — `sdk/client/`**: Published package; requires a semver-minor
+bump alongside the v2 migration to expose `Address` (string) rather than `PublicKey`
+(class) in external types. Pending.
+
+**Phase B — mcp-server v1 handler migration**: Blocked on `@coral-xyz/anchor` npm
+shipping a v2-internal client. npm latest: 0.32.1 as of 2026-05-04 (cargo
+`anchor-lang@1.0.1` does not satisfy this). 4 v1 handlers remain in `handlers/`.
+
+**Phase C — dev/test/script surface**: 13 files still on `@solana/spl-token` (see
+migration plan §1.4). Multi-day effort; not blocked by Phase B. Can start
+alongside Phase A target #2/#3.
+
+**Phase D — remove `@solana/spl-token` root dep**: Gated on Phase C. Closes
+GHSA-3gc7-fjrx-p6mg definitively at the workspace level.
+
 ---
 
 ## 4. Track C — Operational readiness
