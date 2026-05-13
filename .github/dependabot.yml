@@ -1,9 +1,11 @@
 # Dependabot configuration — implements ADR-114
 # Three ecosystems: cargo, npm (workspace root + leaf services), github-actions.
 # Weekly cadence, labeled `dependencies`, direct-only updates, security patches
-# grouped into one PR per ecosystem per week. No ignore list (visibility is the
-# point). No auto-merge — every PR goes through the normal CI gate; revisit
-# once ADR-115 lands.
+# grouped into one PR per ecosystem per week. Ignore list: minimal — applied
+# only to documented major-bump waves with a tracking issue per ADR-114
+# §"Ignore list" (amended 2026-05-12); see issue #149 for the active tracker.
+# No auto-merge — every PR goes through the normal CI gate; revisit once
+# ADR-115 lands.
 # References:
 #   - docs/adr/ADR-114-dependabot-dependency-hygiene.md
 #   - docs/adr/ADR-089-reproducible-installs.md (lockfile canon — drives

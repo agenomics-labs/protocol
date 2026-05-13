@@ -47,7 +47,18 @@ Key policy points:
 - **Auto-merge:** none at first. Every Dependabot PR goes through the
   normal CI gate. Once the CI wall is fully blocking (see ADR-115),
   consider auto-merging patch-level bumps that pass all gates.
-- **Ignore list:** none. The point is visibility.
+- **Ignore list:** none. The point is visibility. **(Amended
+  2026-05-12):** Visibility has been achieved — the first major-bump
+  wave (44 PRs across 18 ecosystems) was surfaced, triaged, and
+  documented in issue #149. `@dependabot ignore this major version` is
+  permitted **only** for PRs in a documented major-bump wave, where a
+  tracking issue lists (a) the package, (b) current major → blocked
+  major, (c) the reason the major is deferred, and (d) the revisit
+  trigger. Without a tracking issue, `ignore` remains disallowed. Patch
+  and minor bumps stay on the original policy (no ignore). When a
+  deferred bump's revisit trigger fires, the tracking issue is updated
+  and the next Dependabot PR for that bump is merged through the
+  normal flow.
 
 ## Consequences
 
@@ -73,3 +84,13 @@ Key policy points:
   security patches. Major bumps for Anchor / web3.js / better-sqlite3
   / React / Tailwind deferred per the dep-tier policy in
   AUDIT-STATUS-2026-04-26.md.
+- 2026-05-12 — Amended Decision §"Ignore list" to permit
+  `@dependabot ignore this major version` for documented major-bump
+  waves. Triggered by the 44-PR / 18-ecosystem major-bump wave that
+  exceeded the `open-pull-requests-limit: 10` per ecosystem as
+  React 19, Anchor 1.0, TypeScript 6, Tailwind 4, Express 5, zod 4,
+  @types/node 25, and 11 other ecosystems simultaneously crossed
+  major boundaries. The wave triage and ignore-list rationale live in
+  issue #149; the dep tier policy in AUDIT-STATUS-2026-04-26.md is
+  superseded by the tracker for the major-bump dimension. Patch /
+  minor bumps remain on the original no-ignore posture.
