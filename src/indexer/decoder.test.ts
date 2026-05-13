@@ -7,13 +7,43 @@
  * the wire format defined in
  *   programs/agent-registry/src/events.rs::ReputationDeltaProposed.
  *
- * Pure-unit test — no real Connection, no DB writes.
+ * ADR-087 Phase A target #2 note: the fixture generator (random pubkey
+ * for the borsh `pubkey()` field) is now built from 32 random bytes and
+ * passed through @solana/kit's `getAddressDecoder` — same end-state
+ * (base58 string) as the v1 `Keypair.generate().publicKey.toBase58()`,
+ * with no dependency on @solana/web3.js.
+ *
+ * Pure-unit test — no real RPC, no DB writes.
  */
 
 import { describe, it } from "node:test";
 import * as assert from "node:assert/strict";
-import { PublicKey, Keypair } from "@solana/web3.js";
+import * as crypto from "node:crypto";
+import { getAddressDecoder } from "@solana/kit";
 import { parseLogsForEvents } from "./index";
+
+// Cached so we're not constructing a new decoder per test.
+const ADDRESS_DECODER = getAddressDecoder();
+
+/**
+ * Test-fixture pubkey helper.
+ *
+ * Returns BOTH the 32 raw bytes (for the borsh wire encoding) AND the
+ * base58 string the indexer's BorshReader.pubkey() will produce when it
+ * decodes those bytes. Pre-migration this was
+ *   const pk = Keypair.generate().publicKey;
+ *   bytes = pk.toBytes(); base58 = pk.toBase58();
+ *
+ * @solana/kit v2 has no Keypair-with-public-key class on the runtime side
+ * — addresses are base58 strings, not class instances. We synthesize the
+ * same fixture by generating 32 random bytes and asking the kit address
+ * decoder to base58-encode them.
+ */
+function fixturePubkey(): { bytes: Buffer; base58: string } {
+  const bytes = crypto.randomBytes(32);
+  const base58 = ADDRESS_DECODER.decode(bytes) as string;
+  return { bytes, base58 };
+}
 
 // Discriminator from the DISCRIMINATOR_MAP — sha256("event:ReputationDeltaProposed")[..8].
 const DISC_REPUTATION_DELTA_PROPOSED = "483cc896eed8c2fc";
@@ -28,8 +58,9 @@ function encI64(n: number | bigint): Buffer {
   b.writeBigInt64LE(BigInt(n), 0);
   return b;
 }
-function encPubkey(pk: PublicKey): Buffer {
-  return Buffer.from(pk.toBytes());
+function encPubkey(bytes: Buffer): Buffer {
+  // Identity wrap — the on-wire pubkey is just the 32 raw bytes.
+  return bytes;
 }
 
 /**
@@ -42,7 +73,7 @@ function encPubkey(pk: PublicKey): Buffer {
  *   pub timestamp: i64
  */
 function encodeReputationDeltaProposed(args: {
-  authority: PublicKey;
+  authorityBytes: Buffer;
   delta: number;
   reason: number;
   oldScore: number;
@@ -50,7 +81,7 @@ function encodeReputationDeltaProposed(args: {
   timestamp: number | bigint;
 }): Buffer {
   return Buffer.concat([
-    encPubkey(args.authority),
+    encPubkey(args.authorityBytes),
     encI16(args.delta),
     Buffer.from([args.reason]),
     Buffer.from([args.oldScore]),
@@ -66,9 +97,9 @@ function makeLog(discriminatorHex: string, payload: Buffer): string {
 
 describe("AUD-200: ReputationDeltaProposed.delta is decoded as i16", () => {
   it("decodes delta = -5 as -5 (not 65531)", () => {
-    const authority = Keypair.generate().publicKey;
+    const authority = fixturePubkey();
     const payload = encodeReputationDeltaProposed({
-      authority,
+      authorityBytes: authority.bytes,
       delta: -5,
       reason: 1,
       oldScore: 50,
@@ -85,7 +116,7 @@ describe("AUD-200: ReputationDeltaProposed.delta is decoded as i16", () => {
     assert.equal(events[0].name, "ReputationDeltaProposed");
 
     const data = events[0].data as Record<string, unknown>;
-    assert.equal(data.authority, authority.toBase58());
+    assert.equal(data.authority, authority.base58);
     // Core AUD-200 assertion. Pre-fix the indexer reported 65531 here
     // because `r.u16()` reads readUInt16LE without sign-extension.
     assert.equal(data.delta, -5, `expected delta=-5, got ${String(data.delta)}`);
@@ -97,12 +128,12 @@ describe("AUD-200: ReputationDeltaProposed.delta is decoded as i16", () => {
   });
 
   it("round-trips the full i16 negative range without aliasing", () => {
-    const authority = Keypair.generate().publicKey;
+    const authority = fixturePubkey();
     // Boundary samples covering the negative half-line.
     const samples = [-1, -100, -32768];
     for (const delta of samples) {
       const payload = encodeReputationDeltaProposed({
-        authority,
+        authorityBytes: authority.bytes,
         delta,
         reason: 0,
         oldScore: 80,
@@ -124,11 +155,11 @@ describe("AUD-200: ReputationDeltaProposed.delta is decoded as i16", () => {
   });
 
   it("preserves positive i16 values unchanged", () => {
-    const authority = Keypair.generate().publicKey;
+    const authority = fixturePubkey();
     const samples = [0, 1, 100, 32767];
     for (const delta of samples) {
       const payload = encodeReputationDeltaProposed({
-        authority,
+        authorityBytes: authority.bytes,
         delta,
         reason: 0,
         oldScore: 0,
@@ -181,23 +212,23 @@ function encU64(n: number | bigint): Buffer {
 
 describe("ADR-131: EscrowCreated decoder pins token_mint at the tail", () => {
   it("decodes all 8 fields including the ADR-131 token_mint", () => {
-    const escrow      = Keypair.generate().publicKey;
-    const client      = Keypair.generate().publicKey;
-    const provider    = Keypair.generate().publicKey;
-    const tokenMint   = Keypair.generate().publicKey;
+    const escrow    = fixturePubkey();
+    const client    = fixturePubkey();
+    const provider  = fixturePubkey();
+    const tokenMint = fixturePubkey();
 
     // Wire layout from programs/settlement/src/events.rs::EscrowCreated.
     // token_mint is the LAST field — appended in the ADR-131 wiring pass
     // to preserve the binary layout of the seven existing fields.
     const payload = Buffer.concat([
-      encPubkey(escrow),
-      encPubkey(client),
-      encPubkey(provider),
+      encPubkey(escrow.bytes),
+      encPubkey(client.bytes),
+      encPubkey(provider.bytes),
       encU64(42),                  // task_id
       encU64(1_000_000),           // total_amount (1 USDC)
       encI64(1_700_000_000),       // deadline
       encU32(3),                   // milestone_count
-      encPubkey(tokenMint),        // ADR-131
+      encPubkey(tokenMint.bytes),  // ADR-131
     ]);
 
     const events = parseLogsForEvents(
@@ -209,9 +240,9 @@ describe("ADR-131: EscrowCreated decoder pins token_mint at the tail", () => {
     assert.equal(events[0].name, "EscrowCreated");
 
     const data = events[0].data as Record<string, unknown>;
-    assert.equal(data.escrow,          escrow.toBase58());
-    assert.equal(data.client,          client.toBase58());
-    assert.equal(data.provider,        provider.toBase58());
+    assert.equal(data.escrow,          escrow.base58);
+    assert.equal(data.client,          client.base58);
+    assert.equal(data.provider,        provider.base58);
     assert.equal(data.task_id,         42);
     assert.equal(data.total_amount,    1_000_000);
     assert.equal(data.deadline,        1_700_000_000);
@@ -223,7 +254,7 @@ describe("ADR-131: EscrowCreated decoder pins token_mint at the tail", () => {
     // SOL + USDC into a single meaningless number.
     assert.equal(
       data.token_mint,
-      tokenMint.toBase58(),
+      tokenMint.base58,
       "token_mint failed to decode at byte offset 32+32+32+8+8+8+4 = 124",
     );
   });
@@ -231,13 +262,13 @@ describe("ADR-131: EscrowCreated decoder pins token_mint at the tail", () => {
 
 describe("ADR-131: DisputeResolved decoder pins refund-split layout", () => {
   it("decodes all 5 fields in declaration order", () => {
-    const escrow   = Keypair.generate().publicKey;
-    const resolver = Keypair.generate().publicKey;
+    const escrow   = fixturePubkey();
+    const resolver = fixturePubkey();
 
     // Wire layout from programs/settlement/src/events.rs::DisputeResolved.
     const payload = Buffer.concat([
-      encPubkey(escrow),
-      encPubkey(resolver),
+      encPubkey(escrow.bytes),
+      encPubkey(resolver.bytes),
       encU64(750_000),    // client_refund
       encU64(250_000),    // provider_refund
       encU64(99),         // task_id
@@ -252,8 +283,8 @@ describe("ADR-131: DisputeResolved decoder pins refund-split layout", () => {
     assert.equal(events[0].name, "DisputeResolved");
 
     const data = events[0].data as Record<string, unknown>;
-    assert.equal(data.escrow,          escrow.toBase58());
-    assert.equal(data.resolver,        resolver.toBase58());
+    assert.equal(data.escrow,          escrow.base58);
+    assert.equal(data.resolver,        resolver.base58);
     // The refund-split fields are the input to vw_dispute_resolved's
     // winner_side derivation (Client/Provider/Split/Unknown). If the
     // u64 byte-order ever flips, the cluster trigger view aggregates
@@ -266,12 +297,12 @@ describe("ADR-131: DisputeResolved decoder pins refund-split layout", () => {
 
 describe("ADR-131: DisputeRaised decoder pins 3-field shape", () => {
   it("decodes escrow, requester, task_id", () => {
-    const escrow    = Keypair.generate().publicKey;
-    const requester = Keypair.generate().publicKey;
+    const escrow    = fixturePubkey();
+    const requester = fixturePubkey();
 
     const payload = Buffer.concat([
-      encPubkey(escrow),
-      encPubkey(requester),
+      encPubkey(escrow.bytes),
+      encPubkey(requester.bytes),
       encU64(7),
     ]);
 
@@ -284,8 +315,8 @@ describe("ADR-131: DisputeRaised decoder pins 3-field shape", () => {
     assert.equal(events[0].name, "DisputeRaised");
 
     const data = events[0].data as Record<string, unknown>;
-    assert.equal(data.escrow,    escrow.toBase58());
-    assert.equal(data.requester, requester.toBase58());
+    assert.equal(data.escrow,    escrow.base58);
+    assert.equal(data.requester, requester.base58);
     assert.equal(data.task_id,   7);
   });
 });
@@ -308,13 +339,13 @@ const DISC_TRANSACTION_EXECUTED = "d3e3a80e206fbdd2";
 
 describe("ADR-082: TransactionExecuted decoder pins agent-vault wire layout", () => {
   it("decodes vault, recipient, amount, timestamp, success in declaration order", () => {
-    const vault     = Keypair.generate().publicKey;
-    const recipient = Keypair.generate().publicKey;
+    const vault     = fixturePubkey();
+    const recipient = fixturePubkey();
 
     // Wire layout from programs/agent-vault/src/events.rs::TransactionExecuted.
     const payload = Buffer.concat([
-      encPubkey(vault),
-      encPubkey(recipient),
+      encPubkey(vault.bytes),
+      encPubkey(recipient.bytes),
       encU64(2_500_000),       // amount (lamports)
       encI64(1_700_000_000),   // timestamp (Solana clock seconds)
       Buffer.from([0x01]),     // success = true
@@ -329,8 +360,8 @@ describe("ADR-082: TransactionExecuted decoder pins agent-vault wire layout", ()
     assert.equal(events[0].name, "TransactionExecuted");
 
     const data = events[0].data as Record<string, unknown>;
-    assert.equal(data.vault,     vault.toBase58());
-    assert.equal(data.recipient, recipient.toBase58());
+    assert.equal(data.vault,     vault.base58);
+    assert.equal(data.recipient, recipient.base58);
     // Load-bearing assertions: each of the four trailing field types
     // must round-trip. If `amount` ever drifts to i64 the byte stream
     // still parses (same width) but signed-overflow values would
@@ -344,12 +375,12 @@ describe("ADR-082: TransactionExecuted decoder pins agent-vault wire layout", ()
   });
 
   it("decodes success=false (failed transfer post-image)", () => {
-    const vault     = Keypair.generate().publicKey;
-    const recipient = Keypair.generate().publicKey;
+    const vault     = fixturePubkey();
+    const recipient = fixturePubkey();
 
     const payload = Buffer.concat([
-      encPubkey(vault),
-      encPubkey(recipient),
+      encPubkey(vault.bytes),
+      encPubkey(recipient.bytes),
       encU64(0),
       encI64(0),
       Buffer.from([0x00]),     // success = false
@@ -385,7 +416,7 @@ const DISC_AGENT_SLASHED = "7897274de30de5b9";
 
 describe("ADR-082 / AUD-111: AgentSlashed decoder pins total_slashes as u32", () => {
   it("decodes authority, total_slashes (u32), suspended, timestamp", () => {
-    const authority = Keypair.generate().publicKey;
+    const authority = fixturePubkey();
 
     // Wire layout from programs/agent-registry/src/events.rs::AgentSlashed.
     //   pub authority: Pubkey
@@ -399,7 +430,7 @@ describe("ADR-082 / AUD-111: AgentSlashed decoder pins total_slashes as u32", ()
     // slash count and consume 3 zero bytes that no longer belong to it,
     // shifting `suspended` and `timestamp` downstream.
     const payload = Buffer.concat([
-      encPubkey(authority),
+      encPubkey(authority.bytes),
       encU32(257),                  // total_slashes — exercises >u8 range
       Buffer.from([0x01]),          // suspended = true
       encI64(1_700_000_000),        // timestamp
@@ -414,7 +445,7 @@ describe("ADR-082 / AUD-111: AgentSlashed decoder pins total_slashes as u32", ()
     assert.equal(events[0].name, "AgentSlashed");
 
     const data = events[0].data as Record<string, unknown>;
-    assert.equal(data.authority,     authority.toBase58());
+    assert.equal(data.authority,     authority.base58);
     // The load-bearing assertion: total_slashes must round-trip the full
     // u32 value, not be aliased to its low byte.
     assert.equal(
@@ -431,11 +462,11 @@ describe("ADR-082 / AUD-111: AgentSlashed decoder pins total_slashes as u32", ()
   });
 
   it("rejects total_slashes aliasing under high-byte values (regression guard)", () => {
-    const authority = Keypair.generate().publicKey;
+    const authority = fixturePubkey();
     // Boundary: a value where the u32 high bytes carry information.
     // 0x01020304 = 16,909,060. Under u8 this would alias to 4.
     const payload = Buffer.concat([
-      encPubkey(authority),
+      encPubkey(authority.bytes),
       encU32(0x01020304),
       Buffer.from([0x00]),          // suspended = false
       encI64(0),
@@ -474,16 +505,16 @@ describe("ADR-082 / AUD-111: AgentSlashed decoder pins total_slashes as u32", ()
 // pattern in various combinations).
 //
 // EscrowCreated, DisputeRaised, and DisputeResolved already have pins
-// (above, lines 167-291) from the ADR-131 wiring pass, so this one
-// rounds out the settlement decoder coverage.
+// (above) from the ADR-131 wiring pass, so this one rounds out the
+// settlement decoder coverage.
 // ---------------------------------------------------------------------------
 
 const DISC_MILESTONE_APPROVED = "286d9f90a9e623e5";
 
 describe("ADR-082: MilestoneApproved decoder pins u32 milestone_index + u64 amount/task_id", () => {
   it("decodes escrow, client, milestone_index (u32), amount, task_id in declaration order", () => {
-    const escrow = Keypair.generate().publicKey;
-    const client = Keypair.generate().publicKey;
+    const escrow = fixturePubkey();
+    const client = fixturePubkey();
 
     // Wire layout from programs/settlement/src/events.rs::MilestoneApproved.
     //   pub escrow: Pubkey
@@ -497,8 +528,8 @@ describe("ADR-082: MilestoneApproved decoder pins u32 milestone_index + u64 amou
     // every subsequent field by 3 bytes, corrupting amount and task_id).
     // 1234 = 0x000004D2 little-endian = [0xD2, 0x04, 0x00, 0x00].
     const payload = Buffer.concat([
-      encPubkey(escrow),
-      encPubkey(client),
+      encPubkey(escrow.bytes),
+      encPubkey(client.bytes),
       encU32(1234),                  // milestone_index — exercises >u8 range
       encU64(5_000_000),             // amount (5 USDC tranche)
       encU64(99),                    // task_id
@@ -513,8 +544,8 @@ describe("ADR-082: MilestoneApproved decoder pins u32 milestone_index + u64 amou
     assert.equal(events[0].name, "MilestoneApproved");
 
     const data = events[0].data as Record<string, unknown>;
-    assert.equal(data.escrow, escrow.toBase58());
-    assert.equal(data.client, client.toBase58());
+    assert.equal(data.escrow, escrow.base58);
+    assert.equal(data.client, client.base58);
     // The load-bearing assertion: milestone_index is u32, NOT u64.
     // A regression to r.u64() would consume 8 bytes here (the full
     // 4-byte milestone_index plus the leading 4 bytes of amount),
@@ -537,14 +568,14 @@ describe("ADR-082: MilestoneApproved decoder pins u32 milestone_index + u64 amou
   });
 
   it("rejects milestone_index aliasing under high-byte values (regression guard)", () => {
-    const escrow = Keypair.generate().publicKey;
-    const client = Keypair.generate().publicKey;
+    const escrow = fixturePubkey();
+    const client = fixturePubkey();
     // Boundary: a value where the u32 high bytes carry information.
     // 0x01020304 = 16,909,060. Under u8 this would alias to 4; under
     // u16 this would alias to 0x0304 = 772.
     const payload = Buffer.concat([
-      encPubkey(escrow),
-      encPubkey(client),
+      encPubkey(escrow.bytes),
+      encPubkey(client.bytes),
       encU32(0x01020304),
       encU64(1),
       encU64(2),

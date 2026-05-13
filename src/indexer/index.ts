@@ -2,13 +2,70 @@
 import express, { Request, Response } from "express";
 import Database from "better-sqlite3";
 import {
-  Connection,
-  PublicKey,
-  Logs,
-  Context as SolanaContext,
-  ConfirmedSignatureInfo,
-  Finality,
-} from "@solana/web3.js";
+  address as toAddressBrand,
+  createSolanaRpc,
+  createSolanaRpcSubscriptions,
+  getAddressDecoder,
+  type Address,
+  type Commitment,
+  type Signature,
+  type Slot,
+} from "@solana/kit";
+
+// ADR-087 Phase A target #2 — @solana/web3.js v1 → @solana/kit v2 migration.
+//
+// v1→v2 mapping summary (see docs/audits/SOLANA-V2-MIGRATION-PLAN-2026-05-04.md
+// §3.1 and the indexer-specific mapping in the Phase A target #2 brief):
+//
+//   Connection             → SolanaRpc (HTTP) + SolanaRpcSubscriptions (WS)
+//   PublicKey              → Address (base58 string brand)
+//   pubkey.toBase58()      → pubkey                       (Address is a string)
+//   getSignaturesForAddress(pk, opts, commitment)
+//                          → rpc.getSignaturesForAddress(addr, { ..., commitment }).send()
+//   getTransaction(sig, opts)
+//                          → rpc.getTransaction(sig, { ..., encoding: "json" }).send()
+//   getSlot({ commitment }) → rpc.getSlot({ commitment }).send()  (returns bigint)
+//   onLogs(pk, cb, commit) returning subId
+//                          → rpcSubs.logsNotifications({ mentions: [addr] }, { commitment })
+//                                  .subscribe({ abortSignal }) returns AsyncIterable
+//   removeOnLogsListener(subId)
+//                          → abortController.abort()  (per-label AbortController)
+//   Logs, Context           → notification.{value,context} from logsNotifications
+//   ConfirmedSignatureInfo  → GetSignaturesForAddressApi response element (inlined)
+//   Finality                → string literal "finalized" | "confirmed"
+//
+// Slot / UnixTimestamp are bigint in v2 — coerced with Number(...) at the
+// SQLite storage boundary (INTEGER columns map to JS number, not BigInt).
+
+type SolanaRpc = ReturnType<typeof createSolanaRpc>;
+type SolanaRpcSubscriptions = ReturnType<typeof createSolanaRpcSubscriptions>;
+
+// 32-byte-buffer → base58 Address. Replaces `new PublicKey(buf).toBase58()`
+// inside the borsh reader's `pubkey()` field. The decoder is constructed
+// once at module load — same allocation cost as the cached encoder in
+// mcp-server/src/solana-v2.ts.
+const ADDRESS_DECODER = getAddressDecoder();
+function bytesToAddress(buf: Buffer | Uint8Array): string {
+  // ADDRESS_DECODER returns the branded `Address` (a base58 string);
+  // we widen it to string at the call site because the borsh reader's
+  // contract is "return a base58 pubkey string", not "return an Address".
+  return ADDRESS_DECODER.decode(buf as Uint8Array) as string;
+}
+
+// Mirror mcp-server/src/solana-v2.ts::resolveWsUrl — derive the WS URL from
+// SOLANA_WS_URL (explicit override), otherwise rewrite SOLANA_RPC_URL's
+// scheme (http→ws, https→wss). Exported so tests can verify the precedence.
+export function resolveWsUrl(): string {
+  const explicit = process.env.SOLANA_WS_URL;
+  if (explicit && explicit.length > 0) return explicit;
+  const http = process.env.SOLANA_RPC_URL;
+  if (http && http.length > 0) {
+    if (http.startsWith("https://")) return "wss://" + http.slice("https://".length);
+    if (http.startsWith("http://")) return "ws://" + http.slice("http://".length);
+    return http;
+  }
+  return "ws://127.0.0.1:8900";
+}
 import { logger, programLogger } from "./logger.js";
 import {
   acquireIndexerWriterLock,
@@ -134,21 +191,27 @@ const PORT = parseInt(process.env.INDEXER_PORT || "3100", 10);
 // convention from `metrics-server.ts` keep working without renaming env.
 const INDEXER_HOST =
   process.env.INDEXER_METRICS_HOST ?? process.env.METRICS_HOST ?? "127.0.0.1";
-const PROGRAM_IDS = {
-  vault: new PublicKey("28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw"),
-  registry: new PublicKey("psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv"),
-  settlement: new PublicKey("9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95"),
+const PROGRAM_IDS: Record<"vault" | "registry" | "settlement", Address> = {
+  vault: toAddressBrand("28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw"),
+  registry: toAddressBrand("psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv"),
+  settlement: toAddressBrand("9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95"),
 };
 
 // Finding #23: "confirmed" can be rolled back by a fork. Use "finalized"
 // so the indexer never persists an event from a transaction that might
 // later be dropped. This adds ~10-20s latency versus "confirmed" but is
 // the correct tradeoff for an authoritative event log.
-// Typed as `Finality` (not `Commitment`) because the narrower union is
-// what `getSignaturesForAddress` and `getTransaction` accept. "finalized"
-// is a valid Finality, and `new Connection(..., "finalized")` accepts it
-// as a Commitment too.
-const COMMITMENT: Finality = "finalized";
+// In @solana/kit v2 the narrower "Finality" union is gone; we pin the
+// commitment as the literal `"finalized"` (still a valid `Commitment`).
+// getSignaturesForAddress's config type EXCLUDES "processed" but accepts
+// "finalized"; getTransaction accepts the full Commitment union — both
+// fit. Narrowing the type to "finalized" here also guards against a
+// future ` const COMMITMENT: Commitment = ... ` typo silently widening
+// the indexer to "confirmed".
+const COMMITMENT = "finalized" as const;
+type IndexerCommitment = typeof COMMITMENT;
+// Local breadcrumb: the heartbeat uses "confirmed" (cheaper, doesn't
+// require finality wait — it's just a liveness probe), not COMMITMENT.
 
 // Backfill paging constants — `getSignaturesForAddress` returns at most
 // 1000 entries per call. We page head → cursor, then process oldest-first
@@ -468,7 +531,11 @@ class BorshReader {
   pubkey(): string {
     const slice = this.buf.subarray(this.offset, this.offset + 32);
     this.offset += 32;
-    return new PublicKey(Buffer.from(slice)).toBase58();
+    // @solana/kit v2: AddressDecoder turns 32 raw bytes into a base58
+    // string-branded `Address`. We return it as `string` to preserve
+    // the BorshReader contract used by every downstream consumer
+    // (event decoders, JSON projection, SQLite text columns).
+    return bytesToAddress(slice);
   }
 
   string(): string {
@@ -1713,10 +1780,10 @@ function persistEventsForTx(
  * one-shot reindex tool instead of paying the cost on every cold start.
  */
 async function backfillProgram(
-  connection: Connection,
+  rpc: SolanaRpc,
   db: Database.Database,
   label: string,
-  programId: PublicKey,
+  programId: Address,
   state: SubscriptionState,
   metrics: IndexerMetrics
 ): Promise<number> {
@@ -1724,17 +1791,23 @@ async function backfillProgram(
 
   if (!cursor || !cursor.signature) {
     try {
-      const head = await connection.getSignaturesForAddress(
-        programId,
-        { limit: 1 },
-        COMMITMENT
-      );
+      // @solana/kit v2: commitment moves into the options object; the call
+      // returns a builder and .send() executes the request.
+      const head = await rpc
+        .getSignaturesForAddress(programId, { limit: 1, commitment: COMMITMENT })
+        .send();
       if (head.length > 0) {
-        upsertCursor(db, label, head[0].slot, head[0].signature);
-        state.lastProcessedSlot = head[0].slot;
-        state.lastSignature = head[0].signature;
+        // Slot is `bigint` in v2; coerce to number for the SQLite INTEGER
+        // column. AUD-039 unchanged — the slot fits in a JS number safely
+        // (mainnet slot counter is ~3e8 today; Number.MAX_SAFE_INTEGER is
+        // ~9e15, ~30 million years of headroom at 0.4 s/slot).
+        const headSlot = Number(head[0].slot);
+        const headSig = head[0].signature as string;
+        upsertCursor(db, label, headSlot, headSig);
+        state.lastProcessedSlot = headSlot;
+        state.lastSignature = headSig;
         programLogger(label).info(
-          { slot: head[0].slot, corr_id: head[0].signature },
+          { slot: headSlot, corr_id: headSig },
           "no cursor — seeded at head signature",
         );
       }
@@ -1743,7 +1816,7 @@ async function backfillProgram(
       // OFF-208: prom counter for cursor-seed failures (first-run
       // boot when no persisted cursor exists). `error_type` namespaced
       // so backfill-page-fetch / backfill-tx / cursor-seed can each be
-      // alert-ruled separately.
+      // alert-ruled separately. PRESERVE EXACT LABEL "backfill_cursor_seed".
       indexerErrors.inc({ error_type: "backfill_cursor_seed" });
       state.lastError = `cursor seed failed: ${(err as Error).message}`;
       programLogger(label).error({ err: String(err) }, "cursor seed failed");
@@ -1751,19 +1824,26 @@ async function backfillProgram(
     return 0;
   }
 
-  const until = cursor.signature;
-  const collected: ConfirmedSignatureInfo[] = [];
-  let before: string | undefined;
+  const until = cursor.signature as Signature;
+  // Inline the v2 row shape (kit's exported type is internal). The fields
+  // we touch are { signature: Signature, slot: Slot } — anything else from
+  // the API is ignored. `slot` stays as bigint here and is coerced at the
+  // SQLite boundary just below.
+  const collected: ReadonlyArray<{ signature: Signature; slot: Slot }>[] = [];
+  let before: Signature | undefined;
 
   try {
     while (true) {
-      const page = await connection.getSignaturesForAddress(
-        programId,
-        { limit: BACKFILL_PAGE_SIZE, before, until },
-        COMMITMENT
-      );
+      const page = await rpc
+        .getSignaturesForAddress(programId, {
+          limit: BACKFILL_PAGE_SIZE,
+          before,
+          until,
+          commitment: COMMITMENT,
+        })
+        .send();
       if (page.length === 0) break;
-      collected.push(...page);
+      collected.push(page);
       if (page.length < BACKFILL_PAGE_SIZE) break;
       before = page[page.length - 1].signature;
     }
@@ -1772,53 +1852,59 @@ async function backfillProgram(
     // OFF-208: prom counter for `getSignaturesForAddress` paging
     // failures. Distinct label from the per-tx fetch below so an RPC
     // outage that wedges paging surfaces independently of a tx-level
-    // RPC flap.
+    // RPC flap. PRESERVE EXACT LABEL "backfill_page_fetch".
     indexerErrors.inc({ error_type: "backfill_page_fetch" });
     state.lastError = `backfill page fetch failed: ${(err as Error).message}`;
     programLogger(label).error({ err: String(err) }, "backfill page fetch failed");
     return 0;
   }
 
-  if (collected.length === 0) {
+  // Flatten + reverse to oldest-first so the cursor advances monotonically.
+  // A crash mid-loop leaves the cursor at the last fully-processed signature.
+  const flattened = collected.flat();
+  if (flattened.length === 0) {
     return 0;
   }
 
   programLogger(label).info(
-    { signature_count: collected.length, since_cursor: until },
+    { signature_count: flattened.length, since_cursor: until },
     "backfilling signatures since cursor",
   );
 
   let totalInserted = 0;
-  // Reverse to oldest-first so the cursor advances monotonically. A crash
-  // mid-loop leaves the cursor at the last fully-processed signature.
-  for (const info of collected.reverse()) {
+  for (const info of flattened.reverse()) {
+    const infoSlot = Number(info.slot);
+    const infoSig = info.signature as string;
     try {
-      const tx = await connection.getTransaction(info.signature, {
-        commitment: COMMITMENT,
-        maxSupportedTransactionVersion: 0,
-      });
+      const tx = await rpc
+        .getTransaction(info.signature, {
+          commitment: COMMITMENT,
+          maxSupportedTransactionVersion: 0,
+          encoding: "json",
+        })
+        .send();
       if (tx?.meta?.logMessages) {
-        const parsed = parseLogsForEvents(tx.meta.logMessages, label);
-        const { inserted } = persistEventsForTx(db, label, info.signature, info.slot, parsed, metrics);
+        const parsed = parseLogsForEvents(tx.meta.logMessages as string[], label);
+        const { inserted } = persistEventsForTx(db, label, infoSig, infoSlot, parsed, metrics);
         totalInserted += inserted;
         metrics.eventsBackfilled += inserted;
       } else {
         // Tx has no logs or couldn't be fetched at finalized commitment —
         // still advance cursor so we don't re-fetch it forever.
-        upsertCursor(db, label, info.slot, info.signature);
+        upsertCursor(db, label, infoSlot, infoSig);
       }
-      state.lastProcessedSlot = Math.max(state.lastProcessedSlot, info.slot);
-      state.lastSignature = info.signature;
+      state.lastProcessedSlot = Math.max(state.lastProcessedSlot, infoSlot);
+      state.lastSignature = infoSig;
     } catch (err) {
       metrics.backfillErrors++;
       // OFF-208: prom counter for per-tx `getTransaction` failures
       // during backfill. Distinct from `backfill_page_fetch` above so
       // operators can tell "RPC pagination broken" from "RPC tx-fetch
-      // intermittently 5xx-ing".
+      // intermittently 5xx-ing". PRESERVE EXACT LABEL "backfill_tx_fetch".
       indexerErrors.inc({ error_type: "backfill_tx_fetch" });
-      state.lastError = `backfill tx ${info.signature.substring(0, 8)}... failed: ${(err as Error).message}`;
+      state.lastError = `backfill tx ${infoSig.substring(0, 8)}... failed: ${(err as Error).message}`;
       programLogger(label).error(
-        { err: String(err), corr_id: info.signature },
+        { err: String(err), corr_id: infoSig },
         "backfill tx failed",
       );
     }
@@ -1833,7 +1919,8 @@ async function backfillProgram(
 }
 
 function subscribeToPrograms(
-  connection: Connection,
+  rpc: SolanaRpc,
+  rpcSubscriptions: SolanaRpcSubscriptions,
   db: Database.Database,
   states?: Map<string, SubscriptionState>,
   metrics?: IndexerMetrics
@@ -1845,14 +1932,19 @@ function subscribeToPrograms(
   const activeStates = states ?? new Map<string, SubscriptionState>();
   const activeMetrics = metrics ?? createInitialMetrics();
 
-  const subscriptionIds: Map<string, number> = new Map();
+  // In @solana/kit v2 there is no numeric `subId` returned by `subscribe()`
+  // — subscriptions are cancelled by aborting the AbortController whose
+  // signal was passed into `subscribe({ abortSignal })`. We track one
+  // controller per program label; calling `controller.abort()` ends the
+  // async iterator's `for await` loop and the underlying WS slot.
+  const subscriptionControllers: Map<string, AbortController> = new Map();
 
-  function getOrCreateState(label: string, programId: PublicKey): SubscriptionState {
+  function getOrCreateState(label: string, programId: Address): SubscriptionState {
     let state = activeStates.get(label);
     if (!state) {
       state = {
         label,
-        programId: programId.toBase58(),
+        programId,
         connected: false,
         lastProcessedSlot: 0,
         lastSignature: null,
@@ -1864,21 +1956,26 @@ function subscribeToPrograms(
     return state;
   }
 
-  function handleLogs(label: string, logs: Logs, ctx: SolanaContext): void {
+  function handleLogs(
+    label: string,
+    slot: number,
+    signature: string,
+    logs: readonly string[],
+  ): void {
     const state = activeStates.get(label);
-    if (state && ctx.slot > state.lastProcessedSlot) {
-      state.lastProcessedSlot = ctx.slot;
-      state.lastSignature = logs.signature;
+    if (state && slot > state.lastProcessedSlot) {
+      state.lastProcessedSlot = slot;
+      state.lastSignature = signature;
     }
 
-    const parsed = parseLogsForEvents(logs.logs, label);
+    const parsed = parseLogsForEvents(logs as string[], label);
     if (parsed.length === 0) return;
 
     const { inserted, skipped } = persistEventsForTx(
       db,
       label,
-      logs.signature,
-      ctx.slot,
+      signature,
+      slot,
       parsed,
       activeMetrics
     );
@@ -1887,8 +1984,8 @@ function subscribeToPrograms(
         programLogger(label).info(
           {
             event_name: event.name,
-            slot: ctx.slot,
-            corr_id: logs.signature,
+            slot,
+            corr_id: signature,
           },
           "event ingested",
         );
@@ -1896,62 +1993,128 @@ function subscribeToPrograms(
     }
     if (skipped > 0) {
       programLogger(label).debug(
-        { skipped, corr_id: logs.signature },
+        { skipped, corr_id: signature },
         "duplicate events skipped",
       );
     }
   }
 
-  function subscribeWithReconnect(label: string, programId: PublicKey): void {
+  // In @solana/kit v2 `subscribe()` is async — it awaits a WS slot from
+  // the rpc-subscriptions transport, then returns a `Promise<AsyncIterable>`.
+  // We launch the subscribe + consume loop as a detached promise so
+  // `subscribeWithReconnect` itself stays synchronous-shaped from the
+  // caller's perspective (matching the v1 `onLogs` return).
+  function subscribeWithReconnect(label: string, programId: Address): void {
     const state = getOrCreateState(label, programId);
     programLogger(label).info(
-      { program_id: programId.toBase58() },
+      { program_id: programId },
       "subscribing to program",
     );
 
-    try {
-      const subId = connection.onLogs(
-        programId,
-        (logs: Logs, ctx: SolanaContext) => {
-          handleLogs(label, logs, ctx);
-        },
-        COMMITMENT
-      );
-      subscriptionIds.set(label, subId);
-      state.connected = true;
-      state.lastError = null;
-    } catch (err) {
-      state.connected = false;
-      state.lastError = `subscribe failed: ${(err as Error).message}`;
-      programLogger(label).error({ err: String(err) }, "subscription failed");
-      scheduleReconnect(label, programId);
-      return;
-    }
+    // Per-subscription AbortController. Aborting this ends the
+    // notification iterator; the server-side slot is released by the
+    // kit transport on signal abort. Used by both AUD-204 (heartbeat-
+    // driven reconnect releases BEFORE re-subscribing) and the
+    // graceful-shutdown SIGINT/SIGTERM path.
+    const controller = new AbortController();
+    subscriptionControllers.set(label, controller);
 
-    // Kick off backfill after subscribe so live events queue while
-    // history is catching up; `INSERT OR IGNORE` handles any overlap.
-    backfillProgram(connection, db, label, programId, state, activeMetrics).catch((err) => {
-      activeMetrics.backfillErrors++;
-      // OFF-208: prom counter for unexpected backfill throws (the
-      // top-level rejection that escapes the inner try/catch sites).
-      // Different `error_type` so an alert that fires on this label
-      // means "the backfill itself crashed", not "an RPC call inside
-      // backfill failed and was already counted above".
-      indexerErrors.inc({ error_type: "backfill_threw" });
-      state.lastError = `backfill threw: ${(err as Error).message}`;
-      programLogger(label).error({ err: String(err) }, "backfill threw");
-    });
+    // Detached async — kick the subscribe + iterator loop, but don't
+    // block `subscribeWithReconnect`'s synchronous-shaped return.
+    void (async () => {
+      let iterable: AsyncIterable<{
+        context: { slot: bigint };
+        value: { signature: string; logs: readonly string[]; err: unknown };
+      }>;
+      try {
+        // Cast: kit's typed `logsNotifications` request returns
+        // `SolanaRpcResponse<{ err, logs, signature }>` but the runtime
+        // shape matches { context: { slot }, value: {...} }. We narrow
+        // to that minimal shape for our handler.
+        iterable = (await rpcSubscriptions
+          .logsNotifications({ mentions: [programId] }, { commitment: COMMITMENT })
+          .subscribe({ abortSignal: controller.signal })) as unknown as AsyncIterable<{
+          context: { slot: bigint };
+          value: { signature: string; logs: readonly string[]; err: unknown };
+        }>;
+        state.connected = true;
+        state.lastError = null;
+      } catch (err) {
+        // Aborts surface here as an AbortError when the signal fired
+        // before subscribe resolved — don't treat that as a real
+        // subscribe failure (the caller is intentionally tearing down).
+        if (controller.signal.aborted) return;
+        state.connected = false;
+        state.lastError = `subscribe failed: ${(err as Error).message}`;
+        programLogger(label).error({ err: String(err) }, "subscription failed");
+        subscriptionControllers.delete(label);
+        scheduleReconnect(label, programId);
+        return;
+      }
+
+      // Kick off backfill after subscribe so live events queue while
+      // history is catching up; `INSERT OR IGNORE` handles any overlap.
+      backfillProgram(rpc, db, label, programId, state, activeMetrics).catch((err) => {
+        activeMetrics.backfillErrors++;
+        // OFF-208: prom counter for unexpected backfill throws (the
+        // top-level rejection that escapes the inner try/catch sites).
+        // Different `error_type` so an alert that fires on this label
+        // means "the backfill itself crashed", not "an RPC call inside
+        // backfill failed and was already counted above". PRESERVE EXACT
+        // LABEL "backfill_threw".
+        indexerErrors.inc({ error_type: "backfill_threw" });
+        state.lastError = `backfill threw: ${(err as Error).message}`;
+        programLogger(label).error({ err: String(err) }, "backfill threw");
+      });
+
+      // Async-iterator consumption loop with its own error boundary so a
+      // thrown error in the handler can never kill the indexer (mirror
+      // the log-and-continue policy the v1 onLogs callback enjoyed by
+      // virtue of being invoked one-at-a-time by Connection).
+      try {
+        for await (const notification of iterable) {
+          try {
+            const slot = Number(notification.context.slot);
+            const signature = notification.value.signature;
+            handleLogs(label, slot, signature, notification.value.logs);
+          } catch (cbErr) {
+            programLogger(label).error(
+              { err: String(cbErr) },
+              "logsNotification handler threw — continuing",
+            );
+          }
+        }
+      } catch (iterErr) {
+        // Normal-shutdown path: aborting the controller ends the
+        // iterator via an AbortError-shaped rejection. Don't log that
+        // as a real failure — it's how the v2 kit signals cancel.
+        if (!controller.signal.aborted) {
+          state.connected = false;
+          state.lastError = `subscription iterator ended: ${(iterErr as Error).message}`;
+          programLogger(label).warn(
+            { err: String(iterErr) },
+            "subscription iterator ended unexpectedly",
+          );
+          // The iterator's natural end (without an explicit abort) means
+          // the WS slot closed beneath us. Schedule a reconnect so we
+          // don't end up silently un-subscribed forever.
+          if (subscriptionControllers.get(label) === controller) {
+            subscriptionControllers.delete(label);
+            scheduleReconnect(label, programId);
+          }
+        }
+      }
+    })();
 
     // AUD-039 / ADR-118: WebSocket disconnects are observed via the
     // process-wide heartbeat (see startHeartbeat below) rather than a
-    // private `_rpcWebSocket.on("close", ...)` peek that would break on
-    // any @solana/web3.js minor bump. The heartbeat is started once on
+    // private socket-field peek. The heartbeat is started once on
     // first subscribe and remains running for the lifetime of the
     // process; per-program reconnect logic is unchanged from the
-    // previous implementation.
+    // pre-migration implementation.
   }
 
-  function scheduleReconnect(label: string, programId: PublicKey): void {
+  function scheduleReconnect(label: string, programId: Address): void {
     const state = getOrCreateState(label, programId);
     state.reconnectAttempts++;
     activeMetrics.subscriptionReconnects++;
@@ -1987,47 +2150,41 @@ function subscribeToPrograms(
   // disconnected and re-routed through scheduleReconnect — exact same
   // outcome as the old "close" event handler, just driven by a public
   // RPC call instead of a private socket field.
-  const heartbeatHandle = startConnectionHeartbeat(connection, {
+  const heartbeatHandle = startConnectionHeartbeat(rpc, {
     intervalMs: HEARTBEAT_INTERVAL_MS,
     timeoutMs: HEARTBEAT_TIMEOUT_MS,
     failureThreshold: HEARTBEAT_FAILURE_THRESHOLD,
     onConnectionLost: (reason) => {
       // Reconnect every program whose subscription is currently live.
       // We iterate over a snapshot because scheduleReconnect mutates
-      // `subscriptionIds` indirectly through subscribeWithReconnect.
-      const labels = Array.from(subscriptionIds.keys());
+      // `subscriptionControllers` indirectly through subscribeWithReconnect.
+      const labels = Array.from(subscriptionControllers.keys());
       for (const label of labels) {
         const state = activeStates.get(label);
         if (!state) continue;
-        const programId = new PublicKey(state.programId);
+        const programId = state.programId as Address;
         programLogger(label).warn(
           { last_slot: state.lastProcessedSlot, reason },
           "heartbeat failed, scheduling reconnect",
         );
         state.connected = false;
         state.lastError = `heartbeat failed: ${reason}`;
-        // AUD-204: release the prior onLogs subscription with the RPC
-        // server BEFORE dropping it from `subscriptionIds` and starting
-        // a fresh subscribe. Without this, every heartbeat-driven
-        // reconnect on a flaky network stacks an extra listener inside
-        // @solana/web3.js's `Connection`, eventually causing duplicate
-        // log delivery (idempotency saves correctness via the UNIQUE
-        // index, but inflates parseErrors/duplicateSkipped metrics and
-        // wastes memory). `removeOnLogsListener` is fire-and-forget at
-        // this layer — if the server has already closed the slot we
-        // just log and continue.
-        const oldSubId = subscriptionIds.get(label);
-        if (oldSubId !== undefined) {
-          // Don't await: `onConnectionLost` is not async and we don't
-          // want a slow RPC to delay the reconnect schedule.
-          void connection.removeOnLogsListener(oldSubId).catch((err) => {
-            programLogger(label).warn(
-              { err: String(err), sub_id: oldSubId },
-              "removeOnLogsListener failed (subscription likely already gone)",
-            );
-          });
+        // AUD-204: release the prior logsNotifications subscription
+        // BEFORE removing it from the map and starting a fresh
+        // subscribe. Without this, every heartbeat-driven reconnect
+        // on a flaky network would stack an extra iterator inside
+        // the kit transport, eventually causing duplicate log delivery
+        // (idempotency saves correctness via the UNIQUE index, but
+        // inflates parseErrors/duplicateSkipped metrics and wastes
+        // memory). `controller.abort()` is fire-and-forget — the
+        // iterator loop above sees the signal abort and exits cleanly
+        // without scheduling its own reconnect (the
+        // `controller.signal.aborted` guard).
+        const oldController = subscriptionControllers.get(label);
+        if (oldController !== undefined) {
+          oldController.abort();
         }
-        subscriptionIds.delete(label);
+        subscriptionControllers.delete(label);
         scheduleReconnect(label, programId);
       }
     },
@@ -2063,7 +2220,7 @@ export interface HeartbeatHandle {
 }
 
 export function startConnectionHeartbeat(
-  connection: Pick<Connection, "getSlot">,
+  rpc: Pick<SolanaRpc, "getSlot">,
   opts: HeartbeatOptions,
 ): HeartbeatHandle {
   let failures = 0;
@@ -2071,9 +2228,12 @@ export function startConnectionHeartbeat(
 
   const ping = async (): Promise<void> => {
     // Race getSlot against a timeout so a wedged WS doesn't stall the
-    // heartbeat. AbortController would be cleaner but @solana/web3.js
-    // <2.0 has no abort signal plumbing through Connection methods.
-    const slotPromise = connection.getSlot({ commitment: "confirmed" });
+    // heartbeat. @solana/kit v2 returns a request builder; calling
+    // .send() returns a Promise<Slot>. AUD-039 invariant preserved:
+    // this still uses ONLY a public RPC method — no private socket-
+    // field access — so a kit minor bump that renames internals does
+    // not silently break the heartbeat.
+    const slotPromise = rpc.getSlot({ commitment: "confirmed" }).send();
     const timeoutPromise = new Promise<never>((_resolve, reject) => {
       setTimeout(
         () => reject(new Error(`heartbeat timeout after ${opts.timeoutMs}ms`)),
@@ -2187,7 +2347,8 @@ function createApi(
         const cursor = readCursor(db, label);
         subscriptions.push({
           program: label,
-          programId: programId.toBase58(),
+          // @solana/kit v2: Address is already a base58 string, no .toBase58().
+          programId,
           connected: false,
           lastProcessedSlot: cursor?.slot ?? 0,
           lastSignature: cursor?.signature ?? null,
@@ -2360,7 +2521,12 @@ async function main(): Promise<void> {
     "AEP event indexer starting",
   );
 
-  const connection = new Connection(RPC_URL, COMMITMENT);
+  // @solana/kit v2: HTTP and WS RPC are separate clients now.
+  // - rpc           — HTTP for getSignaturesForAddress / getTransaction / getSlot
+  // - rpcSubscriptions — WS for logsNotifications (replaces v1 connection.onLogs)
+  // Commitment is per-call in v2 (see COMMITMENT usage at each call site).
+  const rpc = createSolanaRpc(RPC_URL);
+  const rpcSubscriptions = createSolanaRpcSubscriptions(resolveWsUrl());
   const db = initDb(process.env.DB_PATH || "./aep-events.db");
 
   // ADR-128 Phase 1: when INDEXER_PG_URL is set, apply the shadow
@@ -2430,7 +2596,7 @@ async function main(): Promise<void> {
     }
   }
 
-  const { states, metrics, heartbeat } = subscribeToPrograms(connection, db);
+  const { states, metrics, heartbeat } = subscribeToPrograms(rpc, rpcSubscriptions, db);
   const app = createApi(db, states, metrics);
   // AUD-203: bind to INDEXER_HOST (loopback by default) so the /metrics
   // endpoint (and its sibling read-only routes) are not advertised on

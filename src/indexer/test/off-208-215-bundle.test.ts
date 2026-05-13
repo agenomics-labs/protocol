@@ -233,24 +233,36 @@ function sleep(ms: number): Promise<void> {
 }
 
 describe("OFF-210 — heartbeat reset-after-callback semantics", () => {
+  // ADR-087 Phase A target #2: heartbeat now polls
+  // `rpc.getSlot(opts).send()` (kit v2 builder shape) rather than
+  // `connection.getSlot(opts)` (v1 Promise shape). The fake mirrors
+  // that — `getSlot` returns a request builder, `.send()` invokes the
+  // thunk. Semantics tested (throw / success-reset) are unchanged.
+  function fakeRpc(thunk: () => Promise<number | bigint>) {
+    return {
+      getSlot: (..._args: unknown[]) => ({ send: async () => BigInt(await thunk()) }),
+    };
+  }
+
   it("a throwing callback leaves failures >= threshold so the next tick re-fires", async () => {
     let cbCalls = 0;
     let pingCalls = 0;
-    const conn = {
-      getSlot: (async () => {
-        pingCalls++;
-        throw new Error("rpc down");
-      }) as unknown as Parameters<typeof startConnectionHeartbeat>[0]["getSlot"],
-    };
-    const handle = startConnectionHeartbeat(conn, {
-      intervalMs: 15,
-      timeoutMs: 50,
-      failureThreshold: 1,
-      onConnectionLost: () => {
-        cbCalls++;
-        throw new Error("callback explodes");
-      },
+    const rpc = fakeRpc(async () => {
+      pingCalls++;
+      throw new Error("rpc down");
     });
+    const handle = startConnectionHeartbeat(
+      rpc as unknown as Parameters<typeof startConnectionHeartbeat>[0],
+      {
+        intervalMs: 15,
+        timeoutMs: 50,
+        failureThreshold: 1,
+        onConnectionLost: () => {
+          cbCalls++;
+          throw new Error("callback explodes");
+        },
+      },
+    );
     // Wait for several ticks. With OFF-210 in effect, the failure
     // counter is NOT reset on the throwing callback path — so the
     // callback fires every tick that observes a failure (each
@@ -268,23 +280,24 @@ describe("OFF-210 — heartbeat reset-after-callback semantics", () => {
   it("a successful callback resets the counter so the next outage starts fresh", async () => {
     let cbCalls = 0;
     let phase: "fail" | "ok" = "fail";
-    const conn = {
-      getSlot: (async () => {
-        if (phase === "fail") throw new Error("rpc down");
-        return 1;
-      }) as unknown as Parameters<typeof startConnectionHeartbeat>[0]["getSlot"],
-    };
-    const handle = startConnectionHeartbeat(conn, {
-      intervalMs: 10,
-      timeoutMs: 50,
-      failureThreshold: 1,
-      onConnectionLost: () => {
-        cbCalls++;
-        // Successful callback simulates a re-subscribe: now the next
-        // tick will succeed because we flip `phase` to "ok".
-        phase = "ok";
-      },
+    const rpc = fakeRpc(async () => {
+      if (phase === "fail") throw new Error("rpc down");
+      return 1;
     });
+    const handle = startConnectionHeartbeat(
+      rpc as unknown as Parameters<typeof startConnectionHeartbeat>[0],
+      {
+        intervalMs: 10,
+        timeoutMs: 50,
+        failureThreshold: 1,
+        onConnectionLost: () => {
+          cbCalls++;
+          // Successful callback simulates a re-subscribe: now the next
+          // tick will succeed because we flip `phase` to "ok".
+          phase = "ok";
+        },
+      },
+    );
     await sleep(80);
     // Failures are now zero (callback returned cleanly + ping succeeded).
     handle.stop();
