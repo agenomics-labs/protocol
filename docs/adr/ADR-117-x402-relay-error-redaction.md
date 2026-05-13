@@ -1,7 +1,9 @@
 # ADR-117: x402-relay error redaction policy
 
 ## Status
-Proposed
+Accepted (2026-05-13) — typed error envelope shipped in this PR
+(`feat(x402-relay): typed error envelope per ADR-117`); mcp-server sweep
+tracked separately as ADR-117b.
 
 ## Date
 2026-04-24

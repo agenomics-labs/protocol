@@ -288,6 +288,125 @@ function pruneRedeemedSignatures(): void {
 // the test runner past the last subtest.
 setInterval(pruneRedeemedSignatures, SIGNATURE_TTL_MS).unref();
 
+// ---------------------------------------------------------------------------
+// ADR-117 — Typed error envelope for x402-relay.
+//
+// Pre-ADR-117 the verify-failure catch at the bottom of `verifyPaymentOnChain`
+// template-literaled the raw exception into the wire response:
+//
+//     error: `Verification error: ${err}`
+//
+// `getTransaction()` exceptions in @solana/kit / @solana/web3.js stringify to
+// values that can include the RPC endpoint URL, the transaction signature,
+// HTTP-status detail, and a stack trace — every unprivileged caller of /pay
+// received whatever the exception coerced to. Re-audit finding R-offchain-01.
+//
+// Post-ADR-117 the catch maps the exception to one of a small enum of codes,
+// returns a generic message keyed off the code, and the raw exception is
+// logged server-side via pino with the correlation ID. Clients never see the
+// underlying exception text. The `correlationId` in the envelope lets ops
+// stitch a user-reported failure back to the pino log line that holds the
+// raw cause.
+//
+// Scope: this PR. Sweeping the analogous
+// `error instanceof Error ? error.message : String(error)` shape across
+// `mcp-server/` handlers is tracked separately (ADR-117b).
+// ---------------------------------------------------------------------------
+type ErrorCode =
+  | "PAYMENT_NOT_FOUND"
+  | "PAYMENT_UNVERIFIED"
+  | "PAYMENT_REPLAYED"
+  | "RPC_UNAVAILABLE"
+  | "INTERNAL";
+
+interface ErrorEnvelope {
+  code: ErrorCode;
+  message: string;
+  correlationId: string;
+}
+
+// Generic, client-facing messages keyed off code. NEVER inline any value from
+// `err` here — that would re-introduce the leak the catch path closed. If a
+// future code needs caller-specific detail, log it server-side and quote the
+// correlationId, do not widen these strings.
+const ERROR_MESSAGES: Readonly<Record<ErrorCode, string>> = {
+  PAYMENT_NOT_FOUND: "Payment transaction not found on-chain.",
+  PAYMENT_UNVERIFIED: "Payment could not be verified against the expected recipient and amount.",
+  PAYMENT_REPLAYED: "Payment signature has already been redeemed.",
+  RPC_UNAVAILABLE: "Upstream RPC is unavailable; please retry shortly.",
+  INTERNAL: "Internal error processing payment.",
+};
+
+function toErrorEnvelope(code: ErrorCode, correlationId: string): ErrorEnvelope {
+  return { code, message: ERROR_MESSAGES[code], correlationId };
+}
+
+// Classify a thrown exception out of `getTransaction()` (and other unhappy
+// paths reaching the catch) into an ErrorCode. Heuristic — based on the
+// shape of exceptions observed from @solana/kit's RPC transport (which
+// wraps node fetch / system errors). Defaults to INTERNAL on no match, so
+// an unknown exception shape still passes through the generic message
+// rather than leaking its text.
+//
+// Inspection inputs: `err.message`, `err.code`, and `err.cause?.code` — all
+// allow-listed so a `toString()` that includes the RPC URL or the tx
+// signature never reaches the classifier's branch decisions.
+function classifyVerifyException(err: unknown): ErrorCode {
+  if (err === null || err === undefined) return "INTERNAL";
+
+  // Extract message + node-style code without ever stringifying the full
+  // error (which is where stack frames and URLs surface).
+  let msg = "";
+  let nodeCode: unknown = undefined;
+  let causeCode: unknown = undefined;
+  if (typeof err === "object") {
+    const e = err as { message?: unknown; code?: unknown; cause?: { code?: unknown } };
+    if (typeof e.message === "string") msg = e.message;
+    nodeCode = e.code;
+    causeCode = e.cause?.code;
+  }
+  const lowerMsg = msg.toLowerCase();
+
+  // Network/transport — node net errors AND fetch/undici failures. Order
+  // matters: check transport BEFORE "not found" because a transport error
+  // can legitimately include the tx signature in its message and we should
+  // not mis-classify it as PAYMENT_NOT_FOUND.
+  const transportCodes = new Set<string>([
+    "ECONNREFUSED",
+    "ECONNRESET",
+    "ETIMEDOUT",
+    "ENOTFOUND",
+    "EAI_AGAIN",
+    "UND_ERR_CONNECT_TIMEOUT",
+    "UND_ERR_HEADERS_TIMEOUT",
+    "UND_ERR_SOCKET",
+  ]);
+  if (typeof nodeCode === "string" && transportCodes.has(nodeCode)) {
+    return "RPC_UNAVAILABLE";
+  }
+  if (typeof causeCode === "string" && transportCodes.has(causeCode)) {
+    return "RPC_UNAVAILABLE";
+  }
+  if (
+    lowerMsg.includes("fetch failed") ||
+    lowerMsg.includes("getaddrinfo") ||
+    lowerMsg.includes("timeout") ||
+    lowerMsg.includes("econnrefused") ||
+    lowerMsg.includes("network")
+  ) {
+    return "RPC_UNAVAILABLE";
+  }
+
+  // getTransaction-shaped "not found" responses: kit's RPC layer typically
+  // throws with `.signature` referenced in the message, or includes "not
+  // found" verbatim. The substring guard is deliberately narrow.
+  if (lowerMsg.includes("not found") || lowerMsg.includes("signature")) {
+    return "PAYMENT_NOT_FOUND";
+  }
+
+  return "INTERNAL";
+}
+
 interface PaymentVerification {
   valid: boolean;
   sender: string;
@@ -295,6 +414,10 @@ interface PaymentVerification {
   amountSol: number;
   slot: number;
   error?: string;
+  // ADR-117: when valid=false, optionally carries the typed code so the
+  // route handler can map directly onto the envelope without re-parsing
+  // the `error` string. Absent on the happy path.
+  errorCode?: ErrorCode;
 }
 
 async function verifyPaymentOnChain(
@@ -311,11 +434,11 @@ async function verifyPaymentOnChain(
     }).send();
 
     if (!tx) {
-      return { valid: false, sender: "", recipient: "", amountSol: 0, slot: 0, error: "Transaction not found" };
+      return { valid: false, sender: "", recipient: "", amountSol: 0, slot: 0, error: "Transaction not found", errorCode: "PAYMENT_NOT_FOUND" };
     }
 
     if (tx.meta?.err) {
-      return { valid: false, sender: "", recipient: "", amountSol: 0, slot: 0, error: "Transaction failed on-chain" };
+      return { valid: false, sender: "", recipient: "", amountSol: 0, slot: 0, error: "Transaction failed on-chain", errorCode: "PAYMENT_UNVERIFIED" };
     }
 
     // In @solana/kit v2, accountKeys are Address[] (string-branded) in the message.
@@ -327,7 +450,7 @@ async function verifyPaymentOnChain(
     );
 
     if (recipientIndex === -1) {
-      return { valid: false, sender: "", recipient: expectedRecipient, amountSol: 0, slot: Number(tx.slot), error: "Recipient not found in transaction" };
+      return { valid: false, sender: "", recipient: expectedRecipient, amountSol: 0, slot: Number(tx.slot), error: "Recipient not found in transaction", errorCode: "PAYMENT_UNVERIFIED" };
     }
 
     // preBalances / postBalances are Lamports (bigint) in @solana/kit v2.
@@ -345,6 +468,7 @@ async function verifyPaymentOnChain(
         amountSol: transferredSol,
         slot: Number(tx.slot),
         error: `Insufficient payment: ${transferredSol} SOL < ${minAmountSol} SOL`,
+        errorCode: "PAYMENT_UNVERIFIED",
       };
     }
 
@@ -356,7 +480,33 @@ async function verifyPaymentOnChain(
       slot: Number(tx.slot),
     };
   } catch (err) {
-    return { valid: false, sender: "", recipient: "", amountSol: 0, slot: 0, error: `Verification error: ${err}` };
+    // ADR-117: classify the thrown exception into a typed code and emit a
+    // generic message. NEVER template-literal `err` into the response —
+    // its `toString()` can include the RPC URL, tx signature, stack frame,
+    // and HTTP status details (the R-offchain-01 leak). Log the raw cause
+    // server-side at error level via pino; the redaction policy in
+    // logger.ts handles secret keys (JWT_SECRET, authorization, etc.).
+    // The correlation ID is the txSignature (already the corr_id binding
+    // throughout the payment flow per logger.ts `paymentLogger`).
+    const errorCode = classifyVerifyException(err);
+    logger.error(
+      {
+        event: "verify_payment_exception",
+        corr_id: txSignature,
+        error_code: errorCode,
+        err,
+      },
+      "verifyPaymentOnChain threw — classified for redacted client response",
+    );
+    return {
+      valid: false,
+      sender: "",
+      recipient: "",
+      amountSol: 0,
+      slot: 0,
+      error: ERROR_MESSAGES[errorCode],
+      errorCode,
+    };
   }
 }
 
@@ -856,22 +1006,41 @@ app.post("/pay", async (req: Request, res: Response) => {
     PAYMENT_RECIPIENT,
   );
 
+  // ADR-117: the correlation ID stamped on every error envelope. The
+  // payment flow's corr_id is the on-chain signature (logger.ts
+  // `paymentLogger` uses txSignature for corr_id), so we reuse it here
+  // for client-side log correlation — operators searching pino for
+  // `corr_id=<sig>` see the full /pay → /verify → /protected trace AND
+  // the raw-exception log line that produced this envelope. The route
+  // accepts any string as txSignature (per the 400 gate above we only
+  // know it's non-empty), so we treat it as opaque correlation material.
+  const correlationId = txSignature;
+
   switch (result.kind) {
     case "redeemed":
-      res.status(409).json({ error: "Transaction signature already redeemed" });
+      // ADR-117: PAYMENT_REPLAYED — the slot is already redeemed
+      // (in-memory dedup, redis dedup, or post-RPC redeemed-recheck race
+      // resolution all funnel here).
+      res.status(409).json(toErrorEnvelope("PAYMENT_REPLAYED", correlationId));
       return;
     case "no-config":
       res
         .status(500)
         .json({ error: "Relay not configured: PAYMENT_RECIPIENT not set" });
       return;
-    case "invalid":
-      res.status(402).json({
-        error: "Payment verification failed",
-        details: result.details,
-        verification: result.verification,
-      });
+    case "invalid": {
+      // ADR-117: verify-failed paths. The `verifier` populated
+      // `verification.errorCode` for both unhappy-path branches
+      // (`PAYMENT_NOT_FOUND` / `PAYMENT_UNVERIFIED`) AND the catch
+      // (classified via `classifyVerifyException`, e.g. `RPC_UNAVAILABLE`,
+      // `INTERNAL`). Default to `PAYMENT_UNVERIFIED` if a custom injected
+      // verifier returned valid=false without an errorCode (e.g. the
+      // existing AUD-126 test mock) — the catch-all keeps wire-shape
+      // backward compat for verifier mocks that pre-date ADR-117.
+      const code: ErrorCode = result.verification.errorCode ?? "PAYMENT_UNVERIFIED";
+      res.status(402).json(toErrorEnvelope(code, correlationId));
       return;
+    }
     case "saturated":
       // AUD-209 (cycle-2): redeemed-signature map at capacity. Returning
       // 503 here is the fail-closed response; operators should treat
@@ -1051,9 +1220,16 @@ export {
   RATE_LIMIT_WINDOW_MS,
   RATE_LIMIT_MAX_REQUESTS,
   MAX_RATE_LIMIT_ENTRIES,
+  // ADR-117 typed error envelope surface — exported so external test
+  // harnesses and SDK clients can branch on `code` without re-parsing
+  // the envelope shape.
+  toErrorEnvelope,
+  classifyVerifyException,
+  ERROR_MESSAGES,
   __resetRedemptionStateForTests,
   __fillRedemptionStateForTests,
   __resetDrainStateForTests,
   __resetRateLimitStateForTests,
   __rateLimitKeysForTests,
 };
+export type { ErrorCode, ErrorEnvelope };
