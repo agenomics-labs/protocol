@@ -1,7 +1,7 @@
 # Solana v2 Migration Plan — 2026-05-04
 
 **Date**: 2026-05-04  
-**Status**: Phase A target #1 shipped (x402-relay); Phase A targets #2 and #3 pending; Phases B–D planned  
+**Status**: Phase A target #1 shipped 2026-05-04 (x402-relay); Phase A target #2 shipped 2026-05-13 (indexer); Phase A target #3 pending (sdk/client); Phases B–D planned  
 **ADRs**: ADR-087 (dual-stack adapter pattern), ADR-012 (web3.js v2 migration commitment)  
 **CVE ref**: GHSA-3gc7-fjrx-p6mg (bigint-buffer buffer overflow via `toBigIntLE()`)
 
@@ -84,13 +84,24 @@ Anchor at all, densest test coverage after cycle-3 hardening (ADR-126/AUD-209/
 AUD-208/OFF-211/OFF-216 — 62 tests). Lowest-risk first PR validates the
 migration tooling.
 
-**Target #2 — `src/indexer/` (next PR)**  
+**Target #2 — `src/indexer/` — SHIPPED 2026-05-13**  
 Surface: `Connection` (WebSocket subscribe pattern for program-account
 subscriptions), `PublicKey` (PDA derivation, account key comparisons). The indexer
-uses the v1 `connection.onAccountChange` / `connection.onLogs` subscription API,
-which maps to `@solana/kit`'s `createSolanaRpcSubscriptions` + `accountNotifications`/
-`logsNotifications`. Larger surface than x402-relay but self-contained; no external
-consumers of its internal types.
+used the v1 `connection.onLogs` subscription API, which mapped to `@solana/kit`'s
+`createSolanaRpcSubscriptions` + `logsNotifications`. Larger surface than x402-relay
+but self-contained; no external consumers of its internal types.
+
+Shipped shape: `Connection` split into `createSolanaRpc` (HTTP) and
+`createSolanaRpcSubscriptions(resolveWsUrl())` (WS). `onLogs(programId, cb, commitment)`
+returning `subId` replaced by `rpcSubs.logsNotifications({mentions:[addr]},{commitment}).subscribe({abortSignal})`
+returning an `AsyncIterable`, consumed by a detached async IIFE with an inner
+try/catch error boundary. Each program has its own `AbortController` stored
+in a `Map<label, AbortController>`; AUD-204's release-before-resubscribe is
+preserved by aborting the prior controller before awaiting the new subscribe.
+`BorshReader.pubkey()` uses a cached `getAddressDecoder()` matching
+`mcp-server/src/solana-v2.ts`. Heartbeat polls `rpc.getSlot({commitment:"confirmed"}).send()`;
+bigint→Number coerced at SQLite boundary. Test fixtures swap `Keypair.generate()`
+for `crypto.randomBytes(32)` + `getAddressDecoder().decode()`. 125/125 tests pass.
 
 **Target #3 — `sdk/client/` (subsequent PR)**  
 Surface: `PublicKey` (PDA derivation, address validation), `Connection` for any
