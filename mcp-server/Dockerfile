@@ -55,8 +55,11 @@ RUN npm -w @agenomics/action-runtime \
     npm -w @agenomics/mcp-server run build
 
 # 5) Prune dev dependencies so the runtime image stays small. The build
-#    artifacts (dist/) are already produced.
-RUN npm prune --omit=dev --workspaces
+#    artifacts (dist/) are already produced. `--ignore-scripts` is required
+#    under npm 11 — it now runs preprune/prune/postprune lifecycle scripts
+#    by default, and one of our workspace `prepare` hooks invokes `tsc` with
+#    no args (which fails with a usage dump). npm 10 didn't run these on prune.
+RUN npm prune --omit=dev --workspaces --ignore-scripts
 
 # ----- Runtime stage -----
 FROM node:20-bookworm-slim
