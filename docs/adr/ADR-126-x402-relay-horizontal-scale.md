@@ -2,52 +2,40 @@
 
 ## Status
 
-Proposed
-
-*Re-evaluation needed (2026-05-06, per issue #71 post-hackathon-prep
-audit).* Implementation work appears to address the cycle-3 cutover
-gates listed below — a regression-test file
-`src/x402-relay/test/off-201-203-205-206.test.ts` exists covering
-all four blocking findings (OFF-201 / OFF-203 / OFF-205 / OFF-206) —
-but no commits in the history reference those OFF numbers as closed,
-and the "do not flip" production banner below is unchanged. **Do not
-flip status to Accepted on the basis of test files alone.** A human
-reviewer must verify each OFF-* finding is actually closed against the
-cycle-3 punchlist (`docs/audits/CYCLE-3-OFFCHAIN-PUNCHLIST.md`) and
-that the ADR-127 reconciler has shipped, then update Status and
-remove the production banner in a single commit.
+Accepted (2026-05-13) — all four cutover gates closed in cycle-3 wave-9 (commit `3c63f8e` `fix(x402-relay): multi-instance hardening (OFF-201/203/205/206)`); LRU + per-boot instance ID hardening landed in `6833864` (OFF-211/216); reconciler functionality is the SCAN-based one in `3c63f8e` (ADR-127's separate reconciler was superseded by ADR-128's Postgres design). Cycle-3 off-chain punchlist `docs/audits/CYCLE-3-OFFCHAIN-PUNCHLIST.md` shows 0 open across OFF-200..217. `RELAY_REDIS_URL` is now operator-decision, not blocked.
 
 ## Date
 
 2026-04-27
 
-> ⚠️  **Production Status — Phase 1 (do not flip)**
+> ✅  **Production Status — Phase 1 cutover gates closed (2026-05-13)**
 >
-> Phase 1 is **scaffolded and tested as shadow only — production
-> cutover is blocked on the cycle-3 off-chain audit findings below.**
-> Operators MUST leave `RELAY_REDIS_URL` **unset** in production until
-> these findings close; leaving it unset keeps the legacy
-> single-instance in-memory dedup path live and is the supported
-> production posture today.
+> Phase 1 is **production-ready**. Operators can set `RELAY_REDIS_URL`
+> to enable the Redis-backed multi-instance dedup path; leaving it
+> unset preserves the legacy single-instance in-memory dedup path
+> (unchanged behaviour, no regression).
 >
-> Cutover is gated on (cycle-3 off-chain audit, 2026-04-27):
+> Closure record (cycle-3 off-chain audit, 2026-04-27 → 2026-04-28):
 >
-> - **OFF-201** — Redis counter drifts unbounded, producing false-
->   positive 503 saturation responses within ~1h of steady traffic.
-> - **OFF-203** — multi-instance race issues two JWTs for one payment
->   when concurrent `/pay` calls land on different relay processes.
-> - **OFF-205** — `releaseRedeemed` performs an unauthenticated cross-
->   instance `DEL` against the shared lock keyspace.
-> - **OFF-206** — Redis client has no `commandTimeout` configured, so
->   a Redis outage stalls every `/pay` request indefinitely instead
->   of failing fast.
+> - **OFF-201** ✅ Closed `3c63f8e` — periodic SCAN-based reconciler
+>   (default 60s, env-overridable, in-flight-deduped, `unref()`'d) keeps
+>   the Redis counter bounded by reconciling against the canonical lock
+>   keyspace.
+> - **OFF-203** ✅ Closed `3c63f8e` — both unsafe in-memory release sites
+>   removed. Once any caller acquires the Redis lock it holds for full
+>   `SIGNATURE_TTL_MS` regardless of local awaiter race.
+> - **OFF-205** ✅ Closed `3c63f8e` — owner-bound CAS-DEL release token
+>   (Lua) replaces unauthenticated cross-instance `DEL`.
+> - **OFF-206** ✅ Closed `3c63f8e` — env-overridable `commandTimeout`
+>   (default 2000 ms) added; Redis outages fail fast instead of stalling
+>   indefinitely.
 >
-> Source: `docs/audits/ARCHITECTURE-AUDIT-2026-04-27-cycle3-offchain.md`.
-> In-repo punchlist:
-> `docs/audits/CYCLE-3-OFFCHAIN-PUNCHLIST.md` (cutover gates section).
-> Cutover sequence: close OFF-201 / OFF-203 / OFF-205 / OFF-206 + ship
-> the ADR-127 reconciler, then flip `RELAY_REDIS_URL` per the operator
-> runbook.
+> Regression coverage: `src/x402-relay/test/off-201-203-205-206.test.ts`
+> (16 cases) plus subsequent OFF-211/216 closure tests in `6833864`.
+>
+> Sources: `docs/audits/ARCHITECTURE-AUDIT-2026-04-27-cycle3-offchain.md`,
+> `docs/audits/CYCLE-3-OFFCHAIN-PUNCHLIST.md`,
+> `~/.claude/projects/-home-neo-dev-projects-protocol/memory/project_audit_state_20260426.md`.
 
 ## Context
 

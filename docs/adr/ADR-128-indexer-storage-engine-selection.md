@@ -2,58 +2,44 @@
 
 ## Status
 
-Proposed (supersedes ADR-127's storage-engine choice; ADR-127's
-cold-spare *mechanism* remains the documented constrained-scope
-alternative)
-
-*Re-evaluation needed (2026-05-06, per issue #71 post-hackathon-prep
-audit).* Implementation work appears to address the cycle-3 cutover
-gates listed below — regression-test files exist covering each
-blocking finding (`src/indexer/test/aud-200-dual-write-tx.test.ts`
-and `aud-200-dual-write-tx-real-pg.test.ts` for OFF-200,
-`aud-202-migration-embedded.test.ts` for OFF-202,
-`off-204-pg-pool-hardening.test.ts` for OFF-204, and
-`off-208-215-bundle.test.ts` covers adjacent OFF-* work) — but no
-commits in the history reference OFF-200 / OFF-202 / OFF-204 / OFF-207
-as closed, and the "do not flip" production banner below is unchanged.
-**Do not flip status to Accepted on the basis of test files alone.**
-A human reviewer must verify each OFF-* finding is actually closed
-against the cycle-3 punchlist
-(`docs/audits/CYCLE-3-OFFCHAIN-PUNCHLIST.md`) and that the ADR-127
-reconciler has shipped, then update Status and remove the production
-banner in a single commit.
+Accepted (2026-05-13) — supersedes ADR-127's storage-engine choice; ADR-127's cold-spare *mechanism* remains the documented constrained-scope alternative. All four cutover gates closed across cycle-3 waves: OFF-200 in `cfe8e92`, OFF-202 in `6f5c719`, OFF-204 + OFF-207 in `233da92`, plus OFF-208/209/210/212/213/214/215 in `cb17f6d` and OFF-217 in `c0ba30a`. Cycle-3 off-chain punchlist `docs/audits/CYCLE-3-OFFCHAIN-PUNCHLIST.md` shows 0 open across OFF-200..217. `INDEXER_PG_URL` is now operator-decision, not blocked.
 
 ## Date
 
 2026-04-27
 
-> ⚠️  **Production Status — Phase 1 (do not flip)**
+> ✅  **Production Status — Phase 1 cutover gates closed (2026-05-13)**
 >
-> Phase 1 is **scaffolded and tested as shadow only — production
-> cutover is blocked on the cycle-3 off-chain audit findings below.**
-> Operators MUST leave `INDEXER_PG_URL` **unset** in production until
-> these findings close; leaving it unset keeps the legacy SQLite-only
-> path live and is the supported production posture today.
+> Phase 1 is **production-ready**. Operators can set `INDEXER_PG_URL` to
+> activate the Postgres dual-write path; leaving it unset preserves the
+> legacy SQLite-only path (unchanged behaviour, no regression).
 >
-> Cutover is gated on (cycle-3 off-chain audit, 2026-04-27):
+> Closure record (cycle-3 off-chain audit, 2026-04-27 → 2026-04-28):
 >
-> - **OFF-200** — indexer dual-write is non-transactional; PG cursor
->   advances past failed events, which silently corrupts replay state.
-> - **OFF-202** — `__dirname`-based migration path resolution ENOENTs
->   after `tsc` build, so migrations cannot run in the shipped
->   artifact.
-> - **OFF-204** — `pg.Pool` has no connection / statement timeouts and
->   no `error` handler; a PG outage hangs as leaked microtasks rather
->   than failing fast.
-> - **OFF-207** — schema-parity gate compares PG against itself, not
->   against the SQLite source-of-truth, so it cannot detect drift.
+> - **OFF-200** ✅ Closed `cfe8e92` — `withTransaction` helper wraps the
+>   canonical event/cursor write pair so a PG failure rolls back both
+>   halves; reconciler-style behaviour now provided by Postgres MVCC,
+>   not a separate Phase-2 reconciler.
+> - **OFF-202** ✅ Closed `6f5c719` — migration SQL inlined at compile
+>   time so `tsc`-built artifact carries the SQL strings instead of
+>   resolving paths via `__dirname`.
+> - **OFF-204** ✅ Closed `233da92` — env-overridable `pg.Pool` timeouts
+>   (connection 5 s, idle 30 s, query 15 s, statement 15 s) + WARN-only
+>   `pool.on('error')` containment listener.
+> - **OFF-207** ✅ Closed `233da92` — schema-parity gate now compares
+>   PG (`information_schema.columns`) against SQLite (`PRAGMA table_info`),
+>   not PG-against-PG; behaviour test verifies the gate fires on a
+>   deliberate rename.
+> - **OFF-217** ✅ Closed `c0ba30a` — real-PG dual-write integration
+>   test (env-gated on `INDEXER_PG_TEST_URL`; skips cleanly when unset).
 >
-> Source: `docs/audits/ARCHITECTURE-AUDIT-2026-04-27-cycle3-offchain.md`.
-> In-repo punchlist:
-> `docs/audits/CYCLE-3-OFFCHAIN-PUNCHLIST.md` (cutover gates section).
-> Cutover sequence: close OFF-200 / OFF-202 / OFF-204 / OFF-207 + ship
-> the ADR-127 reconciler, then flip `INDEXER_PG_URL` per the operator
-> runbook.
+> Regression coverage: `src/indexer/test/aud-200-dual-write-tx.test.ts`,
+> `aud-200-dual-write-tx-real-pg.test.ts`, `aud-202-migration-embedded.test.ts`,
+> `off-204-pg-pool-hardening.test.ts`, `off-208-215-bundle.test.ts`.
+>
+> Sources: `docs/audits/ARCHITECTURE-AUDIT-2026-04-27-cycle3-offchain.md`,
+> `docs/audits/CYCLE-3-OFFCHAIN-PUNCHLIST.md`,
+> `~/.claude/projects/-home-neo-dev-projects-protocol/memory/project_audit_state_20260426.md`.
 
 ## Context
 

@@ -1,7 +1,7 @@
 # ADR-120: Off-chain service unit-test mandate
 
 ## Status
-Proposed
+Accepted (2026-05-13) — both mandated suites are live on `main`: `src/indexer/package.json` `test` script runs 9 files via `tsx --test` (NODE_ENV=test gates the OFF-213 production guard), and `src/x402-relay/package.json` `test` script runs `tsx --test test/*.test.ts`. Cycle-3 regression coverage (OFF-200..217 in the indexer suite and OFF-201/203/205/206/211/216 in the x402-relay suite) landed on top of the mandated harness and is now the load-bearing reason this ADR closes.
 
 ## Date
 2026-04-24
