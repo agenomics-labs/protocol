@@ -1,0 +1,5 @@
+# Vercel function discovery is automatic for api/*.{ts,js,mjs}. We want only
+# the esbuild-produced api/bundled.mjs to be deployed — the api/mcp.ts source
+# is for local development and the bundle is what runs in production.
+api/mcp.ts
+api/bundled.mjs.meta.json

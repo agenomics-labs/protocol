@@ -1,0 +1,63 @@
+# Self-hosted MCP server behind a Cloudflare Tunnel.
+#
+# Truly free for hackathon judging — Cloudflare gives you a public HTTPS URL
+# that proxies to the local container, no inbound ports opened, no third-
+# party billing. Tradeoff: this machine must stay on during the judging
+# window. The wallet stays on YOUR disk, never on someone else's server.
+#
+# One-time operator setup:
+#   1. Cloudflare account (free): https://dash.cloudflare.com/sign-up
+#   2. Zero Trust dashboard → Networks → Tunnels → "Create a tunnel"
+#      (cloudflared connector type). Name it `aep-mcp-judge`.
+#   3. After creation, Cloudflare shows a `TUNNEL_TOKEN` — copy it.
+#   4. Public hostname tab → add a route:
+#        Subdomain: aep-mcp                (or whatever)
+#        Domain:    <a domain you own>     (free .dev/.xyz works; or use
+#                                          the *.cfargotunnel.com one
+#                                          Cloudflare auto-issues)
+#        Service:   HTTP → mcp:8080
+#   5. Generate the AEP_MCP_AUTH_TOKEN:
+#        echo "AEP_MCP_AUTH_TOKEN=$(openssl rand -hex 32)" > .env.tunnel
+#        echo "SOLANA_WALLET_JSON='$(tr -d '\n' < .keys/smoke-test-devnet.json)'" >> .env.tunnel
+#        echo "CLOUDFLARE_TUNNEL_TOKEN=<paste from step 3>" >> .env.tunnel
+#   6. `docker compose --env-file .env.tunnel up -d`
+#   7. `curl https://<your-public-url>/healthz` → "ready"
+#
+# Teardown:
+#   `docker compose --env-file .env.tunnel down`
+
+services:
+  mcp:
+    build:
+      context: .
+      dockerfile: mcp-server/Dockerfile
+    environment:
+      AEP_MCP_TRANSPORT: http
+      AEP_MCP_HTTP_HOST: 0.0.0.0
+      AEP_MCP_HTTP_PORT: "8080"
+      AEP_MCP_HTTP_ALLOWED_ORIGINS: https://claude.ai,https://*.claude.ai
+      SOLANA_RPC_URL: https://api.devnet.solana.com
+      SOLANA_KEYPAIR_PATH: /secrets/wallet.json
+      AEP_MCP_AUTH_TOKEN: ${AEP_MCP_AUTH_TOKEN}
+      SOLANA_WALLET_JSON: ${SOLANA_WALLET_JSON}
+    # We DON'T expose port 8080 to the host — the only way in is via the
+    # tunnel sidecar, so even if someone scans your IP they hit nothing.
+    expose:
+      - "8080"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      mcp:
+        condition: service_healthy

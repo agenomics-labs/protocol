@@ -44,13 +44,15 @@ Scripts at [`docs/VIDEO_SCRIPTS.md`](docs/VIDEO_SCRIPTS.md).
 
 ## Try it now in claude.ai (0 commands)
 
-The MCP server is hosted so judges can verify directly from the browser:
+The MCP server is hosted on multiple free-tier providers so judges can verify directly from the browser. Pick any URL from the [deploy matrix in README](./README.md#deploy-targets-free-tier-matrix). At submission time the live URL(s) are:
 
-| Provider | URL | Status |
-|----------|-----|--------|
-| Fly.io (primary) | `https://aep-mcp-judge.fly.dev` | iad region, devnet keypair |
-| Railway (mirror) | `https://aep-mcp.up.railway.app` | Same code, second region |
-| Vercel (in progress) | `https://aep-mcp.vercel.app` | Function deploys + `/healthz` returns 200, but MCP `initialize` cold-starts hang (`@solana/web3.js@1.x` rpc-websockets chain). Tracked under ADR-087 Phase B. |
+| Provider | URL | Free? | Notes |
+|----------|-----|-------|-------|
+| Render | `https://aep-mcp-judge.onrender.com` | Yes (no card) | Sleeps after 15min idle — first request wakes in ~30–60s |
+| Cloudflare Tunnel | (operator's domain) | Yes (no card) | Self-hosted; zero cold-start. URL published if operator's machine is up |
+| Fly.io | `https://aep-mcp-judge.fly.dev` | Free allowance but requires card on file | Production-grade; no cold-start |
+| Codespaces fallback | `https://<codespace>-8080.app.github.dev` | 60h/mo per personal account | Spin up via `.devcontainer/` if all else fails |
+| Vercel | `https://aep-mcp.vercel.app` | Yes | **Parked** — Solana v1 SDK / rpc-websockets cold-start crash. Tracked as ADR-087 Phase B follow-up |
 
 1. Open [claude.ai/settings/connectors](https://claude.ai/settings/connectors) → **Add custom connector**.
 2. Paste one of the URLs above.

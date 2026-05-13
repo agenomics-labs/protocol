@@ -1,0 +1,55 @@
+# Render free-tier deploy for the Agenomics MCP server.
+#
+# One-time operator setup (no credit card required for free services):
+#   1. Sign up / sign in at https://dashboard.render.com (GitHub login is
+#      easiest — Render needs read access to this repo to deploy).
+#   2. Click "New +" → "Blueprint" → connect this repo → Apply.
+#      Render reads this file and creates the `aep-mcp-judge` service.
+#   3. Render dashboard → aep-mcp-judge → "Environment" → set:
+#        AEP_MCP_AUTH_TOKEN  = $(openssl rand -hex 32)
+#        SOLANA_WALLET_JSON  = $(tr -d '\n' < .keys/smoke-test-devnet.json)
+#      (These are flagged `sync: false` below — they MUST be set in the
+#      dashboard before the service can start.)
+#   4. First deploy: ~6 minutes (root postinstall builds 4 TS workspaces).
+#   5. Public URL: https://aep-mcp-judge.onrender.com
+#
+# Free-tier behavior to know:
+#   - Service sleeps after 15 minutes of inactivity.
+#   - First request after sleep wakes the container — 30-60s cold start.
+#   - Subsequent requests are warm (<200ms) until the next idle window.
+#   - 512MB RAM, 0.1 CPU — fine for judge-mode traffic, not for production.
+#
+# To eliminate the cold-start, upgrade to "Starter" ($7/mo) — service stays
+# warm. The same render.yaml works; just change `plan: free` to `plan: starter`.
+
+services:
+  - type: web
+    name: aep-mcp-judge
+    runtime: docker
+    dockerfilePath: ./mcp-server/Dockerfile
+    dockerContext: .
+    plan: free
+    region: oregon
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: AEP_MCP_TRANSPORT
+        value: http
+      - key: AEP_MCP_HTTP_HOST
+        value: 0.0.0.0
+      # Render injects PORT; mcp-server/scripts/entrypoint.sh maps it to
+      # AEP_MCP_HTTP_PORT so we don't pin it here.
+      - key: AEP_MCP_HTTP_ALLOWED_ORIGINS
+        value: https://claude.ai,https://*.claude.ai
+      - key: SOLANA_RPC_URL
+        value: https://api.devnet.solana.com
+      - key: SOLANA_KEYPAIR_PATH
+        value: /secrets/wallet.json
+      - key: NODE_ENV
+        value: production
+      # Operator MUST set these in the Render dashboard (sync:false = no
+      # auto-fill, no exposure in render.yaml diff history)
+      - key: AEP_MCP_AUTH_TOKEN
+        sync: false
+      - key: SOLANA_WALLET_JSON
+        sync: false

@@ -33,13 +33,27 @@ Hosted MCP endpoint, no local setup. claude.ai supports remote MCP servers via c
 
 1. Open [claude.ai/settings/connectors](https://claude.ai/settings/connectors)
 2. Click **Add custom connector**
-3. Paste the URL: **`https://aep-mcp-judge.fly.dev`** (primary) or **`https://aep-mcp.up.railway.app`** (mirror)
+3. Paste **any** of the hosted URLs from the [deploy matrix below](#deploy-targets-free-tier-matrix)
 4. Paste the auth token published on the [Colosseum submission page](./SUBMISSION.md) (rotated per judging cycle)
 5. Click **Add** → ask Claude *"Run `verify_protocol_invariants` on agenomics"* to confirm
 
 All 28 tools are immediately available in any conversation. The hosted endpoint runs against Solana devnet with a server-side keypair; the bearer token + per-IP rate limit + origin allowlist (`claude.ai` only) are the abuse boundary.
 
-> **Vercel mirror** (`aep-mcp.vercel.app`) is in progress — the function builds and serves `/healthz` but the MCP `initialize` handshake hangs during cold-start, likely due to `@solana/web3.js@1.x` → `rpc-websockets` + `ws` chain interaction with the Vercel Functions cold-start environment. Tracked under ADR-087 Phase B (v2 SDK migration) — using Fly or Railway in the meantime.
+### Deploy targets (free-tier matrix)
+
+The MCP server ships with deploy configs for several hosts so judges can connect to whichever one is live. All free (no card except where noted).
+
+| Target | Config | URL pattern | Notes |
+|---|---|---|---|
+| **Render** | [`render.yaml`](./render.yaml) | `https://aep-mcp-judge.onrender.com` | Free tier, no card. Sleeps after 15min idle; first request after sleep wakes the container (~30–60s). One-click via Blueprint flow. |
+| **Cloudflare Tunnel** (self-host) | [`docker-compose.yml`](./docker-compose.yml) | your own subdomain or `*.cfargotunnel.com` | Truly free forever, no card, zero cold-start. Wallet stays on your machine. Tradeoff: your machine must stay on during judging. |
+| **Codespaces port-forward** | [`.devcontainer/devcontainer.json`](./.devcontainer/devcontainer.json) | `https://<codespace>-8080.app.github.dev` | 60h/mo free per GitHub personal account. Fallback if no other endpoint is up. |
+| **Koyeb (Eco)** | one-click via [Koyeb Apps](https://app.koyeb.com/apps/new) → Docker → repo URL | `https://<name>-<owner>.koyeb.app` | Free 1-service tier, no card. Auto-detects `mcp-server/Dockerfile`. |
+| **Northflank (Free)** | one-click via [Northflank UI](https://app.northflank.com) → Combined Service | `https://<name>--<id>.code.run` | Free 1-service tier, no card. |
+| **Fly.io** | [`mcp-server/fly.toml`](./mcp-server/fly.toml) | `https://aep-mcp-judge.fly.dev` | Free allowance still exists but **requires card on file** as of 2024. Use `flyctl deploy --config mcp-server/fly.toml`. |
+| **Vercel** | [`mcp-server/vercel.json`](./mcp-server/vercel.json) | `https://aep-mcp.vercel.app` | **Parked.** Function deploys + `/healthz` returns 200 in some configs, but the MCP `initialize` handshake hangs on cold-start (Solana web3.js v1 + rpc-websockets chain). Tracked under ADR-087 Phase B. |
+
+Recommended primary: **Render** (lowest-friction zero-card option) or **Cloudflare Tunnel** (best technical fit if you can keep a machine on). Both use the same `mcp-server/Dockerfile`.
 
 ### Connect to Claude Desktop (stdio, local clone)
 
