@@ -7,8 +7,6 @@ pub mod contexts;
 mod instructions;
 
 use state::*;
-use errors::*;
-use events::*;
 use contexts::*;
 
 declare_id!("9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95");
@@ -205,7 +203,7 @@ mod tests {
         let five: Vec<MilestoneData> = (0..5)
             .map(|_| MilestoneData { description_hash: [0u8; 32], amount: 200_000 })
             .collect();
-        assert!(five.len() > 0 && five.len() <= MAX_MILESTONES);
+        assert!(!five.is_empty() && five.len() <= MAX_MILESTONES);
 
         // 6 milestones invalid
         let six: Vec<MilestoneData> = (0..6)
@@ -503,7 +501,7 @@ mod tests {
             "Mixed post-sweep MUST stay on Expired");
 
         let prior_status = EscrowStatus::Active;
-        let has_pending = post_sweep.iter().any(|s| *s == MilestoneStatus::Pending);
+        let has_pending = post_sweep.contains(&MilestoneStatus::Pending);
         let should_slash = prior_status == EscrowStatus::Active && has_pending;
         assert!(should_slash, "Mixed Active + Pending MUST trigger slash");
 

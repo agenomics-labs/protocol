@@ -40,6 +40,10 @@ default = []
 [dev-dependencies]
 proptest = "1"
 
+# ADR-115 Stage 2: inherit the workspace clippy / rustc lint allowlist.
+[lints]
+workspace = true
+
 # Release profile is owned by the workspace root's `Cargo.toml` and tuned for
 # minimum BPF binary size (Q-S3 spec target 5–10 KB). Per-package
 # `[profile.*]` entries in workspace member crates are silently ignored by

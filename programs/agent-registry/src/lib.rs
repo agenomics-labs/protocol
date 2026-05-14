@@ -252,7 +252,7 @@ pub mod agent_registry {
         // missing in the cycle-1 PR-G batch. A violation reverts the tx.
         assert_valid_profile(agent_profile)?;
 
-        emit!(AgentStatusUpdated { authority: agent_profile.authority, new_status: agent_profile.status.clone(), timestamp: agent_profile.updated_at });
+        emit!(AgentStatusUpdated { authority: agent_profile.authority, new_status: agent_profile.status, timestamp: agent_profile.updated_at });
         Ok(())
     }
 
@@ -543,7 +543,7 @@ pub mod agent_registry {
 
         match agent_profile.cleared_count {
             1 => {
-                agent_profile.reputation_score = agent_profile.reputation_score / 2;
+                agent_profile.reputation_score /= 2;
                 agent_profile.status = AgentStatus::Paused;
             }
             2 => {
@@ -1228,7 +1228,7 @@ mod tests {
     #[test]
     fn c5_clear_suspension_halves_reputation_first_clear() {
         let mut reputation_score: u64 = 1_000;
-        let mut slash_count: u8 = 3;
+        let slash_count: u8 = 3;
         let mut cleared_count: u8 = 0;
         let mut status = AgentStatus::Suspended;
 
@@ -1239,7 +1239,7 @@ mod tests {
         cleared_count = cleared_count.saturating_add(1);
         match cleared_count {
             1 => {
-                reputation_score = reputation_score / 2;
+                reputation_score /= 2;
                 status = AgentStatus::Paused;
             }
             _ => unreachable!(),
@@ -1294,10 +1294,17 @@ mod tests {
 
     /// AUD-004: second clear zeroes reputation_score, sets cleared_count = 2,
     /// status stays Paused. slash_count is still cumulative (not reset).
+    ///
+    /// `reputation_score` and `status` are seeded with the pre-transition
+    /// values that mirror an actually-suspended agent on chain; the match
+    /// then overwrites both. `unused_assignments` correctly flags the
+    /// initial writes as unread — they are intentional documentation of
+    /// the pre-state for this test, not load-bearing arithmetic.
     #[test]
+    #[allow(unused_assignments)]
     fn aud_004_second_clear_zeroes_reputation() {
         let mut reputation_score: u64 = 200;
-        let mut slash_count: u8 = 6; // 3 from first slash cycle, 3 from second
+        let slash_count: u8 = 6; // 3 from first slash cycle, 3 from second
         let mut cleared_count: u8 = 1; // Already cleared once.
         let mut status = AgentStatus::Suspended;
 
@@ -1319,9 +1326,14 @@ mod tests {
     /// AUD-004: third clear is terminal — status moves to Retired and the
     /// agent cannot transition out via `update_status` (Retired is a closed
     /// state). The reputation laundering loop is permanently severed.
+    ///
+    /// `status` is seeded with the pre-transition value (Suspended);
+    /// `#[allow(unused_assignments)]` because the match overwrites it
+    /// before the first read.
     #[test]
+    #[allow(unused_assignments)]
     fn aud_004_third_clear_is_terminal_retired() {
-        let mut slash_count: u8 = 9; // 3 + 3 + 3 cumulative slashes
+        let slash_count: u8 = 9; // 3 + 3 + 3 cumulative slashes
         let mut cleared_count: u8 = 2;
         let mut status = AgentStatus::Suspended;
 

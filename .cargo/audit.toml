@@ -1,0 +1,41 @@
+# ADR-115 Stage 2 — explicit allowlist of accepted RustSec advisories.
+#
+# Picked up by `cargo audit` automatically when run from the workspace
+# root. The CI gate runs `cargo audit --deny warnings`, so any new
+# advisory against a transitive dep that is NOT listed here will fail CI
+# and force a triage decision.
+#
+# Each entry has a one-line rationale and a re-evaluation trigger so a
+# future reviewer can tell whether the exemption is still load-bearing
+# or has become stale. Drop an entry as soon as the underlying dep is
+# replaced or bumped past the affected version.
+#
+# Refresh procedure:
+#   1. `cargo audit --json | jq '.warnings'` to see the current set.
+#   2. For each new entry: add a line below + its rationale.
+#   3. For each entry that no longer fires: delete it (do not leave
+#      stale ignores — they hide future regressions).
+
+[advisories]
+ignore = [
+    # bincode@1.3.3 — unmaintained. Pulled in by Anchor 0.31's toolchain
+    # (anchor-lang → ... → bincode). Re-evaluate on Anchor 1.0 npm
+    # release. See ADR-114 (Dependabot hygiene) and ADR-087 Phase B
+    # (Anchor npm client blocker).
+    "RUSTSEC-2025-0141",
+
+    # libsecp256k1@0.6.0 — unmaintained. Pulled in by
+    # solana-secp256k1-recover → solana-program → spl-token-*. Migration
+    # path is k256, gated on the Solana program library bumping past
+    # libsecp256k1. Re-evaluate when the Anchor 1.0 npm release lands.
+    "RUSTSEC-2025-0161",
+
+    # rand@0.7.3 — unsound when (a) the `log` + `thread_rng` features
+    # are enabled, (b) a custom logger is installed, AND (c) the logger
+    # calls back into `rand::thread_rng()`. None of those conditions
+    # hold for on-chain BPF programs (no log feature, no thread_rng,
+    # no custom logger — Anchor's `msg!` is the only logging surface
+    # and it does not touch rand). Same dep path as libsecp256k1
+    # above; same re-evaluation trigger.
+    "RUSTSEC-2026-0097",
+]

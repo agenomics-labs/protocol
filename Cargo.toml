@@ -7,6 +7,56 @@ members = [
 ]
 resolver = "2"
 
+# ADR-115 Stage 2: workspace-wide lint configuration for the blocking
+# `cargo clippy --workspace --all-targets -- -D warnings` CI gate.
+#
+# Each member crate opts in with `[lints] workspace = true` (see
+# `programs/*/Cargo.toml`). The allowlist names every lint category that
+# is either (a) an inherent property of Anchor's macro expansion that we
+# cannot fix without an upstream Anchor release, or (b) an intentional
+# test-readability idiom that the workspace has chosen to keep.
+[workspace.lints.rust]
+# (a) Anchor's `#[program]` / `#[derive(Accounts)]` macro expansion uses
+#     `--cfg anchor-debug` / `--cfg no-log-ix-name` / `--cfg solana` /
+#     `--cfg custom-heap` / `--cfg custom-panic` — rustc warns because
+#     the workspace itself does not declare these in `--check-cfg`. The
+#     warnings are a property of the Anchor toolchain version, not our
+#     code. Re-evaluate on the Anchor 1.0 npm bump (ADR-114).
+unexpected_cfgs = "allow"
+# (a) Anchor 0.31's `#[program]` macro still expands to
+#     `AccountInfo::realloc(...)`, deprecated in favor of `resize` in
+#     Anchor 0.32+. Surfaces in macro-expanded code that we don't
+#     control. Re-evaluate on the Anchor 1.0 npm bump (ADR-114).
+deprecated = "allow"
+
+[workspace.lints.clippy]
+# (a) Anchor handler signatures embed every account as a separate
+#     positional argument; 7-arg threshold is unworkable for an Anchor
+#     program of any non-trivial size. Allowing this is the standard
+#     pattern across the Anchor ecosystem.
+too_many_arguments = "allow"
+# (b) `vec!["a".to_string(), ...]` in unit tests reads identically to the
+#     `Vec<String>` shape under test (e.g. ADR-060 capability-list
+#     fixtures); rewriting to `[T; N]` arrays adds noise without changing
+#     semantics. Allow workspace-wide.
+useless_vec = "allow"
+# (b) Anchor-style doc comments use deep indentation for nested points;
+#     clippy's "overindented list item" suggestion would dedent example
+#     output and code blocks. Cosmetic; not worth the diff.
+doc_overindented_list_items = "allow"
+doc_lazy_continuation = "allow"
+# (b) Test idioms: `if -10i64 < 0 && !false { ... }` and
+#     `assert!(!(x <= y))` are intentional readability choices that
+#     mirror the policy invariant or assertion direction being tested.
+#     Allow rather than rewrite into clippy-preferred forms that obscure
+#     the test's intent.
+nonminimal_bool = "allow"
+# (b) `assert!(MAX_X == 5)` in tests is the pinning idiom — the constant
+#     value IS the thing under test. `const _: () = assert!(...)` would
+#     work but moves the failure from runtime to build, which is the
+#     wrong layer for unit-test guards.
+assertions_on_constants = "allow"
+
 [profile.release]
 # Surface 3 (Q-S3, "cctp_hook.so binary size"): the workspace release profile
 # is tuned for the smallest possible BPF binary on the Hook program (215 KB →

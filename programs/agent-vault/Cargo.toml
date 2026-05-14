@@ -26,6 +26,10 @@ idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 [dev-dependencies]
 proptest = "1"
 
+# ADR-115 Stage 2: inherit the workspace clippy / rustc lint allowlist.
+[lints]
+workspace = true
+
 [profile.release]
 opt-level = 3
 lto = true

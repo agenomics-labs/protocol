@@ -17,7 +17,7 @@ pub fn create_escrow(
     dispute_resolver: Option<Pubkey>,
 ) -> Result<()> {
     require!(
-        milestones_data.len() > 0 && milestones_data.len() <= MAX_MILESTONES,
+        !milestones_data.is_empty() && milestones_data.len() <= MAX_MILESTONES,
         SettlementError::InvalidMilestoneCount
     );
 

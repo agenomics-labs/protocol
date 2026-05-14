@@ -32,6 +32,12 @@ default = []
 [dev-dependencies]
 proptest = "1"
 
+# ADR-115 Stage 2: inherit the workspace clippy / rustc lint allowlist so
+# the blocking CI gate (`cargo clippy --workspace --all-targets -- -D
+# warnings`) treats this crate identically to the others.
+[lints]
+workspace = true
+
 [profile.release]
 overflow-checks = true
 lto = true

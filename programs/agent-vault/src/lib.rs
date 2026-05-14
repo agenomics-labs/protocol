@@ -1,6 +1,5 @@
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::hash::hashv;
-use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 
 declare_id!("28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw");
 
@@ -10,9 +9,14 @@ pub mod events;
 pub mod contexts;
 pub mod instructions;
 
+// `state::*` is used by the `#[cfg(test)]` block below (e.g. `VaultPolicy`,
+// `MAX_TOKEN_ALLOWLIST`, `TokenSpendRecord`). The lib build does not need
+// it, so clippy's `unused_imports` reports it as removable — but stripping
+// it breaks `cargo test`. Pin the import at the crate root with an
+// `#[allow]` so a future `cargo clippy --fix` cannot silently re-strip it.
+#[allow(unused_imports)]
 use state::*;
 use errors::*;
-use events::*;
 use contexts::*;
 
 // ADR-124 (AUD-116 path-a): Domain tag for the `initialize_vault`

@@ -40,13 +40,23 @@ jobs:
       - name: Cargo test (unit + fuzz)
         run: cargo test --workspace
 
-      # Finding #22: clippy runs advisory-only for now. The workspace has
-      # ~30 pre-existing warnings (mostly from anchor-generated code) that
-      # would flood CI if clippy was gated on -D warnings. Emit the lint
-      # report visibly; tighten the gate once the known-clean baseline lands.
-      - name: Cargo clippy (advisory)
-        run: cargo clippy --workspace --all-targets
-        continue-on-error: true
+      # ADR-115 Stage 2: clippy is BLOCKING. The workspace allowlist
+      # lives in `Cargo.toml` under `[workspace.lints.clippy]` (and
+      # `[workspace.lints.rust]` for the rustc lints), and each member
+      # crate opts in via `[lints] workspace = true`. A reviewer can
+      # see every exemption by `grep` from the source rather than
+      # reading workflow YAML.
+      #
+      # If a new clippy category fires on a PR, the author either:
+      #   (a) fixes the warning, or
+      #   (b) adds an `#[allow]` on the offending item with a
+      #       rationale, or
+      #   (c) bumps the workspace allowlist in `Cargo.toml` (only for
+      #       categorical issues, e.g. macro-expanded code).
+      # `continue-on-error` is intentionally absent — there is no
+      # advisory-only mode anymore.
+      - name: Cargo clippy (blocking)
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
   security-audit:
     name: Security Audit
@@ -75,15 +85,17 @@ jobs:
           key: ${{ runner.os }}-cargo-audit-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-audit-
 
-      # Finding #22: cargo-audit scans Cargo.lock against the RustSec
-      # advisory DB. Runs advisory-only so a new advisory against a
-      # transitive dep doesn't block unrelated PRs — but is visible.
+      # ADR-115 Stage 2: cargo-audit is BLOCKING. The accepted-advisory
+      # allowlist lives in `.cargo/audit.toml` with one rationale +
+      # re-evaluation trigger per entry. A new advisory against any
+      # transitive dep that is NOT in the allowlist fails this step
+      # and forces a triage decision on the PR (fix, replace dep, or
+      # explicitly accept by adding to `.cargo/audit.toml`).
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked || true
 
-      - name: Run cargo audit
-        run: cargo audit
-        continue-on-error: true
+      - name: Run cargo audit (blocking)
+        run: cargo audit --deny warnings
 
   # ADR-089: npm workspaces + committed unified lockfile + `npm ci` everywhere.
   # A single `npm ci` at the workspace root installs every workspace member's

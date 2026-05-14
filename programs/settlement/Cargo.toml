@@ -25,5 +25,9 @@ name = "settlement"
 [dev-dependencies]
 proptest = "1"
 
+# ADR-115 Stage 2: inherit the workspace clippy / rustc lint allowlist.
+[lints]
+workspace = true
+
 [features]
 idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]

@@ -86,7 +86,7 @@ pub fn update_protocol_config(
         // then reject — turning a governance-time misconfiguration into
         // a runtime revert on every `approve_milestone`.
         require!(
-            v >= 0 && v <= MAX_REPUTATION_DELTA,
+            (0..=MAX_REPUTATION_DELTA).contains(&v),
             SettlementError::InvalidProtocolConfigValue
         );
         config.reputation_delta_task_completed = v;
@@ -95,7 +95,7 @@ pub fn update_protocol_config(
         // SEC-11: close the lower-bound hole. `v <= 0` alone admits
         // `i64::MIN`, which the registry's negation panics on in debug.
         require!(
-            v <= 0 && v >= MIN_REPUTATION_DELTA,
+            (MIN_REPUTATION_DELTA..=0).contains(&v),
             SettlementError::InvalidProtocolConfigValue
         );
         config.reputation_delta_dispute_loss = v;
@@ -103,7 +103,7 @@ pub fn update_protocol_config(
     if let Some(v) = reputation_delta_expiry_undelivered {
         // SEC-11: same rationale as `reputation_delta_dispute_loss`.
         require!(
-            v <= 0 && v >= MIN_REPUTATION_DELTA,
+            (MIN_REPUTATION_DELTA..=0).contains(&v),
             SettlementError::InvalidProtocolConfigValue
         );
         config.reputation_delta_expiry_undelivered = v;
@@ -228,14 +228,14 @@ mod tests {
     /// AUD-102: predicate for `reputation_delta_task_completed`. Mirrors
     /// the `require!` body in `update_protocol_config` exactly.
     fn reward_delta_is_valid(v: i64) -> bool {
-        v >= 0 && v <= MAX_REPUTATION_DELTA
+        (0..=MAX_REPUTATION_DELTA).contains(&v)
     }
 
     /// AUD-102: predicate for both `reputation_delta_dispute_loss` and
     /// `reputation_delta_expiry_undelivered`. Mirrors the `require!` body
     /// in `update_protocol_config` exactly.
     fn slash_delta_is_valid(v: i64) -> bool {
-        v <= 0 && v >= MIN_REPUTATION_DELTA
+        (MIN_REPUTATION_DELTA..=0).contains(&v)
     }
 
     /// AUD-102: a slash delta of -100 is five orders of magnitude beyond

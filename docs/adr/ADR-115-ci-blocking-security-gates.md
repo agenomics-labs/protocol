@@ -1,7 +1,7 @@
 # ADR-115: Flip clippy / cargo-audit / npm audit from advisory to blocking
 
 ## Status
-Accepted — Stage 1 shipped (2026-05-13); Stages 2 and 3 pending
+Accepted — Stage 1 shipped (2026-05-13); Stage 2 shipped (2026-05-14); Stage 3 pending
 
 ## Date
 2026-04-24
@@ -33,14 +33,34 @@ diff tractable:
 - Recorded `cargo audit` advisories as `scripts/cargo-audit-baseline.json` (0 vulnerabilities, 3 unmaintained-package warnings: `bincode@1.3.3` RUSTSEC-2025-0141, `libsecp256k1@0.6.0` RUSTSEC-2025-0161 — both gated on Anchor 1.0 npm release per ADR-114; `rand` unsound — same Anchor gate).
 - Neither file is used as a gate yet; they are the regression-baseline for Stage 2.
 
-**Stage 2 (follow-up):** flip clippy and cargo-audit to blocking with
-explicit allowlists.
+**Stage 2 (shipped 2026-05-14):** flipped clippy and cargo-audit to blocking
+with explicit allowlists.
 - `cargo clippy --workspace --all-targets -- -D warnings` plus a
-  `deny.toml` or `clippy.toml` that tolerates the known
-  anchor-generated warnings by name.
-- `cargo audit --deny warnings` with the baseline file pinning
-  currently-accepted advisories.
-- Drop `continue-on-error: true` from both steps.
+  `[workspace.lints]` table in the root `Cargo.toml` that names every
+  categorical exemption with rationale (chose `[workspace.lints]` over
+  `clippy.toml` / `deny.toml` because the allowlist becomes grep-able
+  from source — a reviewer sees every exemption next to the workspace
+  manifest rather than buried in a separate file). Each member crate
+  opts in via `[lints] workspace = true`.
+- `cargo audit --deny warnings` with `.cargo/audit.toml` listing the
+  three currently-accepted advisories by RUSTSEC ID, each with a
+  one-line rationale and a re-evaluation trigger (chose `.cargo/audit.toml`
+  over CLI `--ignore` flags because the audit trail surfaces in PR
+  diffs rather than living in workflow YAML).
+- Dropped `continue-on-error: true` from both steps. CI now fails on
+  the first new warning the allowlist doesn't already accept.
+- Stage 1's `scripts/clippy-baseline.json` and
+  `scripts/cargo-audit-baseline.json` are kept as a historical snapshot
+  but no longer have a load-bearing role — the workspace lints +
+  `.cargo/audit.toml` are the new contract.
+
+The clippy clean-up was a small mixture of (a) `cargo clippy --fix` for
+mechanical lints (`manual_range_contains`, `len_zero`,
+`assign_op_pattern`, `clone_on_copy`, `manual_contains`) and (b) two
+test functions in `programs/agent-registry/src/lib.rs` getting
+`#[allow(unused_assignments)]` with a rationale where the
+"initialise-then-overwrite" pattern was intentional documentation of the
+pre-transition state. Tests: 91/91 + 39/39 + 4/4 + 68/68 still pass.
 
 **Stage 3 (follow-up):** npm audit + ESLint hardening.
 - Add `npm audit --audit-level=high` as a dedicated CI step (blocking).
