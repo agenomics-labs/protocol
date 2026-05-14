@@ -168,6 +168,7 @@ A TypeScript MCP server exposes all three programs as 29 tools that any AI agent
 | Settlement (10) | `create_escrow`, `get_escrow_status`, `accept_task`, `submit_milestone`, `approve_milestone`, `reject_milestone`, `raise_dispute`, `resolve_dispute`, `resolve_dispute_timeout`, `cancel_escrow` |
 | Governance (1) | `verify_protocol_invariants` (AUD-206) |
 | Surface 2 (1, stub) | `pay_x402_service` (x402 payment relay; real CDP integration pending) |
+| Reputation portability (3, ADR-139) | `issue_reputation_attestation`, `verify_reputation_attestation`, `get_portable_reputation` — Ed25519-signed portable reputation snapshots (`packages/reputation-attestor/`) |
 
 **Features:**
 
