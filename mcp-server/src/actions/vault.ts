@@ -18,6 +18,7 @@ import {
   handlePauseVault,
   handleResumeVault,
   handleManageAllowlist,
+  handleQueryExecutionHistory,
 } from "../handlers/vault.js";
 import { handleVaultTransferV2 } from "../handlers-v2/vault.js";
 import { deriveVaultPDA, getWalletPublicKey, isValidPublicKey } from "../solana.js";
@@ -465,4 +466,48 @@ export const manageAllowlistAction: Action<
   capabilities: ["sign:vault"],
   requiresSigner: true,
   handler: wrap(handleManageAllowlist),
+};
+
+// ---------- query_execution_history (ADR-138) ----------
+
+const queryExecutionHistoryInput = {
+  agentIdentity: z.string().optional(),
+  vault: z.string().optional(),
+  actionKind: z
+    .enum([
+      "Transfer",
+      "TokenTransfer",
+      "PolicyUpdate",
+      "AllowlistManage",
+      "IdentityRotation",
+      "PauseToggle",
+      "GrantTransfer",
+      "GrantTokenTransfer",
+    ])
+    .optional(),
+  toolId: z
+    .string()
+    .regex(/^[0-9a-fA-F]{64}$/, {
+      message: "toolId must be a 64-char hex SHA-256 digest",
+    })
+    .optional(),
+  since: z.number().int().nonnegative().optional(),
+  limit: z.number().int().min(1).max(500).optional(),
+} as const;
+
+export const queryExecutionHistoryAction: Action<
+  z.infer<z.ZodObject<typeof queryExecutionHistoryInput>>,
+  unknown
+> = {
+  name: "query_execution_history",
+  title: "Query execution provenance",
+  description:
+    "ADR-138: query the off-chain indexer for execution-provenance attestations bound to a given agent_identity or vault. Each row pins (agent_identity, authority, tool_id, manifest_hash, policy_version, action_kind, slot, amount, mint, recipient).",
+  inputSchema: queryExecutionHistoryInput,
+  outputSchema: z.unknown(),
+  similes: ["audit log", "execution history", "provenance trail"],
+  examples: [],
+  readOnly: true,
+  capabilities: [],
+  handler: wrap(handleQueryExecutionHistory),
 };

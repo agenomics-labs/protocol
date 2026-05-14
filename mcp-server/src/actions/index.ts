@@ -18,6 +18,10 @@
 // See docs/aep-reflex-tech-spec.md §"Surface 2" (lines 220–305) and IC-3
 // (lines 109–137). Tool count 27 → 28. STUB only — real x402 / CDP
 // integration is the Day 3–7 owner's job.
+//
+// ADR-138 (cycle-4): `query_execution_history` exposes the off-chain
+// indexer's `execution_attestations` projection through the standard
+// MCP surface. Tool count 28 → 29.
 
 import type { Action } from "../types/action.js";
 import {
@@ -30,6 +34,7 @@ import {
   pauseVaultAction,
   resumeVaultAction,
   manageAllowlistAction,
+  queryExecutionHistoryAction,
 } from "./vault.js";
 import {
   registerAgentAction,
@@ -56,7 +61,7 @@ import { verifyProtocolInvariantsAction } from "./governance.js";
 import { payX402ServiceAction } from "./pay-x402-service.js";
 
 export const allActions: Action<any, any>[] = [
-  // Vault (9)
+  // Vault (10) — includes ADR-138 `query_execution_history`
   createVaultAction,
   getVaultInfoAction,
   vaultTransferAction,
@@ -66,6 +71,7 @@ export const allActions: Action<any, any>[] = [
   pauseVaultAction,
   resumeVaultAction,
   manageAllowlistAction,
+  queryExecutionHistoryAction,
   // Registry (5) + reputation snapshot (1) + agent-memory (1, ADR-129 Phase 1)
   registerAgentAction,
   getAgentProfileAction,

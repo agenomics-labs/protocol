@@ -101,16 +101,51 @@ export function encodeU64Le(value: bigint | number): Uint8Array {
 }
 
 /**
- * Build the raw ix data for `execute_transfer(amount_lamports: u64)`.
- *   layout: [disc(8) || amount_lamports(u64 LE)]
+ * Build the raw ix data for `execute_transfer(amount_lamports: u64,
+ * tool_id_hash: [u8; 32])`.
+ *   layout: [disc(8) || amount_lamports(u64 LE) || tool_id_hash(32)]
+ *
+ * ADR-138: `toolIdHash` defaults to the all-zeros sentinel for legacy
+ * callers that have not yet adopted the tool-id convention. Indexers
+ * MAY surface a `tool_id_zero_count` metric on rows carrying the
+ * sentinel.
  */
-export function encodeExecuteTransferData(amountLamports: bigint): Uint8Array {
+export function encodeExecuteTransferData(
+  amountLamports: bigint,
+  toolIdHash: Uint8Array = new Uint8Array(32),
+): Uint8Array {
+  if (toolIdHash.length !== 32) {
+    throw new Error(
+      `encodeExecuteTransferData: toolIdHash must be 32 bytes, got ${toolIdHash.length}`,
+    );
+  }
   const disc = anchorDiscriminator("global:execute_transfer");
   const amt = encodeU64Le(amountLamports);
-  const out = new Uint8Array(disc.length + amt.length);
+  const out = new Uint8Array(disc.length + amt.length + toolIdHash.length);
   out.set(disc, 0);
   out.set(amt, disc.length);
+  out.set(toolIdHash, disc.length + amt.length);
   return out;
+}
+
+// ADR-138: import Node's `crypto` at module-top via ESM shape so the
+// `node --import tsx` test harness (no CommonJS `require` in scope) and
+// the prod build path share the same import semantics.
+import { createHash as _adr138Sha } from "node:crypto";
+
+/**
+ * ADR-138: MCP tool catalogue name → 32-byte tool_id_hash.
+ * `sha256("agenomics.tool." + name)`. Mirrors `toolIdHash` in
+ * `sdk/client/src/vault.ts` and `mcpToolIdHash` in
+ * `mcp-server/src/handlers/vault.ts` byte-for-byte.
+ */
+export function v2ToolIdHash(toolName: string): Uint8Array {
+  return new Uint8Array(
+    _adr138Sha("sha256")
+      .update("agenomics.tool.")
+      .update(toolName)
+      .digest(),
+  );
 }
 
 // ==================== INPUT ====================
@@ -206,7 +241,11 @@ export async function handleVaultTransferV2(
     const deps = resolveDeps(depsOverride);
 
     // ---- Build the vault_transfer (execute_transfer) instruction -------
-    const ixData = encodeExecuteTransferData(amountLamports);
+    // ADR-138: bind the action to its triggering MCP tool name.
+    const ixData = encodeExecuteTransferData(
+      amountLamports,
+      v2ToolIdHash("vault_transfer"),
+    );
     const executeTransferIx: Instruction = {
       programAddress: VAULT_PROGRAM_ADDRESS,
       accounts: [
@@ -421,12 +460,16 @@ function resolveDeps(override?: Partial<VaultTransferV2Deps>): VaultTransferV2De
  * Convenience: expose the internal instruction-building path so the action
  * wrapper (or tests) can assemble the ix without going through the full
  * send pipeline.
+ *
+ * ADR-138: `toolIdHash` defaults to the all-zeros sentinel for legacy
+ * callers; production call sites SHOULD pass `v2ToolIdHash("<tool>")`.
  */
 export function buildExecuteTransferInstruction(
   vaultAddress: Address,
   authorityAddress: Address,
   recipientAddress: Address,
   amountLamports: bigint,
+  toolIdHash: Uint8Array = new Uint8Array(32),
 ): Instruction {
   return {
     programAddress: VAULT_PROGRAM_ADDRESS,
@@ -436,6 +479,6 @@ export function buildExecuteTransferInstruction(
       { address: recipientAddress, role: AccountRole.WRITABLE },
       { address: SYSTEM_PROGRAM_ADDRESS, role: AccountRole.READONLY },
     ],
-    data: encodeExecuteTransferData(amountLamports),
+    data: encodeExecuteTransferData(amountLamports, toolIdHash),
   };
 }

@@ -29,9 +29,9 @@ function ctxWith(
 
 describe("ADR-058 Action pipeline", () => {
   describe("non-breaking tool set (ADR-058 §8)", () => {
-    it("exposes all 28 existing tool names", () => {
+    it("exposes all 29 existing tool names", () => {
       const names = allTools.map((t) => t.name).sort();
-      assert.equal(names.length, 28);
+      assert.equal(names.length, 29);
       assert.ok(names.includes("create_vault"));
       assert.ok(names.includes("register_agent"));
       assert.ok(names.includes("create_escrow"));
@@ -49,14 +49,17 @@ describe("ADR-058 Action pipeline", () => {
       // relay (debits vault, settles via CDP on Base). Tool count 27 → 28.
       // See docs/aep-reflex-tech-spec.md §"Surface 2".
       assert.ok(names.includes("pay_x402_service"));
+      // ADR-138 (cycle-4): query_execution_history exposes the off-chain
+      // indexer's execution-provenance projection. Tool count 28 → 29.
+      assert.ok(names.includes("query_execution_history"));
     });
 
-    it("the ADR-058 router handles all 28 tools", () => {
+    it("the ADR-058 router handles all 29 tools", () => {
       const allNames = new Set(allTools.map((t) => t.name));
       for (const routed of actionRouter.names()) {
         assert.ok(allNames.has(routed), `routed action '${routed}' missing from allTools`);
       }
-      assert.equal(pilotActionNames.size, 28);
+      assert.equal(pilotActionNames.size, 29);
       assert.deepEqual(actionRouter.names().sort(), [...allNames].sort());
     });
   });

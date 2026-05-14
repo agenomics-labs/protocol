@@ -278,7 +278,101 @@ export async function handleGetVaultInfo(args: Record<string, unknown>) {
 }
 
 /**
+ * ADR-138 — environment override for the off-chain indexer base URL.
+ * Reused by `handleQueryExecutionHistory` to locate the
+ * `/execution/:dim/:key` endpoint. Falls back to the default loopback
+ * port the indexer binds when no override is set (matches
+ * `INDEXER_PORT=3100` in `src/indexer/index.ts`).
+ *
+ * Read at CALL time (not module-load) so test fixtures that flip the
+ * env between cases see the new value without re-importing the module.
+ */
+function indexerBaseUrl(): string {
+  return (process.env.AEP_INDEXER_URL ?? "http://127.0.0.1:3100").replace(
+    /\/+$/,
+    "",
+  );
+}
+
+/**
+ * ADR-138: query the off-chain indexer for execution-provenance
+ * attestations bound to either `agentIdentity` or `vault`. Returns the
+ * raw indexer JSON (paginated, cursor in `next_cursor.before_slot`).
+ *
+ * Validation rules:
+ *   - exactly one of `agentIdentity` or `vault` must be supplied;
+ *   - filters (`actionKind`, `toolId`, `since`, `limit`) pass through
+ *     as query-string parameters;
+ *   - `limit` is clamped to [1, 500] server-side; the boundary is
+ *     re-asserted here so a misconfigured wrapper fails loudly.
+ *
+ * Network failures surface as thrown errors so the action wrapper
+ * converts them to `PROGRAM_ERROR` results — the same shape used by
+ * every other vault handler.
+ */
+export async function handleQueryExecutionHistory(args: Record<string, unknown>) {
+  const agentIdentity =
+    typeof args.agentIdentity === "string" && args.agentIdentity.length > 0
+      ? args.agentIdentity
+      : null;
+  const vault =
+    typeof args.vault === "string" && args.vault.length > 0 ? args.vault : null;
+  if ((agentIdentity && vault) || (!agentIdentity && !vault)) {
+    throw new Error(
+      "query_execution_history: pass exactly one of `agentIdentity` or `vault`",
+    );
+  }
+  const dim = agentIdentity ? "agent" : "vault";
+  const key = (agentIdentity ?? vault) as string;
+
+  const qs = new URLSearchParams();
+  if (typeof args.actionKind === "string" && args.actionKind.length > 0) {
+    qs.set("action_kind", args.actionKind);
+  }
+  if (typeof args.toolId === "string" && args.toolId.length > 0) {
+    qs.set("tool_id", args.toolId);
+  }
+  if (typeof args.since === "number" && Number.isFinite(args.since)) {
+    qs.set("since", String(Math.trunc(args.since)));
+  }
+  if (typeof args.limit === "number" && Number.isFinite(args.limit)) {
+    qs.set("limit", String(Math.trunc(args.limit)));
+  }
+  const url = `${indexerBaseUrl()}/execution/${dim}/${encodeURIComponent(key)}${
+    qs.toString().length > 0 ? "?" + qs.toString() : ""
+  }`;
+  const resp = await fetch(url);
+  if (!resp.ok) {
+    throw new Error(
+      `query_execution_history: indexer responded ${resp.status} ${resp.statusText}`,
+    );
+  }
+  return await resp.json();
+}
+
+/**
+ * ADR-138: MCP tool catalogue name → 32-byte tool_id_hash.
+ * `sha256("agenomics.tool." + name)`. Pinned local helper because the
+ * handler module deliberately avoids importing `@agenomics/client` (the
+ * dep is layered the other direction — SDK depends on this server in
+ * some test paths). Mirrors `toolIdHash` in `sdk/client/src/vault.ts`
+ * byte-for-byte.
+ */
+function mcpToolIdHash(toolName: string): Buffer {
+  return crypto
+    .createHash("sha256")
+    .update("agenomics.tool.")
+    .update(toolName)
+    .digest();
+}
+
+/**
  * Transfer SOL from the vault to a recipient.
+ *
+ * ADR-138: emits an `ExecutionAttested` event binding the tool that
+ * triggered the transfer. We hash the MCP tool name `vault_transfer`
+ * locally — the on-chain handler accepts the 32-byte digest as its
+ * `tool_id_hash` arg.
  */
 export async function handleVaultTransfer(args: Record<string, unknown>) {
   const recipientAddress = parsePublicKey(requireString(args, "recipientAddress"));
@@ -295,8 +389,11 @@ export async function handleVaultTransfer(args: Record<string, unknown>) {
   const profileNonce = BigInt(vaultAccount.profileNonce.toString());
   const [agentProfilePDA] = deriveAgentProfilePDA(wallet.publicKey, profileNonce);
 
+  // ADR-138: bind the action to its triggering MCP tool name.
+  const toolIdHash = Array.from(mcpToolIdHash("vault_transfer"));
+
   const sig = await program.methods
-    .executeTransfer(new BN(solToLamports(amountSol)))
+    .executeTransfer(new BN(solToLamports(amountSol)), toolIdHash)
     .accountsPartial({
       vault: vaultPDA,
       agent: wallet.publicKey,
@@ -342,8 +439,11 @@ export async function handleVaultTokenTransfer(args: Record<string, unknown>) {
   const profileNonce = BigInt(vaultAccount.profileNonce.toString());
   const [agentProfilePDA] = deriveAgentProfilePDA(wallet.publicKey, profileNonce);
 
+  // ADR-138: bind the action to its triggering MCP tool name.
+  const toolIdHash = Array.from(mcpToolIdHash("vault_token_transfer"));
+
   const sig = await program.methods
-    .executeTokenTransfer(new BN(amount))
+    .executeTokenTransfer(new BN(amount), toolIdHash)
     .accountsPartial({
       vault: vaultPDA,
       agent: wallet.publicKey,
