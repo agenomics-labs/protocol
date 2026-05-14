@@ -141,6 +141,10 @@ cd dashboard && npm run dev
 - [Security Audit Prep](docs/SECURITY_AUDIT.md)
 - [ADRs](docs/adr/)
 
+## Strategy
+
+- [CLARITY-Era Evolution: From Agent Infrastructure to Machine Institutional Substrate](docs/strategy/clarity-era-evolution.md) — 18-month wedge roadmap, moat analysis, and what we are not building.
+
 ## Security
 
 Internal audit cycles are documented in [`docs/audits/`](docs/audits/) — every finding has a closing commit referenced in the punch-list.
