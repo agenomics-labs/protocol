@@ -1,0 +1,61 @@
+{
+  "name": "@agenomics/reputation-attestor",
+  "version": "0.1.0",
+  "description": "ADR-139 portable reputation attestations. Reads on-chain AgentProfile state, canonicalizes a snapshot payload (RFC-8785), Ed25519-signs it with an issuer key, and provides a verifier for cross-protocol consumers. Independent of any centralised API.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist/**",
+    "src/**",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "agenomics",
+    "aep",
+    "solana",
+    "reputation",
+    "attestation",
+    "ed25519",
+    "rfc-8785",
+    "portable-credential"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/agenomics-labs/protocol.git",
+    "directory": "packages/reputation-attestor"
+  },
+  "bugs": {
+    "url": "https://github.com/agenomics-labs/protocol/issues"
+  },
+  "homepage": "https://github.com/agenomics-labs/protocol/tree/main/packages/reputation-attestor#readme",
+  "license": "Apache-2.0",
+  "private": true,
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepare": "tsc",
+    "test": "node --import tsx --test test/canonical.test.ts test/sign-verify.test.ts test/freshness.test.ts test/issuer.test.ts"
+  },
+  "dependencies": {
+    "@agenomics/action-runtime": "*",
+    "@noble/curves": "^1.4.0",
+    "@noble/hashes": "^1.4.0",
+    "canonicalize": "2.0.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.9.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.2.2"
+  }
+}
