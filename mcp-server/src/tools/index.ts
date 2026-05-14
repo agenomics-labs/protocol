@@ -46,6 +46,17 @@ export { verifyProtocolInvariantsTool } from "./governance.js";
 // docs/aep-reflex-tech-spec.md §"Surface 2".
 export { payX402ServiceTool } from "./pay-x402-service.js";
 
+// ADR-111: re-export delegation-grant tools.
+export {
+  createDelegationGrantTool,
+  revokeDelegationGrantTool,
+  updateDelegationGrantTool,
+  executeGrantTransferTool,
+  executeGrantTokenTransferTool,
+  getDelegationGrantTool,
+  listDelegationGrantsForVaultTool,
+} from "./delegation.js";
+
 // Import for aggregation
 import {
   createVaultTool,
@@ -86,11 +97,24 @@ import {
 import { verifyProtocolInvariantsTool } from "./governance.js";
 import { payX402ServiceTool } from "./pay-x402-service.js";
 
+// ADR-111: delegation-grant tools (7 tools)
+import {
+  createDelegationGrantTool,
+  revokeDelegationGrantTool,
+  updateDelegationGrantTool,
+  executeGrantTransferTool,
+  executeGrantTokenTransferTool,
+  getDelegationGrantTool,
+  listDelegationGrantsForVaultTool,
+} from "./delegation.js";
+
 /**
- * All 29 Agenomics MCP tools organized by domain:
+ * All 36 Agenomics MCP tools organized by domain:
  * - Vault (10): Agent wallet management with spending policies
  *   (includes `rotate_agent_identity` per ADR-069 / AUD-015 and the
  *   ADR-138 `query_execution_history` provenance surface)
+ * - Delegation (7): ADR-111 bounded sub-authority grants on a vault —
+ *   create / revoke / update / execute (SOL + SPL) / get / list.
  * - Registry (5) + reputation snapshot (1) + agent-memory (1): Agent
  *   discovery, reputation, and ADR-129 Phase 1 manifest similarity
  * - Settlement (10): Escrow lifecycle and milestone-based payments
@@ -110,6 +134,14 @@ export const allTools: Tool[] = [
   resumeVaultTool,
   manageAllowlistTool,
   queryExecutionHistoryTool,
+  // Delegation (ADR-111)
+  createDelegationGrantTool,
+  revokeDelegationGrantTool,
+  updateDelegationGrantTool,
+  executeGrantTransferTool,
+  executeGrantTokenTransferTool,
+  getDelegationGrantTool,
+  listDelegationGrantsForVaultTool,
   // Registry
   registerAgentTool,
   getAgentProfileTool,
@@ -146,6 +178,14 @@ export type ToolName =
   | "resume_vault"
   | "manage_allowlist"
   | "query_execution_history"
+  // ADR-111 delegation grants
+  | "create_delegation_grant"
+  | "revoke_delegation_grant"
+  | "update_delegation_grant"
+  | "execute_grant_transfer"
+  | "execute_grant_token_transfer"
+  | "get_delegation_grant"
+  | "list_delegation_grants_for_vault"
   | "register_agent"
   | "get_agent_profile"
   | "update_agent_profile"
