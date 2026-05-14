@@ -1,6 +1,15 @@
 /** AEP Off-chain Event Indexer - subscribes to program logs, stores in SQLite, exposes REST API */
 import express, { Request, Response } from "express";
 import Database from "better-sqlite3";
+// ADR-118: per-program write-path mutex. SQLite + WAL allows concurrent
+// readers but serialises writers; the better-sqlite3 binding is sync, so
+// two interleaved write paths (backfill + live-stream) can't actually
+// overlap inside the engine. The mutex serialises at a *higher* layer:
+// the live `handleLogs` and the per-tx backfill commit each grab the
+// same per-label mutex so a backfill mid-batch advance can't sneak a
+// cursor write between the live-stream's INSERT+UPSERT pair. Per-label
+// (not global) so the three programs progress independently.
+import { Mutex } from "async-mutex";
 import {
   address as toAddressBrand,
   createSolanaRpc,
@@ -226,6 +235,14 @@ const BACKFILL_TX_DELAY_MS = 25;
 function initDb(dbPath: string): Database.Database {
   const db = new Database(dbPath);
   db.pragma("journal_mode = WAL");
+  // ADR-118: synchronous = FULL forces an fsync on every commit so a
+  // power-loss / kernel-panic mid-batch cannot leave the WAL with a
+  // committed-but-unsynced page. Cost is one fsync per commit, which is
+  // affordable here because writes are batched at the
+  // `persistEventsForTx` granularity (one tx = one commit), not per
+  // event. Combined with the per-program write mutex (see below) this
+  // closes R-offchain-02 from the 2026-05 re-audit.
+  db.pragma("synchronous = FULL");
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS events (
@@ -1655,6 +1672,66 @@ function sleep(ms: number): Promise<void> {
  * event_ordinal) index so a duplicate log (websocket replay, backfill
  * overlap) is silently skipped rather than raising.
  */
+// ===========================================================================
+// ADR-118 — per-program write mutex.
+//
+// One `Mutex` per program label (`vault`, `registry`, `settlement`). Every
+// write path acquires the matching label's mutex before touching SQLite:
+//
+//   - `persistEventsForTx` (called by live-stream `handleLogs` and by the
+//     per-tx loop in `backfillProgram`) — wraps the INSERT+UPSERT pair.
+//   - Standalone `upsertCursor` callsites in `backfillProgram` (the no-
+//     cursor seed and the no-logs cursor-advance) — wrapped at the call
+//     site, not inside `upsertCursor` itself, because some seed callers
+//     are still synchronous-shaped and the locking is the caller's
+//     orchestration concern.
+//
+// Reads stay unlocked — WAL allows readers to proceed against a snapshot
+// even while a writer holds the journal lock. The registry is module-
+// scoped (not per-`subscribeToPrograms` instance) so a backfill kicked
+// off in one call and a live-stream consumer in another are serialised
+// against the same Mutex object.
+// ===========================================================================
+const writeMutexes: Map<string, Mutex> = new Map();
+
+function getWriteMutex(label: string): Mutex {
+  let m = writeMutexes.get(label);
+  if (!m) {
+    m = new Mutex();
+    writeMutexes.set(label, m);
+  }
+  return m;
+}
+
+/**
+ * ADR-118 — convenience wrapper for `mutex.runExclusive` keyed by label.
+ * Use at every write callsite (live-stream `handleLogs`, backfill batch
+ * commit, standalone `upsertCursor` seed). Test-only export so the mutex
+ * registry can be instrumented for the concurrent-enters assertion.
+ */
+export function withProgramWriteLock<T>(label: string, fn: () => T | Promise<T>): Promise<T> {
+  return getWriteMutex(label).runExclusive(fn);
+}
+
+// ADR-118 — module-scoped shutdown flag. Set by the SIGTERM/SIGINT
+// handler so the backfill loop can finish the current batch transaction
+// and stop scheduling fresh `getTransaction` requests. The live-stream
+// loop's exit is driven separately via the per-label `AbortController`s
+// (see `subscribeToPrograms`); this flag is the *cooperative* signal
+// the polling backfill checks between its per-tx iterations.
+let isShuttingDown = false;
+/** Test-only: reset the flag after a sub-process / fixture test ends. */
+export function __resetShutdownFlagForTest(): void {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error("__resetShutdownFlagForTest is only callable when NODE_ENV=test");
+  }
+  isShuttingDown = false;
+}
+/** Test-only: peek the flag from outside the module. */
+export function __isShuttingDownForTest(): boolean {
+  return isShuttingDown;
+}
+
 function persistEventsForTx(
   db: Database.Database,
   label: string,
@@ -1803,7 +1880,10 @@ async function backfillProgram(
         // ~9e15, ~30 million years of headroom at 0.4 s/slot).
         const headSlot = Number(head[0].slot);
         const headSig = head[0].signature as string;
-        upsertCursor(db, label, headSlot, headSig);
+        // ADR-118: seed cursor under the per-label write mutex so a
+        // live-stream `handleLogs` already running for this label can't
+        // interleave with the cold-start seed.
+        await withProgramWriteLock(label, () => upsertCursor(db, label, headSlot, headSig));
         state.lastProcessedSlot = headSlot;
         state.lastSignature = headSig;
         programLogger(label).info(
@@ -1873,6 +1953,17 @@ async function backfillProgram(
 
   let totalInserted = 0;
   for (const info of flattened.reverse()) {
+    // ADR-118: SIGTERM cooperative-stop point. Check BETWEEN batches
+    // (per ADR §Decision item 3); a batch already in-flight commits
+    // cleanly under the write mutex below, then the loop bails out so
+    // the cursor only ever advances on fully-persisted work.
+    if (isShuttingDown) {
+      programLogger(label).info(
+        { events_inserted: totalInserted, remaining: flattened.length },
+        "backfill bailing out — shutdown requested",
+      );
+      break;
+    }
     const infoSlot = Number(info.slot);
     const infoSig = info.signature as string;
     try {
@@ -1885,13 +1976,20 @@ async function backfillProgram(
         .send();
       if (tx?.meta?.logMessages) {
         const parsed = parseLogsForEvents(tx.meta.logMessages as string[], label);
-        const { inserted } = persistEventsForTx(db, label, infoSig, infoSlot, parsed, metrics);
+        // ADR-118: per-program write mutex around the per-tx commit so
+        // a concurrent live-stream `handleLogs` for this label cannot
+        // sneak its own commit between our INSERT+UPSERT pair.
+        const { inserted } = await withProgramWriteLock(label, () =>
+          persistEventsForTx(db, label, infoSig, infoSlot, parsed, metrics)
+        );
         totalInserted += inserted;
         metrics.eventsBackfilled += inserted;
       } else {
         // Tx has no logs or couldn't be fetched at finalized commitment —
         // still advance cursor so we don't re-fetch it forever.
-        upsertCursor(db, label, infoSlot, infoSig);
+        // ADR-118: same mutex as the persistEventsForTx path so backfill
+        // never races a live-stream cursor write for this label.
+        await withProgramWriteLock(label, () => upsertCursor(db, label, infoSlot, infoSig));
       }
       state.lastProcessedSlot = Math.max(state.lastProcessedSlot, infoSlot);
       state.lastSignature = infoSig;
@@ -1928,6 +2026,17 @@ function subscribeToPrograms(
   states: Map<string, SubscriptionState>;
   metrics: IndexerMetrics;
   heartbeat: HeartbeatHandle;
+  /**
+   * ADR-118: abort every live `logsNotifications` subscription.
+   * Iterates the per-label `AbortController` map and fires `.abort()`
+   * on each — mirrors the AUD-204 release-before-resubscribe semantic
+   * the heartbeat path uses. After this returns, the `for await`
+   * loops inside `subscribeWithReconnect` see the abort and exit
+   * without scheduling a reconnect (the `controller.signal.aborted`
+   * guard). Used exclusively by the graceful-shutdown handler in
+   * `main()`.
+   */
+  abortAll: () => void;
 } {
   const activeStates = states ?? new Map<string, SubscriptionState>();
   const activeMetrics = metrics ?? createInitialMetrics();
@@ -1956,12 +2065,12 @@ function subscribeToPrograms(
     return state;
   }
 
-  function handleLogs(
+  async function handleLogs(
     label: string,
     slot: number,
     signature: string,
     logs: readonly string[],
-  ): void {
+  ): Promise<void> {
     const state = activeStates.get(label);
     if (state && slot > state.lastProcessedSlot) {
       state.lastProcessedSlot = slot;
@@ -1971,13 +2080,18 @@ function subscribeToPrograms(
     const parsed = parseLogsForEvents(logs as string[], label);
     if (parsed.length === 0) return;
 
-    const { inserted, skipped } = persistEventsForTx(
-      db,
-      label,
-      signature,
-      slot,
-      parsed,
-      activeMetrics
+    // ADR-118: serialise the per-tx write against any concurrent
+    // backfill write for the SAME label. Other labels remain free to
+    // progress in parallel (one Mutex per label).
+    const { inserted, skipped } = await withProgramWriteLock(label, () =>
+      persistEventsForTx(
+        db,
+        label,
+        signature,
+        slot,
+        parsed,
+        activeMetrics
+      )
     );
     if (inserted > 0) {
       for (const event of parsed) {
@@ -2076,7 +2190,11 @@ function subscribeToPrograms(
           try {
             const slot = Number(notification.context.slot);
             const signature = notification.value.signature;
-            handleLogs(label, slot, signature, notification.value.logs);
+            // ADR-118: handleLogs is now async (mutex acquisition).
+            // Await per notification so the write mutex is held end-to-
+            // end before we move to the next message; this preserves
+            // the per-tx commit ordering the v1 onLogs callback enjoyed.
+            await handleLogs(label, slot, signature, notification.value.logs);
           } catch (cbErr) {
             programLogger(label).error(
               { err: String(cbErr) },
@@ -2190,7 +2308,27 @@ function subscribeToPrograms(
     },
   });
 
-  return { states: activeStates, metrics: activeMetrics, heartbeat: heartbeatHandle };
+  // ADR-118: expose a single-shot helper that aborts every live
+  // subscription. The map is local to this closure (so per-instance
+  // state stays encapsulated), but the SIGTERM handler in `main()`
+  // needs to reach in and trigger the abort path. AUD-204 already
+  // wires `abort()` to a clean release on the kit transport side —
+  // we reuse exactly that semantic here.
+  const abortAll = (): void => {
+    for (const [label, controller] of subscriptionControllers) {
+      try {
+        controller.abort();
+      } catch (err) {
+        programLogger(label).warn(
+          { err: String(err) },
+          "abort during shutdown failed",
+        );
+      }
+    }
+    subscriptionControllers.clear();
+  };
+
+  return { states: activeStates, metrics: activeMetrics, heartbeat: heartbeatHandle, abortAll };
 }
 
 /**
@@ -2596,7 +2734,7 @@ async function main(): Promise<void> {
     }
   }
 
-  const { states, metrics, heartbeat } = subscribeToPrograms(rpc, rpcSubscriptions, db);
+  const { states, metrics, heartbeat, abortAll } = subscribeToPrograms(rpc, rpcSubscriptions, db);
   const app = createApi(db, states, metrics);
   // AUD-203: bind to INDEXER_HOST (loopback by default) so the /metrics
   // endpoint (and its sibling read-only routes) are not advertised on
@@ -2646,31 +2784,105 @@ async function main(): Promise<void> {
     );
   }
 
-  // CYCLE4-OFF-001: SIGTERM is what container orchestrators send (k8s,
-  // Docker, systemd) before SIGKILL. Without a handler, the process
-  // exits at default-kill before `writerLock.release()` runs — PG
-  // releases the lock on session teardown anyway (correctness preserved)
-  // but rolling-deploy startup is delayed by the next instance waiting
-  // for the lock-holder's TCP session to time out. Mirror the SIGINT
-  // path for SIGTERM via a shared graceful-shutdown helper.
+  // CYCLE4-OFF-001 / ADR-118: SIGTERM is what container orchestrators
+  // send (k8s, Docker, systemd) before SIGKILL. Without graceful
+  // handling we'd lose the in-flight batch's commit on rollout, and PG
+  // would only release the writer lock when the TCP session timed out
+  // (delaying the next replica). The handler below:
+  //
+  //   1. logs `shutdown:start` (info, with reason + budget)
+  //   2. flips `isShuttingDown=true` so the backfill loop bails between
+  //      batches — the in-flight `persistEventsForTx` commit still
+  //      completes under the per-program mutex, so the cursor only
+  //      moves on fully-persisted work
+  //   3. aborts every live `logsNotifications` subscription via the
+  //      per-label `AbortController`s (AUD-204 release pattern)
+  //   4. stops the heartbeat (unrefs its timer so process exit doesn't
+  //      block on the next tick)
+  //   5. logs `shutdown:flush`, then releases the writer lock and
+  //      closes the PG pool
+  //   6. closes the SQLite DB and exits 0 with `shutdown:exit`
+  //
+  // Force-exit fallback at `gracefulShutdownTimeoutMs` (default 30 s,
+  // env override `INDEXER_GRACEFUL_SHUTDOWN_MS`) covers the case where
+  // an in-flight RPC call or PG `release()` hangs past the budget.
+  // K8s' default `terminationGracePeriodSeconds` is 30 s — match it so
+  // the force-exit code (1) only ever lands inside a kill -9 window
+  // anyway.
+  const gracefulShutdownTimeoutMs = Number.parseInt(
+    process.env.INDEXER_GRACEFUL_SHUTDOWN_MS ?? "30000",
+    10,
+  );
+  let shutdownInFlight = false;
   const gracefulShutdown = (reason: "SIGINT" | "SIGTERM"): void => {
-    logger.info({ reason }, "shutting down");
+    // Idempotent: a double-signal (operator hits Ctrl+C twice, or k8s
+    // re-sends SIGTERM during the grace window) must not start a second
+    // shutdown pipeline — the first one's force-exit timer is still
+    // armed, and re-entering `db.close()` on a closed handle throws.
+    if (shutdownInFlight) {
+      logger.warn({ reason }, "shutdown:duplicate-signal — already shutting down");
+      return;
+    }
+    shutdownInFlight = true;
+    isShuttingDown = true;
+    logger.info(
+      { reason, budget_ms: gracefulShutdownTimeoutMs, event: "shutdown:start" },
+      "shutdown:start",
+    );
+
+    // Force-exit fallback. If any of the steps below hang (an RPC mid-
+    // call, a PG socket that won't drain), we bail out with code 1 so
+    // the orchestrator sees a non-zero exit and we don't outlive our
+    // grace period.
+    const forceExitTimer = setTimeout(() => {
+      logger.error(
+        { reason, budget_ms: gracefulShutdownTimeoutMs, event: "shutdown:exit" },
+        "shutdown:exit — graceful budget exceeded, force-exiting (1)",
+      );
+      process.exit(1);
+    }, gracefulShutdownTimeoutMs);
+    // Unref so this timer alone never keeps the process alive past the
+    // clean-exit path below.
+    forceExitTimer.unref?.();
+
+    // ADR-118: stop the heartbeat first so a pending tick doesn't
+    // re-arm a reconnect against a subscription we're about to abort.
     heartbeat.stop();
-    // OFF-212: release the writer lock explicitly on graceful
-    // shutdown. The PG session-close path also releases it, so this
-    // is an optimisation for a clean exit, not a correctness
-    // primitive — `release()` is idempotent and safe to call even
-    // when the lock was never acquired.
-    void writerLock.release().catch((err) => {
-      logger.warn({ err: String(err), off: "OFF-212" }, "writer lock release failed");
-    });
-    // ADR-128 Phase 1: close the shadow pool. `close()` is a no-op on
-    // DisabledPostgresStore, so this is safe regardless of opt-in.
-    void pgStore.close().catch((err) => {
-      logger.warn({ err: String(err) }, "postgres pool close failed");
-    });
-    db.close();
-    process.exit(0);
+    // ADR-118 / AUD-204: abort every live subscription. The kit
+    // transport releases the WS slot on signal abort; the
+    // `subscribeWithReconnect` consumer loop sees the abort and exits
+    // without scheduling a reconnect.
+    abortAll();
+
+    // Run the rest of the cleanup async so a slow PG `release()` or
+    // pool close doesn't block the signal handler frame.
+    void (async () => {
+      try {
+        logger.info({ reason, event: "shutdown:flush" }, "shutdown:flush");
+        // OFF-212: release the writer lock explicitly. PG session-close
+        // releases it too, so this is a clean-exit optimisation, not a
+        // correctness primitive.
+        await writerLock.release().catch((err) => {
+          logger.warn({ err: String(err), off: "OFF-212" }, "writer lock release failed");
+        });
+        // ADR-128 Phase 1: close the shadow pool. No-op on
+        // DisabledPostgresStore.
+        await pgStore.close().catch((err) => {
+          logger.warn({ err: String(err) }, "postgres pool close failed");
+        });
+        db.close();
+        clearTimeout(forceExitTimer);
+        logger.info({ reason, event: "shutdown:exit" }, "shutdown:exit");
+        process.exit(0);
+      } catch (err) {
+        // Any throw on the clean-exit path falls through to the force-
+        // exit timer; log so the operator can see why.
+        logger.error(
+          { err: String(err), reason, event: "shutdown:exit" },
+          "shutdown:exit — clean path threw, force-exit will fire",
+        );
+      }
+    })();
   };
   process.on("SIGINT", () => gracefulShutdown("SIGINT"));
   process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
