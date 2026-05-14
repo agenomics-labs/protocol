@@ -22,6 +22,12 @@ crate-type = ["cdylib", "lib"]
 
 [features]
 idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+# ADR-111: Allow downstream consumers (e.g. the `aep-fuzz` harness) to
+# depend on `agent-vault` for its `state` types without linking a second
+# BPF cdylib entrypoint. Mirrors the registry's feature surface; same
+# pattern Settlement uses to depend on the registry as a CPI-only lib.
+no-entrypoint = []
+cpi = ["no-entrypoint"]
 
 [dev-dependencies]
 proptest = "1"

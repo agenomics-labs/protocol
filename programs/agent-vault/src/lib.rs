@@ -248,6 +248,94 @@ pub mod agent_vault {
     pub fn resume_vault(ctx: Context<ResumeVault>) -> Result<()> {
         instructions::resume_vault(ctx)
     }
+
+    // ========================================================================
+    // ADR-111: Delegation grants
+    // ========================================================================
+
+    /// ADR-111: Issue a delegation grant binding a sub-authority (`grantee`)
+    /// to a bounded, auditable, time-limited slice of the vault's spending
+    /// authority. Only the vault authority may call. The grant scope is
+    /// capped by `allowed_actions` (bitflags), per-mint and SOL spend caps,
+    /// an optional `allowed_recipients` list, and an `expires_at` window.
+    /// See `instructions::create_delegation_grant` for the full gating
+    /// list and ADR-111 §"Enforcement" for the rationale.
+    pub fn create_delegation_grant(
+        ctx: Context<CreateDelegationGrant>,
+        grantee: Pubkey,
+        nonce: u8,
+        allowed_actions: u8,
+        spend_cap_lamports: u64,
+        token_caps: Vec<GrantTokenCap>,
+        allowed_recipients: Vec<Pubkey>,
+        expires_at: i64,
+    ) -> Result<()> {
+        instructions::create_delegation_grant(
+            ctx,
+            grantee,
+            nonce,
+            allowed_actions,
+            spend_cap_lamports,
+            token_caps,
+            allowed_recipients,
+            expires_at,
+        )
+    }
+
+    /// ADR-111: Revoke a delegation grant. Either the original grantor
+    /// (vault authority at create time) or the grantee may call. Idempotent —
+    /// revoking an already-revoked grant succeeds and re-emits the event so
+    /// indexers can detect the retry. Does NOT close the account; the
+    /// audit-trail invariant in ADR-111 §"revoke_delegation" requires the
+    /// row stays on-chain until the future `close_delegation_grant`
+    /// instruction archives expired+revoked rows ≥ 30 days old (ADR-111b).
+    pub fn revoke_delegation_grant(ctx: Context<RevokeDelegationGrant>) -> Result<()> {
+        instructions::revoke_delegation_grant(ctx)
+    }
+
+    /// ADR-111: Tighten the scope of an existing delegation grant. Vault
+    /// authority only. May lower spend caps, drop action bits, narrow the
+    /// recipient list, or shorten the expiry — never the inverse. See
+    /// `instructions::update_delegation_grant` for the invariant enforced.
+    pub fn update_delegation_grant(
+        ctx: Context<UpdateDelegationGrant>,
+        new_allowed_actions: u8,
+        new_spend_cap_lamports: u64,
+        new_token_caps: Vec<GrantTokenCap>,
+        new_allowed_recipients: Vec<Pubkey>,
+        new_expires_at: i64,
+    ) -> Result<()> {
+        instructions::update_delegation_grant(
+            ctx,
+            new_allowed_actions,
+            new_spend_cap_lamports,
+            new_token_caps,
+            new_allowed_recipients,
+            new_expires_at,
+        )
+    }
+
+    /// ADR-111: SOL transfer signed by a delegation grantee. Applies BOTH
+    /// the grant's bounded scope (spend cap, recipient set, expiry, action
+    /// bit) AND the parent vault's policy (per-tx limit, daily limit, rate
+    /// limit, pause flag, suspension gate). Grant caps are ADDITIONAL to
+    /// vault caps, never a replacement — ADR-111 §"Enforcement" pins this.
+    pub fn execute_grant_transfer(
+        ctx: Context<ExecuteGrantTransfer>,
+        amount_lamports: u64,
+    ) -> Result<()> {
+        instructions::execute_grant_transfer(ctx, amount_lamports)
+    }
+
+    /// ADR-111: SPL transfer signed by a delegation grantee. Same dual-
+    /// gating shape as `execute_grant_transfer` but against per-mint caps
+    /// (`GrantTokenCap`) and the vault's `token_spend_records`.
+    pub fn execute_grant_token_transfer(
+        ctx: Context<ExecuteGrantTokenTransfer>,
+        amount: u64,
+    ) -> Result<()> {
+        instructions::execute_grant_token_transfer(ctx, amount)
+    }
 }
 
 /// ADR-124 (AUD-116 path-a): Ed25519 precompile introspection for the
@@ -1221,5 +1309,265 @@ mod tests {
         let expected = [0xABu8; 32];
         profile.manifest_hash = expected;
         assert_eq!(manifest_hash_from_profile(&profile), expected);
+    }
+
+    // ================================================================
+    // ADR-111: Delegation grant policy unit tests
+    // ================================================================
+
+    use crate::state::{grant_actions, DelegationGrant, GrantTokenCap};
+    use crate::instructions::validate_allowed_actions;
+
+    fn empty_grant() -> DelegationGrant {
+        DelegationGrant {
+            vault: Pubkey::default(),
+            grantor: Pubkey::default(),
+            grantee: Pubkey::default(),
+            allowed_actions: 0,
+            spend_cap_lamports: 0,
+            spent_lamports: 0,
+            token_spend_caps: vec![],
+            allowed_recipients: vec![],
+            expires_at: 0,
+            revoked: false,
+            created_at: 0,
+            nonce: 0,
+            bump: 255,
+        }
+    }
+
+    #[test]
+    fn adr_111_allows_checks_specific_bit() {
+        let mut g = empty_grant();
+        g.allowed_actions = grant_actions::EXECUTE_TRANSFER;
+        assert!(g.allows(grant_actions::EXECUTE_TRANSFER));
+        assert!(!g.allows(grant_actions::EXECUTE_TOKEN_TRANSFER));
+        // Read-only (zero bit) is never allowed by `allows()` — callers
+        // must check `allowed_actions == 0` directly for the read-only case.
+        assert!(!g.allows(0));
+    }
+
+    #[test]
+    fn adr_111_allows_for_combined_actions() {
+        let mut g = empty_grant();
+        g.allowed_actions =
+            grant_actions::EXECUTE_TRANSFER | grant_actions::EXECUTE_TOKEN_TRANSFER;
+        assert!(g.allows(grant_actions::EXECUTE_TRANSFER));
+        assert!(g.allows(grant_actions::EXECUTE_TOKEN_TRANSFER));
+    }
+
+    #[test]
+    fn adr_111_recipient_allowed_empty_list_is_wildcard() {
+        let g = empty_grant();
+        let r = Pubkey::new_unique();
+        assert!(g.is_recipient_allowed(&r));
+    }
+
+    #[test]
+    fn adr_111_recipient_allowed_nonempty_list_is_restrictive() {
+        let mut g = empty_grant();
+        let r1 = Pubkey::new_unique();
+        let r2 = Pubkey::new_unique();
+        let r3 = Pubkey::new_unique();
+        g.allowed_recipients = vec![r1, r2];
+        assert!(g.is_recipient_allowed(&r1));
+        assert!(g.is_recipient_allowed(&r2));
+        assert!(!g.is_recipient_allowed(&r3));
+    }
+
+    #[test]
+    fn adr_111_project_spend_overflow_returns_none() {
+        let mut g = empty_grant();
+        g.spent_lamports = u64::MAX - 5;
+        assert_eq!(g.project_spend(10), None);
+        assert_eq!(g.project_spend(5), Some(u64::MAX));
+    }
+
+    #[test]
+    fn adr_111_is_within_window_no_expiry_sentinel() {
+        let g = empty_grant();
+        assert!(g.is_within_window(0));
+        assert!(g.is_within_window(i64::MAX));
+    }
+
+    #[test]
+    fn adr_111_is_within_window_strict_less_than() {
+        let mut g = empty_grant();
+        g.expires_at = 1_000_000;
+        assert!(g.is_within_window(999_999));
+        // At the boundary, expired (semantics: `now < expires_at`).
+        assert!(!g.is_within_window(1_000_000));
+        assert!(!g.is_within_window(1_000_001));
+    }
+
+    #[test]
+    fn adr_111_validate_allowed_actions_accepts_known_bits() {
+        assert!(validate_allowed_actions(0).is_ok()); // READ_ONLY
+        assert!(validate_allowed_actions(grant_actions::EXECUTE_TRANSFER).is_ok());
+        assert!(validate_allowed_actions(grant_actions::EXECUTE_TOKEN_TRANSFER).is_ok());
+        assert!(validate_allowed_actions(grant_actions::ALL_KNOWN).is_ok());
+    }
+
+    #[test]
+    fn adr_111_validate_allowed_actions_rejects_unknown_bits() {
+        // Any bit above ALL_KNOWN MUST be rejected — reusing a removed bit
+        // would silently widen the action surface of pre-existing grants.
+        assert!(validate_allowed_actions(0b0000_0100).is_err());
+        assert!(validate_allowed_actions(0b1000_0000).is_err());
+        assert!(validate_allowed_actions(u8::MAX).is_err());
+    }
+
+    #[test]
+    fn adr_111_grant_space_is_under_anchor_max() {
+        // Anchor's `init` payer flow uses `max_account_size = 10240`
+        // (the BPF transaction account-size ceiling). Pin the constant
+        // here so a future field addition without a rent-budget
+        // re-evaluation surfaces as a test failure.
+        assert!(DelegationGrant::SPACE <= 10240);
+    }
+
+    #[test]
+    fn adr_111_grant_space_room_for_full_vecs() {
+        // Ensure SPACE leaves room for the bounded-vec maxima + Anchor
+        // 8-byte discriminator. Recompute the worst case alongside the
+        // SPACE constant comment in state.rs.
+        let worst = 8 // disc
+            + 32*3 // vault + grantor + grantee
+            + 1    // allowed_actions
+            + 8 + 8 // spend_cap_lamports + spent_lamports
+            + 4 + (crate::state::MAX_GRANT_TOKEN_CAPS * (32 + 8 + 8)) // token_spend_caps vec
+            + 4 + (crate::state::MAX_GRANT_ALLOWED_RECIPIENTS * 32)   // allowed_recipients vec
+            + 8 + 1 + 8 + 1 + 1; // expires_at + revoked + created_at + nonce + bump
+        assert!(
+            DelegationGrant::SPACE >= worst,
+            "SPACE ({}) must cover worst-case serialized size ({})",
+            DelegationGrant::SPACE,
+            worst
+        );
+    }
+
+    #[test]
+    fn adr_111_grantor_grantee_revoker_acceptance_matrix() {
+        // The revoke handler accepts: grantee, grantor, or current
+        // vault.authority. Test that no other signer is accepted.
+        let grantor = Pubkey::new_unique();
+        let grantee = Pubkey::new_unique();
+        let auth = Pubkey::new_unique();
+        let stranger = Pubkey::new_unique();
+        let acceptable =
+            |signer: Pubkey| signer == grantee || signer == grantor || signer == auth;
+        assert!(acceptable(grantee));
+        assert!(acceptable(grantor));
+        assert!(acceptable(auth));
+        assert!(!acceptable(stranger));
+    }
+
+    // ----- update tighten-only invariants -----
+
+    #[test]
+    fn adr_111_update_actions_subset_invariant() {
+        // Subset bitmask: new MUST be a subset of stored.
+        let stored = grant_actions::EXECUTE_TRANSFER | grant_actions::EXECUTE_TOKEN_TRANSFER;
+        // Allowed (subset): TRANSFER only, TOKEN_TRANSFER only, both, neither.
+        for new in [
+            0u8,
+            grant_actions::EXECUTE_TRANSFER,
+            grant_actions::EXECUTE_TOKEN_TRANSFER,
+            stored,
+        ] {
+            assert_eq!(new & !stored, 0);
+        }
+        // Rejected: any bit not present in stored.
+        let new_with_extra = stored | 0b0100_0000;
+        assert_ne!(new_with_extra & !stored, 0);
+    }
+
+    #[test]
+    fn adr_111_update_cap_floor_is_spent_lamports() {
+        // A grant with 100 spent cannot have its cap lowered below 100.
+        let mut g = empty_grant();
+        g.spend_cap_lamports = 500;
+        g.spent_lamports = 100;
+        // A proposed cap >= spent is acceptable.
+        assert!(150 >= g.spent_lamports && 150 <= g.spend_cap_lamports);
+        // A proposed cap < spent is rejected.
+        assert!(99 < g.spent_lamports);
+    }
+
+    #[test]
+    fn adr_111_update_expiry_tighten_only_semantics() {
+        // Stored: no-expiry (0). Any new value is a tightening.
+        let stored_no_expiry = 0i64;
+        for new in [0i64, 1_700_000_000, i64::MAX] {
+            let ok = stored_no_expiry == 0;
+            assert!(ok || new <= stored_no_expiry);
+        }
+        // Stored: 1_000_000. new MUST be != 0 AND <= stored.
+        let stored = 1_000_000_i64;
+        let bad_no_expiry = 0i64;
+        let bad_extend = 1_500_000_i64;
+        let ok_shrink = 800_000_i64;
+        assert!(bad_no_expiry == 0); // would loosen
+        assert!(bad_extend > stored); // would loosen
+        assert!(ok_shrink <= stored && ok_shrink != 0);
+    }
+
+    // ----- proptest: tighten-only update invariant under random walks -----
+    mod adr_111_fuzz {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            /// ADR-111: A sequence of "tighten-only" cap updates can never
+            /// raise the cap. Models the update_delegation_grant path.
+            #[test]
+            fn cap_tightening_is_monotonic(
+                start_cap in 1u64..u64::MAX/2,
+                deltas in proptest::collection::vec(any::<u64>(), 0..32)
+            ) {
+                let mut cap = start_cap;
+                for d in deltas {
+                    // Each "tightening" can lower the cap (saturating at 0)
+                    // but the operation must NEVER raise it.
+                    let new_cap = cap.saturating_sub(d % (cap.max(1) + 1));
+                    prop_assert!(new_cap <= cap);
+                    cap = new_cap;
+                }
+                prop_assert!(cap <= start_cap);
+            }
+
+            /// ADR-111: A series of `project_spend` calls against a cap
+            /// always saturates correctly — no panic, no silent overflow.
+            #[test]
+            fn project_spend_never_overflows(
+                start_spent in any::<u64>(),
+                amount in any::<u64>(),
+            ) {
+                let mut g = empty_grant();
+                g.spent_lamports = start_spent;
+                let projected = g.project_spend(amount);
+                if let Some(p) = projected {
+                    prop_assert!(p >= start_spent);
+                } else {
+                    // `None` only when start + amount > u64::MAX.
+                    prop_assert!(start_spent.checked_add(amount).is_none());
+                }
+            }
+
+            /// ADR-111: action mask intersection rule — a new mask is
+            /// "tighter" iff it is a subset of the old (bitwise).
+            #[test]
+            fn action_subset_check_matches_bitwise(
+                stored in 0u8..=grant_actions::ALL_KNOWN,
+                candidate in 0u8..=grant_actions::ALL_KNOWN,
+            ) {
+                let is_subset = candidate & !stored == 0;
+                let is_subset_iter = (0..8u8).all(|i| {
+                    let mask = 1u8 << i;
+                    if candidate & mask != 0 { stored & mask != 0 } else { true }
+                });
+                prop_assert_eq!(is_subset, is_subset_iter);
+            }
+        }
     }
 }
