@@ -38,7 +38,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { AnchorProvider, Wallet, type Idl } from "@coral-xyz/anchor";
-import { Connection, Keypair, PublicKey } from "@solana/web3.js";
+import { Connection, Keypair } from "@solana/web3.js";
+import type { Address } from "@solana/kit";
 
 import { AgentRegistryIdl, getProgramIds } from "@agenomics/idl";
 import { AgentRegistryClient, clampReputationScore } from "@agenomics/client";
@@ -89,8 +90,8 @@ function loadWalletKeypair(): Keypair {
 async function main(): Promise<void> {
   // Step 1: wallet
   const keypair = loadWalletKeypair();
-  const authority = keypair.publicKey;
-  console.log(`authority: ${authority.toBase58()}`);
+  const authority = keypair.publicKey.toBase58() as Address;
+  console.log(`authority: ${authority}`);
 
   // Step 2: AnchorProvider for devnet. We construct the provider directly
   //         (rather than `AnchorProvider.env()`) so this script runs without
@@ -102,9 +103,10 @@ async function main(): Promise<void> {
   });
 
   // Step 3: resolve cluster-keyed program IDs from @agenomics/idl.
+  //         ADR-087: SDK takes `Address` (kit's branded base58 string).
   const programIds = getProgramIds("devnet");
-  const registryProgramId = new PublicKey(programIds.agentRegistry);
-  console.log(`agent-registry program: ${registryProgramId.toBase58()}`);
+  const registryProgramId = programIds.agentRegistry as Address;
+  console.log(`agent-registry program: ${registryProgramId}`);
 
   // Step 4: instantiate AgentRegistryClient. Cast the IDL JSON to `Idl`
   //         from @coral-xyz/anchor — this is the canonical pattern
@@ -116,9 +118,10 @@ async function main(): Promise<void> {
   );
 
   // Step 5: derive the agent-profile PDA for (authority, nonce=0n).
-  //         Seeds: [authority.toBytes(), "agent-profile", nonce as u64 LE].
-  const profilePda = registry.profilePda(authority, NONCE);
-  console.log(`profile PDA (nonce=${NONCE}): ${profilePda.toBase58()}`);
+  //         Seeds: [authority, "agent-profile", nonce as u64 LE].
+  //         ADR-087: `profilePda` is async (kit `getProgramDerivedAddress`).
+  const profilePda = await registry.profilePda(authority, NONCE);
+  console.log(`profile PDA (nonce=${NONCE}): ${profilePda}`);
 
   // Step 6: fetch the on-chain AgentProfile account, with a clear
   //         "not yet registered" branch — the expected first-run state.
@@ -131,7 +134,7 @@ async function main(): Promise<void> {
     // the common, expected case for an authority that has never registered.
     const message = err instanceof Error ? err.message : String(err);
     console.log(
-      `\nno profile found at ${profilePda.toBase58()} — this is expected ` +
+      `\nno profile found at ${profilePda} — this is expected ` +
         `for an unregistered authority.\n` +
         `   underlying error: ${message}\n` +
         `   to register, build a \`registerAgent\` transaction against\n` +
@@ -148,7 +151,7 @@ async function main(): Promise<void> {
   const score = clampReputationScore(
     BigInt(profile.reputationScore.toString()),
   );
-  console.log(`\nfound profile: ${profilePda.toBase58()}`);
+  console.log(`\nfound profile: ${profilePda}`);
   console.log(`   reputation: ${score}/100`);
 }
 

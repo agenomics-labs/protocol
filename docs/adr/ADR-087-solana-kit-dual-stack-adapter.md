@@ -1,7 +1,7 @@
 # ADR-087: `@solana/kit` v1+v2 dual-stack adapter pattern in `@agenomics/mcp-server`
 
 ## Status
-Accepted — Phase A targets #1 (2026-05-04) and #2 (2026-05-13) shipped
+Accepted — Phase A targets #1 (2026-05-04), #2 (2026-05-13), and #3 (2026-05-14) shipped
 
 ## Date
 2026-04-23 (backfill — decision is live in production via PRs #4, #22, #23)
@@ -70,7 +70,7 @@ At that point a follow-up ADR captures the v2-only end-state and supersedes this
 |--------|--------|-------|
 | `src/x402-relay/` | **Shipped** (2026-05-04) | `Connection`+`LAMPORTS_PER_SOL` → `createSolanaRpc`; 62/62 tests pass; `@solana/web3.js` removed from package dep |
 | `src/indexer/` | **Shipped** (2026-05-13) | `Connection` split into `createSolanaRpc`+`createSolanaRpcSubscriptions(resolveWsUrl())`; `onLogs` callback → `logsNotifications` AsyncIterable + per-label `AbortController`; AUD-204/OFF-208/OFF-210/OFF-213 invariants preserved; 125/125 tests pass |
-| `sdk/client/` | Pending | Published package; requires semver-minor API break for Address→string |
+| `sdk/client/` | **Shipped** (2026-05-14) | Semver-minor API break: `PublicKey` → `Address` across all public functions; PDA derivation switched to `getProgramDerivedAddress` (now async); Ed25519 precompile ix hand-rolled to drop the direct `@solana/web3.js` dep (still pulled transitively via Anchor — sunset requires Phase B Anchor unblock); 56/56 tests pass (added 2 layout-pinning tests around the precompile hand-roll); AUD-003 golden vectors byte-identical |
 
 ### Phase B — mcp-server v1 handler migration
 

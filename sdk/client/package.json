@@ -47,7 +47,7 @@
   "dependencies": {
     "@agenomics/idl": "*",
     "@coral-xyz/anchor": "^0.31.0",
-    "@solana/web3.js": "^1.95.0"
+    "@solana/kit": "6.8.0"
   },
   "devDependencies": {
     "@types/node": "^20.9.0",

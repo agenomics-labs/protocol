@@ -7,26 +7,38 @@
  * Usage:
  *   import agentVaultIdl from "path/to/idl/agent_vault.json" assert { type: "json" };
  *   import { Idl } from "@coral-xyz/anchor";
+ *   import type { Address } from "@solana/kit";
  *
- *   const VAULT_PROGRAM_ID = new PublicKey("28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw");
+ *   const VAULT_PROGRAM_ID = "28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw" as Address;
  *   const client = new AgentVaultClient(provider, agentVaultIdl as Idl, VAULT_PROGRAM_ID);
  *
- *   const pda = client.vaultPda(authority);
+ *   const pda = await client.vaultPda(authority);  // Address
  *   const vault = await client.fetchVault(authority);
  */
 
-import { Program, AnchorProvider } from "@coral-xyz/anchor";
+import { Program, AnchorProvider, web3 } from "@coral-xyz/anchor";
 import {
-  Ed25519Program,
-  PublicKey,
-  TransactionInstruction,
-} from "@solana/web3.js";
+  getProgramDerivedAddress,
+  getAddressEncoder,
+  type Address,
+} from "@solana/kit";
 import * as crypto from "node:crypto";
 
 import type { AgentVault } from "./idl-types.js";
 
+/**
+ * ADR-087: PublicKey is reached via Anchor's `web3` re-export so the
+ * SDK does not carry a direct `@solana/web3.js` dependency.
+ */
+type PublicKey = web3.PublicKey;
+const PublicKey = web3.PublicKey;
+
 /** On-chain seed for the vault PDA. */
-const VAULT_SEED = Buffer.from("vault");
+const VAULT_SEED = "vault";
+
+/** Solana Ed25519 native precompile program address (immutable). */
+export const ED25519_PROGRAM_ADDRESS: Address =
+  "Ed25519SigVerify111111111111111111111111111" as Address;
 
 /**
  * ADR-124 (AUD-116 path-a): vault-side domain tag for the proof-of-control
@@ -44,10 +56,27 @@ const VAULT_SEED = Buffer.from("vault");
  * protocols sign distinct domain-tagged hashes; each signature is bound
  * to its originating handler.
  */
-export const VAULT_IDENTITY_BIND_DOMAIN: Uint8Array = Buffer.concat([
-  Buffer.from("AEP_VAULT_IDENTITY_BIND_V1", "utf8"),
-  Buffer.from([0]),
-]);
+export const VAULT_IDENTITY_BIND_DOMAIN: Uint8Array = (() => {
+  const out = new Uint8Array(27);
+  out.set(new TextEncoder().encode("AEP_VAULT_IDENTITY_BIND_V1"), 0);
+  out[26] = 0;
+  return out;
+})();
+
+/**
+ * Minimal `IInstruction`-shaped output for the Ed25519 precompile.
+ *
+ * ADR-087: post v2 migration we no longer return v1's
+ * `TransactionInstruction`. The Ed25519 precompile takes no on-chain
+ * accounts; only `programAddress` + `data` are populated. Consumers on
+ * the kit v2 stack can pass this directly to `Transaction` builders that
+ * accept the `IInstruction` shape.
+ */
+export interface Ed25519VerifyInstruction {
+  readonly programAddress: Address;
+  readonly accounts: readonly [];
+  readonly data: Uint8Array;
+}
 
 /**
  * ADR-124 (AUD-116 path-a): Compute the 32-byte domain-separated bind
@@ -65,14 +94,15 @@ export const VAULT_IDENTITY_BIND_DOMAIN: Uint8Array = Buffer.concat([
  *     authority).
  */
 export function vaultIdentityBindMessage(
-  authority: PublicKey,
-  agentIdentity: PublicKey,
+  authority: Address,
+  agentIdentity: Address,
 ): Buffer {
+  const encoder = getAddressEncoder();
   return crypto
     .createHash("sha256")
     .update(VAULT_IDENTITY_BIND_DOMAIN)
-    .update(authority.toBuffer())
-    .update(agentIdentity.toBuffer())
+    .update(encoder.encode(authority) as Uint8Array)
+    .update(encoder.encode(agentIdentity) as Uint8Array)
     .digest();
 }
 
@@ -89,12 +119,33 @@ export function vaultIdentityBindMessage(
  * / message bytes equal the supplied handler arguments. Mismatches surface
  * as `AgentIdentityBindSignatureMismatch` (or
  * `MissingAgentIdentityBindSignature` if this ix is omitted).
+ *
+ * ADR-087: hand-rolled instruction data (replacing the v1
+ * `Ed25519Program.createInstructionWithPublicKey` helper) so the SDK no
+ * longer needs a direct `@solana/web3.js` dependency. Byte layout is the
+ * documented Solana Ed25519 native-precompile format:
+ *
+ *   offset 0 : num_signatures (u8) = 1
+ *   offset 1 : padding (u8)        = 0
+ *   offset 2 : Ed25519SignatureOffsets struct (14 bytes)
+ *               signature_offset:           u16 LE = 16 + 32 = 48
+ *               signature_instruction_index:u16 LE = u16::MAX
+ *               public_key_offset:          u16 LE = 16
+ *               public_key_instruction_index:u16 LE= u16::MAX
+ *               message_data_offset:        u16 LE = 16 + 32 + 64 = 112
+ *               message_data_size:          u16 LE = 32
+ *               message_instruction_index:  u16 LE = u16::MAX
+ *   offset 16: public_key (32 bytes)
+ *   offset 48: signature (64 bytes)
+ *   offset 112: message (32 bytes)
+ *
+ * Total: 16 + 32 + 64 + 32 = 144 bytes (matches the legacy v1 output).
  */
 export function buildVaultIdentityBindInstruction(args: {
-  agentIdentity: PublicKey;
-  message: Buffer;
-  signature: Buffer;
-}): TransactionInstruction {
+  agentIdentity: Address;
+  message: Uint8Array;
+  signature: Uint8Array;
+}): Ed25519VerifyInstruction {
   if (args.message.length !== 32) {
     throw new Error(
       `buildVaultIdentityBindInstruction: message must be 32 bytes, got ${args.message.length}`,
@@ -105,11 +156,47 @@ export function buildVaultIdentityBindInstruction(args: {
       `buildVaultIdentityBindInstruction: signature must be 64 bytes, got ${args.signature.length}`,
     );
   }
-  return Ed25519Program.createInstructionWithPublicKey({
-    publicKey: args.agentIdentity.toBuffer(),
-    message: args.message,
-    signature: args.signature,
-  });
+
+  const pubkeyBytes = getAddressEncoder().encode(args.agentIdentity) as Uint8Array;
+  // Defense-in-depth: kit's address encoder always returns 32 bytes for a
+  // base58 Address, but pin the assumption here for the same reason the
+  // on-chain handler pins the precompile layout.
+  if (pubkeyBytes.length !== 32) {
+    throw new Error(
+      `buildVaultIdentityBindInstruction: agentIdentity must encode to 32 bytes, got ${pubkeyBytes.length}`,
+    );
+  }
+
+  const NUM_SIGS = 1;
+  const HEADER_LEN = 2 + 14 * NUM_SIGS; // 16 for one signature
+  const PUBKEY_OFFSET = HEADER_LEN; // 16
+  const SIG_OFFSET = HEADER_LEN + 32; // 48
+  const MSG_OFFSET = HEADER_LEN + 32 + 64; // 112
+  const TOTAL_LEN = MSG_OFFSET + args.message.length; // 144
+  const U16_MAX = 0xffff;
+
+  const data = new Uint8Array(TOTAL_LEN);
+  const view = new DataView(data.buffer);
+
+  data[0] = NUM_SIGS;
+  data[1] = 0; // padding
+  view.setUint16(2, SIG_OFFSET, true);
+  view.setUint16(4, U16_MAX, true); // signature_instruction_index = self (sentinel)
+  view.setUint16(6, PUBKEY_OFFSET, true);
+  view.setUint16(8, U16_MAX, true); // public_key_instruction_index = self
+  view.setUint16(10, MSG_OFFSET, true);
+  view.setUint16(12, args.message.length, true);
+  view.setUint16(14, U16_MAX, true); // message_instruction_index = self
+
+  data.set(pubkeyBytes, PUBKEY_OFFSET);
+  data.set(args.signature, SIG_OFFSET);
+  data.set(args.message, MSG_OFFSET);
+
+  return {
+    programAddress: ED25519_PROGRAM_ADDRESS,
+    accounts: [],
+    data,
+  };
 }
 
 /**
@@ -118,17 +205,21 @@ export function buildVaultIdentityBindInstruction(args: {
  * The vault PDA is the canonical account that holds spending policy and
  * per-token rate limiting for an agent. It is linked to an AgentProfile
  * via the `vault_address` field on registration (ADR-041).
+ *
+ * ADR-087: public API accepts/returns `Address` (kit). Anchor account
+ * fetches retain Anchor's typed shape (which still contains `PublicKey`
+ * fields decoded by Anchor's coder — that is the Anchor return contract).
  */
 export class AgentVaultClient {
   /** The underlying Anchor Program instance. ADR-088 typed via `AgentVault`. */
   readonly program: Program<AgentVault>;
 
-  constructor(provider: AnchorProvider, idl: AgentVault, programId: PublicKey) {
+  constructor(provider: AnchorProvider, idl: AgentVault, programId: Address) {
     this.program = new Program<AgentVault>(idl, provider);
-    if (!this.program.programId.equals(programId)) {
+    if (this.program.programId.toBase58() !== (programId as string)) {
       throw new Error(
         `AgentVaultClient: IDL programId ${this.program.programId.toBase58()} ` +
-          `does not match supplied programId ${programId.toBase58()}`,
+          `does not match supplied programId ${programId}`,
       );
     }
   }
@@ -140,18 +231,19 @@ export class AgentVaultClient {
   /**
    * Derive the vault PDA for a given authority.
    *
-   * Seeds: [ "vault", authority.toBytes() ]
+   * Seeds: [ "vault", authority ]
    *
    * Matches the on-chain `seeds = [b"vault", authority.key().as_ref()]`
    * declaration in `programs/agent-vault/src/contexts.rs`. Pre-AUD-003
    * the SDK had these reversed, so every vault operation routed through
    * `@agenomics/client` failed on-chain.
    */
-  vaultPda(authority: PublicKey): PublicKey {
-    const [pda] = PublicKey.findProgramAddressSync(
-      [VAULT_SEED, authority.toBytes()],
-      this.program.programId,
-    );
+  async vaultPda(authority: Address): Promise<Address> {
+    const addressEncoder = getAddressEncoder();
+    const [pda] = await getProgramDerivedAddress({
+      programAddress: this.programIdAsAddress(),
+      seeds: [VAULT_SEED, addressEncoder.encode(authority)],
+    });
     return pda;
   }
 
@@ -162,7 +254,9 @@ export class AgentVaultClient {
   /**
    * Fetch and decode a Vault account.
    *
-   * Returns the raw Anchor-decoded account object. Notable fields:
+   * Returns the raw Anchor-decoded account object. Notable fields (Anchor
+   * coder still returns `PublicKey` for pubkey fields — call `.toBase58()`
+   * at the read site if you want `Address` semantics):
    *   - `agentIdentity: PublicKey`
    *   - `authority: PublicKey`
    *   - `paused: boolean`
@@ -172,12 +266,20 @@ export class AgentVaultClient {
    *
    * @throws if the account does not exist or cannot be decoded.
    */
-  async fetchVault(authority: PublicKey) {
-    const pda = this.vaultPda(authority);
+  async fetchVault(authority: Address) {
+    const pdaAddr = await this.vaultPda(authority);
+    const pda = new PublicKey(pdaAddr as string);
     // ADR-088: typed via `Program<AgentVault>.account.vault`. Return type
-    // is Anchor's typed `Vault` projection (`agentIdentity: PublicKey`,
-    // `policy.perTxLimitLamports: BN`, etc.) — no `Record<string, unknown>`
+    // is Anchor's typed `Vault` projection — no `Record<string, unknown>`
     // pass-through.
     return this.program.account.vault.fetch(pda);
+  }
+
+  // -------------------------------------------------------------------------
+  // Internal Anchor adapters
+  // -------------------------------------------------------------------------
+
+  private programIdAsAddress(): Address {
+    return this.program.programId.toBase58() as Address;
   }
 }

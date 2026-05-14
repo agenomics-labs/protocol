@@ -13,25 +13,38 @@
  *
  * The same byte sequence is what the Base-side CCTP V2 burn-message payload
  * MUST encode (Open Question Q-S3-C — Surface 4 owner pins this on Day 2).
+ *
+ * ADR-087: the public API migrated from `@solana/web3.js` v1 `PublicKey` to
+ * `@solana/kit` v2 `Address` (base58 string brand). The 73-byte wire format
+ * is unchanged.
  */
 
-import { PublicKey } from "@solana/web3.js";
+import {
+  getProgramDerivedAddress,
+  getAddressEncoder,
+  getAddressDecoder,
+  type Address,
+  type ProgramDerivedAddressBump,
+} from "@solana/kit";
 
 /** Byte length of a Borsh-encoded `ReflexHookPayload`. */
 export const REFLEX_HOOK_PAYLOAD_LEN = 73;
 
 /** Seed for the CCTP-Hook replay-guard PDA. */
-export const HOOK_REPLAY_SEED = Buffer.from("hook-replay");
+export const HOOK_REPLAY_SEED = "hook-replay";
 
 /** Seed for the CCTP-Hook signer PDA (= upstream escrow's `client`). */
-export const HOOK_SIGNER_SEED = Buffer.from("hook_signer");
+export const HOOK_SIGNER_SEED = "hook_signer";
+
+const ADDRESS_ENCODER = getAddressEncoder();
+const ADDRESS_DECODER = getAddressDecoder();
 
 /**
  * IC-4 — ReflexHookPayload (verbatim from master spec).
  */
 export interface ReflexHookPayload {
   /** AEP Settlement escrow PDA. */
-  escrowPda: PublicKey;
+  escrowPda: Address;
   /** Which milestone to approve (u8, 0..=255). */
   milestoneIndex: number;
   /** Base-side x402 settle / CCTP burn tx hash (32 bytes). */
@@ -82,7 +95,7 @@ export function encodeReflexHookPayload(p: ReflexHookPayload): Buffer {
   const out = Buffer.alloc(REFLEX_HOOK_PAYLOAD_LEN);
   let cursor = 0;
   // escrow_pda: 32 bytes
-  out.set(p.escrowPda.toBytes(), cursor);
+  out.set(ADDRESS_ENCODER.encode(p.escrowPda) as Uint8Array, cursor);
   cursor += 32;
   // milestone_index: 1 byte
   out.writeUInt8(p.milestoneIndex, cursor);
@@ -118,7 +131,10 @@ export function decodeReflexHookPayload(bytes: Uint8Array): ReflexHookPayload {
     );
   }
   const buf = Buffer.from(bytes);
-  const escrowPda = new PublicKey(buf.subarray(0, 32));
+  // ADR-087: `getAddressDecoder().decode()` returns the `Address` brand
+  // directly; matches the v1 `new PublicKey(buf.subarray(0,32)).toBase58()`
+  // round-trip byte-for-byte.
+  const escrowPda = ADDRESS_DECODER.decode(buf.subarray(0, 32)) as Address;
   const milestoneIndex = buf.readUInt8(32);
   const baseTxHash = new Uint8Array(buf.subarray(33, 65));
   const amountReturnedMicros = buf.readBigUInt64LE(65);
@@ -141,14 +157,14 @@ export function decodeReflexHookPayload(bytes: Uint8Array): ReflexHookPayload {
  * have used this PDA as the escrow's `client` for the Hook to be authorized
  * to call `approve_milestone` on it (Q-S3-G).
  */
-export function hookSignerPda(
-  cctpHookProgramId: PublicKey,
-  agentAuthority: PublicKey,
-): [PublicKey, number] {
-  return PublicKey.findProgramAddressSync(
-    [HOOK_SIGNER_SEED, agentAuthority.toBytes()],
-    cctpHookProgramId,
-  );
+export async function hookSignerPda(
+  cctpHookProgramId: Address,
+  agentAuthority: Address,
+): Promise<readonly [Address, ProgramDerivedAddressBump]> {
+  return getProgramDerivedAddress({
+    programAddress: cctpHookProgramId,
+    seeds: [HOOK_SIGNER_SEED, ADDRESS_ENCODER.encode(agentAuthority)],
+  });
 }
 
 /**
@@ -158,12 +174,12 @@ export function hookSignerPda(
  * Initialization with this PDA is the Hook program's idempotency mechanism —
  * a duplicate triple reverts atomically before any CPI fires.
  */
-export function hookReplayPda(
-  cctpHookProgramId: PublicKey,
-  escrowPda: PublicKey,
+export async function hookReplayPda(
+  cctpHookProgramId: Address,
+  escrowPda: Address,
   milestoneIndex: number,
   baseTxHash: Uint8Array,
-): [PublicKey, number] {
+): Promise<readonly [Address, ProgramDerivedAddressBump]> {
   if (!Number.isInteger(milestoneIndex) || milestoneIndex < 0 || milestoneIndex > 255) {
     throw new Error(
       `hookReplayPda: milestoneIndex must be a u8 (0..=255); got ${milestoneIndex}`,
@@ -174,13 +190,13 @@ export function hookReplayPda(
       `hookReplayPda: baseTxHash must be 32 bytes; got ${baseTxHash.length}`,
     );
   }
-  return PublicKey.findProgramAddressSync(
-    [
+  return getProgramDerivedAddress({
+    programAddress: cctpHookProgramId,
+    seeds: [
       HOOK_REPLAY_SEED,
-      escrowPda.toBytes(),
-      Buffer.from([milestoneIndex]),
-      Buffer.from(baseTxHash),
+      ADDRESS_ENCODER.encode(escrowPda),
+      new Uint8Array([milestoneIndex]),
+      baseTxHash,
     ],
-    cctpHookProgramId,
-  );
+  });
 }

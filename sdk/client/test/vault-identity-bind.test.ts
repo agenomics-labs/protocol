@@ -17,24 +17,37 @@
  *
  * Plus instruction-builder shape tests (length validation, ed25519-program
  * id, inline pubkey / signature / message bytes).
+ *
+ * ADR-087: tests migrated from `@solana/web3.js` v1 to the kit `Address`
+ * brand. `web3.Keypair` is reached via Anchor's re-export so this test
+ * file does not pull a direct `@solana/web3.js` dep.
  */
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as crypto from "node:crypto";
-import {
-  Ed25519Program,
-  Keypair,
-  PublicKey,
-  TransactionInstruction,
-} from "@solana/web3.js";
+import { web3 } from "@coral-xyz/anchor";
+import { getAddressEncoder, type Address } from "@solana/kit";
 import { ed25519 } from "@noble/curves/ed25519";
 
 import {
   VAULT_IDENTITY_BIND_DOMAIN,
+  ED25519_PROGRAM_ADDRESS,
   vaultIdentityBindMessage,
   buildVaultIdentityBindInstruction,
 } from "../src/index.js";
+
+const { Keypair } = web3;
+
+/** Generate a fresh kit Address backed by a random ed25519 keypair. */
+function newAddress(): Address {
+  return Keypair.generate().publicKey.toBase58() as Address;
+}
+
+/** Raw 32 pubkey bytes for an Address (matches v1 `pubkey.toBuffer()`). */
+function pubkeyBytes(addr: Address): Uint8Array {
+  return getAddressEncoder().encode(addr) as Uint8Array;
+}
 
 // ---------------------------------------------------------------------------
 // Domain-tag pinning. The on-chain constant in
@@ -84,15 +97,15 @@ test("VAULT_IDENTITY_BIND_DOMAIN differs from the registry manifest domain (cros
 // ---------------------------------------------------------------------------
 
 test("vaultIdentityBindMessage matches sha256(domain || authority || agent_identity)", () => {
-  const authority = Keypair.generate().publicKey;
-  const agentIdentity = Keypair.generate().publicKey;
+  const authority = newAddress();
+  const agentIdentity = newAddress();
 
   const got = vaultIdentityBindMessage(authority, agentIdentity);
   const expected = crypto
     .createHash("sha256")
     .update(VAULT_IDENTITY_BIND_DOMAIN)
-    .update(authority.toBuffer())
-    .update(agentIdentity.toBuffer())
+    .update(pubkeyBytes(authority))
+    .update(pubkeyBytes(agentIdentity))
     .digest();
 
   assert.deepEqual(got, expected);
@@ -100,17 +113,17 @@ test("vaultIdentityBindMessage matches sha256(domain || authority || agent_ident
 });
 
 test("vaultIdentityBindMessage is deterministic for the same inputs", () => {
-  const authority = Keypair.generate().publicKey;
-  const agentIdentity = Keypair.generate().publicKey;
+  const authority = newAddress();
+  const agentIdentity = newAddress();
   const first = vaultIdentityBindMessage(authority, agentIdentity);
   const second = vaultIdentityBindMessage(authority, agentIdentity);
   assert.deepEqual(first, second);
 });
 
 test("vaultIdentityBindMessage is injective across the authority leg", () => {
-  const authorityA = Keypair.generate().publicKey;
-  const authorityB = Keypair.generate().publicKey;
-  const agentIdentity = Keypair.generate().publicKey;
+  const authorityA = newAddress();
+  const authorityB = newAddress();
+  const agentIdentity = newAddress();
   assert.notDeepEqual(
     vaultIdentityBindMessage(authorityA, agentIdentity),
     vaultIdentityBindMessage(authorityB, agentIdentity),
@@ -118,9 +131,9 @@ test("vaultIdentityBindMessage is injective across the authority leg", () => {
 });
 
 test("vaultIdentityBindMessage is injective across the agent_identity leg", () => {
-  const authority = Keypair.generate().publicKey;
-  const agentIdentityA = Keypair.generate().publicKey;
-  const agentIdentityB = Keypair.generate().publicKey;
+  const authority = newAddress();
+  const agentIdentityA = newAddress();
+  const agentIdentityB = newAddress();
   assert.notDeepEqual(
     vaultIdentityBindMessage(authority, agentIdentityA),
     vaultIdentityBindMessage(authority, agentIdentityB),
@@ -134,13 +147,13 @@ test("vaultIdentityBindMessage MUST differ from the untagged sha256(authority ||
   // defense seen from the message side (the domain-tag side is pinned by
   // `VAULT_IDENTITY_BIND_DOMAIN differs from the registry manifest
   // domain` above; this is the symmetric assertion at the digest layer).
-  const authority = Keypair.generate().publicKey;
-  const agentIdentity = Keypair.generate().publicKey;
+  const authority = newAddress();
+  const agentIdentity = newAddress();
   const tagged = vaultIdentityBindMessage(authority, agentIdentity);
   const untagged = crypto
     .createHash("sha256")
-    .update(authority.toBuffer())
-    .update(agentIdentity.toBuffer())
+    .update(pubkeyBytes(authority))
+    .update(pubkeyBytes(agentIdentity))
     .digest();
   assert.notDeepEqual(tagged, untagged);
 });
@@ -152,38 +165,89 @@ test("vaultIdentityBindMessage MUST differ from the untagged sha256(authority ||
 //   - inline message length == 32
 //   - inline signature length == 64
 //   - inline pubkey length == 32
-// The SDK helper is a thin wrapper around `Ed25519Program.createInstruction…`,
-// but length validation and program-id wiring belong in the SDK contract
-// because they're the off-chain mirror of the on-chain expectation.
+// The SDK helper hand-rolls the Ed25519 precompile data layout (ADR-087:
+// no `Ed25519Program.createInstructionWithPublicKey` dependency on the v1
+// stack). Length validation and program-id wiring belong in the SDK
+// contract because they're the off-chain mirror of the on-chain
+// expectation.
 // ---------------------------------------------------------------------------
 
-test("buildVaultIdentityBindInstruction returns an Ed25519Program ix", () => {
-  const authority = Keypair.generate().publicKey;
+test("ED25519_PROGRAM_ADDRESS matches the Solana native precompile address", () => {
+  assert.equal(
+    ED25519_PROGRAM_ADDRESS,
+    "Ed25519SigVerify111111111111111111111111111",
+  );
+});
+
+test("buildVaultIdentityBindInstruction targets the Ed25519 precompile and emits a 144-byte data buffer", () => {
+  const authority = newAddress();
   const agentIdentityKp = Keypair.generate();
-  const message = vaultIdentityBindMessage(authority, agentIdentityKp.publicKey);
+  const agentIdentity = agentIdentityKp.publicKey.toBase58() as Address;
+  const message = vaultIdentityBindMessage(authority, agentIdentity);
   const seed = agentIdentityKp.secretKey.slice(0, 32);
   const signature = Buffer.from(ed25519.sign(message, seed));
 
-  const ix: TransactionInstruction = buildVaultIdentityBindInstruction({
-    agentIdentity: agentIdentityKp.publicKey,
+  const ix = buildVaultIdentityBindInstruction({
+    agentIdentity,
     message,
     signature,
   });
 
-  assert.equal(ix.programId.toBase58(), Ed25519Program.programId.toBase58());
+  assert.equal(ix.programAddress, ED25519_PROGRAM_ADDRESS);
+  assert.equal(ix.accounts.length, 0);
   // The precompile ix data layout starts with `num_signatures = 1` followed
   // by 14 bytes of offsets, so the data length floor is 16 + 64 + 32 + 32 =
   // 144 bytes for one inline (sig, pubkey, message) tuple.
-  assert.ok(
-    ix.data.length >= 144,
-    `expected precompile ix data length >= 144, got ${ix.data.length}`,
-  );
+  assert.equal(ix.data.length, 144);
+});
+
+test("buildVaultIdentityBindInstruction lays out pubkey/sig/message at the documented offsets", () => {
+  // Cross-check the hand-rolled precompile bytes against a known fixture.
+  // The on-chain handler's `verify_ed25519_precompile` introspection reads
+  // offsets out of the first 16 bytes; this test mirrors that read so a
+  // future refactor of the layout surfaces here, not at the runtime.
+  const authority = newAddress();
+  const agentIdentityKp = Keypair.generate();
+  const agentIdentity = agentIdentityKp.publicKey.toBase58() as Address;
+  const message = vaultIdentityBindMessage(authority, agentIdentity);
+  const seed = agentIdentityKp.secretKey.slice(0, 32);
+  const signature = Buffer.from(ed25519.sign(message, seed));
+
+  const ix = buildVaultIdentityBindInstruction({
+    agentIdentity,
+    message,
+    signature,
+  });
+
+  const view = new DataView(ix.data.buffer, ix.data.byteOffset, ix.data.byteLength);
+  assert.equal(ix.data[0], 1, "num_signatures should be 1");
+  assert.equal(ix.data[1], 0, "padding should be 0");
+  const sigOffset = view.getUint16(2, true);
+  const pubkeyOffset = view.getUint16(6, true);
+  const messageOffset = view.getUint16(10, true);
+  const messageSize = view.getUint16(12, true);
+  assert.equal(pubkeyOffset, 16);
+  assert.equal(sigOffset, 16 + 32);
+  assert.equal(messageOffset, 16 + 32 + 64);
+  assert.equal(messageSize, 32);
+
+  // Inline pubkey bytes must equal the agent_identity address-encoded bytes.
+  const inlinePubkey = ix.data.slice(pubkeyOffset, pubkeyOffset + 32);
+  assert.deepEqual(inlinePubkey, pubkeyBytes(agentIdentity));
+
+  // Inline signature must equal the noble-signed bytes verbatim.
+  const inlineSig = ix.data.slice(sigOffset, sigOffset + 64);
+  assert.deepEqual(inlineSig, new Uint8Array(signature));
+
+  // Inline message must equal the bind-message digest.
+  const inlineMsg = ix.data.slice(messageOffset, messageOffset + 32);
+  assert.deepEqual(inlineMsg, new Uint8Array(message));
 });
 
 test("buildVaultIdentityBindInstruction rejects a non-32-byte message", () => {
-  const agentIdentity = Keypair.generate().publicKey;
-  const tooShort = Buffer.alloc(16);
-  const sig = Buffer.alloc(64);
+  const agentIdentity = newAddress();
+  const tooShort = new Uint8Array(16);
+  const sig = new Uint8Array(64);
   assert.throws(
     () =>
       buildVaultIdentityBindInstruction({
@@ -196,9 +260,9 @@ test("buildVaultIdentityBindInstruction rejects a non-32-byte message", () => {
 });
 
 test("buildVaultIdentityBindInstruction rejects a non-64-byte signature", () => {
-  const agentIdentity = Keypair.generate().publicKey;
-  const msg = Buffer.alloc(32);
-  const tooShort = Buffer.alloc(48);
+  const agentIdentity = newAddress();
+  const msg = new Uint8Array(32);
+  const tooShort = new Uint8Array(48);
   assert.throws(
     () =>
       buildVaultIdentityBindInstruction({
@@ -218,10 +282,9 @@ test("buildVaultIdentityBindInstruction rejects a non-64-byte signature", () => 
 test("end-to-end: bind message → noble sign → precompile ix carries matching inline bytes", () => {
   const authorityKp = Keypair.generate();
   const agentIdentityKp = Keypair.generate();
-  const message = vaultIdentityBindMessage(
-    authorityKp.publicKey,
-    agentIdentityKp.publicKey,
-  );
+  const authority = authorityKp.publicKey.toBase58() as Address;
+  const agentIdentity = agentIdentityKp.publicKey.toBase58() as Address;
+  const message = vaultIdentityBindMessage(authority, agentIdentity);
   const seed = agentIdentityKp.secretKey.slice(0, 32);
   const signature = Buffer.from(ed25519.sign(message, seed));
 
@@ -235,17 +298,11 @@ test("end-to-end: bind message → noble sign → precompile ix carries matching
   );
   assert.equal(verified, true);
 
-  // Sanity check: the public-key bytes embedded in the ix data MUST equal
-  // the agent_identity pubkey bytes. The Solana ed25519-program lays the
-  // pubkey out at a defined offset within the instruction data; instead of
-  // re-implementing the offset arithmetic in the test, we assert the
-  // construction does not throw and the data buffer is non-empty — the
-  // on-chain handler's introspection check (in the agent-vault tests) is
-  // the authoritative round-trip test.
   const ix = buildVaultIdentityBindInstruction({
-    agentIdentity: agentIdentityKp.publicKey,
+    agentIdentity,
     message,
     signature,
   });
-  assert.ok(ix.data.length >= 144);
+  assert.equal(ix.data.length, 144);
+  assert.equal(ix.programAddress, ED25519_PROGRAM_ADDRESS);
 });

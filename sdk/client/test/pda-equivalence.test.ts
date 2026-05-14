@@ -29,35 +29,61 @@
  *       helpers is caught even if the golden base58 strings are
  *       accidentally regenerated alongside the bug.
  *
- * If a future PR changes the on-chain seeds in `programs/<crate>/src/contexts.rs`
- * (or the `b"escrow"` signer-seeds in `instructions/<file>.rs`), this test
+ * ADR-087: the SDK migrated from `@solana/web3.js` v1 to `@solana/kit` v2;
+ * the canonical re-derivation in this test still uses Anchor's bundled v1
+ * `PublicKey` (reached via Anchor's `web3` namespace re-export so this
+ * test does not pull a direct `@solana/web3.js` dependency). This keeps
+ * the file a *cross-stack* byte-equivalence proof: v2 PDAs (SDK) ↔ v1
+ * PDAs (Anchor reference) ↔ hand-pinned golden vectors. If a future PR
+ * changes the on-chain seeds in `programs/<crate>/src/contexts.rs` (or
+ * the `b"escrow"` signer-seeds in `instructions/<file>.rs`), this test
  * will fail intentionally — update both the SDK helpers AND this file.
  */
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { PublicKey } from "@solana/web3.js";
+import { web3 } from "@coral-xyz/anchor";
 import type { AnchorProvider, Idl } from "@coral-xyz/anchor";
+import type { Address } from "@solana/kit";
 import { AgentRegistryClient, AgentVaultClient, SettlementClient } from "../src/index.js";
 import { AepClient } from "../src/index.js";
+
+const { PublicKey } = web3;
+type PublicKey = web3.PublicKey;
 
 // ---------------------------------------------------------------------------
 // Cluster-stable program IDs. These match the on-chain `declare_id!` macros
 // in programs/*/src/lib.rs and the values exported from
 // `mcp-server/src/solana.ts`.
 // ---------------------------------------------------------------------------
-const VAULT_PROGRAM_ID = new PublicKey("28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw");
-const REGISTRY_PROGRAM_ID = new PublicKey("psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv");
-const SETTLEMENT_PROGRAM_ID = new PublicKey("9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95");
+const VAULT_PROGRAM_ID_BS58 = "28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw";
+const REGISTRY_PROGRAM_ID_BS58 = "psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv";
+const SETTLEMENT_PROGRAM_ID_BS58 = "9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95";
+
+const VAULT_PROGRAM_ID = new PublicKey(VAULT_PROGRAM_ID_BS58);
+const REGISTRY_PROGRAM_ID = new PublicKey(REGISTRY_PROGRAM_ID_BS58);
+const SETTLEMENT_PROGRAM_ID = new PublicKey(SETTLEMENT_PROGRAM_ID_BS58);
+
+const VAULT_PROGRAM_ADDR = VAULT_PROGRAM_ID_BS58 as Address;
+const REGISTRY_PROGRAM_ADDR = REGISTRY_PROGRAM_ID_BS58 as Address;
+const SETTLEMENT_PROGRAM_ADDR = SETTLEMENT_PROGRAM_ID_BS58 as Address;
 
 // ---------------------------------------------------------------------------
 // Three fixed authorities. Picked from well-known cluster-stable pubkeys so
 // re-running this test on any cluster is deterministic and the golden
 // vectors below never need updating.
 // ---------------------------------------------------------------------------
-const AUTHORITY_A = new PublicKey("11111111111111111111111111111111"); // SystemProgram
-const AUTHORITY_B = new PublicKey("So11111111111111111111111111111111111111112"); // wSOL mint
-const AUTHORITY_C = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"); // Token program
+const AUTHORITY_A_BS58 = "11111111111111111111111111111111"; // SystemProgram
+const AUTHORITY_B_BS58 = "So11111111111111111111111111111111111111112"; // wSOL mint
+const AUTHORITY_C_BS58 = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"; // Token program
+
+const AUTHORITY_A = new PublicKey(AUTHORITY_A_BS58);
+const AUTHORITY_B = new PublicKey(AUTHORITY_B_BS58);
+const AUTHORITY_C = new PublicKey(AUTHORITY_C_BS58);
+
+const AUTHORITY_A_ADDR = AUTHORITY_A_BS58 as Address;
+const AUTHORITY_B_ADDR = AUTHORITY_B_BS58 as Address;
+const AUTHORITY_C_ADDR = AUTHORITY_C_BS58 as Address;
 
 // ---------------------------------------------------------------------------
 // Canonical on-chain re-derivations. These mirror the literal seed
@@ -192,22 +218,22 @@ function minimalIdl(programId: PublicKey): Idl {
 function makeRegistryClient(): AgentRegistryClient {
   return new AgentRegistryClient(
     stubProvider(),
-    minimalIdl(REGISTRY_PROGRAM_ID),
-    REGISTRY_PROGRAM_ID,
+    minimalIdl(REGISTRY_PROGRAM_ID) as any,
+    REGISTRY_PROGRAM_ADDR,
   );
 }
 function makeVaultClient(): AgentVaultClient {
   return new AgentVaultClient(
     stubProvider(),
-    minimalIdl(VAULT_PROGRAM_ID),
-    VAULT_PROGRAM_ID,
+    minimalIdl(VAULT_PROGRAM_ID) as any,
+    VAULT_PROGRAM_ADDR,
   );
 }
 function makeSettlementClient(): SettlementClient {
   return new SettlementClient(
     stubProvider(),
-    minimalIdl(SETTLEMENT_PROGRAM_ID),
-    SETTLEMENT_PROGRAM_ID,
+    minimalIdl(SETTLEMENT_PROGRAM_ID) as any,
+    SETTLEMENT_PROGRAM_ADDR,
   );
 }
 
@@ -215,12 +241,12 @@ function makeSettlementClient(): SettlementClient {
 // Vault PDA equivalence (AUD-003 fix #1)
 // ---------------------------------------------------------------------------
 
-test("AgentVaultClient.vaultPda matches on-chain seeds and golden vectors", () => {
+test("AgentVaultClient.vaultPda matches on-chain seeds and golden vectors", async () => {
   const client = makeVaultClient();
 
-  const sdkA = client.vaultPda(AUTHORITY_A).toBase58();
-  const sdkB = client.vaultPda(AUTHORITY_B).toBase58();
-  const sdkC = client.vaultPda(AUTHORITY_C).toBase58();
+  const sdkA = await client.vaultPda(AUTHORITY_A_ADDR);
+  const sdkB = await client.vaultPda(AUTHORITY_B_ADDR);
+  const sdkC = await client.vaultPda(AUTHORITY_C_ADDR);
 
   // (a) Golden vectors — pre-AUD-003 the SDK reversed seed order, which
   //     would produce *different* base58 strings here. This is the
@@ -231,7 +257,8 @@ test("AgentVaultClient.vaultPda matches on-chain seeds and golden vectors", () =
 
   // (b) Independent canonical re-derivation — guards against this test
   //     file silently regenerating both columns from the same broken seed
-  //     order in a future refactor.
+  //     order in a future refactor. Uses Anchor's v1 PublicKey so this
+  //     leg is a CROSS-STACK proof: kit v2 (sdk) ↔ web3.js v1 (canonical).
   assert.equal(sdkA, canonicalVaultPda(AUTHORITY_A));
   assert.equal(sdkB, canonicalVaultPda(AUTHORITY_B));
   assert.equal(sdkC, canonicalVaultPda(AUTHORITY_C));
@@ -241,22 +268,22 @@ test("AgentVaultClient.vaultPda matches on-chain seeds and golden vectors", () =
 // Registry PDAs (AUD-003 fix #3 — u64 nonce encoding)
 // ---------------------------------------------------------------------------
 
-test("AgentRegistryClient.ownerNoncePda matches on-chain seeds and golden vectors", () => {
+test("AgentRegistryClient.ownerNoncePda matches on-chain seeds and golden vectors", async () => {
   const client = makeRegistryClient();
-  const sdkA = client.ownerNoncePda(AUTHORITY_A).toBase58();
-  const sdkB = client.ownerNoncePda(AUTHORITY_B).toBase58();
+  const sdkA = await client.ownerNoncePda(AUTHORITY_A_ADDR);
+  const sdkB = await client.ownerNoncePda(AUTHORITY_B_ADDR);
   assert.equal(sdkA, GOLDEN.ownerNonce.A);
   assert.equal(sdkB, GOLDEN.ownerNonce.B);
   assert.equal(sdkA, canonicalOwnerNoncePda(AUTHORITY_A));
   assert.equal(sdkB, canonicalOwnerNoncePda(AUTHORITY_B));
 });
 
-test("AgentRegistryClient.profilePda matches on-chain seeds and golden vectors", () => {
+test("AgentRegistryClient.profilePda matches on-chain seeds and golden vectors", async () => {
   const client = makeRegistryClient();
 
-  const sdkA0 = client.profilePda(AUTHORITY_A, 0n).toBase58();
-  const sdkA1 = client.profilePda(AUTHORITY_A, 1n).toBase58();
-  const sdkB42 = client.profilePda(AUTHORITY_B, 42n).toBase58();
+  const sdkA0 = await client.profilePda(AUTHORITY_A_ADDR, 0n);
+  const sdkA1 = await client.profilePda(AUTHORITY_A_ADDR, 1n);
+  const sdkB42 = await client.profilePda(AUTHORITY_B_ADDR, 42n);
 
   assert.equal(sdkA0, GOLDEN.profile.A0);
   assert.equal(sdkA1, GOLDEN.profile.A1);
@@ -267,7 +294,7 @@ test("AgentRegistryClient.profilePda matches on-chain seeds and golden vectors",
   assert.equal(sdkB42, canonicalProfilePda(AUTHORITY_B, 42n));
 });
 
-test("AepClient.deriveAgentProfilePda matches AgentRegistryClient.profilePda byte-for-byte", () => {
+test("AepClient.deriveAgentProfilePda matches AgentRegistryClient.profilePda byte-for-byte", async () => {
   // The AepClient helper duplicates the registry derivation as a
   // convenience for callers who only have a base58 string. AUD-003 fix #3
   // updated both encoders in lockstep; this test pins them together.
@@ -277,13 +304,13 @@ test("AepClient.deriveAgentProfilePda matches AgentRegistryClient.profilePda byt
   });
   const registry = makeRegistryClient();
 
-  for (const [authority, nonce] of [
-    [AUTHORITY_A, 0n] as const,
-    [AUTHORITY_A, 1n] as const,
-    [AUTHORITY_B, 42n] as const,
+  for (const [authority, addr, nonce] of [
+    [AUTHORITY_A, AUTHORITY_A_ADDR, 0n] as const,
+    [AUTHORITY_A, AUTHORITY_A_ADDR, 1n] as const,
+    [AUTHORITY_B, AUTHORITY_B_ADDR, 42n] as const,
   ]) {
-    const fromRegistry = registry.profilePda(authority, nonce).toBase58();
-    const fromAep = aep.deriveAgentProfilePda(authority.toBase58(), nonce);
+    const fromRegistry = await registry.profilePda(addr, nonce);
+    const fromAep = await aep.deriveAgentProfilePda(authority.toBase58(), nonce);
     assert.equal(fromAep, fromRegistry);
   }
 });
@@ -292,18 +319,12 @@ test("AepClient.deriveAgentProfilePda matches AgentRegistryClient.profilePda byt
 // Settlement PDAs (AUD-003 fix #2 — escrow seed string)
 // ---------------------------------------------------------------------------
 
-test("SettlementClient.escrowPda matches on-chain seeds and golden vectors", () => {
+test("SettlementClient.escrowPda matches on-chain seeds and golden vectors", async () => {
   const client = makeSettlementClient();
 
-  const sdkAB1 = client
-    .escrowPda(AUTHORITY_A, AUTHORITY_B, 1n)
-    .toBase58();
-  const sdkAB2 = client
-    .escrowPda(AUTHORITY_A, AUTHORITY_B, 2n)
-    .toBase58();
-  const sdkBC99 = client
-    .escrowPda(AUTHORITY_B, AUTHORITY_C, 99n)
-    .toBase58();
+  const sdkAB1 = await client.escrowPda(AUTHORITY_A_ADDR, AUTHORITY_B_ADDR, 1n);
+  const sdkAB2 = await client.escrowPda(AUTHORITY_A_ADDR, AUTHORITY_B_ADDR, 2n);
+  const sdkBC99 = await client.escrowPda(AUTHORITY_B_ADDR, AUTHORITY_C_ADDR, 99n);
 
   // Pre-AUD-003 the SDK used `"task_escrow"` as the seed, producing
   // entirely different base58 strings — this assertion is the
@@ -317,9 +338,9 @@ test("SettlementClient.escrowPda matches on-chain seeds and golden vectors", () 
   assert.equal(sdkBC99, canonicalEscrowPda(AUTHORITY_B, AUTHORITY_C, 99n));
 });
 
-test("SettlementClient.protocolConfigPda matches on-chain seed and golden vector", () => {
+test("SettlementClient.protocolConfigPda matches on-chain seed and golden vector", async () => {
   const client = makeSettlementClient();
-  const sdk = client.protocolConfigPda().toBase58();
+  const sdk = await client.protocolConfigPda();
   assert.equal(sdk, GOLDEN.protocolConfig);
   assert.equal(sdk, canonicalProtocolConfigPda());
 });
@@ -330,12 +351,12 @@ test("SettlementClient.protocolConfigPda matches on-chain seed and golden vector
 // minimal noise.
 // ---------------------------------------------------------------------------
 
-test("escrow seed is 'escrow' (6 bytes), not 'task_escrow' (11 bytes) — length-of-seed regression guard", () => {
+test("escrow seed is 'escrow' (6 bytes), not 'task_escrow' (11 bytes) — length-of-seed regression guard", async () => {
   // If the SDK ever drifts back to "task_escrow", the byte length check
   // alone catches it deterministically without needing a golden vector.
   const client = makeSettlementClient();
   const onChainEscrow = canonicalEscrowPda(AUTHORITY_A, AUTHORITY_B, 1n);
-  const sdkEscrow = client.escrowPda(AUTHORITY_A, AUTHORITY_B, 1n).toBase58();
+  const sdkEscrow = await client.escrowPda(AUTHORITY_A_ADDR, AUTHORITY_B_ADDR, 1n);
   assert.equal(sdkEscrow, onChainEscrow);
 
   // Direct comparison against a deliberately wrong "task_escrow" seed:
@@ -352,9 +373,9 @@ test("escrow seed is 'escrow' (6 bytes), not 'task_escrow' (11 bytes) — length
   );
 });
 
-test("vault seed order is [seed, authority], not [authority, seed] — order regression guard", () => {
+test("vault seed order is [seed, authority], not [authority, seed] — order regression guard", async () => {
   const client = makeVaultClient();
-  const correct = client.vaultPda(AUTHORITY_A).toBase58();
+  const correct = await client.vaultPda(AUTHORITY_A_ADDR);
 
   // Deliberately wrong (pre-AUD-003) order:
   const [wrong] = PublicKey.findProgramAddressSync(

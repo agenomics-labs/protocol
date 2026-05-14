@@ -7,41 +7,56 @@
  * Usage:
  *   import settlementIdl from "path/to/idl/settlement.json" assert { type: "json" };
  *   import { Idl } from "@coral-xyz/anchor";
+ *   import type { Address } from "@solana/kit";
  *
- *   const SETTLEMENT_PROGRAM_ID = new PublicKey("9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95");
+ *   const SETTLEMENT_PROGRAM_ID = "9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95" as Address;
  *   const client = new SettlementClient(provider, settlementIdl as Idl, SETTLEMENT_PROGRAM_ID);
  *
- *   const pda = client.escrowPda(clientKey, providerKey, 1n);
+ *   const pda = await client.escrowPda(clientKey, providerKey, 1n);  // Address
  *   const escrow = await client.fetchEscrow(clientKey, providerKey, 1n);
  */
 
-import { Program, AnchorProvider } from "@coral-xyz/anchor";
+import { Program, AnchorProvider, web3 } from "@coral-xyz/anchor";
+import {
+  getProgramDerivedAddress,
+  getAddressEncoder,
+  type Address,
+} from "@solana/kit";
 
 import type { Settlement } from "./idl-types.js";
-import { PublicKey } from "@solana/web3.js";
+
+/**
+ * ADR-087: PublicKey is reached via Anchor's `web3` re-export so the SDK
+ * does not directly depend on `@solana/web3.js`.
+ */
+type PublicKey = web3.PublicKey;
+const PublicKey = web3.PublicKey;
 
 /** On-chain seed for task escrow PDAs. */
-const ESCROW_SEED = Buffer.from("escrow");
+const ESCROW_SEED = "escrow";
 
 /** On-chain seed for the protocol-config PDA. */
-const PROTOCOL_CONFIG_SEED = Buffer.from("protocol_config");
+const PROTOCOL_CONFIG_SEED = "protocol_config";
 
 /**
  * Client for the settlement program.
  *
  * Covers both the task-escrow lifecycle and the governance-owned
  * ProtocolConfig account (ADR-075).
+ *
+ * ADR-087: public API accepts/returns `Address` (kit). Anchor account
+ * fetches retain Anchor's typed shape.
  */
 export class SettlementClient {
   /** The underlying Anchor Program instance. ADR-088 typed via `Settlement`. */
   readonly program: Program<Settlement>;
 
-  constructor(provider: AnchorProvider, idl: Settlement, programId: PublicKey) {
+  constructor(provider: AnchorProvider, idl: Settlement, programId: Address) {
     this.program = new Program<Settlement>(idl, provider);
-    if (!this.program.programId.equals(programId)) {
+    if (this.program.programId.toBase58() !== (programId as string)) {
       throw new Error(
         `SettlementClient: IDL programId ${this.program.programId.toBase58()} ` +
-          `does not match supplied programId ${programId.toBase58()}`,
+          `does not match supplied programId ${programId}`,
       );
     }
   }
@@ -53,7 +68,7 @@ export class SettlementClient {
   /**
    * Derive the task-escrow PDA for a given client, provider, and task ID.
    *
-   * Seeds: [ "escrow", client.toBytes(), provider.toBytes(), taskId as little-endian u64 ]
+   * Seeds: [ "escrow", client, provider, taskId as little-endian u64 ]
    *
    * Matches the on-chain `seeds = [b"escrow", client.key().as_ref(),
    * provider.key().as_ref(), &task_id.to_le_bytes()]` declaration in
@@ -66,20 +81,23 @@ export class SettlementClient {
    * The task ID is a monotonically increasing counter chosen at escrow
    * creation time to prevent collisions (ADR-052).
    */
-  escrowPda(
-    client: PublicKey,
-    provider: PublicKey,
+  async escrowPda(
+    client: Address,
+    provider: Address,
     taskId: bigint,
-  ): PublicKey {
-    const [pda] = PublicKey.findProgramAddressSync(
-      [
+  ): Promise<Address> {
+    const addressEncoder = getAddressEncoder();
+    const taskIdBuf = new Uint8Array(8);
+    new DataView(taskIdBuf.buffer).setBigUint64(0, taskId, true);
+    const [pda] = await getProgramDerivedAddress({
+      programAddress: this.programIdAsAddress(),
+      seeds: [
         ESCROW_SEED,
-        client.toBytes(),
-        provider.toBytes(),
-        Buffer.from(new Uint8Array(new BigUint64Array([taskId]).buffer)),
+        addressEncoder.encode(client),
+        addressEncoder.encode(provider),
+        taskIdBuf,
       ],
-      this.program.programId,
-    );
+    });
     return pda;
   }
 
@@ -91,11 +109,11 @@ export class SettlementClient {
    * The single ProtocolConfig account holds governance-adjustable parameters:
    * minimum escrow amount, dispute timeout, and reputation deltas (ADR-075).
    */
-  protocolConfigPda(): PublicKey {
-    const [pda] = PublicKey.findProgramAddressSync(
-      [PROTOCOL_CONFIG_SEED],
-      this.program.programId,
-    );
+  async protocolConfigPda(): Promise<Address> {
+    const [pda] = await getProgramDerivedAddress({
+      programAddress: this.programIdAsAddress(),
+      seeds: [PROTOCOL_CONFIG_SEED],
+    });
     return pda;
   }
 
@@ -106,7 +124,8 @@ export class SettlementClient {
   /**
    * Fetch and decode a TaskEscrow account.
    *
-   * Returns the raw Anchor-decoded account object. Notable fields:
+   * Returns the raw Anchor-decoded account object. Notable fields (Anchor
+   * coder still returns `PublicKey` for pubkey fields):
    *   - `client: PublicKey`
    *   - `provider: PublicKey`
    *   - `tokenMint: PublicKey`
@@ -117,8 +136,9 @@ export class SettlementClient {
    *
    * @throws if the account does not exist or cannot be decoded.
    */
-  async fetchEscrow(client: PublicKey, provider: PublicKey, taskId: bigint) {
-    const pda = this.escrowPda(client, provider, taskId);
+  async fetchEscrow(client: Address, provider: Address, taskId: bigint) {
+    const pdaAddr = await this.escrowPda(client, provider, taskId);
+    const pda = new PublicKey(pdaAddr as string);
     // ADR-088: typed via `Program<Settlement>.account.taskEscrow`.
     return this.program.account.taskEscrow.fetch(pda);
   }
@@ -132,8 +152,17 @@ export class SettlementClient {
    * @throws if the account does not exist or cannot be decoded.
    */
   async fetchProtocolConfig() {
-    const pda = this.protocolConfigPda();
+    const pdaAddr = await this.protocolConfigPda();
+    const pda = new PublicKey(pdaAddr as string);
     // ADR-088: typed via `Program<Settlement>.account.protocolConfig`.
     return this.program.account.protocolConfig.fetch(pda);
+  }
+
+  // -------------------------------------------------------------------------
+  // Internal Anchor adapters
+  // -------------------------------------------------------------------------
+
+  private programIdAsAddress(): Address {
+    return this.program.programId.toBase58() as Address;
   }
 }

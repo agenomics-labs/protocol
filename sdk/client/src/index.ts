@@ -13,18 +13,18 @@
  *
  *   import { AgentRegistryClient, AgentStatus } from "@agenomics/client";
  *   import { AnchorProvider, Idl } from "@coral-xyz/anchor";
- *   import { PublicKey } from "@solana/web3.js";
+ *   import type { Address } from "@solana/kit";
  *
  *   // Load your IDL JSON (from target/idl/ or @agenomics/idl once ADR-099 matures)
  *   import agentRegistryIdl from "./target/idl/agent_registry.json" assert { type: "json" };
  *
  *   const provider = AnchorProvider.env();
- *   const REGISTRY_PROGRAM_ID = new PublicKey("psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv");
+ *   const REGISTRY_PROGRAM_ID = "psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv" as Address;
  *   const registry = new AgentRegistryClient(
  *     provider, agentRegistryIdl as Idl, REGISTRY_PROGRAM_ID
  *   );
  *
- *   const pda = registry.profilePda(authority, 0n);
+ *   const pda = await registry.profilePda(authority, 0n);   // returns Address
  *   const profile = await registry.fetchProfile(authority, 0n);
  *
  * Quick start — cluster config helper:
@@ -33,10 +33,14 @@
  *   const client = new AepClient({ cluster: "devnet", rpcUrl: "https://api.devnet.solana.com" });
  *   const { agentRegistry, agentVault, settlement } = client.getProgramIds();
  *
- * See ADR-098 for design rationale.
+ * See ADR-098 (SDK rationale) and ADR-087 (web3.js v1→@solana/kit v2 migration).
  */
 
-import { PublicKey } from "@solana/web3.js";
+import {
+  getProgramDerivedAddress,
+  getAddressEncoder,
+  type Address,
+} from "@solana/kit";
 import type { ProgramIds } from "@agenomics/idl";
 import { getProgramIds } from "@agenomics/idl";
 
@@ -52,8 +56,10 @@ export {
 export {
   AgentVaultClient,
   VAULT_IDENTITY_BIND_DOMAIN,
+  ED25519_PROGRAM_ADDRESS,
   vaultIdentityBindMessage,
   buildVaultIdentityBindInstruction,
+  type Ed25519VerifyInstruction,
 } from "./vault.js";
 export { SettlementClient } from "./settlement.js";
 export {
@@ -102,8 +108,8 @@ export interface AepClientConfig {
  * `AgentRegistryClient`, `AgentVaultClient`, and `SettlementClient`.
  *
  * For PDA derivation, use the typed client classes directly — they accept
- * `PublicKey` arguments and use `PublicKey.findProgramAddressSync` under
- * the hood.
+ * `Address` (string-branded base58) arguments and use kit's
+ * `getProgramDerivedAddress` under the hood.
  */
 export class AepClient {
   private readonly programIds: ProgramIds;
@@ -121,27 +127,31 @@ export class AepClient {
   /**
    * Derive the agent-profile PDA for a given owner public key (base58) and nonce.
    *
-   * Seeds: [ ownerPubkey.toBytes(), "agent-profile", nonce as little-endian u64 ]
+   * Seeds: [ ownerPubkey, "agent-profile", nonce as little-endian u64 ]
    *
    * AUD-003: `OwnerNonce::nonce` is `u64` on-chain (see
    * `programs/agent-registry/src/state.rs`). Pre-fix this helper encoded
-   * the seed via `BigInt64Array` (signed i64); `BigUint64Array` matches
-   * the on-chain type and keeps this helper byte-identical to
-   * `AgentRegistryClient.profilePda`.
+   * the seed via `BigInt64Array` (signed i64); we use a DataView with
+   * `setBigUint64(..., true)` to match the on-chain `u64::to_le_bytes()`
+   * encoding exactly.
    *
-   * Returns the PDA as a base58-encoded string.
+   * ADR-087: post v2 migration, this helper is async because kit's
+   * `getProgramDerivedAddress` is async (Web Crypto-compatible).
+   *
+   * @returns the PDA as a base58-encoded `Address` (branded string).
    */
-  deriveAgentProfilePda(ownerPubkey: string, nonce: bigint = 0n): string {
-    const authority = new PublicKey(ownerPubkey);
-    const registryProgramId = new PublicKey(this.programIds.agentRegistry);
-    const [pda] = PublicKey.findProgramAddressSync(
-      [
-        authority.toBytes(),
-        Buffer.from("agent-profile"),
-        Buffer.from(new Uint8Array(new BigUint64Array([nonce]).buffer)),
+  async deriveAgentProfilePda(ownerPubkey: string, nonce: bigint = 0n): Promise<Address> {
+    const addressEncoder = getAddressEncoder();
+    const nonceBuf = new Uint8Array(8);
+    new DataView(nonceBuf.buffer).setBigUint64(0, nonce, true);
+    const [pda] = await getProgramDerivedAddress({
+      programAddress: this.programIds.agentRegistry as Address,
+      seeds: [
+        addressEncoder.encode(ownerPubkey as Address),
+        "agent-profile",
+        nonceBuf,
       ],
-      registryProgramId,
-    );
-    return pda.toBase58();
+    });
+    return pda;
   }
 }

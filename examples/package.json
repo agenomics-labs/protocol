@@ -13,6 +13,7 @@
     "@agenomics/idl": "file:../sdk/idl",
     "@agenomics/client": "file:../sdk/client",
     "@coral-xyz/anchor": "^0.31.1",
+    "@solana/kit": "6.8.0",
     "@solana/web3.js": "^1.98.4"
   },
   "devDependencies": {

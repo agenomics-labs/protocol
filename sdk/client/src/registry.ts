@@ -7,24 +7,39 @@
  * Usage:
  *   import agentRegistryIdl from "path/to/idl/agent_registry.json" assert { type: "json" };
  *   import { Idl } from "@coral-xyz/anchor";
+ *   import type { Address } from "@solana/kit";
  *
- *   const REGISTRY_PROGRAM_ID = new PublicKey("psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv");
+ *   const REGISTRY_PROGRAM_ID = "psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv" as Address;
  *   const client = new AgentRegistryClient(provider, agentRegistryIdl as Idl, REGISTRY_PROGRAM_ID);
  *
- *   const pda = client.profilePda(authority, 0n);
+ *   const pda = await client.profilePda(authority, 0n);  // Address (base58 string)
  *   const profile = await client.fetchProfile(authority, 0n);
  */
 
-import { Program, AnchorProvider } from "@coral-xyz/anchor";
+import { Program, AnchorProvider, web3 } from "@coral-xyz/anchor";
+import {
+  getProgramDerivedAddress,
+  getAddressEncoder,
+  type Address,
+} from "@solana/kit";
+
+/**
+ * ADR-087: PublicKey is re-exported from Anchor's `web3` namespace so the
+ * SDK never directly imports `@solana/web3.js`. Anchor's internal account
+ * decoder still returns `PublicKey` values, and `Program.methods.…accounts`
+ * expects `PublicKey` instances — we accept `Address` at the public API and
+ * convert at the Anchor boundary only.
+ */
+type PublicKey = web3.PublicKey;
+const PublicKey = web3.PublicKey;
 
 import type { AgentRegistry } from "./idl-types.js";
-import { PublicKey } from "@solana/web3.js";
-
-/** On-chain seed for the owner-nonce PDA. */
-const OWNER_NONCE_SEED = Buffer.from("owner-nonce");
 
 /** On-chain seed for the agent-profile PDA. */
-const AGENT_PROFILE_SEED = Buffer.from("agent-profile");
+const AGENT_PROFILE_SEED = "agent-profile";
+
+/** On-chain seed for the owner-nonce PDA. */
+const OWNER_NONCE_SEED = "owner-nonce";
 
 /**
  * Maximum valid reputation score, mirrored from the on-chain constant
@@ -89,17 +104,23 @@ export function clampReputationScore(raw: bigint): number {
  *
  * All PDAs are derived deterministically using the same seeds as the on-chain
  * Anchor context structs in programs/agent-registry/src/contexts.rs.
+ *
+ * ADR-087: post v2 migration the public API surface accepts/returns
+ * `Address` (kit's base58-string brand) rather than `PublicKey` (web3.js v1
+ * class). Anchor itself still operates on `PublicKey` internally — this
+ * client converts `Address → PublicKey` at the Anchor boundary so callers
+ * never see the v1 type.
  */
 export class AgentRegistryClient {
   /** The underlying Anchor Program instance. ADR-088 typed via `AgentRegistry`. */
   readonly program: Program<AgentRegistry>;
 
-  constructor(provider: AnchorProvider, idl: AgentRegistry, programId: PublicKey) {
+  constructor(provider: AnchorProvider, idl: AgentRegistry, programId: Address) {
     this.program = new Program<AgentRegistry>(idl, provider);
-    if (!this.program.programId.equals(programId)) {
+    if (this.program.programId.toBase58() !== (programId as string)) {
       throw new Error(
         `AgentRegistryClient: IDL programId ${this.program.programId.toBase58()} ` +
-          `does not match supplied programId ${programId.toBase58()}`,
+          `does not match supplied programId ${programId}`,
       );
     }
   }
@@ -111,7 +132,7 @@ export class AgentRegistryClient {
   /**
    * Derive the agent-profile PDA for a given authority and nonce.
    *
-   * Seeds: [ authority.toBytes(), "agent-profile", nonce as little-endian u64 ]
+   * Seeds: [ authority, "agent-profile", nonce as little-endian u64 ]
    *
    * The nonce encodes the nth profile registered by this authority (ADR-097).
    * Pass the value returned by `fetchOwnerNonce().nonce` to derive the next
@@ -120,36 +141,36 @@ export class AgentRegistryClient {
    * AUD-003: `OwnerNonce::nonce` is `u64` on-chain (see
    * `programs/agent-registry/src/state.rs`). Pre-fix the SDK encoded it
    * via `BigInt64Array` (signed i64), which is byte-identical for
-   * non-negative values but documents the wrong sign convention; switching
-   * to `BigUint64Array` matches the on-chain type exactly and prevents a
-   * future signed-overflow regression if the encoder is ever asked to
-   * round-trip via `Number`.
+   * non-negative values but documents the wrong sign convention; we use
+   * `DataView.setBigUint64(..., true)` which matches the on-chain
+   * `u64::to_le_bytes()` exactly and prevents a future signed-overflow
+   * regression if the encoder is ever asked to round-trip via `Number`.
    */
-  profilePda(authority: PublicKey, nonce: bigint): PublicKey {
-    const [pda] = PublicKey.findProgramAddressSync(
-      [
-        authority.toBytes(),
-        AGENT_PROFILE_SEED,
-        Buffer.from(new Uint8Array(new BigUint64Array([nonce]).buffer)),
-      ],
-      this.program.programId,
-    );
+  async profilePda(authority: Address, nonce: bigint): Promise<Address> {
+    const addressEncoder = getAddressEncoder();
+    const nonceBuf = new Uint8Array(8);
+    new DataView(nonceBuf.buffer).setBigUint64(0, nonce, true);
+    const [pda] = await getProgramDerivedAddress({
+      programAddress: this.programIdAsAddress(),
+      seeds: [addressEncoder.encode(authority), AGENT_PROFILE_SEED, nonceBuf],
+    });
     return pda;
   }
 
   /**
    * Derive the owner-nonce PDA for a given authority.
    *
-   * Seeds: [ authority.toBytes(), "owner-nonce" ]
+   * Seeds: [ authority, "owner-nonce" ]
    *
    * The owner-nonce account tracks how many profiles an authority has
    * registered, providing a unique nonce seed for each registration.
    */
-  ownerNoncePda(authority: PublicKey): PublicKey {
-    const [pda] = PublicKey.findProgramAddressSync(
-      [authority.toBytes(), OWNER_NONCE_SEED],
-      this.program.programId,
-    );
+  async ownerNoncePda(authority: Address): Promise<Address> {
+    const addressEncoder = getAddressEncoder();
+    const [pda] = await getProgramDerivedAddress({
+      programAddress: this.programIdAsAddress(),
+      seeds: [addressEncoder.encode(authority), OWNER_NONCE_SEED],
+    });
     return pda;
   }
 
@@ -167,10 +188,17 @@ export class AgentRegistryClient {
    * removed from the on-chain account; consumers must not assume they are
    * present.
    *
+   * Note: returned account objects retain Anchor's native `PublicKey` shape
+   * for pubkey fields (Anchor's typed coder is the source). Consumers that
+   * want `Address` semantics should call `.toBase58()` at the read site;
+   * the SDK does not deep-rewrite Anchor's return value to keep the type
+   * graph minimal.
+   *
    * @throws if the account does not exist or cannot be decoded.
    */
-  async fetchProfile(authority: PublicKey, nonce: bigint) {
-    const pda = this.profilePda(authority, nonce);
+  async fetchProfile(authority: Address, nonce: bigint) {
+    const pdaAddr = await this.profilePda(authority, nonce);
+    const pda = this.addressToPublicKey(pdaAddr);
     // ADR-088: typed via `Program<AgentRegistry>.account.agentProfile`.
     return this.program.account.agentProfile.fetch(pda);
   }
@@ -180,8 +208,9 @@ export class AgentRegistryClient {
    *
    * @throws if the account does not exist or cannot be decoded.
    */
-  async fetchOwnerNonce(authority: PublicKey) {
-    const pda = this.ownerNoncePda(authority);
+  async fetchOwnerNonce(authority: Address) {
+    const pdaAddr = await this.ownerNoncePda(authority);
+    const pda = this.addressToPublicKey(pdaAddr);
     // ADR-088: typed via `Program<AgentRegistry>.account.ownerNonce`.
     return this.program.account.ownerNonce.fetch(pda);
   }
@@ -204,7 +233,7 @@ export class AgentRegistryClient {
    *   }
    */
   async fetchCdpWallet(
-    authority: PublicKey,
+    authority: Address,
     nonce: bigint,
   ): Promise<Uint8Array | null> {
     const profile = (await this.fetchProfile(authority, nonce)) as any;
@@ -233,16 +262,37 @@ export class AgentRegistryClient {
    *                    `.transaction()`, or `.instruction()` per their
    *                    transaction-construction needs.
    */
-  updateCdpWalletIx(authority: PublicKey, nonce: bigint, wallet: Uint8Array | null) {
-    const profile = this.profilePda(authority, nonce);
-    const ownerNonce = this.ownerNoncePda(authority);
+  async updateCdpWalletIx(
+    authority: Address,
+    nonce: bigint,
+    wallet: Uint8Array | null,
+  ) {
+    const profileAddr = await this.profilePda(authority, nonce);
+    const ownerNonceAddr = await this.ownerNoncePda(authority);
+    const profile = this.addressToPublicKey(profileAddr);
+    const ownerNonce = this.addressToPublicKey(ownerNonceAddr);
+    const authorityPk = this.addressToPublicKey(authority);
     const arg = wallet === null ? null : Array.from(wallet);
     return this.program.methods
       .updateCdpWallet(arg as any)
       .accounts({
-        authority,
+        authority: authorityPk,
         ownerNonce,
         agentProfile: profile,
       } as any);
+  }
+
+  // -------------------------------------------------------------------------
+  // Internal Anchor adapters
+  // -------------------------------------------------------------------------
+
+  /** Adapter: bridge kit Address → Anchor PublicKey for fetch / .accounts() boundary. */
+  private addressToPublicKey(addr: Address): PublicKey {
+    return new PublicKey(addr as string);
+  }
+
+  /** Adapter: Anchor PublicKey → kit Address brand for getProgramDerivedAddress. */
+  private programIdAsAddress(): Address {
+    return this.program.programId.toBase58() as Address;
   }
 }

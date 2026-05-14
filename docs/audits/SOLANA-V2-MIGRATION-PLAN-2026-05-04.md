@@ -1,7 +1,7 @@
 # Solana v2 Migration Plan — 2026-05-04
 
 **Date**: 2026-05-04  
-**Status**: Phase A target #1 shipped 2026-05-04 (x402-relay); Phase A target #2 shipped 2026-05-13 (indexer); Phase A target #3 pending (sdk/client); Phases B–D planned  
+**Status**: Phase A target #1 shipped 2026-05-04 (x402-relay); Phase A target #2 shipped 2026-05-13 (indexer); Phase A target #3 shipped 2026-05-14 (sdk/client); Phases B–D planned  
 **ADRs**: ADR-087 (dual-stack adapter pattern), ADR-012 (web3.js v2 migration commitment)  
 **CVE ref**: GHSA-3gc7-fjrx-p6mg (bigint-buffer buffer overflow via `toBigIntLE()`)
 
@@ -49,7 +49,7 @@ migration: registry, reputation, settlement, formatters) remains blocked on this
 |---------|-----------|--------------------------|-------|
 | `mcp-server` | `solana.ts`, `handlers/` (4 remaining v1 handlers), some tests | `solana-v2.ts`, `handlers-v2/vault.ts`, `pipeline/` | ADR-087 dual-stack; vault_transfer already on v2 send path |
 | `src/indexer` | `index.ts`, `decoder.test.ts`, `heartbeat.test.ts` | none | Phase A target #2 |
-| `sdk/client` | `index.ts`, `registry.ts`, `settlement.ts`, `vault.ts`, tests | none | Phase A target #3 |
+| `sdk/client` | ~~`index.ts`, `registry.ts`, `settlement.ts`, `vault.ts`, tests~~ | `index.ts`, `registry.ts`, `settlement.ts`, `vault.ts`, `cctp-hook.ts`, all tests **(migrated 2026-05-14)** | Phase A target #3 — **DONE** |
 | `src/x402-relay` | ~~`index.ts`~~ | `index.ts` **(migrated in this PR)** | Phase A target #1 — **DONE** |
 | `packages/sas-resolver` | none | `types.ts` (type import only) | Already on v2 |
 | `examples/` | `register-agent.ts` | none | dev-surface only; no spl-token |
@@ -103,12 +103,69 @@ preserved by aborting the prior controller before awaiting the new subscribe.
 bigint→Number coerced at SQLite boundary. Test fixtures swap `Keypair.generate()`
 for `crypto.randomBytes(32)` + `getAddressDecoder().decode()`. 125/125 tests pass.
 
-**Target #3 — `sdk/client/` (subsequent PR)**  
-Surface: `PublicKey` (PDA derivation, address validation), `Connection` for any
-RPC reads. SDK/client is published externally (`@agenomics/client` per
-`build(npm)` commit), so its API contract needs a semver-minor bump alongside the
-migration to expose `Address` (string) rather than `PublicKey` (class) in the
-exported types. Requires a deprecation shim or a deliberate API break.
+**Target #3 — `sdk/client/` — SHIPPED 2026-05-14**  
+Surface: `PublicKey` (PDA derivation, address validation, account-key
+arguments). No `Connection` — the SDK delegates RPC to the caller-supplied
+`AnchorProvider`. Shipped as a deliberate API break (pre-publish `0.1.0`,
+so semver-minor by convention; the package was never published to npm so
+no external consumers were broken).
+
+Shipped shape: public API of all four typed clients (`AgentRegistryClient`,
+`AgentVaultClient`, `SettlementClient`, plus the standalone CCTP-Hook
+helpers and `AepClient`) accepts/returns `Address` (kit's branded base58
+string) in place of `PublicKey` (web3.js class). PDA derivation switched
+from `PublicKey.findProgramAddressSync` to `getProgramDerivedAddress` —
+since the kit helper is async, all PDA-deriving methods (`profilePda`,
+`ownerNoncePda`, `vaultPda`, `escrowPda`, `protocolConfigPda`,
+`hookSignerPda`, `hookReplayPda`, `AepClient.deriveAgentProfilePda`) and
+their downstream consumers (`fetchProfile`, `fetchOwnerNonce`,
+`fetchVault`, `fetchEscrow`, `fetchProtocolConfig`, `fetchCdpWallet`,
+`updateCdpWalletIx`) are now `async`.
+
+Internal Anchor calls still operate on `PublicKey` (Anchor's
+`Program<T>.account.x.fetch` and `.accounts({...})` expect web3.js
+`PublicKey` instances and there is no v2-internal Anchor client on npm
+yet — see Phase B). The client converts `Address → PublicKey` at the
+Anchor boundary using Anchor's `web3` namespace re-export, so the SDK
+itself does not declare a direct dependency on `@solana/web3.js`. The
+v1 PublicKey type still leaks through Anchor's decoded account return
+shapes; consumers wanting `Address` semantics should call `.toBase58()`
+at the read site. Full elimination is gated on Phase B (npm Anchor v2
+client).
+
+`vault.ts::buildVaultIdentityBindInstruction` was the one non-trivial
+re-implementation: the v1 helper relied on
+`Ed25519Program.createInstructionWithPublicKey` (web3.js v1) to assemble
+the Solana ed25519 native-precompile instruction bytes. The v2 SDK
+hand-rolls the documented precompile data layout
+(`num_signatures || padding || Ed25519SignatureOffsets[1] || pubkey ||
+signature || message`, 144 bytes total) and returns a kit-shaped
+`Ed25519VerifyInstruction` (`{ programAddress, accounts: [], data }`)
+rather than v1's `TransactionInstruction`. The hand-rolled layout is
+pinned by a new unit test (`vault-identity-bind.test.ts` —
+"buildVaultIdentityBindInstruction lays out pubkey/sig/message at the
+documented offsets") that asserts every offset and every inline byte
+matches the documented precompile shape; this protects the layout from
+drift even if no validator round-trip is available in unit tests.
+
+AUD-003 regression gate: the `pda-equivalence.test.ts` golden vectors
+(vault, owner-nonce, profile, escrow, protocol-config) are byte-identical
+across the v1→v2 cutover. The canonical re-derivation helpers still use
+Anchor's bundled `web3.PublicKey` so the test serves as a CROSS-STACK
+proof (kit v2 SDK ↔ web3.js v1 reference ↔ pinned golden vectors).
+
+Test result: 56/56 pass (was 54/54 pre-migration; +2 tests for the
+precompile layout pin). Build: `tsc` exits 0. `npm ls @solana/web3.js
+--workspace=sdk/client`: still present transitively via Anchor only
+(`@coral-xyz/anchor → @solana/web3.js@1.98.4`); no direct entry in
+`sdk/client/package.json`.
+
+`examples/register-agent.ts` (the documented external-consumer
+quickstart) was updated in the same change: switched `PublicKey →
+Address`, added `await` to `profilePda`, dropped the `.toBase58()`
+call on the Address-typed result. The example still uses
+`@solana/web3.js` for `Connection`/`Keypair`/`Wallet` (provider
+construction is outside the SDK's surface).
 
 ### Phase B — mcp-server v1 handler migration (blocked)
 

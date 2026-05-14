@@ -21,25 +21,25 @@ npm install @agenomics/client
 
 _Not yet on npm; pre-publish 0.1.0. See `docs/SDK_PUBLISH.md` for the publish path._
 
-Peer dependencies: `@coral-xyz/anchor@^0.31`, `@solana/web3.js@^1.95`.
+Peer dependencies: `@coral-xyz/anchor@^0.31`, `@solana/kit@6.8.x` (ADR-087 — public API uses kit's `Address` brand; `@solana/web3.js` is no longer a direct dependency, only reached transitively via Anchor).
 
 ## Quick example
 
 ```ts
 import { AgentRegistryClient, clampReputationScore } from "@agenomics/client";
 import { AnchorProvider, Idl } from "@coral-xyz/anchor";
-import { PublicKey } from "@solana/web3.js";
+import type { Address } from "@solana/kit";
 import { AgentRegistryIdl, getProgramIds } from "@agenomics/idl";
 
 const provider = AnchorProvider.env();
-const programId = new PublicKey(getProgramIds("devnet").agentRegistry);
+const programId = getProgramIds("devnet").agentRegistry as Address;
 const registry = new AgentRegistryClient(provider, AgentRegistryIdl as Idl, programId);
 
-const authority = new PublicKey("psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv");
-const profilePda = registry.profilePda(authority, 0n);
+const authority = "psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv" as Address;
+const profilePda = await registry.profilePda(authority, 0n);
 const profile = await registry.fetchProfile(authority, 0n);
 const score = clampReputationScore(BigInt(profile.reputationScore.toString()));
-console.log(profilePda.toBase58(), `${score}/100`);
+console.log(profilePda, `${score}/100`);
 ```
 
 For a one-line cluster bootstrap without owning a provider yet:
@@ -49,7 +49,7 @@ import { AepClient } from "@agenomics/client";
 
 const client = new AepClient({ cluster: "devnet", rpcUrl: "https://api.devnet.solana.com" });
 const { agentRegistry, agentVault, settlement } = client.getProgramIds();
-const profilePda = client.deriveAgentProfilePda(authority.toBase58(), 0n);
+const profilePda = await client.deriveAgentProfilePda(authority, 0n);
 ```
 
 ## Key exports
