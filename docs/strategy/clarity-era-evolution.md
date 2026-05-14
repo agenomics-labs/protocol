@@ -200,7 +200,7 @@ These are out of scope. Every future ADR proposing one of them should be rejecte
 - **Not an agent marketplace.** Discovery (`discover_agents`, `find_similar_agents`) exists as a primitive; building a marketplace UI / front end on top is a downstream product decision, not a protocol concern.
 - **Not an agent communication protocol.** Message transport, routing, and discovery semantics belong to AgentConnect, MCP, A2A, or whichever protocol wins. Agenomics integrates via adapter packages.
 - **Not a social application.** Norm enforcement, peer follows, agent timelines — all are downstream of the trust graph and properly live in Moltbook or its successors.
-- **Not a token speculation vehicle.** Governance weight is stake × TraceRank × decay (ADR-113); there is no liquid governance token in plan, no airdrop mechanic, no AMM listing target. Tokenization decisions, if they ever happen, are downstream of substrate adoption — not a wedge.
+- **Not a token speculation vehicle, and not a premature-tokenization vehicle.** Governance weight is stake × TraceRank × decay (ADR-113); there is no liquid governance token in plan, no airdrop mechanic, no AMM listing target. Tokenization decisions, if they ever happen, are downstream of substrate adoption — not a wedge. Trust infrastructure markets (compliance, enterprise, regulated finance) punish artificial scarcity and speculative economics; revenue should come from operating the trust layer, not from minting access to it. See §9 for the monetization model that does work.
 
 ---
 
@@ -214,18 +214,76 @@ These are out of scope. Every future ADR proposing one of them should be rejecte
 
 ---
 
+## 9. Monetization and open-core architecture
+
+The protocol layer should remain open source. "Open source everything with no monetization strategy" is a different decision and the wrong one. The model that fits this category is **open protocol + monetized trust infrastructure** — the pattern compounded by Red Hat (Linux), Confluent (Kafka), Elastic (Elasticsearch), HashiCorp (Terraform/Vault/Consul), Docker, and GitLab. The moat in each case is not the source code; the moat is the operating data, the integrations, and the trust that accumulates around a neutral spec.
+
+### 9.1 What stays open
+
+The protocol surface stays open and Apache-2.0 (already enforced by the "License parity check" CI gate). Specifically:
+
+- **On-chain programs.** `programs/agent-vault`, `programs/agent-registry`, `programs/settlement`, `programs/cctp-hook`, and any new program introduced by wedges 1, 5, 7, 8.
+- **Specs and ADRs.** All 137+ ADRs under `docs/adr/`. Specs are the most replicable substrate of trust; closing them destroys the legitimacy that compliance buyers are paying for.
+- **SDKs and clients.** `sdk/idl/`, `sdk/client/`, `sdk/action-runtime/`.
+- **MCP integration surface.** `mcp-server/` and the 28+ tool schemas. MCP is the developer onramp; closing it forecloses ecosystem formation.
+- **Identity and capability standards.** ADR-060 capability descriptors, ADR-061/064 SAS integration patterns, ADR-138/139 attestation schemas (once landed), DID/cross-chain identity standards from wedge 8.
+- **Verification tooling.** `packages/capability-manifest-validator/`, `packages/sas-resolver/`, the verifier half of any ZK circuit (wedge 7).
+- **Orchestration primitives.** Vault policy engine, delegation grant primitives, dispute primitives. These are *standards*; standards must be inspectable.
+- **Reference issuer.** The reference reputation-attestation issuer (wedge 3) ships open so anyone can run one. A federation of independent issuers is the goal; a single hosted issuer is the bootstrap.
+
+Closed-source trust infrastructure is a contradiction in terms for regulated autonomous finance, governance, and delegation. Open posture is itself a compliance asset.
+
+### 9.2 Where monetization concentrates
+
+Revenue accrues to operating the trust layer, not to gatekeeping the protocol. Five durable surfaces:
+
+1. **Reputation intelligence layer.** The open spec says what a reputation attestation *is*. The proprietary surface is the *scoring* — Sybil-resistance models, behavioral analytics, fraud heuristics, cross-protocol risk signals, slash-prediction. Equivalent to credit bureaus and Chainalysis. Cleanly separable from the on-chain reputation primitive: ADR-094 keeps the on-chain delta bounded and auditable; richer signals are SAS-issued attestations from paid issuers a relying party chooses to trust.
+2. **Enterprise compliance and governance.** Audit dashboards, jurisdiction routing, AML-aware execution, regulatory reporting, delegation governance UIs, policy testing, ZK-verifier orchestration. SaaS pricing per agent, per attestation, per audited transaction. The protocol primitives stay free; the operationalized compliance product is paid.
+3. **Hosted trust services.** Managed issuer-as-a-service for reputation attestations, hosted SAS resolver with SLAs, managed indexer (the indexer in `src/indexer/` is open; running it as a paid endpoint with retention, search, and replay is the product), hosted KYC/jurisdiction oracle integrations. Comparable to managed Kubernetes, hosted Postgres, hosted observability.
+4. **Settlement rails.** Tiny fees on routed escrow or x402 / CCTP flows where Agenomics-operated relayers provide latency, reliability, or jurisdiction guarantees. Optional, never mandatory at the protocol layer. Stripe-style economics if volume materializes.
+5. **Developer platform — "Datadog for autonomous systems."** Hosted observability, debugging, simulation, policy testing, agent telemetry, attack-surface analysis, replay against historical provenance. Different product from the open indexer; the indexer is data, the platform is the workflow around it.
+
+The strongest moat is **none of the above individually**. The moat is the **accumulated trust data**: long-lived reputation graphs, agent interaction history, execution provenance, delegation lineage, behavioral analytics, fraud history. Forks copy code in a weekend; they cannot fork a five-year-old machine trust graph.
+
+### 9.3 Per-wedge mapping
+
+| Wedge | Open core | Where monetization can attach later |
+|---|---|---|
+| 1. Delegation grants | Program, SDK, MCP, indexer schema | Hosted governance UI for enterprise delegation hierarchies; policy-testing service |
+| 2. Execution provenance | Event schema, decoder, indexer, query API | Hosted long-retention indexer with SLA + search; replay/debug developer platform |
+| 3. Portable reputation | Schema, reference issuer, resolver, MCP tools | Paid issuer federation membership; proprietary scoring/risk signals as SAS attestations; reputation API SLA tiers |
+| 4. Policy-aware MCP auth | Tool-scope spec, gating logic | Managed policy authoring + simulation; enterprise SSO/SCIM integrations |
+| 5. Peer-ranked disputes | Voting program, slashing logic | Dispute escalation services (human review tier); insurance integrations |
+| 6. Progressive decentralization | Governance program | None directly — keeping this neutral is the point |
+| 7. ZK compliance | Circuits, verifier, attestation schemas | Hosted prover service; jurisdiction/KYC oracle integrations (regulated counterparties) |
+| 8. Cross-chain identity | Resolver, DID method spec, cross-chain proofs | Managed identity-resolution endpoint; enterprise federation services |
+
+Wedges 1, 5, 6 are pure protocol — no near-term commercial surface, and that is correct. Wedges 2, 3, 7, 8 each have a clean open/hosted seam built in by design, not retrofitted.
+
+### 9.4 What this changes about prioritization
+
+Three concrete consequences for the next 18 months:
+
+- **Indexer durability is now a business decision, not only an operational one.** The open indexer (`src/indexer/`) is the bootstrap of the hosted trust-data product. ADR-082, ADR-118, ADR-127 hardening work is on the critical path for both reliability and future revenue.
+- **The reference reputation issuer (wedge 3) must be designed for federation from day one.** Single-issuer is the bootstrap; multi-issuer (with the relying party choosing whom to trust) is the structural answer to "is this a centralized credit bureau?" The schema in ADR-139 already supports `issuer` as a field; the bootstrap roadmap must include a path to plural issuers before any monetized issuer service is offered.
+- **Tokenization stays off the roadmap until substrate adoption justifies it, if ever.** Per §7. Compliance buyers, enterprises, and regulators discount protocols that ship a token before they ship adoption. The CLARITY-era opportunity is to be the *neutral* substrate; token mechanics introduce conflict-of-interest signals that the durable comparables (Red Hat, Confluent, HashiCorp) explicitly avoided.
+
+The long-term position is **neutral public infrastructure with monetized enterprise trust layers** — Linux + Red Hat, Kafka + Confluent, Elasticsearch + Elastic, Kubernetes + managed clouds. That structural DNA is the durable one.
+
+---
+
 ## Cross-references
 
-| Wedge | Primary ADR(s) | In-flight branch | Audit / status notes |
-|---|---|---|---|
-| 1. Delegation grants | ADR-111 (Proposed) | `claude/delegation-grants-adr-111` | Open items: rent sizing, CU profile, SAS credential gate (deferred to ADR-111b) |
-| 2. Execution provenance | ADR-138 (new) | `claude/execution-provenance-events` | Extends ADR-082, ADR-118, ADR-127 indexer surface |
-| 3. Portable reputation | ADR-139 (new) | `claude/portable-reputation-attestations` | Extends ADR-061, ADR-064; cross-domain replay defense per ADR-124 pattern |
-| 4. Policy-aware MCP auth | Extends ADR-083 (new ADR likely) | not yet branched | CI gate extension per ADR-115 |
-| 5. Peer-ranked disputes | ADR-112 (Proposed) | not yet branched | Legal review required before mainnet; devnet/testnet safe |
-| 6. Progressive decentralization | ADR-113 (Proposed) | not yet branched | Stage 1 unblocks issuer-key decentralization (risk §6) |
-| 7. ZK compliance | new ADR (Reserved-pending-trigger) | not yet branched | Conditional on CLARITY Act or equivalent forcing function |
-| 8. Cross-chain identity | new ADR | not yet branched | Builds on `programs/cctp-hook`, wedges 3 + 7 |
+| Wedge | Primary ADR(s) | In-flight branch | Openness / monetization seam | Audit / status notes |
+|---|---|---|---|---|
+| 1. Delegation grants | ADR-111 (Proposed) | `claude/delegation-grants-adr-111` | Open core; hosted enterprise governance UI later | Open items: rent sizing, CU profile, SAS credential gate (deferred to ADR-111b) |
+| 2. Execution provenance | ADR-138 (new) | `claude/execution-provenance-events` | Open core; hosted long-retention indexer + replay platform | Extends ADR-082, ADR-118, ADR-127 indexer surface |
+| 3. Portable reputation | ADR-139 (new) | `claude/portable-reputation-attestations` | Open spec + reference issuer; paid issuer federation + proprietary scoring | Extends ADR-061, ADR-064; cross-domain replay defense per ADR-124 pattern |
+| 4. Policy-aware MCP auth | Extends ADR-083 (new ADR likely) | not yet branched | Open core; managed policy authoring + enterprise SSO | CI gate extension per ADR-115 |
+| 5. Peer-ranked disputes | ADR-112 (Proposed) | not yet branched | Pure open protocol | Legal review required before mainnet; devnet/testnet safe |
+| 6. Progressive decentralization | ADR-113 (Proposed) | not yet branched | Pure open governance (neutrality is the asset) | Stage 1 unblocks issuer-key decentralization (risk §6) |
+| 7. ZK compliance | new ADR (Reserved-pending-trigger) | not yet branched | Open circuits + verifier; hosted prover + jurisdiction/KYC oracles | Conditional on CLARITY Act or equivalent forcing function |
+| 8. Cross-chain identity | new ADR | not yet branched | Open DID method; managed resolution endpoint | Builds on `programs/cctp-hook`, wedges 3 + 7 |
 
 **Foundation ADRs (already accepted; not wedges):** ADR-020 (reputation staking), ADR-060 (capability manifest), ADR-061 / ADR-064 (SAS integration + resolver), ADR-094 (reputation trust hierarchy), ADR-095 (vault/registry suspension coupling), ADR-097 (registration nonce), ADR-124 (vault identity binding), ADR-130 (cosign — Reserved).
 
