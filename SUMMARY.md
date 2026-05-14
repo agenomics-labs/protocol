@@ -17,7 +17,7 @@ The entire protocol is accessible to any AI agent through a Model Context Protoc
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                     MCP Server (TypeScript)                  │
-│           28 tools · Input validation · Error handling        │
+│           29 tools · Input validation · Error handling        │
 ├──────────────┬──────────────────┬────────────────────────────┤
 │  Agent Vault │  Agent Registry  │   Settlement Protocol      │
 │   (Anchor)   │    (Anchor)      │       (Anchor)             │
@@ -150,7 +150,7 @@ Per ADR-050, the vault has no cross-program-call surface. Transfers are SOL-only
 
 ## MCP Server
 
-A TypeScript MCP server exposes all three programs as 28 tools that any AI agent can invoke through the Model Context Protocol.
+A TypeScript MCP server exposes all three programs as 29 tools that any AI agent can invoke through the Model Context Protocol.
 
 **Source:** `mcp-server/src/index.ts` + `solana.ts` + `tools/*.ts` (per-tool descriptors)
 **Tests:** 416 passing via `cd mcp-server && npm test` (node:test + tsx; integration test `test/mcp-handlers.test.ts` requires a live local validator and is run separately).
@@ -159,7 +159,7 @@ A TypeScript MCP server exposes all three programs as 28 tools that any AI agent
 
 | Program | Tools |
 |---------|-------|
-| Agent Vault (9) | `create_vault`, `get_vault_info`, `vault_transfer`, `vault_token_transfer`, `update_vault_policy`, `rotate_agent_identity`, `manage_allowlist`, `pause_vault`, `resume_vault` |
+| Agent Vault (10) | `create_vault`, `get_vault_info`, `vault_transfer`, `vault_token_transfer`, `update_vault_policy`, `rotate_agent_identity`, `manage_allowlist`, `pause_vault`, `resume_vault`, `query_execution_history` (ADR-138) |
 | Agent Registry (5) | `register_agent`, `get_agent_profile`, `update_agent_profile`, `discover_agents`, `stake_reputation` |
 | Reputation (1) | `get_agent_reputation` |
 | Agent Memory (1) | `find_similar_agents` (ADR-129 Phase 1) |
@@ -312,4 +312,4 @@ aep/
 ---
 
 *Built by Alejandro for the Colosseum Frontier Hackathon (Apr 6 – May 11, 2026)*
-*3 programs · 28 MCP tools · Real CPI verified on-chain*
+*3 programs · 29 MCP tools · Real CPI verified on-chain*
