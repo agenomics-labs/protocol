@@ -409,6 +409,62 @@ function initDb(dbPath: string): Database.Database {
       ON execution_attestations(vault, slot DESC);
     CREATE INDEX IF NOT EXISTS idx_exec_attest_tool_slot
       ON execution_attestations(tool_id, slot DESC);
+
+    -- ADR-111: Per-grant current-state projection. Bumped on
+    -- DelegationGrantCreated (insert), DelegationGrantRevoked (update),
+    -- DelegationGrantUpdated (update), DelegationGrantExecuted
+    -- (running tally updates). The SQLite mirror is kept in lockstep
+    -- with migrations/004-adr-111-delegation-grants.sql; the parity
+    -- test in test/aud-202-migration-embedded.test.ts pins the
+    -- Postgres shape.
+    CREATE TABLE IF NOT EXISTS delegation_grants (
+      grant_address TEXT PRIMARY KEY,
+      vault TEXT NOT NULL,
+      grantor TEXT NOT NULL,
+      grantee TEXT NOT NULL,
+      nonce INTEGER NOT NULL CHECK(nonce >= 0 AND nonce <= 255),
+      allowed_actions INTEGER NOT NULL,
+      spend_cap_lamports TEXT NOT NULL,
+      spent_lamports TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      revoked INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      last_seen_slot INTEGER NOT NULL,
+      observed_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_delegation_grants_vault   ON delegation_grants(vault);
+    CREATE INDEX IF NOT EXISTS idx_delegation_grants_grantee ON delegation_grants(grantee);
+
+    -- ADR-111: Append-only audit log for every delegation-grant lifecycle
+    -- event. One row per Created / Revoked / Updated / Executed.
+    CREATE TABLE IF NOT EXISTS delegation_grant_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind TEXT NOT NULL CHECK(kind IN ('Created', 'Revoked', 'Updated', 'Executed')),
+      grant_address TEXT NOT NULL,
+      vault TEXT NOT NULL,
+      grantee TEXT,
+      grantor TEXT,
+      revoker TEXT,
+      recipient TEXT,
+      mint TEXT,
+      action_kind INTEGER,
+      allowed_actions INTEGER,
+      spend_cap_lamports TEXT,
+      amount TEXT,
+      spent_after TEXT,
+      expires_at INTEGER,
+      nonce INTEGER,
+      event_timestamp INTEGER NOT NULL,
+      slot INTEGER NOT NULL,
+      signature TEXT NOT NULL,
+      observed_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_dgrant_events_grant ON delegation_grant_events(grant_address);
+    CREATE INDEX IF NOT EXISTS idx_dgrant_events_vault ON delegation_grant_events(vault);
+    CREATE INDEX IF NOT EXISTS idx_dgrant_events_kind  ON delegation_grant_events(kind);
+    CREATE INDEX IF NOT EXISTS idx_dgrant_events_slot  ON delegation_grant_events(slot);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_dgrant_events_unique
+      ON delegation_grant_events(grant_address, signature, slot, kind);
   `);
 
   // Migration: older databases were created without `event_ordinal`.
@@ -493,6 +549,13 @@ const DISCRIMINATOR_MAP: Record<string, string> = {
   "58ef5d414a8c53d5": "AllowlistUpdated",
   c69d16974464a223: "VaultPaused",
   d0adee40213fe297: "VaultResumed",
+  // ADR-111: delegation-grant events. Disc-map values match
+  // sha256("event:<Name>")[..8]; cross-verified by
+  // scripts/check-event-coverage.ts on every CI run.
+  "37ea91e0d721da14": "DelegationGrantCreated",
+  "597b42ded5f14ef3": "DelegationGrantRevoked",
+  de3e0cc9bca0dfc7: "DelegationGrantUpdated",
+  b588434af4e727f9: "DelegationGrantExecuted",
 
   // settlement
   "467f69665c6107ad": "EscrowCreated",
@@ -939,6 +1002,56 @@ const EVENT_DECODERS: Record<string, EventDecoder> = {
       timestamp,
     };
   },
+
+  // ADR-111: delegation-grant events. Field layouts mirror
+  // programs/agent-vault/src/events.rs verbatim; field names match the
+  // Rust struct field names so downstream consumers can index by the
+  // same identifiers used on-chain.
+
+  // DelegationGrantCreated — emitted by create_delegation_grant.
+  DelegationGrantCreated: (r) => ({
+    vault: r.pubkey(),
+    grant: r.pubkey(),
+    grantor: r.pubkey(),
+    grantee: r.pubkey(),
+    allowed_actions: r.u8(),
+    spend_cap_lamports: u64ToJson(r.u64()),
+    expires_at: i64ToJson(r.i64()),
+    nonce: r.u8(),
+    timestamp: i64ToJson(r.i64()),
+  }),
+
+  // DelegationGrantRevoked — emitted by revoke_delegation_grant.
+  DelegationGrantRevoked: (r) => ({
+    vault: r.pubkey(),
+    grant: r.pubkey(),
+    revoker: r.pubkey(),
+    timestamp: i64ToJson(r.i64()),
+  }),
+
+  // DelegationGrantUpdated — emitted by update_delegation_grant.
+  DelegationGrantUpdated: (r) => ({
+    vault: r.pubkey(),
+    grant: r.pubkey(),
+    new_allowed_actions: r.u8(),
+    new_spend_cap_lamports: u64ToJson(r.u64()),
+    new_expires_at: i64ToJson(r.i64()),
+    timestamp: i64ToJson(r.i64()),
+  }),
+
+  // DelegationGrantExecuted — emitted on a successful
+  // execute_grant_transfer / execute_grant_token_transfer.
+  DelegationGrantExecuted: (r) => ({
+    vault: r.pubkey(),
+    grant: r.pubkey(),
+    grantee: r.pubkey(),
+    action_kind: r.u8(),
+    mint: r.pubkey(),
+    recipient: r.pubkey(),
+    amount: u64ToJson(r.u64()),
+    spent_after: u64ToJson(r.u64()),
+    timestamp: i64ToJson(r.i64()),
+  }),
 
   // ADR-082 decoder gap closure: agent-registry events (commit 2 of 4).
   // All 3 events below had DISCRIMINATOR_MAP entries but no
@@ -1498,6 +1611,173 @@ function updateAgentFromEvent(
       slot,
       signature,
     });
+    return;
+  }
+
+  // ADR-111: DelegationGrantCreated — insert a new row into
+  // `delegation_grants` (current-state projection) and append a row to
+  // `delegation_grant_events` (audit log). Subsequent revoke/update/
+  // execute events bump the same row in `delegation_grants`.
+  if (event.name === "DelegationGrantCreated") {
+    const grantAddr = typeof data.grant === "string" ? data.grant : undefined;
+    const vault = typeof data.vault === "string" ? data.vault : undefined;
+    const grantor = typeof data.grantor === "string" ? data.grantor : undefined;
+    const grantee = typeof data.grantee === "string" ? data.grantee : undefined;
+    if (!grantAddr || !vault || !grantor || !grantee) return;
+    const allowedActions =
+      typeof data.allowed_actions === "number" ? data.allowed_actions : 0;
+    const spendCap = coerceU64String(data.spend_cap_lamports);
+    const expiresAt = coerceI64(data.expires_at);
+    const nonce = typeof data.nonce === "number" ? data.nonce : 0;
+    const eventTs = coerceI64(data.timestamp);
+    db.prepare(`
+      INSERT INTO delegation_grants
+        (grant_address, vault, grantor, grantee, nonce, allowed_actions,
+         spend_cap_lamports, spent_lamports, expires_at, revoked,
+         created_at, last_seen_slot, observed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, '0', ?, 0, ?, ?, datetime('now'))
+      ON CONFLICT(grant_address) DO UPDATE SET
+        allowed_actions = excluded.allowed_actions,
+        spend_cap_lamports = excluded.spend_cap_lamports,
+        expires_at = excluded.expires_at,
+        revoked = 0,
+        last_seen_slot = excluded.last_seen_slot
+    `).run(
+      grantAddr,
+      vault,
+      grantor,
+      grantee,
+      nonce,
+      allowedActions,
+      spendCap,
+      expiresAt,
+      eventTs,
+      slot
+    );
+    db.prepare(`
+      INSERT OR IGNORE INTO delegation_grant_events
+        (kind, grant_address, vault, grantee, grantor,
+         allowed_actions, spend_cap_lamports, expires_at, nonce,
+         event_timestamp, slot, signature, observed_at)
+      VALUES ('Created', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    `).run(
+      grantAddr,
+      vault,
+      grantee,
+      grantor,
+      allowedActions,
+      spendCap,
+      expiresAt,
+      nonce,
+      eventTs,
+      slot,
+      signature
+    );
+    return;
+  }
+
+  if (event.name === "DelegationGrantRevoked") {
+    const grantAddr = typeof data.grant === "string" ? data.grant : undefined;
+    const vault = typeof data.vault === "string" ? data.vault : undefined;
+    const revoker = typeof data.revoker === "string" ? data.revoker : undefined;
+    if (!grantAddr || !vault || !revoker) return;
+    const eventTs = coerceI64(data.timestamp);
+    db.prepare(`
+      UPDATE delegation_grants
+      SET revoked = 1, last_seen_slot = ?
+      WHERE grant_address = ?
+    `).run(slot, grantAddr);
+    db.prepare(`
+      INSERT OR IGNORE INTO delegation_grant_events
+        (kind, grant_address, vault, revoker, event_timestamp, slot, signature, observed_at)
+      VALUES ('Revoked', ?, ?, ?, ?, ?, ?, datetime('now'))
+    `).run(grantAddr, vault, revoker, eventTs, slot, signature);
+    return;
+  }
+
+  if (event.name === "DelegationGrantUpdated") {
+    const grantAddr = typeof data.grant === "string" ? data.grant : undefined;
+    const vault = typeof data.vault === "string" ? data.vault : undefined;
+    if (!grantAddr || !vault) return;
+    const allowedActions =
+      typeof data.new_allowed_actions === "number" ? data.new_allowed_actions : 0;
+    const newCap = coerceU64String(data.new_spend_cap_lamports);
+    const newExpiresAt = coerceI64(data.new_expires_at);
+    const eventTs = coerceI64(data.timestamp);
+    db.prepare(`
+      UPDATE delegation_grants
+      SET allowed_actions = ?,
+          spend_cap_lamports = ?,
+          expires_at = ?,
+          last_seen_slot = ?
+      WHERE grant_address = ?
+    `).run(allowedActions, newCap, newExpiresAt, slot, grantAddr);
+    db.prepare(`
+      INSERT OR IGNORE INTO delegation_grant_events
+        (kind, grant_address, vault, allowed_actions, spend_cap_lamports,
+         expires_at, event_timestamp, slot, signature, observed_at)
+      VALUES ('Updated', ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    `).run(
+      grantAddr,
+      vault,
+      allowedActions,
+      newCap,
+      newExpiresAt,
+      eventTs,
+      slot,
+      signature
+    );
+    return;
+  }
+
+  if (event.name === "DelegationGrantExecuted") {
+    const grantAddr = typeof data.grant === "string" ? data.grant : undefined;
+    const vault = typeof data.vault === "string" ? data.vault : undefined;
+    const grantee = typeof data.grantee === "string" ? data.grantee : undefined;
+    if (!grantAddr || !vault || !grantee) return;
+    const actionKind =
+      typeof data.action_kind === "number" ? data.action_kind : 0;
+    const mint = typeof data.mint === "string" ? data.mint : "";
+    const recipient = typeof data.recipient === "string" ? data.recipient : "";
+    const amount = coerceU64String(data.amount);
+    const spentAfter = coerceU64String(data.spent_after);
+    const eventTs = coerceI64(data.timestamp);
+    // Bump the running spend tally on the projection row. For SOL grants
+    // (action_kind = 1) we update spent_lamports directly. For SPL
+    // grants (action_kind = 2) the per-mint tally lives in the on-chain
+    // GrantTokenCap and is not surfaced as a top-level projection
+    // column — operators query the events table for per-mint history.
+    if (actionKind === 1) {
+      db.prepare(`
+        UPDATE delegation_grants
+        SET spent_lamports = ?, last_seen_slot = ?
+        WHERE grant_address = ?
+      `).run(spentAfter, slot, grantAddr);
+    } else {
+      db.prepare(`
+        UPDATE delegation_grants
+        SET last_seen_slot = ?
+        WHERE grant_address = ?
+      `).run(slot, grantAddr);
+    }
+    db.prepare(`
+      INSERT OR IGNORE INTO delegation_grant_events
+        (kind, grant_address, vault, grantee, action_kind, mint, recipient,
+         amount, spent_after, event_timestamp, slot, signature, observed_at)
+      VALUES ('Executed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    `).run(
+      grantAddr,
+      vault,
+      grantee,
+      actionKind,
+      mint,
+      recipient,
+      amount,
+      spentAfter,
+      eventTs,
+      slot,
+      signature
+    );
     return;
   }
 
