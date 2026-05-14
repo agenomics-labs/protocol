@@ -301,6 +301,15 @@
         {
           "name": "amount",
           "type": "u64"
+        },
+        {
+          "name": "tool_id_hash",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
         }
       ]
     },
@@ -465,6 +474,15 @@
         {
           "name": "amount_lamports",
           "type": "u64"
+        },
+        {
+          "name": "tool_id_hash",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
         }
       ]
     },
@@ -1103,6 +1121,19 @@
       ]
     },
     {
+      "name": "ExecutionAttested",
+      "discriminator": [
+        103,
+        21,
+        180,
+        127,
+        185,
+        198,
+        97,
+        114
+      ]
+    },
+    {
       "name": "PolicyUpdated",
       "discriminator": [
         225,
@@ -1599,6 +1630,70 @@
       }
     },
     {
+      "name": "ActionKind",
+      "docs": [
+        "ADR-138: classifier for the on-chain action that produced an",
+        "`ExecutionAttested` event."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          { "name": "Transfer" },
+          { "name": "TokenTransfer" },
+          { "name": "PolicyUpdate" },
+          { "name": "AllowlistManage" },
+          { "name": "IdentityRotation" },
+          { "name": "PauseToggle" },
+          { "name": "GrantTransfer" },
+          { "name": "GrantTokenTransfer" }
+        ]
+      }
+    },
+    {
+      "name": "ExecutionAttested",
+      "docs": [
+        "ADR-138: cryptographically-verifiable provenance record emitted at",
+        "the end of every value-moving or authority-changing vault",
+        "instruction."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "vault", "type": "pubkey" },
+          { "name": "agent_identity", "type": "pubkey" },
+          { "name": "authority", "type": "pubkey" },
+          {
+            "name": "action_kind",
+            "type": { "defined": { "name": "ActionKind" } }
+          },
+          {
+            "name": "tool_id",
+            "type": { "array": ["u8", 32] }
+          },
+          {
+            "name": "manifest_hash",
+            "type": { "array": ["u8", 32] }
+          },
+          { "name": "policy_version", "type": "u32" },
+          {
+            "name": "delegation_grant",
+            "type": { "option": "pubkey" }
+          },
+          { "name": "amount", "type": "u64" },
+          {
+            "name": "mint",
+            "type": { "option": "pubkey" }
+          },
+          {
+            "name": "recipient",
+            "type": { "option": "pubkey" }
+          },
+          { "name": "slot", "type": "u64" },
+          { "name": "timestamp", "type": "i64" }
+        ]
+      }
+    },
+    {
       "name": "OwnerNonce",
       "docs": [
         "ADR-097: Per-owner monotonic nonce counter.",
@@ -1936,6 +2031,16 @@
               "are gated by the 24h window. Bumps the account `space` by 8 bytes."
             ],
             "type": "i64"
+          },
+          {
+            "name": "policy_version",
+            "docs": [
+              "ADR-138: monotonically-increasing counter incremented on every",
+              "successful `update_policy` call. Stamped into every",
+              "`ExecutionAttested` event so off-chain consumers can pin which",
+              "policy version was in force when a value-moving action executed."
+            ],
+            "type": "u32"
           }
         ]
       }

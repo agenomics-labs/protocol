@@ -36,6 +36,50 @@ const PublicKey = web3.PublicKey;
 /** On-chain seed for the vault PDA. */
 const VAULT_SEED = "vault";
 
+/**
+ * ADR-138: domain prefix for the MCP tool identifier hash. The on-chain
+ * `tool_id_hash` argument to `execute_transfer` / `execute_token_transfer`
+ * is `sha256("agenomics.tool." + name)`, pinned here so caller code and
+ * indexer-side reverse lookups produce the same 32-byte digest.
+ *
+ * Why a hash and not the raw name: a 32-byte fixed-width field keeps the
+ * on-chain instruction args bounded; a hash is also a stable
+ * canonicalised key that survives tool renames (within the same
+ * `name`) without an on-chain migration. Indexers reverse the hash via
+ * an off-chain catalogue (the MCP server's `allTools` aggregation in
+ * `mcp-server/src/tools/index.ts`).
+ */
+export const TOOL_ID_HASH_DOMAIN = "agenomics.tool.";
+
+/**
+ * ADR-138: 32-byte all-zeros sentinel for callers that haven't yet
+ * adopted the tool-id convention. Accepted on-chain; indexers MAY
+ * surface a `tool_id_zero_count` metric. Convenience for SDK consumers
+ * who want to log the migration debt.
+ */
+export const TOOL_ID_ZERO: Uint8Array = new Uint8Array(32);
+
+/**
+ * ADR-138: compute the on-chain `tool_id_hash` for an MCP tool name.
+ *
+ * Returns `sha256(TOOL_ID_HASH_DOMAIN + name)` as a 32-byte `Uint8Array`
+ * suitable for the `execute_transfer` / `execute_token_transfer`
+ * instruction's `tool_id_hash` argument. Pure function — no I/O, no
+ * timing leakage that the caller need worry about.
+ */
+export function toolIdHash(toolName: string): Uint8Array {
+  if (typeof toolName !== "string" || toolName.length === 0) {
+    throw new Error("toolIdHash: toolName must be a non-empty string");
+  }
+  const digest = crypto.createHash("sha256");
+  digest.update(TOOL_ID_HASH_DOMAIN);
+  digest.update(toolName);
+  // crypto.Hash.digest() returns a Buffer; convert to a plain Uint8Array
+  // so consumers on the kit v2 stack (which prefers Uint8Array) get the
+  // expected shape without an extra cast.
+  return new Uint8Array(digest.digest());
+}
+
 /** Solana Ed25519 native precompile program address (immutable). */
 export const ED25519_PROGRAM_ADDRESS: Address =
   "Ed25519SigVerify111111111111111111111111111" as Address;
