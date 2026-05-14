@@ -1,7 +1,12 @@
 # ADR-070: `deregister_agent` stake cleanup and Suspended-bypass prevention
 
 ## Status
-Proposed
+Accepted (2026-05-13) — `deregister_agent` refuses Suspended-bypass at `programs/agent-registry/src/lib.rs:590-616` with `require!(reputation_stake.staked_amount == 0, StakePresentOnDeregister)`. Implementation deviates from the ADR draft in two intentional ways:
+
+1. **Error name**: implemented as `StakePresentOnDeregister` (semantically equivalent to the ADR's proposed `StakeNotEmpty`).
+2. **Stake topology**: `reputation_stake` is embedded inside `AgentProfile` as a nested struct rather than living in a separate `[authority, b"reputation-stake"]` PDA. This obviates the "close = authority alongside" wiring — when `agent_profile` is closed (Anchor `close = authority`), the nested stake is GC'd with it. The load-bearing invariant (deregistration with stake fails, forcing explicit `unstake_reputation` first) is preserved.
+
+ADR-097 nonce bump on deregister also lands here (`owner_nonce.nonce = saturating_add(1)` at line 613) closing the defense-in-depth "re-register with same seeds to resurrect" door noted as deferred in the ADR's §Decision. AUD-118 rationale for `saturating_add` documented in the source.
 
 ## Date
 2026-04-22

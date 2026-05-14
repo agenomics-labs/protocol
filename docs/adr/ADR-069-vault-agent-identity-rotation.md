@@ -1,7 +1,7 @@
 # ADR-069: Vault `agent_identity` rotation path and hot-key documentation
 
 ## Status
-Proposed
+Accepted (2026-05-13) — `update_agent_identity` instruction is live in `programs/agent-vault/src/instructions.rs:253` with the `UpdateAgentIdentity` context at `programs/agent-vault/src/contexts.rs:132` and the `agent_identity_rotated_at` slot pinned in `state.rs:76`. AUD-023 24-hour sliding-window rate-limit shipped (`errors.rs:85-90`, `RotationRateLimited`). AUD-200 / ADR-124 Ed25519 proof-of-control mirroring the init-leg flow shipped in cycle-3 (commit `4c2341c`). Full integration suite passes.
 
 ## Date
 2026-04-22
