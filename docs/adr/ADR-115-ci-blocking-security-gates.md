@@ -1,7 +1,7 @@
 # ADR-115: Flip clippy / cargo-audit / npm audit from advisory to blocking
 
 ## Status
-Accepted — Stage 1 shipped (2026-05-13); Stage 2 shipped (2026-05-14); Stage 3 pending
+Accepted — Stage 1 shipped (2026-05-13); Stage 2 shipped (2026-05-14); Stage 3a-1 (ESLint infra) shipped (2026-05-14); Stage 3a-2 (no-explicit-any: "error" flip) and Stage 3b (npm audit blocking) pending
 
 ## Date
 2026-04-24
@@ -62,13 +62,60 @@ test functions in `programs/agent-registry/src/lib.rs` getting
 "initialise-then-overwrite" pattern was intentional documentation of the
 pre-transition state. Tests: 91/91 + 39/39 + 4/4 + 68/68 still pass.
 
-**Stage 3 (follow-up):** npm audit + ESLint hardening.
-- Add `npm audit --audit-level=high` as a dedicated CI step (blocking).
-- Flip `@typescript-eslint/no-explicit-any` to `"error"` in
-  `mcp-server/.eslintrc.json` and add `.eslintignore` entries for the
-  ~7 known Kit v1↔v2 shim locations with ticket references.
-- Add the same ESLint config to `src/indexer/` and
-  `src/x402-relay/` (S-xcut-10 follow-up: they were never added).
+**Stage 3 (split — see Stage 3a-1 shipped, Stage 3a-2 + 3b pending):**
+npm audit + ESLint hardening. Originally a single follow-up; split
+during the 2026-05-14 autonomous session once two surprises surfaced:
+
+- *Surprise A — npm audit can't flip yet*. A fresh
+  `npm audit --audit-level=high --workspaces --include-workspace-root`
+  reports 4 high-severity vulnerabilities in the `bigint-buffer` chain
+  pulled in via the workspace-root `@solana/spl-token` dev dep
+  (GHSA-3gc7-fjrx-p6mg → `@solana/buffer-layout-utils` →
+  `@solana/spl-token` → `@sqds/multisig`). Eliminating these is what
+  ADR-087 Phase C+D is *for*. Flipping `--audit-level=high` to blocking
+  before Phase D would fail every PR.
+- *Surprise B — `.eslintrc.json` already exists in indexer / x402-relay*.
+  The ADR's "S-xcut-10 follow-up: they were never added" is stale; both
+  configs are in place. What's actually missing is the eslint *runtime*
+  — no package has `eslint` in its devDeps and there are no `lint`
+  scripts anywhere.
+
+**Stage 3a-1 (shipped 2026-05-14):** ESLint infrastructure.
+- Installed `eslint@^8.57.0` + `@typescript-eslint/parser@^7` +
+  `@typescript-eslint/eslint-plugin@^7` at the workspace root devDeps.
+  v8 matches the legacy `.eslintrc.json` format already in the repo
+  (v9's flat config would force a separate config rewrite).
+- Added `lint` scripts to `mcp-server/package.json`,
+  `src/indexer/package.json`, `src/x402-relay/package.json`. The
+  invocation pattern is `eslint --no-eslintrc -c .eslintrc.json
+  src/**/*.ts` (or `*.ts test/**/*.ts` for the indexer + x402-relay
+  layout where the entry point sits next to `package.json`).
+- Added test-files overrides to indexer + x402-relay `.eslintrc.json`
+  that turn off `no-console` and `@typescript-eslint/no-var-requires`
+  — both are deliberate test idioms (Prometheus startup banner;
+  `const Database = require("better-sqlite3")` for dynamic load
+  isolation in adr-118 / aud-200 / aud-128 fixtures).
+- Five pre-existing `eslint:recommended` errors hand-fixed with
+  per-line `eslint-disable-next-line ... -- rationale` comments
+  (better-sqlite3 dynamic loads, the metrics-server startup banner,
+  the backfill `while (true)` paginate-until-empty loop).
+- Three CI steps added under the `typescript-check-mcp` job, all
+  `continue-on-error: true` until Stage 3a-2. Reviewers can see the
+  warning count on every PR; nothing gets blocked yet.
+
+**Stage 3a-2 (pending):** flip
+`@typescript-eslint/no-explicit-any` from `"warn"` to `"error"` in
+the three `.eslintrc.json` files and triage the ~30 production-path
+violations (20 in mcp-server, 10 in indexer, 0 in x402-relay).
+Per-site choice: fix with `unknown`, replace with `Record<string,
+unknown>`, or accept with
+`// eslint-disable-next-line @typescript-eslint/no-explicit-any --
+<rationale>`. Once clean, drop `continue-on-error: true` from the
+three ESLint CI steps.
+
+**Stage 3b (pending — blocked on ADR-087 Phase D):** drop
+`continue-on-error: true` from the existing `npm audit (high)` step.
+Gated on the workspace `@solana/spl-token` dev dep being removed.
 
 The staging prevents the "one giant PR that lights CI on fire on merge
 day" anti-pattern.

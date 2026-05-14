@@ -90,6 +90,7 @@ describe("ADR-118 — PRAGMA synchronous = FULL", () => {
     // Sanity: the FULL setting comes from initDb, not from
     // better-sqlite3's defaults. If a future bump changes the engine
     // default to FULL we'd want to know (so we can drop the pragma).
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const Database = require("better-sqlite3");
     const raw = new Database(":memory:");
     try {

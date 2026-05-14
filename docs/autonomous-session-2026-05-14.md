@@ -121,3 +121,110 @@ of the pre-transition state.
 After ADR-115 Stage 2 lands, the queue order is:
 1. **ADR-115 Stage 3 next** (npm audit blocking + ESLint `no-explicit-any: error`). Same shape as Stage 2 — small, bounded, the same blocking-gate pattern applied to the npm side. Continues the security-gates theme rather than context-switching.
 2. After Stage 3, re-evaluate whether to take ADR-116 (small Rust + cascading IDL regen) or one of the multi-day items (ADR-135 / 137 / 141). The cascading-IDL-regen risk of ADR-116 makes me biased toward parking it for a deliberate session; the multi-day ones are stretch goals for the session, not commitments.
+
+## Decision 5 — ADR-115 Stage 3 split: npm-audit blocked, ESLint tackled separately
+
+**Observation**: Running `npm audit --audit-level=high --workspaces --include-workspace-root` from a clean install reports **4 high-severity vulnerabilities** all in the same `bigint-buffer` chain:
+
+```
+bigint-buffer        — GHSA-3gc7-fjrx-p6mg (Vulnerable to Buffer Overflow via toBigIntLE())
+@solana/buffer-layout-utils  → depends on vulnerable bigint-buffer
+@solana/spl-token            → depends on vulnerable @solana/buffer-layout-utils
+@sqds/multisig               → depends on vulnerable @solana/spl-token
+```
+
+These live in workspace-root devDependencies (tests + scripts + load
+harnesses) — exactly the consumer surface that ADR-087 Phase C is
+designed to migrate to `@solana-program/token` and Phase D removes the
+workspace-root `@solana/spl-token` dep. Flipping `npm audit
+--audit-level=high` to blocking now means **every PR fails CI until
+Phases C/D ship**.
+
+**Choice**: leave the npm-audit step at `continue-on-error: true` for
+now. Flip when Phase D lands. Track the dependency: the same
+`bigint-buffer` chain is the load-bearing reason for ADR-087 Phase C/D's
+existence; one ADR drives the other.
+
+This means ADR-115 Stage 3 splits into:
+
+- **Stage 3a (this session)**: ESLint hardening — install eslint v8 +
+  `@typescript-eslint`, add `lint` scripts to mcp-server / indexer /
+  x402-relay, flip `@typescript-eslint/no-explicit-any` to `"error"`,
+  triage the ~25 existing `as any` / `: any` violations.
+- **Stage 3b (post-Phase-D)**: npm audit blocking. Drop
+  `continue-on-error: true` from the existing `npm audit (high)` step.
+
+## Decision 6 — ESLint Stage 3a scope split
+
+**Observation**: Counting `no-explicit-any` violations under `src/**/*.ts`
+(production paths, excluding tests):
+
+```
+mcp-server:    20
+src/indexer:   10
+src/x402-relay: 0
+total:         30
+```
+
+The ADR-115 Stage 3 spec assumed "~7 known Kit v1↔v2 shim locations".
+Reality is ~4x bigger and spans more than just Kit shims — `Action<any,
+any>[]` heterogeneous-collection patterns, `_ctx: any` adapter shapes,
+`status: any` Anchor-enum decoders in `handlers/formatters.ts`, etc.
+Including test files would push the count to 71 in mcp-server alone.
+
+Each violation needs a per-site judgment: fix with a proper type
+(usually `unknown`), replace with `Record<string, unknown>`, accept
+with `// eslint-disable-next-line @typescript-eslint/no-explicit-any`
++ a ticket reference, or refactor. That's a real triage pass — not a
+mechanical sed.
+
+**Choice**: split Stage 3a into two sub-stages.
+
+- **Stage 3a-1 (this session)** — lint infrastructure. Install eslint
+  v8 + `@typescript-eslint` plugins at workspace root devDeps. Add a
+  `lint` script to each of the three packages. Add a CI step that
+  runs eslint at the *current* "warn" level (no rule flip), with
+  `continue-on-error: true` so reviewers see what would block when the
+  rule does flip but PRs are not gated on it yet. This puts the
+  scaffold in place so the next session can do the triage without
+  having to set up eslint from scratch.
+- **Stage 3a-2 (next deliberate session)** — flip
+  `no-explicit-any` to `"error"` across mcp-server / indexer /
+  x402-relay, triage the 30 production-path violations, drop
+  `continue-on-error: true` from the lint step. Out of scope for this
+  autonomous batch because doing 30 sites well takes more careful
+  reading than a hygiene-cleanup pace allows.
+
+Same reasoning that kept ADR-116 out of today's session: doing it
+half-right (mechanical disable-comments everywhere) is worse than
+parking it until there's room for the triage.
+
+## Outcome — Stage 3a-1 shipped
+
+- Installed `eslint@8.57.1` + `@typescript-eslint/parser@7.x` + `@typescript-eslint/eslint-plugin@7.x` at workspace root devDeps.
+- Added `lint` script to each of the three packages (mcp-server, src/indexer, src/x402-relay).
+- Added test-files override to indexer + x402-relay `.eslintrc.json` (turn off `no-console` and `no-var-requires` for tests).
+- Five pre-existing `eslint:recommended` errors hand-fixed with `eslint-disable-next-line` + per-line rationale: two `better-sqlite3` dynamic requires, the metrics-server Prometheus banner, the indexer backfill `while (true)` paginate loop. None of these are code smells — they're deliberate idioms.
+- Three CI steps added (mcp-server / indexer / x402-relay), all `continue-on-error: true`.
+- Local exit codes: `npm run lint --workspace=...` → 0 in all three.
+- Test sanity: indexer 134/134, x402-relay 73/73 still pass.
+
+The Stage 3a-2 triage of 30 production-path `no-explicit-any` violations is the explicit next ticket, captured in ADR-115.
+
+---
+
+## Decision 7 — node_modules state vs CI-reported flakes
+
+**Observation**: `npm test --workspace=src/indexer` and
+`--workspace=src/x402-relay` were reporting partial test failures
+(50/58 and 34/73 pass) — but only locally. The failure mode was
+`Cannot find module 'array-flatten'` from a stale Express install in
+`src/indexer/node_modules/express`. Running `npm install` at workspace
+root rehoisted the missing transitive dep and both suites came clean
+(134/134 and 73/73). This was already true before my Stage 2 work
+(verified by stashing and re-running).
+
+**Choice**: no fix needed — CI runs `npm ci` from a clean checkout, so
+the broken local state never materialises there. Logged here so a
+future session that sees a similar test-failure pattern reaches for
+`npm install` before reverting code changes.

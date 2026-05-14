@@ -154,11 +154,31 @@ jobs:
       - name: MCP transport auth gate (ADR-083)
         run: ./scripts/check-mcp-transport-auth.sh
 
-      # Finding #22: npm audit at `high` severity. Runs advisory-only for
-      # the same reason cargo-audit does — a newly disclosed issue should
-      # be visible without torpedoing unrelated PRs. Workspace-aware.
+      # ADR-115 Stage 3b (pending): npm audit at `high` severity. Runs
+      # advisory-only until ADR-087 Phase C+D eliminates the bigint-buffer
+      # CVE chain (currently 4 high-severity vulnerabilities pull through
+      # the workspace-root `@solana/spl-token` dev dep). Flipping to
+      # blocking before Phase D would fail every PR.
       - name: npm audit (high)
         run: npm audit --audit-level=high --workspaces --include-workspace-root
+        continue-on-error: true
+
+      # ADR-115 Stage 3a-1: ESLint runs on `src/**/*.ts` for
+      # mcp-server / indexer / x402-relay. Configured at the current
+      # `no-explicit-any: "warn"` level — Stage 3a-2 (a deliberate
+      # session) flips it to "error" after triaging the ~30 production-
+      # path violations. `continue-on-error: true` until then so PRs
+      # see what the future block would report but are not gated yet.
+      - name: ESLint (mcp-server)
+        run: npm run lint --workspace=@agenomics/mcp-server
+        continue-on-error: true
+
+      - name: ESLint (indexer)
+        run: npm run lint --workspace=@agenomics/indexer
+        continue-on-error: true
+
+      - name: ESLint (x402-relay)
+        run: npm run lint --workspace=@agenomics/x402-relay
         continue-on-error: true
 
   # Finding #22: the indexer lives in `src/indexer/` with its own package.json

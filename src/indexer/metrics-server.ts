@@ -276,6 +276,7 @@ export function startMetricsServer(port: number = 9100, pgPool?: Pool): http.Ser
   });
 
   server.listen(port, host, () => {
+    // eslint-disable-next-line no-console -- startup-only banner on stdout; matches the indexer's other init logs and is below the structured-logger boundary.
     console.log(`[metrics] Prometheus scrape endpoint on http://${host}:${port}/metrics`);
   });
 

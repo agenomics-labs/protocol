@@ -1913,6 +1913,7 @@ async function backfillProgram(
   let before: Signature | undefined;
 
   try {
+    // eslint-disable-next-line no-constant-condition -- backfill paginates until the RPC returns an empty page; the loop body's early `break` is the exit condition.
     while (true) {
       const page = await rpc
         .getSignaturesForAddress(programId, {
