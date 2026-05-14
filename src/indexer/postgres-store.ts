@@ -180,6 +180,8 @@ export const INDEXER_PG_TABLES: readonly string[] = [
   "vault_identity_history",
   "manifest_history",
   "protocol_config_history",
+  // ADR-138 — execution provenance attestations. See migration 003.
+  "execution_attestations",
 ] as const;
 
 const INDEXER_PG_TABLE_SET: ReadonlySet<string> = new Set(INDEXER_PG_TABLES);
@@ -268,6 +270,50 @@ export interface ProtocolConfigHistoryRecord {
 }
 
 /**
+ * ADR-138 — `ExecutionAttested` event projection. One row per
+ * value-moving or authority-changing vault instruction. Mirrors the
+ * SQLite schema in `index.ts::initDb` and the migration in
+ * `003-adr-138-execution-attestations.sql`.
+ *
+ * Field shapes:
+ *   * `toolId` / `manifestHash` — 64-char hex strings (32-byte payload
+ *     hex-encoded). The zero-hash sentinel is a string of 64 ASCII '0'
+ *     bytes, NOT an empty string.
+ *   * `amount`                  — u64-as-decimal-string per
+ *     `coerceU64String` semantics. '0' for non-value actions.
+ *   * `delegationGrant` / `mint` / `recipient` — base58 strings or null.
+ *   * `slot` / `eventTimestamp` — bigints permitted for out-of-safe-
+ *     range round-trip.
+ *   * `instructionIndex`        — per-tx event ordinal (0-based). Used
+ *     with `txSignature` for idempotency.
+ */
+export interface ExecutionAttestationRecord {
+  txSignature: string;
+  instructionIndex: number;
+  vault: string;
+  agentIdentity: string;
+  authority: string;
+  actionKind:
+    | "Transfer"
+    | "TokenTransfer"
+    | "PolicyUpdate"
+    | "AllowlistManage"
+    | "IdentityRotation"
+    | "PauseToggle"
+    | "GrantTransfer"
+    | "GrantTokenTransfer";
+  toolId: string;
+  manifestHash: string;
+  policyVersion: number;
+  delegationGrant: string | null;
+  amount: string;
+  mint: string | null;
+  recipient: string | null;
+  slot: number;
+  eventTimestamp: number | bigint;
+}
+
+/**
  * Phase 1 write-path API surface. Every method mirrors a SQLite write
  * site in `src/indexer/index.ts`. All methods are async; SQLite remains
  * the sync authoritative store. All methods MUST swallow their own
@@ -300,6 +346,8 @@ export interface PostgresStore {
   insertVaultIdentityHistory(rec: VaultIdentityHistoryRecord): Promise<void>;
   insertManifestHistory(rec: ManifestHistoryRecord): Promise<void>;
   insertProtocolConfigHistory(rec: ProtocolConfigHistoryRecord): Promise<void>;
+  /** ADR-138 — append an execution-provenance attestation row. */
+  insertExecutionAttestation(rec: ExecutionAttestationRecord): Promise<void>;
   /** Best-effort agent projection mirror. See dual-write notes in index.ts. */
   upsertAgent(authority: string, name: string | null, category: string | null): Promise<void>;
   updateAgentName(authority: string, name: string | null): Promise<void>;
@@ -362,6 +410,7 @@ export class DisabledPostgresStore implements PostgresStore {
   async insertVaultIdentityHistory(_rec: VaultIdentityHistoryRecord): Promise<void> {}
   async insertManifestHistory(_rec: ManifestHistoryRecord): Promise<void> {}
   async insertProtocolConfigHistory(_rec: ProtocolConfigHistoryRecord): Promise<void> {}
+  async insertExecutionAttestation(_rec: ExecutionAttestationRecord): Promise<void> {}
   async upsertAgent(_authority: string, _name: string | null, _category: string | null): Promise<void> {}
   async updateAgentName(_authority: string, _name: string | null): Promise<void> {}
   async updateAgentReputation(_authority: string, _score: number, _taskCompletedDelta: number): Promise<void> {}
@@ -597,6 +646,43 @@ export class LivePostgresStore implements PostgresStore {
           coerceBigIntParam(rec.reputationDeltaExpiryUndelivered),
           rec.slot,
           rec.signature,
+        ],
+      );
+    });
+  }
+
+  /**
+   * ADR-138 — `ExecutionAttested` projection. Idempotent on
+   * `(tx_signature, instruction_index)`; a backfill replay or websocket
+   * reconnect that re-delivers the same event is a no-op.
+   */
+  async insertExecutionAttestation(rec: ExecutionAttestationRecord): Promise<void> {
+    await this.runShadow("insertExecutionAttestation", async () => {
+      await this.pool.query(
+        `INSERT INTO execution_attestations
+           (tx_signature, instruction_index, vault, agent_identity, authority,
+            action_kind, tool_id, manifest_hash, policy_version,
+            delegation_grant, amount, mint, recipient,
+            slot, event_timestamp, ingested_at, decoded_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+                 $14, $15, now(), now())
+         ON CONFLICT (tx_signature, instruction_index) DO NOTHING`,
+        [
+          rec.txSignature,
+          rec.instructionIndex,
+          rec.vault,
+          rec.agentIdentity,
+          rec.authority,
+          rec.actionKind,
+          rec.toolId,
+          rec.manifestHash,
+          rec.policyVersion,
+          rec.delegationGrant,
+          rec.amount,
+          rec.mint,
+          rec.recipient,
+          rec.slot,
+          coerceBigIntParam(rec.eventTimestamp),
         ],
       );
     });

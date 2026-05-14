@@ -460,7 +460,7 @@ describe("OFF-213 — setPostgresStoreForTest NODE_ENV gate", () => {
 // ---------------------------------------------------------------------------
 
 describe("OFF-214 — INDEXER_PG_TABLES is single source of truth", () => {
-  it("contains the seven Phase 1 tables in migration order", () => {
+  it("contains the eight Phase-1+ADR-138 tables in migration order", () => {
     assert.deepEqual(
       [...INDEXER_PG_TABLES],
       [
@@ -471,6 +471,8 @@ describe("OFF-214 — INDEXER_PG_TABLES is single source of truth", () => {
         "vault_identity_history",
         "manifest_history",
         "protocol_config_history",
+        // ADR-138: execution provenance attestations (migration 003).
+        "execution_attestations",
       ],
     );
   });
