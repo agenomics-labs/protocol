@@ -1,10 +1,10 @@
 # ADR-118: Indexer concurrency hardening (WAL fullsync + write mutex + SIGTERM)
 
 ## Status
-Proposed
+Accepted (2026-05-13) — see commit landing this change in `src/indexer/`.
 
 ## Date
-2026-04-24
+2026-04-24 (Proposed) → 2026-05-13 (Accepted)
 
 ## Context
 
