@@ -47,17 +47,21 @@
   "scripts": {
     "build": "tsc",
     "prepare": "tsc",
-    "test": "node --import tsx --test test/resolver.test.ts test/schema.test.ts test/merge.test.ts test/cache.test.ts"
+    "test": "node --import tsx --test test/resolver.test.ts test/schema.test.ts test/merge.test.ts test/cache.test.ts test/agenomics-reputation.test.ts"
   },
   "dependencies": {
     "@agenomics/action-runtime": "*",
     "zod": "^3.23.8"
   },
   "peerDependencies": {
+    "@agenomics/reputation-attestor": "*",
     "@solana/kit": "^6.8.0",
     "ioredis": "^5.10.1"
   },
   "peerDependenciesMeta": {
+    "@agenomics/reputation-attestor": {
+      "optional": true
+    },
     "ioredis": {
       "optional": true
     }

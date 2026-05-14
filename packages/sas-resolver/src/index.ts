@@ -76,3 +76,14 @@ export type {
   ManifestLike,
   Result,
 } from "./types.js";
+
+// ADR-139 — portable reputation attestation helper. Uses the existing
+// cache primitive (`CacheBackend`) and lazy-loads
+// `@agenomics/reputation-attestor` so consumers that never call this
+// helper do not pay the import cost. See
+// `src/agenomics-reputation.ts` for the contract.
+export {
+  resolveAgenomicsReputation,
+  type AgenomicsReputationResolved,
+  type ResolveAgenomicsReputationOptions,
+} from "./agenomics-reputation.js";
