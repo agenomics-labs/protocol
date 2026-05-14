@@ -194,13 +194,24 @@ pub mod agent_vault {
     /// Executes a SOL transfer from the vault to a recipient.
     /// Enforces spending limits, rate limiting, daily caps, and the Registry
     /// suspension gate (ADR-095).
+    ///
+    /// ADR-138: `tool_id_hash` is a 32-byte SHA-256 over the MCP tool
+    /// identifier that triggered the action (compute via
+    /// `sha256("agenomics.tool." + name)`). The all-zeros sentinel is
+    /// accepted for backwards-compatible callers; indexers MAY surface a
+    /// `tool_id_zero_count` metric so operators can track migration
+    /// progress. The hash is emitted on `ExecutionAttested` so a
+    /// downstream auditor can replay (agent_identity, manifest_hash,
+    /// policy_version, tool_id, slot) into the canonical provenance
+    /// record.
     pub fn execute_transfer(
         ctx: Context<ExecuteTransfer>,
         amount_lamports: u64,
+        tool_id_hash: [u8; 32],
     ) -> Result<()> {
         // ADR-095: gate on Registry suspension before any transfer logic.
         require_not_suspended(&ctx.accounts.agent_profile)?;
-        instructions::execute_transfer(ctx, amount_lamports)
+        instructions::execute_transfer(ctx, amount_lamports, tool_id_hash)
     }
 
     // ADR-050: execute_program_call removed — without vault PDA signing (ADR-038),
@@ -212,13 +223,18 @@ pub mod agent_vault {
     /// Enforces token allowlist, rate limiting, the vault's pause state, and the
     /// Registry suspension gate (ADR-095).
     /// The vault PDA signs the transfer via CPI.
+    ///
+    /// ADR-138: `tool_id_hash` is a 32-byte SHA-256 over the MCP tool
+    /// identifier that triggered the action. See `execute_transfer` for
+    /// the convention. The hash is emitted on `ExecutionAttested`.
     pub fn execute_token_transfer(
         ctx: Context<ExecuteTokenTransfer>,
         amount: u64,
+        tool_id_hash: [u8; 32],
     ) -> Result<()> {
         // ADR-095: gate on Registry suspension before any transfer logic.
         require_not_suspended(&ctx.accounts.agent_profile)?;
-        instructions::execute_token_transfer(ctx, amount)
+        instructions::execute_token_transfer(ctx, amount, tool_id_hash)
     }
 
     /// Pauses the vault, preventing any transfers or program calls.
@@ -1065,5 +1081,145 @@ mod tests {
             &VAULT_IDENTITY_BIND_DOMAIN[..26],
             b"AEP_VAULT_IDENTITY_BIND_V1"
         );
+    }
+
+    // ================================================================
+    // ADR-138: Execution provenance attestations
+    //
+    // Pure logic/serialization tests for the new event schema. The
+    // end-to-end emit assertions are covered by the Anchor integration
+    // tests in `tests/execution-provenance.ts`.
+    // ================================================================
+
+    use crate::events::{ActionKind, ExecutionAttested};
+    use crate::instructions::{manifest_hash_from_profile, TOOL_ID_ZERO};
+    use anchor_lang::AnchorSerialize;
+
+    /// ADR-138: `ActionKind` tag values are positional. Reordering the
+    /// enum re-encodes every previously-emitted event under a different
+    /// tag and silently mis-classifies historical data on the indexer.
+    /// Pin the declaration order here so the test fails loudly before a
+    /// merge can land a reordering.
+    #[test]
+    fn adr_138_action_kind_tag_values_pinned() {
+        // Serialize each variant and pull out the 1-byte enum tag.
+        let pairs: &[(ActionKind, u8)] = &[
+            (ActionKind::Transfer, 0),
+            (ActionKind::TokenTransfer, 1),
+            (ActionKind::PolicyUpdate, 2),
+            (ActionKind::AllowlistManage, 3),
+            (ActionKind::IdentityRotation, 4),
+            (ActionKind::PauseToggle, 5),
+            (ActionKind::GrantTransfer, 6),
+            (ActionKind::GrantTokenTransfer, 7),
+        ];
+        for (variant, expected_tag) in pairs {
+            let mut buf = Vec::new();
+            variant.serialize(&mut buf).expect("serialize must succeed");
+            assert_eq!(
+                buf.len(),
+                1,
+                "ActionKind must serialize to a single positional byte"
+            );
+            assert_eq!(
+                buf[0], *expected_tag,
+                "{:?} should serialize to tag {}",
+                variant, expected_tag,
+            );
+        }
+    }
+
+    /// ADR-138: the `ExecutionAttested` event must round-trip through
+    /// borsh ser/de losslessly. This is a structural smoke test — the
+    /// indexer decoder relies on exact field ordering, so a reorder
+    /// would silently mis-decode every attestation row.
+    #[test]
+    fn adr_138_execution_attested_round_trips() {
+        use anchor_lang::AnchorDeserialize;
+        let original = ExecutionAttested {
+            vault: sample_pubkey(),
+            agent_identity: sample_pubkey(),
+            authority: sample_pubkey(),
+            action_kind: ActionKind::TokenTransfer,
+            tool_id: [7u8; 32],
+            manifest_hash: [9u8; 32],
+            policy_version: 42,
+            delegation_grant: None,
+            amount: 1_000_000,
+            mint: Some(sample_pubkey()),
+            recipient: Some(sample_pubkey()),
+            slot: 1_234_567,
+            timestamp: 1_700_000_000,
+        };
+        let mut buf = Vec::new();
+        original.serialize(&mut buf).expect("serialize");
+        let decoded: ExecutionAttested = AnchorDeserialize::try_from_slice(&buf)
+            .expect("deserialize");
+        assert_eq!(decoded.vault, original.vault);
+        assert_eq!(decoded.agent_identity, original.agent_identity);
+        assert_eq!(decoded.authority, original.authority);
+        assert_eq!(decoded.action_kind, original.action_kind);
+        assert_eq!(decoded.tool_id, original.tool_id);
+        assert_eq!(decoded.manifest_hash, original.manifest_hash);
+        assert_eq!(decoded.policy_version, original.policy_version);
+        assert_eq!(decoded.delegation_grant, original.delegation_grant);
+        assert_eq!(decoded.amount, original.amount);
+        assert_eq!(decoded.mint, original.mint);
+        assert_eq!(decoded.recipient, original.recipient);
+        assert_eq!(decoded.slot, original.slot);
+        assert_eq!(decoded.timestamp, original.timestamp);
+    }
+
+    /// ADR-138: the all-zeros `TOOL_ID_ZERO` sentinel is the documented
+    /// migration path for callers that haven't yet adopted the
+    /// tool-id-hash convention. Pin its value so a refactor cannot
+    /// silently change the sentinel.
+    #[test]
+    fn adr_138_tool_id_zero_sentinel_pinned() {
+        assert_eq!(TOOL_ID_ZERO, [0u8; 32]);
+    }
+
+    /// ADR-138: `manifest_hash_from_profile` returns the profile's
+    /// `manifest_hash` field verbatim, including the all-zeros sentinel
+    /// for pre-ADR-060 profiles. Pinned so a future refactor (e.g.
+    /// substituting the manifest_signature) cannot silently shift the
+    /// binding surface.
+    #[test]
+    fn adr_138_manifest_hash_passthrough() {
+        use agent_registry::state::{AgentProfile, AgentStatus, PricingModel, ReputationStake};
+        let mut profile = AgentProfile {
+            authority: Pubkey::default(),
+            name: String::new(),
+            description: String::new(),
+            category: String::new(),
+            capabilities: vec![],
+            pricing_model: PricingModel::PerTask,
+            pricing_amount: 0,
+            accepted_tokens: vec![],
+            vault_address: Pubkey::default(),
+            status: AgentStatus::Active,
+            reputation_score: 0,
+            __padding_aud007: [0u8; 17],
+            created_at: 0,
+            updated_at: 0,
+            reputation_stake: ReputationStake { staked_amount: 0, slash_count: 0 },
+            bump: 0,
+            manifest_cid: [0u8; 64],
+            manifest_hash: [0u8; 32],
+            manifest_signature: [0u8; 64],
+            manifest_version: 0,
+            version: 0,
+            registration_nonce: 0,
+            cleared_count: 0,
+            cdp_wallet: None,
+        };
+        // Pre-manifest profile yields the all-zeros sentinel.
+        assert_eq!(manifest_hash_from_profile(&profile), [0u8; 32]);
+
+        // Once a manifest is registered, the helper returns it
+        // byte-for-byte (no hashing, no transformation).
+        let expected = [0xABu8; 32];
+        profile.manifest_hash = expected;
+        assert_eq!(manifest_hash_from_profile(&profile), expected);
     }
 }
