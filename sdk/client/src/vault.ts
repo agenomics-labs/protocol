@@ -80,6 +80,35 @@ export function toolIdHash(toolName: string): Uint8Array {
   return new Uint8Array(digest.digest());
 }
 
+/**
+ * ADR-111: On-chain seed for the delegation grant PDA. The full seed
+ * tuple is `[b"delegation", vault, grantee, [nonce]]` — encoding the
+ * (vault, grantee, nonce) triple so a single vault/grantee pair can
+ * hold multiple historical grants.
+ */
+const DELEGATION_SEED = "delegation";
+
+/**
+ * ADR-111: Grant action bitflags. MUST stay in lockstep with
+ * `programs/agent-vault/src/state.rs::grant_actions`.
+ */
+export const GRANT_ACTIONS = {
+  /** Allow `execute_grant_transfer` (SOL transfers via the grant). */
+  EXECUTE_TRANSFER: 0b0000_0001,
+  /** Allow `execute_grant_token_transfer` (SPL transfers via the grant). */
+  EXECUTE_TOKEN_TRANSFER: 0b0000_0010,
+  /** Read-only sentinel: a grant with `allowed_actions == 0` authorizes no transfers. */
+  READ_ONLY: 0b0000_0000,
+} as const;
+
+/** ADR-111: Per-mint spend cap shape on a `DelegationGrant`. */
+export interface GrantTokenCapInput {
+  /** The SPL mint this cap covers. */
+  mint: Address;
+  /** Lifetime cap in the mint's base units. */
+  cap: bigint;
+}
+
 /** Solana Ed25519 native precompile program address (immutable). */
 export const ED25519_PROGRAM_ADDRESS: Address =
   "Ed25519SigVerify111111111111111111111111111" as Address;
@@ -291,6 +320,42 @@ export class AgentVaultClient {
     return pda;
   }
 
+  /**
+   * ADR-111: Derive the `DelegationGrant` PDA for a (vault, grantee, nonce)
+   * triple.
+   *
+   * Seeds: `[ "delegation", vault, grantee, [nonce] ]`
+   *
+   * Matches the on-chain `seeds = [b"delegation", vault.key().as_ref(),
+   * grantee.key().as_ref(), &[nonce]]` declaration in
+   * `programs/agent-vault/src/contexts.rs`. The `nonce` is the third
+   * seed so a single vault/grantee pair can hold multiple historical
+   * grants without PDA collision (e.g. an already-revoked nonce=0 grant
+   * alongside a fresh nonce=1 grant).
+   */
+  async delegationGrantPda(
+    vault: Address,
+    grantee: Address,
+    nonce: number,
+  ): Promise<Address> {
+    if (!Number.isInteger(nonce) || nonce < 0 || nonce > 0xff) {
+      throw new Error(
+        `delegationGrantPda: nonce must be a u8 (0-255), got ${nonce}`,
+      );
+    }
+    const addressEncoder = getAddressEncoder();
+    const [pda] = await getProgramDerivedAddress({
+      programAddress: this.programIdAsAddress(),
+      seeds: [
+        DELEGATION_SEED,
+        addressEncoder.encode(vault),
+        addressEncoder.encode(grantee),
+        new Uint8Array([nonce]),
+      ],
+    });
+    return pda;
+  }
+
   // -------------------------------------------------------------------------
   // Account fetches
   // -------------------------------------------------------------------------
@@ -317,6 +382,46 @@ export class AgentVaultClient {
     // is Anchor's typed `Vault` projection — no `Record<string, unknown>`
     // pass-through.
     return this.program.account.vault.fetch(pda);
+  }
+
+  /**
+   * ADR-111: Fetch a `DelegationGrant` account. Returns the Anchor-typed
+   * projection (camelCase fields, BN for u64/i64, PublicKey for pubkey).
+   *
+   * @throws if the account does not exist (Anchor surfaces this as
+   * `AccountNotFoundError`); callers MUST handle the not-found case
+   * because a grant can be revoked-and-not-yet-closed (still on-chain)
+   * but a never-issued (vault, grantee, nonce) tuple has no account.
+   */
+  async fetchDelegationGrant(
+    vault: Address,
+    grantee: Address,
+    nonce: number,
+  ) {
+    const pdaAddr = await this.delegationGrantPda(vault, grantee, nonce);
+    const pda = new PublicKey(pdaAddr as string);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (this.program.account as any).delegationGrant.fetch(pda);
+  }
+
+  /**
+   * ADR-111: Enumerate every `DelegationGrant` PDA whose `vault` field
+   * matches the supplied vault. Uses Anchor's `memcmp` filter against the
+   * `vault` field's stored byte offset.
+   *
+   * Field offset: 8-byte Anchor discriminator + 0 (vault is the first
+   * field on `DelegationGrant`) = offset 8.
+   */
+  async fetchAllDelegationGrantsForVault(vault: Address) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (this.program.account as any).delegationGrant.all([
+      {
+        memcmp: {
+          offset: 8,
+          bytes: vault as string,
+        },
+      },
+    ]);
   }
 
   // -------------------------------------------------------------------------

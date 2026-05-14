@@ -59,7 +59,9 @@ export {
   ED25519_PROGRAM_ADDRESS,
   vaultIdentityBindMessage,
   buildVaultIdentityBindInstruction,
+  GRANT_ACTIONS,
   type Ed25519VerifyInstruction,
+  type GrantTokenCapInput,
 } from "./vault.js";
 export { SettlementClient } from "./settlement.js";
 export {

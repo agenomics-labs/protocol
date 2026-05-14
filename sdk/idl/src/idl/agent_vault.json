@@ -124,6 +124,312 @@
       ]
     },
     {
+      "name": "create_delegation_grant",
+      "docs": [
+        "ADR-111: Issue a delegation grant binding a sub-authority (`grantee`)",
+        "to a bounded, auditable, time-limited slice of the vault's spending",
+        "authority. Only the vault authority may call. The grant scope is",
+        "capped by `allowed_actions` (bitflags), per-mint and SOL spend caps,",
+        "an optional `allowed_recipients` list, and an `expires_at` window.",
+        "See `instructions::create_delegation_grant` for the full gating",
+        "list and ADR-111 \u00a7\"Enforcement\" for the rationale."
+      ],
+      "discriminator": [
+        211,
+        124,
+        131,
+        238,
+        184,
+        82,
+        196,
+        198
+      ],
+      "accounts": [
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "authority"
+              }
+            ]
+          },
+          "relations": [
+            "authority"
+          ]
+        },
+        {
+          "name": "agent_profile",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  45,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.profile_nonce",
+                "account": "Vault"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                11,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0
+              ]
+            }
+          }
+        },
+        {
+          "name": "grant",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              },
+              {
+                "kind": "arg",
+                "path": "grantee"
+              },
+              {
+                "kind": "arg",
+                "path": "nonce"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "grantee",
+          "type": "pubkey"
+        },
+        {
+          "name": "nonce",
+          "type": "u8"
+        },
+        {
+          "name": "allowed_actions",
+          "type": "u8"
+        },
+        {
+          "name": "spend_cap_lamports",
+          "type": "u64"
+        },
+        {
+          "name": "token_caps",
+          "type": {
+            "vec": {
+              "defined": {
+                "name": "GrantTokenCap"
+              }
+            }
+          }
+        },
+        {
+          "name": "allowed_recipients",
+          "type": {
+            "vec": "pubkey"
+          }
+        },
+        {
+          "name": "expires_at",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "execute_grant_token_transfer",
+      "docs": [
+        "ADR-111: SPL transfer signed by a delegation grantee. Same dual-",
+        "gating shape as `execute_grant_transfer` but against per-mint caps",
+        "(`GrantTokenCap`) and the vault's `token_spend_records`."
+      ],
+      "discriminator": [
+        105,
+        61,
+        138,
+        215,
+        21,
+        110,
+        194,
+        24
+      ],
+      "accounts": [
+        {
+          "name": "vault",
+          "writable": true
+        },
+        {
+          "name": "grant",
+          "writable": true
+        },
+        {
+          "name": "grantee",
+          "signer": true
+        },
+        {
+          "name": "agent_profile"
+        },
+        {
+          "name": "vault_token_account",
+          "writable": true
+        },
+        {
+          "name": "recipient_token_account",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "execute_grant_transfer",
+      "docs": [
+        "ADR-111: SOL transfer signed by a delegation grantee. Applies BOTH",
+        "the grant's bounded scope (spend cap, recipient set, expiry, action",
+        "bit) AND the parent vault's policy (per-tx limit, daily limit, rate",
+        "limit, pause flag, suspension gate). Grant caps are ADDITIONAL to",
+        "vault caps, never a replacement \u2014 ADR-111 \u00a7\"Enforcement\" pins this."
+      ],
+      "discriminator": [
+        166,
+        95,
+        191,
+        75,
+        67,
+        239,
+        18,
+        27
+      ],
+      "accounts": [
+        {
+          "name": "vault",
+          "writable": true
+        },
+        {
+          "name": "grant",
+          "writable": true
+        },
+        {
+          "name": "grantee",
+          "signer": true
+        },
+        {
+          "name": "agent_profile"
+        },
+        {
+          "name": "recipient",
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount_lamports",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "execute_token_transfer",
       "docs": [
         "Executes an SPL token transfer from the vault's token account to a recipient.",
@@ -179,7 +485,7 @@
         {
           "name": "authority",
           "docs": [
-            "The vault authority — used as a canonical PDA seed (ADR-093).",
+            "The vault authority \u2014 used as a canonical PDA seed (ADR-093).",
             "Not required to be a signer; the `agent` field carries the signature."
           ],
           "relations": [
@@ -278,13 +584,13 @@
             "",
             "Constraints:",
             "- Mint must match `vault_token_account.mint` (already-mitigated per",
-            "DEEP-AUDIT-2026-04-22 Audit 1 finding SEC-6 — retained as-is).",
+            "DEEP-AUDIT-2026-04-22 Audit 1 finding SEC-6 \u2014 retained as-is).",
             "- ADR-072 (SEC-6): The recipient account must NOT be the vault's own",
             "token account (the exact same account) AND its SPL owner must not",
             "be the vault PDA. This blocks a self-transfer loop that would",
             "otherwise let a griefer (or a compromised `agent_identity`) burn",
             "rate-limit slots and exhaust the hourly window during incident",
-            "response — every self-transfer is a no-op at the token-program",
+            "response \u2014 every self-transfer is a no-op at the token-program",
             "layer but still increments `txs_in_current_window`.",
             "",
             "Note: the recipient-mint match was already present pre-ADR-072; the",
@@ -334,7 +640,7 @@
         {
           "name": "vault",
           "docs": [
-            "The vault PDA — serves as both state account and SOL source.",
+            "The vault PDA \u2014 serves as both state account and SOL source.",
             "ADR-029: Removed vestigial vault_account field; the vault PDA itself",
             "holds SOL and is used directly for lamport transfers.",
             "",
@@ -374,7 +680,7 @@
         {
           "name": "authority",
           "docs": [
-            "The vault authority — used as a canonical PDA seed (ADR-093).",
+            "The vault authority \u2014 used as a canonical PDA seed (ADR-093).",
             "Not required to be a signer; the `agent` field carries the signature."
           ],
           "relations": [
@@ -496,7 +802,7 @@
         "ADR-095 / ADR-097 / AUD-008 (PR-J): `profile_nonce` is sourced from",
         "the authority's `OwnerNonce` PDA in the Registry program (passed as",
         "the `owner_nonce` account on the context). The account MUST already",
-        "exist — vault initialization requires prior `register_agent`. The",
+        "exist \u2014 vault initialization requires prior `register_agent`. The",
         "nonce is stored on-chain so `execute_transfer` /",
         "`execute_token_transfer` can re-derive the correct profile address",
         "for the suspension check without requiring the client to supply it.",
@@ -557,7 +863,7 @@
         {
           "name": "owner_nonce",
           "docs": [
-            "AUD-008 / ADR-097: MUST exist — vault initialization requires prior",
+            "AUD-008 / ADR-097: MUST exist \u2014 vault initialization requires prior",
             "agent registration. Sources `vault.profile_nonce` from the Registry's",
             "authoritative `OwnerNonce` account, eliminating the user-supplied",
             "scalar that could brick transfers.",
@@ -641,13 +947,13 @@
         {
           "name": "instructions_sysvar",
           "docs": [
-            "ADR-124 / AUD-116 (path-a): Instructions sysvar — read-only,",
+            "ADR-124 / AUD-116 (path-a): Instructions sysvar \u2014 read-only,",
             "address-pinned to the canonical sysvar pubkey. Used by",
             "`identity_bind::verify_ed25519_precompile` to introspect the paired",
             "`Ed25519Program::verify` instruction in the same transaction. The",
             "caller MUST include an ed25519-program sig-verify instruction",
             "covering `vault_identity_bind_message(authority, agent_identity)`",
-            "signed by `agent_identity` — this proves control of the candidate",
+            "signed by `agent_identity` \u2014 this proves control of the candidate",
             "hot key at init time, closing the AUD-116 init-mis-bind seam.",
             "canonical sysvar account satisfies the constraint."
           ],
@@ -891,11 +1197,48 @@
       "args": []
     },
     {
+      "name": "revoke_delegation_grant",
+      "docs": [
+        "ADR-111: Revoke a delegation grant. Either the original grantor",
+        "(vault authority at create time) or the grantee may call. Idempotent \u2014",
+        "revoking an already-revoked grant succeeds and re-emits the event so",
+        "indexers can detect the retry. Does NOT close the account; the",
+        "audit-trail invariant in ADR-111 \u00a7\"revoke_delegation\" requires the",
+        "row stays on-chain until the future `close_delegation_grant`",
+        "instruction archives expired+revoked rows \u2265 30 days old (ADR-111b)."
+      ],
+      "discriminator": [
+        1,
+        102,
+        119,
+        163,
+        49,
+        200,
+        130,
+        164
+      ],
+      "accounts": [
+        {
+          "name": "vault",
+          "writable": true
+        },
+        {
+          "name": "grant",
+          "writable": true
+        },
+        {
+          "name": "signer",
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "update_agent_identity",
       "docs": [
         "ADR-069 (SEC-2): Rotate `vault.agent_identity`.",
         "",
-        "`agent_identity` is a **hot key** — the off-chain agent runtime's",
+        "`agent_identity` is a **hot key** \u2014 the off-chain agent runtime's",
         "signing key, distinct from the human-custodied `authority`. It should",
         "be rotated on any compromise of the agent runtime or on a routine",
         "cadence. Only the vault `authority` (verified via `has_one` on the",
@@ -903,7 +1246,7 @@
         "",
         "Emits `AgentIdentityUpdated { vault, old_identity, new_identity }`.",
         "Does not touch balances, policies, daily-spend counters, or rate-limit",
-        "counters — rotation is a pure key-swap.",
+        "counters \u2014 rotation is a pure key-swap.",
         "",
         "AUD-200 / ADR-124 (cycle-3, symmetric closure of init): the rotation",
         "handler now requires the SAME Ed25519 proof-of-control pattern as",
@@ -959,13 +1302,13 @@
         {
           "name": "instructions_sysvar",
           "docs": [
-            "AUD-200 / ADR-124 (path-a, symmetric): Instructions sysvar — read-only,",
+            "AUD-200 / ADR-124 (path-a, symmetric): Instructions sysvar \u2014 read-only,",
             "address-pinned to the canonical sysvar pubkey. Used by",
             "`identity_bind::verify_ed25519_precompile` to introspect the paired",
             "`Ed25519Program::verify` instruction in the same transaction. The",
             "caller MUST include an ed25519-program sig-verify instruction",
             "covering `vault_identity_bind_message(authority, new_agent_identity)`",
-            "signed by `new_agent_identity` — this proves control of the candidate",
+            "signed by `new_agent_identity` \u2014 this proves control of the candidate",
             "hot key at rotation time, closing the AUD-200 mis-bind seam at",
             "rotation that mirrors AUD-116 at init.",
             "canonical sysvar account satisfies the constraint."
@@ -986,6 +1329,89 @@
               64
             ]
           }
+        }
+      ]
+    },
+    {
+      "name": "update_delegation_grant",
+      "docs": [
+        "ADR-111: Tighten the scope of an existing delegation grant. Vault",
+        "authority only. May lower spend caps, drop action bits, narrow the",
+        "recipient list, or shorten the expiry \u2014 never the inverse. See",
+        "`instructions::update_delegation_grant` for the invariant enforced."
+      ],
+      "discriminator": [
+        245,
+        164,
+        164,
+        2,
+        33,
+        174,
+        135,
+        174
+      ],
+      "accounts": [
+        {
+          "name": "vault",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "authority"
+              }
+            ]
+          },
+          "relations": [
+            "authority"
+          ]
+        },
+        {
+          "name": "grant",
+          "writable": true
+        },
+        {
+          "name": "authority",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "new_allowed_actions",
+          "type": "u8"
+        },
+        {
+          "name": "new_spend_cap_lamports",
+          "type": "u64"
+        },
+        {
+          "name": "new_token_caps",
+          "type": {
+            "vec": {
+              "defined": {
+                "name": "GrantTokenCap"
+              }
+            }
+          }
+        },
+        {
+          "name": "new_allowed_recipients",
+          "type": {
+            "vec": "pubkey"
+          }
+        },
+        {
+          "name": "new_expires_at",
+          "type": "i64"
         }
       ]
     },
@@ -1067,6 +1493,19 @@
       ]
     },
     {
+      "name": "DelegationGrant",
+      "discriminator": [
+        17,
+        243,
+        30,
+        117,
+        106,
+        128,
+        57,
+        128
+      ]
+    },
+    {
       "name": "OwnerNonce",
       "discriminator": [
         44,
@@ -1118,6 +1557,58 @@
         140,
         83,
         213
+      ]
+    },
+    {
+      "name": "DelegationGrantCreated",
+      "discriminator": [
+        55,
+        234,
+        145,
+        224,
+        215,
+        33,
+        218,
+        20
+      ]
+    },
+    {
+      "name": "DelegationGrantExecuted",
+      "discriminator": [
+        181,
+        136,
+        67,
+        74,
+        244,
+        231,
+        39,
+        249
+      ]
+    },
+    {
+      "name": "DelegationGrantRevoked",
+      "discriminator": [
+        89,
+        123,
+        66,
+        222,
+        213,
+        241,
+        78,
+        243
+      ]
+    },
+    {
+      "name": "DelegationGrantUpdated",
+      "discriminator": [
+        222,
+        62,
+        12,
+        201,
+        188,
+        160,
+        223,
+        199
       ]
     },
     {
@@ -1350,6 +1841,61 @@
       "code": 6024,
       "name": "AgentIdentityBindSignatureMismatch",
       "msg": "The paired Ed25519 instruction does not match the supplied agent_identity / agent_identity_signature / vault_identity_bind_message (ADR-124)"
+    },
+    {
+      "code": 6025,
+      "name": "GrantRevoked",
+      "msg": "Delegation grant has been revoked"
+    },
+    {
+      "code": 6026,
+      "name": "GrantExpired",
+      "msg": "Delegation grant has expired"
+    },
+    {
+      "code": 6027,
+      "name": "ActionNotAllowed",
+      "msg": "Action not permitted by delegation grant"
+    },
+    {
+      "code": 6028,
+      "name": "RecipientNotAllowed",
+      "msg": "Recipient not allowed by delegation grant"
+    },
+    {
+      "code": 6029,
+      "name": "GrantSpendCapExceeded",
+      "msg": "Delegation grant spend cap exceeded"
+    },
+    {
+      "code": 6030,
+      "name": "GrantNotForVault",
+      "msg": "Delegation grant does not belong to the supplied vault"
+    },
+    {
+      "code": 6031,
+      "name": "GrantUpdateCannotLoosen",
+      "msg": "Delegation grant updates may only tighten scope (cannot loosen)"
+    },
+    {
+      "code": 6032,
+      "name": "TooManyActiveGrants",
+      "msg": "Vault already holds the maximum number of active delegation grants"
+    },
+    {
+      "code": 6033,
+      "name": "InvalidGrantParameters",
+      "msg": "Invalid delegation grant parameters"
+    },
+    {
+      "code": 6034,
+      "name": "GrantHasNoLamportCap",
+      "msg": "Delegation grant has no SOL spend authority"
+    },
+    {
+      "code": 6035,
+      "name": "GrantTokenNotConfigured",
+      "msg": "Delegation grant has no spend authority for this token mint"
     }
   ],
   "types": [
@@ -1397,7 +1943,7 @@
         "AUD-007 (PR-Q): the legacy `total_tasks_completed: u64`, `total_earnings: u64`,",
         "and `avg_rating: u8` fields were removed. PR-G (AUD-001/002) had already",
         "deleted the only writer (`update_reputation`), so these fields had become",
-        "permanently zero — misleading consumers that they represented real telemetry.",
+        "permanently zero \u2014 misleading consumers that they represented real telemetry.",
         "Because the fields are NOT contiguous at the end of the struct (they sit",
         "between `reputation_score` and `created_at`), a clean removal would shift",
         "every subsequent field's serialization offset and silently corrupt every",
@@ -1411,14 +1957,14 @@
         "ADR-060 adds four manifest fields that point to an off-chain capability",
         "manifest (IPFS CIDv1 or Arweave tx ID). The on-chain fields are the",
         "integrity commitment; the manifest body is off-chain. M5 resolution:",
-        "`manifest_cid` is `[u8; 64]` to fit CIDv1 string encodings (≤ ~60 chars)",
+        "`manifest_cid` is `[u8; 64]` to fit CIDv1 string encodings (\u2264 ~60 chars)",
         "or Arweave 43-char base64url tx IDs with headroom. Unused bytes are",
         "zero-padded; readers trim trailing 0x00.",
         "",
         "The existing `capabilities: Vec<String>` stays as a denormalized on-chain",
-        "search index (ADR-060 §1 \"Relationship\"); the manifest is the source of",
+        "search index (ADR-060 \u00a71 \"Relationship\"); the manifest is the source of",
         "truth. `update_manifest` re-validates the invariant",
-        "`capabilities ⊆ manifest.capabilities[].name`.",
+        "`capabilities \u2286 manifest.capabilities[].name`.",
         "",
         "ADR-097: `registration_nonce` is included in the PDA seed to prevent",
         "Sybil reuse via close-then-reopen. The nonce is taken from the owner's",
@@ -1650,6 +2196,221 @@
       }
     },
     {
+      "name": "DelegationGrant",
+      "docs": [
+        "ADR-111: First-class delegation grant \u2014 bounded sub-authority on a vault."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "grantor",
+            "type": "pubkey"
+          },
+          {
+            "name": "grantee",
+            "type": "pubkey"
+          },
+          {
+            "name": "allowed_actions",
+            "type": "u8"
+          },
+          {
+            "name": "spend_cap_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "spent_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "token_spend_caps",
+            "type": {
+              "vec": {
+                "defined": {
+                  "name": "GrantTokenCap"
+                }
+              }
+            }
+          },
+          {
+            "name": "allowed_recipients",
+            "type": {
+              "vec": "pubkey"
+            }
+          },
+          {
+            "name": "expires_at",
+            "type": "i64"
+          },
+          {
+            "name": "revoked",
+            "type": "bool"
+          },
+          {
+            "name": "created_at",
+            "type": "i64"
+          },
+          {
+            "name": "nonce",
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "DelegationGrantCreated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "grant",
+            "type": "pubkey"
+          },
+          {
+            "name": "grantor",
+            "type": "pubkey"
+          },
+          {
+            "name": "grantee",
+            "type": "pubkey"
+          },
+          {
+            "name": "allowed_actions",
+            "type": "u8"
+          },
+          {
+            "name": "spend_cap_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "expires_at",
+            "type": "i64"
+          },
+          {
+            "name": "nonce",
+            "type": "u8"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "DelegationGrantExecuted",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "grant",
+            "type": "pubkey"
+          },
+          {
+            "name": "grantee",
+            "type": "pubkey"
+          },
+          {
+            "name": "action_kind",
+            "type": "u8"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "recipient",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "spent_after",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "DelegationGrantRevoked",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "grant",
+            "type": "pubkey"
+          },
+          {
+            "name": "revoker",
+            "type": "pubkey"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "DelegationGrantUpdated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "grant",
+            "type": "pubkey"
+          },
+          {
+            "name": "new_allowed_actions",
+            "type": "u8"
+          },
+          {
+            "name": "new_spend_cap_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "new_expires_at",
+            "type": "i64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
       "name": "ExecutionAttested",
       "docs": [
         "ADR-138: cryptographically-verifiable provenance record emitted at",
@@ -1690,6 +2451,29 @@
           },
           { "name": "slot", "type": "u64" },
           { "name": "timestamp", "type": "i64" }
+        ]
+      }
+    },
+    {
+      "name": "GrantTokenCap",
+      "docs": [
+        "ADR-111: Per-mint spend cap for a delegation grant."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "cap",
+            "type": "u64"
+          },
+          {
+            "name": "spent",
+            "type": "u64"
+          }
         ]
       }
     },
@@ -2041,6 +2825,15 @@
               "policy version was in force when a value-moving action executed."
             ],
             "type": "u32"
+          },
+          {
+            "name": "active_grant_count",
+            "docs": [
+              "ADR-111: Count of `DelegationGrant` PDAs currently outstanding for",
+              "this vault. Bumped on `create_delegation_grant`, decremented on",
+              "`revoke_delegation_grant`."
+            ],
+            "type": "u8"
           }
         ]
       }
