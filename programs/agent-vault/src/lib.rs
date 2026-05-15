@@ -1315,7 +1315,7 @@ mod tests {
     // ADR-111: Delegation grant policy unit tests
     // ================================================================
 
-    use crate::state::{grant_actions, DelegationGrant, GrantTokenCap};
+    use crate::state::{grant_actions, DelegationGrant};
     use crate::instructions::validate_allowed_actions;
 
     fn empty_grant() -> DelegationGrant {

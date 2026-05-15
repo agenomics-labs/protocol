@@ -538,13 +538,17 @@ describe("ADR-129 Phase 2 — wire vs. on-chain reason-code mapping (AUD-109/113
 });
 
 describe("ADR-129 Phase 2 — additive-only surface (no new MCP action)", () => {
-  it("tool count is 29 (ADR-138 added query_execution_history)", () => {
+  it("tool count is 29 (ADR-138 added query_execution_history; ADR-111 MCP tools deferred)", () => {
     // Tool-count drift guard. ADR-129 Phase 1 (db52117) was 26→27
     // (find_similar_agents). Phase 2 added 0 (best-effort wires inside
     // approve_milestone / resolve_dispute / resolve_dispute_timeout).
     // Reflex Surface 2 (docs/aep-reflex-tech-spec.md §"Surface 2") added
     // pay_x402_service: 27→28.
     // ADR-138 (cycle-4) added query_execution_history: 28→29.
+    // ADR-111 (cycle-4) lands the on-chain delegation grants surface but
+    // intentionally defers the 7 matching MCP tools to a follow-up PR
+    // (the handler + action wrappers are not yet authored). Tool count
+    // stays at 29 until that follow-up lands.
     //
     // If a future PR bumps this count, the new contributor MUST update
     // both this assertion AND the count callouts in README.md +

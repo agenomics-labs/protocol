@@ -17,7 +17,7 @@ The entire protocol is accessible to any AI agent through a Model Context Protoc
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                     MCP Server (TypeScript)                  │
-│           36 tools · Input validation · Error handling        │
+│           29 tools · Input validation · Error handling        │
 ├──────────────┬──────────────────┬────────────────────────────┤
 │  Agent Vault │  Agent Registry  │   Settlement Protocol      │
 │   (Anchor)   │    (Anchor)      │       (Anchor)             │

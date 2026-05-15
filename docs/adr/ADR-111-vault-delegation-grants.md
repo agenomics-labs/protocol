@@ -160,8 +160,18 @@ context, not an external signer.
 
 - New account kind; new instruction family; new events. Indexer
   (ADR-082) gains a `delegation_grants` table + event decoders.
-- `mcp-server` gains `grant_delegation` / `revoke_delegation` /
-  `list_active_grants` tools.
+- `mcp-server` MCP tool surface (`create_delegation_grant` /
+  `revoke_delegation_grant` / `update_delegation_grant` /
+  `execute_grant_transfer` / `execute_grant_token_transfer` /
+  `get_delegation_grant` / `list_delegation_grants_for_vault`) is
+  **deferred to a follow-up PR**. The first iteration of this ADR
+  landed the on-chain primitive (program, IDL, SDK helpers, indexer
+  projection) without the MCP wrappers — the wrappers need matching
+  handlers + Action pipeline registrations that were out of scope for
+  the first batch. Until the follow-up lands, callers integrate via
+  the SDK (`sdk/client/src/vault.ts` — `GRANT_ACTIONS`,
+  `GrantTokenCapInput`, `DELEGATION_SEED`) or by building the
+  instructions directly against the IDL.
 - dashboard renders "X delegations outstanding" per vault with
   expiry countdowns.
 
@@ -393,9 +403,10 @@ Net-new attack surfaces introduced by ADR-111:
 - `fuzz/Cargo.toml` (new bin entry)
 - `idl/agent_vault.json`, `sdk/idl/src/idl/agent_vault.json`
 - `sdk/client/src/{vault,index}.ts`
-- `mcp-server/src/tools/{delegation,index}.ts`
+- (MCP tool exposure `mcp-server/src/tools/{delegation,index}.ts`
+  intentionally deferred — see Consequences §Protocol above)
 - `src/indexer/index.ts` (disc-map, decoders, SQLite mirror, write paths)
-- `src/indexer/migrations/003-adr-111-delegation-grants.sql`
+- `src/indexer/migrations/004-adr-111-delegation-grants.sql`
 - `src/indexer/migrations.embedded.ts`
 - `dashboard/src/data/programs.js`, `README.md`, `SUMMARY.md`
 - `docs/audits/AUD-DELEG-001-delegation-grants.md` (audit note)

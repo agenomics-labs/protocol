@@ -52,6 +52,11 @@ describe("ADR-058 Action pipeline", () => {
       // ADR-138 (cycle-4): query_execution_history exposes the off-chain
       // indexer's execution-provenance projection. Tool count 28 → 29.
       assert.ok(names.includes("query_execution_history"));
+      // ADR-111 (cycle-4): on-chain delegation grants landed in
+      // programs/agent-vault/. The MCP tool surface (7 delegation tools)
+      // is intentionally deferred to a follow-up PR that adds matching
+      // handlers + action wrappers; only the on-chain primitive ships
+      // in this iteration. Tool count stays at 29 until that follow-up.
     });
 
     it("the ADR-058 router handles all 29 tools", () => {
