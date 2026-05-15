@@ -46,12 +46,15 @@ export { verifyProtocolInvariantsTool } from "./governance.js";
 // docs/aep-reflex-tech-spec.md §"Surface 2".
 export { payX402ServiceTool } from "./pay-x402-service.js";
 
-// ADR-139 — portable reputation attestation tools (3).
-export {
-  issueReputationAttestationTool,
-  verifyReputationAttestationTool,
-  getPortableReputationTool,
-} from "./reputation-attestation.js";
+// ADR-139 portable reputation attestation MCP tools are intentionally
+// NOT wired here. Same deferral pattern as ADR-111 (#160): the
+// reputation-attestor package, indexer issuer service, sas-resolver
+// helper, and SDK Reputation namespace landed in this PR; the matching
+// MCP tools (issue / verify / get_portable_reputation) need
+// Action-pipeline wrappers + handlers to be authored atomically. The
+// follow-up that lands the wrappers re-introduces the
+// `./reputation-attestation.js` import and the corresponding entries
+// in `allTools` and `ToolName`.
 
 // Import for aggregation
 import {
@@ -157,10 +160,6 @@ export const allTools: Tool[] = [
   verifyProtocolInvariantsTool,
   // Surface 2 (scaffold/stub) — see docs/aep-reflex-tech-spec.md §"Surface 2"
   payX402ServiceTool,
-  // ADR-139 portable reputation attestations
-  issueReputationAttestationTool,
-  verifyReputationAttestationTool,
-  getPortableReputationTool,
 ];
 
 export type ToolName =
