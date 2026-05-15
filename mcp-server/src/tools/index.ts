@@ -46,6 +46,16 @@ export { verifyProtocolInvariantsTool } from "./governance.js";
 // docs/aep-reflex-tech-spec.md §"Surface 2".
 export { payX402ServiceTool } from "./pay-x402-service.js";
 
+// ADR-139 portable reputation attestation MCP tools are intentionally
+// NOT wired here. Same deferral pattern as ADR-111 (#160): the
+// reputation-attestor package, indexer issuer service, sas-resolver
+// helper, and SDK Reputation namespace landed in this PR; the matching
+// MCP tools (issue / verify / get_portable_reputation) need
+// Action-pipeline wrappers + handlers to be authored atomically. The
+// follow-up that lands the wrappers re-introduces the
+// `./reputation-attestation.js` import and the corresponding entries
+// in `allTools` and `ToolName`.
+
 // Import for aggregation
 import {
   createVaultTool,
@@ -88,9 +98,17 @@ import { payX402ServiceTool } from "./pay-x402-service.js";
 
 // ADR-111 delegation-grant MCP tools are intentionally NOT wired here.
 // The on-chain program, IDL, SDK helpers, and indexer projection landed
-// in this PR; the MCP tool surface is deferred to a separate complete
+// in #160; the MCP tool surface is deferred to a separate complete
 // follow-up that adds matching handlers + action wrappers. See ADR-111
 // "Migration Progress" for the gap and the planned phasing.
+//
+// ADR-139 reputation-attestation MCP tools are likewise NOT wired here.
+// The reputation-attestor package, indexer issuer service, sas-resolver
+// helper, and SDK Reputation namespace landed in this PR; the matching
+// MCP tools (issue / verify / get_portable_reputation) are deferred to
+// a follow-up PR that adds Action wrappers + handlers atomically.
+// Adding tools to the registry without router coverage would break the
+// `action-shape.test.ts` parity guard the same way #160 did.
 
 /**
  * All 29 Agenomics MCP tools organized by domain:
@@ -103,6 +121,9 @@ import { payX402ServiceTool } from "./pay-x402-service.js";
  * - Governance (1): Protocol-wide invariant sweep (AUD-206 / roadmap §3 B2)
  * - Surface 2 (1): `pay_x402_service` — x402 payment relay (scaffold/stub;
  *   docs/aep-reflex-tech-spec.md §"Surface 2")
+ * - Reputation portability (3): ADR-139 portable reputation attestations
+ *   (`issue_reputation_attestation`, `verify_reputation_attestation`,
+ *   `get_portable_reputation`).
  */
 export const allTools: Tool[] = [
   // Vault
@@ -170,4 +191,7 @@ export type ToolName =
   | "resolve_dispute"
   | "resolve_dispute_timeout"
   | "verify_protocol_invariants"
-  | "pay_x402_service";
+  | "pay_x402_service"
+  | "issue_reputation_attestation"
+  | "verify_reputation_attestation"
+  | "get_portable_reputation";

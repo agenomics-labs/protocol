@@ -3375,6 +3375,24 @@ async function main(): Promise<void> {
 
   const { states, metrics, heartbeat, abortAll } = subscribeToPrograms(rpc, rpcSubscriptions, db);
   const app = createApi(db, states, metrics);
+
+  // ADR-139: optionally mount the portable reputation attestation issuer.
+  // Activated when REPUTATION_ATTESTOR_KEYPAIR_PATH or _B64 is set; the
+  // mount is a no-op otherwise so existing deployments are unaffected.
+  // See `src/indexer/reputation-attestor.ts` for the route surface and
+  // `docs/adr/ADR-139-portable-reputation-attestations.md` for the model.
+  try {
+    const { tryMountReputationAttestorFromEnv } = await import(
+      "./reputation-attestor-wire.js"
+    );
+    tryMountReputationAttestorFromEnv(app, rpc as unknown as Parameters<typeof tryMountReputationAttestorFromEnv>[1], logger);
+  } catch (e) {
+    logger.warn(
+      { err: e instanceof Error ? e.message : String(e), adr: "ADR-139" },
+      "reputation-attestor mount failed; service continues without it",
+    );
+  }
+
   // AUD-203: bind to INDEXER_HOST (loopback by default) so the /metrics
   // endpoint (and its sibling read-only routes) are not advertised on
   // every interface. Mirrors mcp-server/observability.ts post-PR-F.

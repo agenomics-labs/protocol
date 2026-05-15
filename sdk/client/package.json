@@ -46,6 +46,7 @@
   },
   "dependencies": {
     "@agenomics/idl": "*",
+    "@agenomics/reputation-attestor": "*",
     "@coral-xyz/anchor": "^0.31.0",
     "@solana/kit": "6.8.0"
   },

@@ -75,6 +75,24 @@ export {
   type ReflexHookPayload,
 } from "./cctp-hook.js";
 
+// ADR-139 — portable reputation attestation namespace. Re-exports the
+// helpers and types from `@agenomics/reputation-attestor` plus SDK-side
+// `fromAgentProfile` / `issueForProfile` conveniences keyed off Anchor's
+// decoded profile shape.
+export {
+  Reputation,
+  type AnchorAgentProfileLike,
+  type FromAgentProfileOptions,
+  type ReputationCredential,
+  type ReputationAttestationPayload,
+  type AgentProfileSnapshot,
+  type IssueOptions,
+  type IssuerKeypair,
+  type VerifyOptions,
+  type VerifyResult,
+  type OnChainProfileFetcher,
+} from "./reputation.js";
+
 // ---------------------------------------------------------------------------
 // Re-export shared types
 // ---------------------------------------------------------------------------

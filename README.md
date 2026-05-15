@@ -100,6 +100,14 @@ Restart Claude Desktop after editing. The 29 tools (`create_vault`, `register_ag
 ### Surface 2 (1, scaffold/stub)
 `pay_x402_service`
 
+### Reputation portability (3, ADR-139)
+`issue_reputation_attestation` `verify_reputation_attestation` `get_portable_reputation`
+
+A signed snapshot of an agent's reputation that any third party can verify
+in one Ed25519 check — no Agenomics RPC required. See
+`packages/reputation-attestor/README.md` and
+`docs/adr/ADR-139-portable-reputation-attestations.md`.
+
 ## Development
 
 ```bash

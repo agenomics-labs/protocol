@@ -23,7 +23,7 @@
     "dev": "tsc && node dist/index.js",
     "watch": "tsc --watch",
     "lint": "eslint --no-eslintrc -c .eslintrc.json src/**/*.ts",
-    "pretest": "cd .. && npm -w @agenomics/action-runtime -w @agenomics/capability-manifest-validator -w @agenomics/sas-resolver run build",
+    "pretest": "cd .. && npm -w @agenomics/action-runtime -w @agenomics/capability-manifest-validator -w @agenomics/sas-resolver -w @agenomics/reputation-attestor run build",
     "test": "node --import tsx --test test/action-shape.test.ts test/solana-v2.test.ts test/pipeline.test.ts test/handlers-v2-vault.test.ts test/smoke-integration.test.ts test/transport-auth.test.ts test/transport-rate-limit.test.ts test/loadwallet-permission.test.ts test/idl-typed-decode.test.ts test/result-util.test.ts test/logger.test.ts test/observability.test.ts test/governance.test.ts test/create-vault-bind-proof.test.ts test/find-similar-agents.test.ts test/record-outcome.test.ts test/evo-bridge-resilience.test.ts test/idempotency-ttl.test.ts test/transport-origin.test.ts test/vault-layout-drift.test.ts test/preflight-contract.test.ts test/tools/pay-x402-service.test.ts"
   },
   "keywords": [
@@ -39,6 +39,7 @@
   "dependencies": {
     "@agenomics/action-runtime": "*",
     "@agenomics/capability-manifest-validator": "*",
+    "@agenomics/reputation-attestor": "*",
     "@agenomics/sas-resolver": "*",
     "@coinbase/cdp-sdk": "^1.49.0",
     "@coinbase/x402": "^2.1.0",
