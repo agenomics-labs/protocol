@@ -334,15 +334,43 @@ surfaces as an ADR-129 regression rather than a silent integration
 break:
 
 1. **JSONL bridge protocol stays stable.** The
-   `evo_observe` / `evo_retrieve` / `evo_learn` / `evo_consolidate` /
-   `evo_stats` / `evo_health` MCP tool inputs and outputs are the
-   surface mcp-server depends on. Schema changes go through EVO's
-   ADR-005 / ADR-062 process; mcp-server pins the major version of
-   EVO's `package.json`.
+   `observe` / `observe_text` / `retrieve` / `retrieve_text` / `learn` /
+   `consolidate` / `stats` / `health` / `embed` / `strategies` /
+   `l0_list` JSON commands (the `JsonCommand` enum in
+   `EVO/crates/evo/src/cli/json_rpc.rs`) and their result shapes are
+   the surface mcp-server depends on. Schema changes go through EVO's
+   ADR-005 / ADR-062 process.
+
+   **EVO is a Rust workspace with no `package.json`**, so the previous
+   "pin EVO's package.json major version" contract was unenforceable
+   and let a real protocol skew land (`result.memories[]` vs the
+   adapter's `result.results[]`, `node_id` vs `id`, `rank_score` vs
+   `score` — surfaced 2026-05-15 in AUD-129 follow-up; observed by
+   `mcp-server/test/aud-129-evo-roundtrip.integration.test.ts`). The
+   enforceable contract is **the integration test** itself: it pipes
+   through a real `evo` binary and asserts the wire shapes the adapter
+   parses. CI without an EVO binary skips the test cleanly; local
+   development with `AEP_EVO_BINARY` + `AEP_EVO_MODEL_DIR` runs the
+   full roundtrip. A future protocol-incompatible EVO change shows up
+   as a test failure in the next mcp-server CI run that includes the
+   binary, not as a silent empty-hits regression in production.
 2. **Bridge subprocess respects ADR-048 input bounds.** The
    `EVO_MAX_*` env vars (`EVO/src/mcp/tools.ts:38-54`) bound payload
    sizes; mcp-server inherits these bounds and does not re-implement
    them.
+
+   **Known gap (Phase 1.1 follow-up — surfaced 2026-05-15):** EVO's
+   `retrieve_text` accepts `metadata` on `observe_text` but does NOT
+   echo metadata back on retrieved hits. The current `findSimilarAgents`
+   facade (`adapters/agent-memory.ts`) reads `hit.metadata.authority`
+   and `hit.metadata.agent_profile_address`, both of which will always
+   be empty until either (a) EVO adds metadata to the retrieve_text
+   response, or (b) the facade is rewritten to cross-reference via
+   `l0_list` / a side index, or (c) authority/agent_profile_address are
+   embedded into the observation `content` and parsed back out. This
+   does not block the Phase 1 shape-fix landing (the retrieval roundtrip
+   works; only the facade-level authority lookup is degraded) but
+   `find_similar_agents` is functionally incomplete until resolved.
 3. **`evo_health` returns embedder kind.** ADR-057 in EVO requires
    `evo_health` to surface whether ONNX or BLAKE3-fallback embeddings
    are in use; mcp-server's Phase 3 `agent_memory_health` action

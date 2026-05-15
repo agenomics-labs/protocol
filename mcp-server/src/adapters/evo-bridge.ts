@@ -342,35 +342,64 @@ class LiveEvoClient implements EvoClient {
 }
 
 /**
- * Tolerant parser for EVO's retrieval result shape. EVO returns
- * `{ ok: true, result: { results: [...], ... } }`; the result entries
- * carry various fields, but Phase 1 only consumes id/score/content/metadata.
- * Unknown fields are dropped, malformed entries are skipped (best-effort).
+ * Tolerant parser for EVO's retrieval result shape. EVO HEAD (post ADR-196,
+ * `crates/evo/src/cli/json_rpc.rs`) returns
+ *
+ *   `{ ok: true, result: { memories: [{ node_id, content, rank_score,
+ *     similarity, metadata? }], strategies, tokens_used } }`
+ *
+ * Older fixtures and pre-ADR-196 binaries used `result.results` /
+ * `result.hits` with `entry.id` / `entry.score`; we accept all three array
+ * keys and both id/score field names so the adapter stays robust across
+ * protocol revisions and against legacy mocks in the unit-test suite.
+ *
+ * Phase 1 only consumes id/score/content/metadata from each hit. Unknown
+ * fields (`strategies`, `tokens_used`, `embedding`, etc.) are dropped.
+ * Malformed entries are skipped (best-effort).
  */
 export function parseRetrievalResult(result: unknown): EvoRetrievalResult {
   if (!result || typeof result !== "object") {
     return { hits: [] };
   }
   const r = result as Record<string, unknown>;
+  // EVO emits `result.memories[]` (the canonical key since ADR-196). Older
+  // mocks/fixtures use `results` or `hits`; we accept all three.
   const rawHits =
-    Array.isArray(r.results)
-      ? r.results
-      : Array.isArray(r.hits)
-        ? r.hits
-        : Array.isArray(r)
-          ? r
-          : [];
+    Array.isArray(r.memories)
+      ? r.memories
+      : Array.isArray(r.results)
+        ? r.results
+        : Array.isArray(r.hits)
+          ? r.hits
+          : Array.isArray(r)
+            ? r
+            : [];
   const hits: EvoRetrievalHit[] = [];
   for (const raw of rawHits) {
     if (!raw || typeof raw !== "object") continue;
     const entry = raw as Record<string, unknown>;
-    const id = typeof entry.id === "string" ? entry.id : String(entry.id ?? "");
+    // EVO emits `node_id`; pre-ADR-196 fixtures use `id`.
+    const id =
+      typeof entry.node_id === "string"
+        ? entry.node_id
+        : typeof entry.id === "string"
+          ? entry.id
+          : "";
+    if (!id) continue;
     // MCP-306: distinguish "missing score" from "genuine 0". Pre-fix code
     // emitted score=0 when neither field was present, so malformed hits
     // sorted indistinguishably from real zero-similarity hits. Now we drop
     // entries lacking a numeric score outright.
+    //
+    // EVO emits both `rank_score` (engine-ranked, includes economic value +
+    // recency per EVO ADR-077) and `similarity` (raw cosine). Prefer
+    // `rank_score` because that is what EVO ranks by; the higher-level
+    // facade exposes it as `similarityScore` to callers. Legacy `score`
+    // field accepted for forward-compat with future protocol revisions.
     let score: number;
-    if (typeof entry.score === "number") {
+    if (typeof entry.rank_score === "number") {
+      score = entry.rank_score;
+    } else if (typeof entry.score === "number") {
       score = entry.score;
     } else if (typeof entry.similarity === "number") {
       score = entry.similarity;
@@ -391,7 +420,6 @@ export function parseRetrievalResult(result: unknown): EvoRetrievalResult {
       entry.metadata && typeof entry.metadata === "object"
         ? (entry.metadata as Record<string, string>)
         : undefined;
-    if (!id) continue;
     hits.push({ id, score, content, metadata });
   }
   return { hits };
