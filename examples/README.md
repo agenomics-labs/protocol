@@ -120,3 +120,24 @@ example code itself does not change.
 
 The next examples in this directory will cover registration, vault
 creation, and the escrow lifecycle once SDK instruction builders ship.
+
+## Building these examples with AI tools
+
+If you're using an AI development tool to extend or remix these
+examples, the protocol ships an [`/llms.txt`](https://agenomics.xyz/llms.txt)
+entry point following the [llmstxt.org](https://llmstxt.org) convention.
+It links to the canonical docs (getting-started, API reference,
+integration guide) and the SDK package READMEs.
+
+- **Cursor / Windsurf**: add `https://agenomics.xyz/llms.txt` to your
+  context.
+- **Claude Code**: install the MCP server per the
+  [getting-started](https://agenomics.xyz/getting-started) walkthrough;
+  once connected, every on-chain instruction is reachable as a typed
+  MCP tool with a real `inputSchema`.
+- **ChatGPT / Claude.ai**: paste the `llms.txt` link or the relevant
+  docs page into the conversation.
+
+Per [ADR-137](../docs/adr/ADR-137-ai-tool-ingestible-documentation.md);
+v0.2 will ship per-package `CLAUDE.md` / `AGENTS.md` files alongside
+this README.

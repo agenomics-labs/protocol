@@ -236,3 +236,32 @@ Adds infra; benefits do not yet outweigh the flat-text path.
   documentation lie).
 - Existing `CLAUDE.md` (repo root) — internal contributor file;
   not the consumer-facing artifact this ADR ships.
+
+## Revisions
+
+### 2026-05-15 — v0.1-partial shipped
+
+The smallest-shippable slice of the v0.1 scope landed: the static
+`docs/llms.txt` curated index and the `## Building with AI tools`
+inbound-link sections on the docs homepage (`docs/index.md`) and
+`examples/README.md`. The file ships at `agenomics.xyz/llms.txt` via
+the existing VitePress build (no plugin needed — VitePress serves
+static `.txt` files from the source root unchanged).
+
+Shipped:
+- ✅ `docs/llms.txt` — short curated index per llmstxt.org spec
+- ✅ Inbound-link section on `docs/index.md` (homepage)
+- ✅ Inbound-link section on `examples/README.md`
+
+Deferred to v0.2 (intentionally — pattern validation gate):
+- ⏸ `docs/llms-full.txt` build-time concatenation (needs a VitePress
+  plugin; defer until we see real consumer ingestion patterns)
+- ⏸ `sdk/client/CLAUDE.md` and `packages/sas-resolver/CLAUDE.md`
+  (~300 lines each; defer until typed shapes from ADR-141 land so the
+  prose isn't out of date the day it ships)
+- ⏸ Repo-root `.cursorrules` (this ADR already deferred this to v0.2)
+
+Status stays **Proposed** until the per-package `CLAUDE.md` files and
+the `llms-full.txt` plugin land — those are the load-bearing parts of
+the AI-conversion-gap claim. The static `llms.txt` is the prerequisite
+inbound surface.
