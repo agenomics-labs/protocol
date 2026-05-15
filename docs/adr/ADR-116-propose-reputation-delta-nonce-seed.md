@@ -1,10 +1,10 @@
 # ADR-116: Align `ProposeReputationDelta` context with ADR-097 nonce seed
 
 ## Status
-Proposed
+Accepted (2026-05-15) — implementation landed in commit `9ebfa4d` (the AUD-001/AUD-002 reputation-policy unification wave) and verified against §Decision items 1-5 below in the 2026-05-15 ADR backlog sweep (issue #71).
 
 ## Date
-2026-04-24
+2026-04-24 (proposed) / 2026-05-15 (accepted, retrospective close)
 
 ## Context
 
@@ -81,3 +81,15 @@ owner-nonce reference at the same time.
 - `docs/ARCHITECTURE_REAUDIT_2026-05.md` R-onchain-01.
 - `programs/agent-registry/src/contexts.rs:301-325` (affected
   context).
+
+## Implementation verification (2026-05-15)
+
+| §Decision item | Status | Evidence |
+|---|---|---|
+| 1. `owner_nonce` account field | ✅ | `programs/agent-registry/src/contexts.rs::ProposeReputationDelta` — `pub owner_nonce: Account<'info, OwnerNonce>` with seeds `[authority.key().as_ref(), b"owner-nonce"]` |
+| 2. `agent_profile.seeds` includes nonce | ✅ | Same file — seeds now `[authority.key().as_ref(), b"agent-profile", &owner_nonce.nonce.to_le_bytes()]` |
+| 3. `has_one = authority` on `agent_profile` | ✅ | `has_one = authority @ AgentRegistryError::UnauthorizedCaller` |
+| 4. Re-register-and-slash flow test | ✅ | `tests/cpi-failures.test.ts:109,122,487,505-506` covers the ADR-097 nonce-seed binding for `propose_reputation_delta`; `tests/agent-registry.ts:33` documents the deregister→re-register helper used by tests |
+| 5. Registry IDL regen | ✅ | `idl/agent_registry.json` and `sdk/idl/src/idl/agent_registry.json` both carry the `owner_nonce` account on the `proposeReputationDelta` instruction |
+
+Implementation landed via commit `9ebfa4d` *fix(registry,settlement): unify reputation policy + invariant migration (AUD-001, AUD-002)* before this ADR's docs-only PR (#65, `50f9050`/`c264656`) — the audit re-write retro-documented the AUD-001/AUD-002 work as ADR-116. Status was therefore stale (`Proposed`) from the day the ADR landed; this update closes the loop.
