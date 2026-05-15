@@ -153,6 +153,8 @@ pub fn initialize_vault(
     // value so a downstream auditor can pin the exact policy revision
     // in force at execution time.
     vault.policy_version = 0;
+    // ADR-111: no outstanding delegation grants at vault genesis.
+    vault.active_grant_count = 0;
 
     emit!(VaultInitialized {
         vault: ctx.accounts.vault.key(),
@@ -1005,6 +1007,674 @@ pub fn resume_vault(ctx: Context<ResumeVault>) -> Result<()> {
         recipient: None,
         slot: clock.slot,
         timestamp: clock.unix_timestamp,
+    });
+
+    Ok(())
+}
+
+// ============================================================================
+// ADR-111: Delegation grant handlers
+// ============================================================================
+
+/// ADR-111: Validate that a proposed `allowed_actions` bitmap contains no
+/// unknown bits. New action bits MUST be appended in future revisions —
+/// reusing a removed bit would silently expand the action surface of
+/// historical grants.
+#[inline]
+pub fn validate_allowed_actions(actions: u8) -> Result<()> {
+    require!(
+        actions & !grant_actions::ALL_KNOWN == 0,
+        VaultError::InvalidGrantParameters
+    );
+    Ok(())
+}
+
+/// ADR-111: Validate the bounded-vec lengths and pin per-tx cap
+/// consistency at create/update time. The intent is to fail fast on
+/// obviously-bad parameters before any state mutation.
+fn validate_grant_caps(
+    spend_cap_lamports: u64,
+    token_caps: &[GrantTokenCap],
+    allowed_recipients: &[Pubkey],
+    vault_policy: &VaultPolicy,
+    vault_token_records: &[TokenSpendRecord],
+) -> Result<()> {
+    require!(
+        allowed_recipients.len() <= MAX_GRANT_ALLOWED_RECIPIENTS,
+        VaultError::InvalidGrantParameters
+    );
+    require!(
+        token_caps.len() <= MAX_GRANT_TOKEN_CAPS,
+        VaultError::InvalidGrantParameters
+    );
+    // ADR-111 §"Enforcement": a grant must never authorize a single-tx
+    // amount the vault itself wouldn't allow. We compare the grant's
+    // lifetime cap against the vault's per-tx limit — a more permissive
+    // grant would let a grantee bypass the per-tx ceiling by splitting
+    // their cap across many small transfers and is intentional, but the
+    // grant cap MUST NOT itself license a single transfer above per-tx.
+    require!(
+        spend_cap_lamports <= vault_policy.per_tx_limit_lamports
+            || spend_cap_lamports == 0
+            // A cap of u64::MAX paired with a daily limit of u64::MAX would
+            // be permitted; the daily limit gate still enforces. We only
+            // reject grants whose lifetime cap is strictly greater than
+            // the vault per-tx cap when both are finite.
+            || vault_policy.per_tx_limit_lamports == 0,
+        VaultError::InvalidGrantParameters
+    );
+    // Per-mint cap consistency: each `GrantTokenCap` must correspond to
+    // an allowlisted mint with configured per-tx limits on the vault,
+    // and the grant cap MUST NOT exceed the vault's per-tx limit for
+    // that mint (same rationale as above).
+    for cap in token_caps.iter() {
+        let vault_record = vault_token_records
+            .iter()
+            .find(|r| r.mint == cap.mint)
+            .ok_or(VaultError::TokenNotConfigured)?;
+        require!(
+            cap.spent == 0,
+            VaultError::InvalidGrantParameters
+        );
+        require!(
+            cap.cap <= vault_record.per_tx_limit || cap.cap == 0,
+            VaultError::InvalidGrantParameters
+        );
+    }
+    Ok(())
+}
+
+/// ADR-111: `create_delegation_grant` — only vault `authority` may call.
+///
+/// Gates (in order, fail-fast):
+///   1. Vault not paused.
+///   2. Vault not suspended (ADR-095 via `agent_profile`).
+///   3. `active_grant_count < MAX_ACTIVE_GRANTS_PER_VAULT`.
+///   4. `allowed_actions` carries only known bits.
+///   5. `allowed_recipients` and `token_spend_caps` within their bounds.
+///   6. Grant lifetime caps ≤ vault per-tx caps (per-mint and SOL).
+///   7. `expires_at == 0` or `expires_at > now`.
+///
+/// On success: writes the grant PDA, bumps `vault.active_grant_count`,
+/// emits `DelegationGrantCreated`.
+pub fn create_delegation_grant(
+    ctx: Context<CreateDelegationGrant>,
+    grantee: Pubkey,
+    nonce: u8,
+    allowed_actions: u8,
+    spend_cap_lamports: u64,
+    token_caps: Vec<GrantTokenCap>,
+    allowed_recipients: Vec<Pubkey>,
+    expires_at: i64,
+) -> Result<()> {
+    // ADR-095: suspension gate. A suspended agent must not issue new
+    // grants — closing the seam where ADR-095 only covered direct
+    // transfers.
+    require_not_suspended(&ctx.accounts.agent_profile)?;
+
+    let now = Clock::get()?.unix_timestamp;
+    {
+        let vault = &ctx.accounts.vault;
+        require!(!vault.paused, VaultError::VaultPaused);
+        require!(
+            vault.active_grant_count < MAX_ACTIVE_GRANTS_PER_VAULT,
+            VaultError::TooManyActiveGrants
+        );
+        validate_allowed_actions(allowed_actions)?;
+        require!(
+            expires_at == 0 || expires_at > now,
+            VaultError::InvalidGrantParameters
+        );
+        validate_grant_caps(
+            spend_cap_lamports,
+            &token_caps,
+            &allowed_recipients,
+            &vault.policy,
+            &vault.token_spend_records,
+        )?;
+    }
+
+    let grant_key = ctx.accounts.grant.key();
+    let vault_key = ctx.accounts.vault.key();
+    let authority_key = ctx.accounts.authority.key();
+
+    {
+        let grant = &mut ctx.accounts.grant;
+        grant.vault = vault_key;
+        grant.grantor = authority_key;
+        grant.grantee = grantee;
+        grant.allowed_actions = allowed_actions;
+        grant.spend_cap_lamports = spend_cap_lamports;
+        grant.spent_lamports = 0;
+        // Force `spent = 0` on every cap regardless of caller input
+        // (validate_grant_caps already rejected non-zero, but defense in
+        // depth at the write site).
+        grant.token_spend_caps = token_caps
+            .into_iter()
+            .map(|c| GrantTokenCap {
+                mint: c.mint,
+                cap: c.cap,
+                spent: 0,
+            })
+            .collect();
+        grant.allowed_recipients = allowed_recipients;
+        grant.expires_at = expires_at;
+        grant.revoked = false;
+        grant.created_at = now;
+        grant.nonce = nonce;
+        grant.bump = ctx.bumps.grant;
+    }
+
+    let new_count = {
+        let vault = &mut ctx.accounts.vault;
+        vault.active_grant_count = vault.active_grant_count.saturating_add(1);
+        vault.active_grant_count
+    };
+    // Defensive: saturating_add ceilings at u8::MAX; the bound check above
+    // already enforces strict-less-than the cap. This second assert is a
+    // belt-and-braces guard against a future refactor reordering the
+    // checks.
+    require!(
+        new_count <= MAX_ACTIVE_GRANTS_PER_VAULT,
+        VaultError::TooManyActiveGrants
+    );
+
+    emit!(DelegationGrantCreated {
+        vault: vault_key,
+        grant: grant_key,
+        grantor: authority_key,
+        grantee,
+        allowed_actions,
+        spend_cap_lamports,
+        expires_at,
+        nonce,
+        timestamp: now,
+    });
+
+    Ok(())
+}
+
+/// ADR-111: `revoke_delegation_grant` — vault authority OR grantee may
+/// revoke. Sets `revoked = true` and decrements `vault.active_grant_count`.
+/// Idempotent: revoking an already-revoked grant is a no-op success so
+/// off-chain clients can retry safely.
+pub fn revoke_delegation_grant(ctx: Context<RevokeDelegationGrant>) -> Result<()> {
+    let signer_key = ctx.accounts.signer.key();
+    let grant_key = ctx.accounts.grant.key();
+    let vault_key = ctx.accounts.vault.key();
+    let now = Clock::get()?.unix_timestamp;
+
+    // ADR-111 §"revoke_delegation": either grantor (vault authority at
+    // create time) or grantee can revoke. The grantor pubkey is pinned
+    // at create time; the current `vault.authority` is also accepted to
+    // cover an authority rotation (none today, but governance reserves
+    // the right). We compare the signer against BOTH and the live
+    // vault.authority so the path stays correct under future rotation.
+    {
+        let grant = &ctx.accounts.grant;
+        let vault = &ctx.accounts.vault;
+        require!(
+            signer_key == grant.grantee
+                || signer_key == grant.grantor
+                || signer_key == vault.authority,
+            VaultError::Unauthorized
+        );
+    }
+
+    let already_revoked = ctx.accounts.grant.revoked;
+    if !already_revoked {
+        let grant = &mut ctx.accounts.grant;
+        grant.revoked = true;
+
+        let vault = &mut ctx.accounts.vault;
+        vault.active_grant_count = vault.active_grant_count.saturating_sub(1);
+    }
+
+    emit!(DelegationGrantRevoked {
+        vault: vault_key,
+        grant: grant_key,
+        revoker: signer_key,
+        timestamp: now,
+    });
+
+    Ok(())
+}
+
+/// ADR-111: `update_delegation_grant` — vault authority only. TIGHTEN-
+/// only: every field's new value must be no looser than the stored
+/// value. The invariants enforced here are:
+///   - `new_allowed_actions ⊆ grant.allowed_actions` (no new bits)
+///   - `new_spend_cap_lamports ≤ grant.spend_cap_lamports`
+///     AND `new_spend_cap_lamports ≥ grant.spent_lamports`
+///     (cap may shrink but not below already-spent)
+///   - For every existing `GrantTokenCap`: `new.cap ≤ stored.cap`
+///     AND `new.cap ≥ stored.spent` (and the mint must already exist;
+///     adding new mints is loosening and is rejected)
+///   - `new_allowed_recipients ⊆ grant.allowed_recipients`. Empty
+///     `grant.allowed_recipients` is the "any recipient" sentinel; any
+///     non-empty `new_allowed_recipients` from an empty stored list is
+///     a TIGHTENING (delegating from vault-controls to grant-controls).
+///     Conversely, going FROM a non-empty list TO empty is loosening
+///     and rejected.
+///   - `new_expires_at` MUST NOT extend the window. Two cases:
+///       (a) stored `expires_at == 0` (no expiry) → any `new_expires_at`
+///           is a tightening.
+///       (b) stored `expires_at > 0`  → `new_expires_at != 0` AND
+///           `new_expires_at <= grant.expires_at`.
+pub fn update_delegation_grant(
+    ctx: Context<UpdateDelegationGrant>,
+    new_allowed_actions: u8,
+    new_spend_cap_lamports: u64,
+    new_token_caps: Vec<GrantTokenCap>,
+    new_allowed_recipients: Vec<Pubkey>,
+    new_expires_at: i64,
+) -> Result<()> {
+    let grant_key = ctx.accounts.grant.key();
+    let vault_key = ctx.accounts.vault.key();
+    let now = Clock::get()?.unix_timestamp;
+
+    {
+        let grant = &ctx.accounts.grant;
+        require!(!grant.revoked, VaultError::GrantRevoked);
+
+        // Actions: subset-only.
+        validate_allowed_actions(new_allowed_actions)?;
+        require!(
+            new_allowed_actions & !grant.allowed_actions == 0,
+            VaultError::GrantUpdateCannotLoosen
+        );
+
+        // Lamport cap: must not raise above stored, must not drop below
+        // already-spent.
+        require!(
+            new_spend_cap_lamports <= grant.spend_cap_lamports,
+            VaultError::GrantUpdateCannotLoosen
+        );
+        require!(
+            new_spend_cap_lamports >= grant.spent_lamports,
+            VaultError::GrantUpdateCannotLoosen
+        );
+
+        // Token caps: only existing mints, only tightening caps,
+        // not below per-mint already-spent.
+        require!(
+            new_token_caps.len() <= MAX_GRANT_TOKEN_CAPS,
+            VaultError::InvalidGrantParameters
+        );
+        for new_cap in new_token_caps.iter() {
+            let stored = grant
+                .token_spend_caps
+                .iter()
+                .find(|c| c.mint == new_cap.mint)
+                .ok_or(VaultError::GrantUpdateCannotLoosen)?;
+            require!(
+                new_cap.cap <= stored.cap,
+                VaultError::GrantUpdateCannotLoosen
+            );
+            require!(
+                new_cap.cap >= stored.spent,
+                VaultError::GrantUpdateCannotLoosen
+            );
+        }
+
+        // Recipients: every new entry must already be in the stored list,
+        // UNLESS the stored list is empty (the "any recipient" sentinel —
+        // moving from that to a constrained set is a tightening).
+        require!(
+            new_allowed_recipients.len() <= MAX_GRANT_ALLOWED_RECIPIENTS,
+            VaultError::InvalidGrantParameters
+        );
+        if !grant.allowed_recipients.is_empty() {
+            for r in new_allowed_recipients.iter() {
+                require!(
+                    grant.allowed_recipients.contains(r),
+                    VaultError::GrantUpdateCannotLoosen
+                );
+            }
+            // Going from a non-empty list to empty is loosening (re-opens
+            // the "any recipient" door).
+            require!(
+                !new_allowed_recipients.is_empty(),
+                VaultError::GrantUpdateCannotLoosen
+            );
+        }
+
+        // Expiry: must shrink, never extend. Past-tense new_expires_at
+        // is permitted (it immediately expires the grant — equivalent
+        // to a revoke).
+        if grant.expires_at == 0 {
+            // Any new_expires_at is a tightening (including 0 = no change).
+        } else {
+            require!(new_expires_at != 0, VaultError::GrantUpdateCannotLoosen);
+            require!(
+                new_expires_at <= grant.expires_at,
+                VaultError::GrantUpdateCannotLoosen
+            );
+        }
+    }
+
+    // Apply.
+    {
+        let grant = &mut ctx.accounts.grant;
+        grant.allowed_actions = new_allowed_actions;
+        grant.spend_cap_lamports = new_spend_cap_lamports;
+        // Replace token caps by mint — preserving `spent` from the stored
+        // record (the per-cap `spent` field on the input is ignored).
+        let mut updated: Vec<GrantTokenCap> = Vec::with_capacity(new_token_caps.len());
+        for nc in new_token_caps.into_iter() {
+            let stored = grant
+                .token_spend_caps
+                .iter()
+                .find(|c| c.mint == nc.mint)
+                .expect("validated above");
+            updated.push(GrantTokenCap {
+                mint: nc.mint,
+                cap: nc.cap,
+                spent: stored.spent,
+            });
+        }
+        grant.token_spend_caps = updated;
+        grant.allowed_recipients = new_allowed_recipients;
+        grant.expires_at = new_expires_at;
+    }
+
+    emit!(DelegationGrantUpdated {
+        vault: vault_key,
+        grant: grant_key,
+        new_allowed_actions,
+        new_spend_cap_lamports,
+        new_expires_at,
+        timestamp: now,
+    });
+
+    Ok(())
+}
+
+/// ADR-111: `execute_grant_transfer` — SOL transfer signed by the
+/// grantee. Applies BOTH grant-scoped and vault-scoped gates:
+///   1. ADR-095 suspension gate on parent vault.
+///   2. `!vault.paused`.
+///   3. `!grant.revoked && grant.is_within_window(now)`.
+///   4. `grant.allows(EXECUTE_TRANSFER)`.
+///   5. `grant.is_recipient_allowed(recipient)`.
+///   6. `amount > 0`, `amount <= grant.spend_cap_lamports - grant.spent_lamports`.
+///   7. Vault per-tx limit, vault daily limit (incl. day rollover),
+///      vault rate-limit window — identical semantics to direct
+///      `execute_transfer`, NOT bypassed.
+///   8. Rent-exempt minimum on the vault PDA post-transfer.
+/// On success: lamport mutation, vault counter writes, grant `spent_lamports` bump,
+/// `DelegationGrantExecuted` event.
+pub fn execute_grant_transfer(
+    ctx: Context<ExecuteGrantTransfer>,
+    amount_lamports: u64,
+) -> Result<()> {
+    require!(amount_lamports > 0, VaultError::InvalidAmount);
+    require_not_suspended(&ctx.accounts.agent_profile)?;
+
+    let clock = Clock::get()?;
+    let now = clock.unix_timestamp;
+
+    let new_daily_total;
+    let new_last_spend_day;
+    let new_rate_limit_window_start;
+    let new_txs_in_current_window;
+    let new_spent_lamports;
+    {
+        let vault = &ctx.accounts.vault;
+        let grant = &ctx.accounts.grant;
+
+        require!(!vault.paused, VaultError::VaultPaused);
+        require!(!grant.revoked, VaultError::GrantRevoked);
+        require!(grant.is_within_window(now), VaultError::GrantExpired);
+        require!(
+            grant.allows(grant_actions::EXECUTE_TRANSFER),
+            VaultError::ActionNotAllowed
+        );
+        require!(
+            grant.is_recipient_allowed(&ctx.accounts.recipient.key()),
+            VaultError::RecipientNotAllowed
+        );
+
+        // Grant-scoped lamport cap.
+        require!(
+            grant.spend_cap_lamports > 0,
+            VaultError::GrantHasNoLamportCap
+        );
+        let projected = grant
+            .project_spend(amount_lamports)
+            .ok_or(VaultError::ArithmeticOverflow)?;
+        require!(
+            projected <= grant.spend_cap_lamports,
+            VaultError::GrantSpendCapExceeded
+        );
+        new_spent_lamports = projected;
+
+        // Vault-scoped per-tx limit (NOT bypassed).
+        require!(
+            amount_lamports <= vault.policy.per_tx_limit_lamports,
+            VaultError::PerTxLimitExceeded
+        );
+
+        // Vault-scoped daily limit + day rollover.
+        let current_day = (now / 86400) as u64;
+        let mut spent = vault.spent_today_lamports;
+        let mut last_day = vault.last_spend_day;
+        if current_day > last_day {
+            spent = 0;
+            last_day = current_day;
+        }
+        let projected_day = spent.saturating_add(amount_lamports);
+        require!(
+            projected_day <= vault.policy.daily_limit_lamports,
+            VaultError::DailyLimitExceeded
+        );
+        new_daily_total = projected_day;
+        new_last_spend_day = last_day;
+
+        // Vault-scoped rate-limit window.
+        let elapsed = compute_window_elapsed(now, vault.rate_limit_window_start);
+        let (window_start, mut txs) = if elapsed > 3600 {
+            (now, 0u32)
+        } else {
+            (vault.rate_limit_window_start, vault.txs_in_current_window)
+        };
+        require!(txs < vault.policy.max_txs_per_hour, VaultError::RateLimitExceeded);
+        txs = txs.saturating_add(1);
+        new_rate_limit_window_start = window_start;
+        new_txs_in_current_window = txs;
+    }
+
+    // Rent / lamport move.
+    let vault_info = ctx.accounts.vault.to_account_info();
+    let recipient_info = ctx.accounts.recipient.to_account_info();
+    let rent_minimum = Rent::get()?.minimum_balance(vault_info.data_len());
+    let post_balance = vault_info
+        .lamports()
+        .checked_sub(amount_lamports)
+        .ok_or(VaultError::InsufficientFunds)?;
+    require!(post_balance >= rent_minimum, VaultError::BelowRentExemption);
+    **vault_info.try_borrow_mut_lamports()? = post_balance;
+    **recipient_info.try_borrow_mut_lamports()? = recipient_info
+        .lamports()
+        .checked_add(amount_lamports)
+        .ok_or(VaultError::ArithmeticOverflow)?;
+
+    // State writes.
+    {
+        let vault = &mut ctx.accounts.vault;
+        vault.spent_today_lamports = new_daily_total;
+        vault.last_spend_day = new_last_spend_day;
+        vault.rate_limit_window_start = new_rate_limit_window_start;
+        vault.txs_in_current_window = new_txs_in_current_window;
+    }
+    {
+        let grant = &mut ctx.accounts.grant;
+        grant.spent_lamports = new_spent_lamports;
+    }
+
+    emit!(DelegationGrantExecuted {
+        vault: ctx.accounts.vault.key(),
+        grant: ctx.accounts.grant.key(),
+        grantee: ctx.accounts.grantee.key(),
+        action_kind: grant_actions::EXECUTE_TRANSFER,
+        // Convention: Pubkey::default() represents native SOL.
+        mint: Pubkey::default(),
+        recipient: ctx.accounts.recipient.key(),
+        amount: amount_lamports,
+        spent_after: new_spent_lamports,
+        timestamp: now,
+    });
+
+    Ok(())
+}
+
+/// ADR-111: `execute_grant_token_transfer` — SPL transfer signed by the
+/// grantee. Same dual-gating shape as `execute_grant_transfer` but
+/// against per-mint caps and the vault's `token_spend_records`.
+pub fn execute_grant_token_transfer(
+    ctx: Context<ExecuteGrantTokenTransfer>,
+    amount: u64,
+) -> Result<()> {
+    require!(amount > 0, VaultError::InvalidAmount);
+    require_not_suspended(&ctx.accounts.agent_profile)?;
+
+    let clock = Clock::get()?;
+    let now = clock.unix_timestamp;
+    let mint = ctx.accounts.vault_token_account.mint;
+    let authority_key;
+    let bump;
+    let new_grant_token_spent;
+    let new_vault_record_spent;
+    let new_vault_record_last_day;
+    let resets_vault_day;
+    let new_window_start;
+    let new_window_count;
+    let vault_record_idx;
+    let grant_cap_idx;
+
+    {
+        let vault = &ctx.accounts.vault;
+        let grant = &ctx.accounts.grant;
+        require!(!vault.paused, VaultError::VaultPaused);
+        require!(!grant.revoked, VaultError::GrantRevoked);
+        require!(grant.is_within_window(now), VaultError::GrantExpired);
+        require!(
+            grant.allows(grant_actions::EXECUTE_TOKEN_TRANSFER),
+            VaultError::ActionNotAllowed
+        );
+        require!(
+            grant.is_recipient_allowed(&ctx.accounts.recipient_token_account.owner),
+            VaultError::RecipientNotAllowed
+        );
+        // Vault-level allowlist still applies.
+        require!(
+            vault.policy.is_token_allowed(&mint),
+            VaultError::TokenNotAllowed
+        );
+
+        // Grant-scoped per-mint cap lookup.
+        grant_cap_idx = grant
+            .token_spend_caps
+            .iter()
+            .position(|c| c.mint == mint)
+            .ok_or(VaultError::GrantTokenNotConfigured)?;
+        let grant_cap = &grant.token_spend_caps[grant_cap_idx];
+        require!(grant_cap.cap > 0, VaultError::GrantHasNoLamportCap);
+        let projected = grant_cap
+            .spent
+            .checked_add(amount)
+            .ok_or(VaultError::ArithmeticOverflow)?;
+        require!(
+            projected <= grant_cap.cap,
+            VaultError::GrantSpendCapExceeded
+        );
+        new_grant_token_spent = projected;
+
+        // Vault-scoped per-mint per-tx + daily caps (NOT bypassed).
+        vault_record_idx = vault
+            .token_spend_records
+            .iter()
+            .position(|r| r.mint == mint)
+            .ok_or(VaultError::TokenNotConfigured)?;
+        let record = &vault.token_spend_records[vault_record_idx];
+        require!(
+            amount <= record.per_tx_limit,
+            VaultError::PerTxTokenLimitExceeded
+        );
+        let current_day = (now / 86400) as u64;
+        let effective_spent = if current_day > record.last_spend_day {
+            0
+        } else {
+            record.spent_today
+        };
+        let projected_record = effective_spent
+            .checked_add(amount)
+            .ok_or(VaultError::ArithmeticOverflow)?;
+        require!(
+            projected_record <= record.daily_limit,
+            VaultError::TokenDailyLimitExceeded
+        );
+        new_vault_record_spent = projected_record;
+        new_vault_record_last_day = current_day;
+        resets_vault_day = current_day > record.last_spend_day;
+
+        // Vault-scoped global rate-limit window.
+        let elapsed = compute_window_elapsed(now, vault.rate_limit_window_start);
+        let (ws, txs) = if elapsed >= 3600 {
+            (now, 0u32)
+        } else {
+            (vault.rate_limit_window_start, vault.txs_in_current_window)
+        };
+        require!(txs < vault.policy.max_txs_per_hour, VaultError::RateLimitExceeded);
+        new_window_start = ws;
+        new_window_count = txs.saturating_add(1);
+
+        authority_key = vault.authority;
+        bump = vault.bump;
+    }
+
+    // Apply writes.
+    {
+        let vault = &mut ctx.accounts.vault;
+        vault.rate_limit_window_start = new_window_start;
+        vault.txs_in_current_window = new_window_count;
+        let record = &mut vault.token_spend_records[vault_record_idx];
+        if resets_vault_day {
+            record.last_spend_day = new_vault_record_last_day;
+        }
+        record.spent_today = new_vault_record_spent;
+    }
+    {
+        let grant = &mut ctx.accounts.grant;
+        grant.token_spend_caps[grant_cap_idx].spent = new_grant_token_spent;
+    }
+
+    // CPI transfer — vault PDA signs (same pattern as execute_token_transfer).
+    let signer_seeds: &[&[u8]] = &[b"vault", authority_key.as_ref(), &[bump]];
+    let cpi = Transfer {
+        from: ctx.accounts.vault_token_account.to_account_info(),
+        to: ctx.accounts.recipient_token_account.to_account_info(),
+        authority: ctx.accounts.vault.to_account_info(),
+    };
+    token::transfer(
+        CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            cpi,
+            &[signer_seeds],
+        ),
+        amount,
+    )?;
+
+    emit!(DelegationGrantExecuted {
+        vault: ctx.accounts.vault.key(),
+        grant: ctx.accounts.grant.key(),
+        grantee: ctx.accounts.grantee.key(),
+        action_kind: grant_actions::EXECUTE_TOKEN_TRANSFER,
+        mint,
+        recipient: ctx.accounts.recipient_token_account.key(),
+        amount,
+        spent_after: new_grant_token_spent,
+        timestamp: now,
     });
 
     Ok(())

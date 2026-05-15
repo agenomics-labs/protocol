@@ -50,6 +50,8 @@ Programmable wallets that let agents hold and spend funds under configurable pol
 - `add_token_allowlist` / `remove_token_allowlist` — Token whitelist management
 - `add_program_allowlist` / `remove_program_allowlist` — Program whitelist management (reserved for future use; ADR-050 removed `execute_program_call`)
 - `pause_vault` / `resume_vault` — Emergency kill switch
+- `create_delegation_grant` / `revoke_delegation_grant` / `update_delegation_grant` — ADR-111 bounded sub-authority issuance, revocation, and tighten-only update
+- `execute_grant_transfer` / `execute_grant_token_transfer` — ADR-111 grantee-signed SOL / SPL transfer with dual-gating (grant cap AND vault cap)
 
 **Key implementation details:**
 

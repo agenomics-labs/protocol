@@ -86,6 +86,12 @@ import {
 import { verifyProtocolInvariantsTool } from "./governance.js";
 import { payX402ServiceTool } from "./pay-x402-service.js";
 
+// ADR-111 delegation-grant MCP tools are intentionally NOT wired here.
+// The on-chain program, IDL, SDK helpers, and indexer projection landed
+// in this PR; the MCP tool surface is deferred to a separate complete
+// follow-up that adds matching handlers + action wrappers. See ADR-111
+// "Migration Progress" for the gap and the planned phasing.
+
 /**
  * All 29 Agenomics MCP tools organized by domain:
  * - Vault (10): Agent wallet management with spending policies

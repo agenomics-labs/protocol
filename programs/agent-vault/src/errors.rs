@@ -111,4 +111,86 @@ pub enum VaultError {
     ///     non-32-byte message, or out-of-range offsets).
     #[msg("The paired Ed25519 instruction does not match the supplied agent_identity / agent_identity_signature / vault_identity_bind_message (ADR-124)")]
     AgentIdentityBindSignatureMismatch,
+
+    // ====================================================================
+    // ADR-111: Delegation grant error surface
+    // ====================================================================
+
+    /// ADR-111: `execute_grant_*` was invoked against a grant whose
+    /// `revoked` flag is set. Revocation is permanent for the lifetime of
+    /// the account; the caller must obtain a freshly-issued grant.
+    #[msg("Delegation grant has been revoked")]
+    GrantRevoked,
+
+    /// ADR-111: The current Unix timestamp is at or past the grant's
+    /// `expires_at` boundary. `expires_at == 0` is the no-expiry sentinel
+    /// and never raises this.
+    #[msg("Delegation grant has expired")]
+    GrantExpired,
+
+    /// ADR-111: The requested action bit is not set in
+    /// `grant.allowed_actions`. E.g. an `execute_grant_transfer` call
+    /// against a grant whose `allowed_actions` only carries
+    /// `EXECUTE_TOKEN_TRANSFER`.
+    #[msg("Action not permitted by delegation grant")]
+    ActionNotAllowed,
+
+    /// ADR-111: The recipient pubkey is not in `grant.allowed_recipients`.
+    /// An empty `allowed_recipients` list is the "delegate to vault"
+    /// sentinel and never raises this — only a non-empty list with no
+    /// match does.
+    #[msg("Recipient not allowed by delegation grant")]
+    RecipientNotAllowed,
+
+    /// ADR-111: The cumulative spend (lamports or per-mint base units)
+    /// would exceed the grant's lifetime cap. Distinct from the vault's
+    /// own `DailyLimitExceeded` / `TokenDailyLimitExceeded` so operators
+    /// can tell at a glance whether a transfer was blocked by the grant
+    /// or by the parent vault.
+    #[msg("Delegation grant spend cap exceeded")]
+    GrantSpendCapExceeded,
+
+    /// ADR-111: The `vault` PDA passed in the `execute_grant_*` context
+    /// is not the same vault that owns the grant. The seeds binding on
+    /// the grant PDA already enforces this; the explicit check belt-and-
+    /// braces guards against a future loosening of the seeds constraint.
+    #[msg("Delegation grant does not belong to the supplied vault")]
+    GrantNotForVault,
+
+    /// ADR-111: `update_delegation_grant` attempted a change that would
+    /// LOOSEN the grant's scope — e.g. raising `spend_cap_lamports`,
+    /// adding a recipient, granting a new action bit, or extending
+    /// `expires_at`. Updates are tighten-only by invariant; loosening
+    /// requires revoking the old grant and issuing a new one.
+    #[msg("Delegation grant updates may only tighten scope (cannot loosen)")]
+    GrantUpdateCannotLoosen,
+
+    /// ADR-111: `create_delegation_grant` was attempted while the parent
+    /// vault already holds `MAX_ACTIVE_GRANTS_PER_VAULT` active grants.
+    /// Operators must revoke a stale grant first.
+    #[msg("Vault already holds the maximum number of active delegation grants")]
+    TooManyActiveGrants,
+
+    /// ADR-111: Generic input-validation error for grant create/update —
+    /// e.g. `allowed_actions` carries an unknown bit, `allowed_recipients`
+    /// exceeds the bounded vec, or `expires_at` is in the past at create
+    /// time. The error message identifies which guard fired in the docs;
+    /// the on-chain message stays generic to avoid leaking sensitive
+    /// detail in the log surface.
+    #[msg("Invalid delegation grant parameters")]
+    InvalidGrantParameters,
+
+    /// ADR-111: A SOL grant transfer was attempted but the grant carries
+    /// no `spend_cap_lamports > 0` envelope. Treated separately from
+    /// `GrantSpendCapExceeded` so the error message tells the operator
+    /// "this grant was issued without lamport authority" rather than
+    /// "you've blown the cap."
+    #[msg("Delegation grant has no SOL spend authority")]
+    GrantHasNoLamportCap,
+
+    /// ADR-111: An SPL grant transfer was attempted for a mint that has
+    /// no matching `GrantTokenCap` entry. The grantee can only move
+    /// mints the grantor explicitly enumerated at create time.
+    #[msg("Delegation grant has no spend authority for this token mint")]
+    GrantTokenNotConfigured,
 }

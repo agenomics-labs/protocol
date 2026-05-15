@@ -156,3 +156,77 @@ pub struct ExecutionAttested {
     pub slot: u64,
     pub timestamp: i64,
 }
+
+// ============================================================================
+// ADR-111: Delegation grant events
+// ============================================================================
+
+/// Emitted when `create_delegation_grant` lands a fresh `DelegationGrant`
+/// PDA on a vault. Indexers project these into the `delegation_grants`
+/// table; dashboards surface the per-vault outstanding-grant count from
+/// the running tally of Created minus Revoked events.
+///
+/// `nonce` is the third PDA seed and is included so off-chain consumers
+/// can derive the PDA address without an on-chain account fetch.
+#[event]
+pub struct DelegationGrantCreated {
+    pub vault: Pubkey,
+    pub grant: Pubkey,
+    pub grantor: Pubkey,
+    pub grantee: Pubkey,
+    pub allowed_actions: u8,
+    pub spend_cap_lamports: u64,
+    pub expires_at: i64,
+    pub nonce: u8,
+    pub timestamp: i64,
+}
+
+/// Emitted when `revoke_delegation_grant` flips `grant.revoked = true`.
+/// `revoker` is either the grantor (vault authority) or the grantee — both
+/// can revoke per ADR-111. Indexers MUST treat this as the authoritative
+/// "no further execute_grant_* permitted" signal even before the next
+/// vault account fetch.
+#[event]
+pub struct DelegationGrantRevoked {
+    pub vault: Pubkey,
+    pub grant: Pubkey,
+    pub revoker: Pubkey,
+    pub timestamp: i64,
+}
+
+/// Emitted when `update_delegation_grant` tightens a grant's scope.
+/// `new_spend_cap_lamports`, `new_allowed_actions`, and `new_expires_at`
+/// are the post-update values; recipient-list changes are reflected on
+/// the account but elided from the event surface to keep the wire payload
+/// fixed-size (indexers can re-read the account if they need the full
+/// list).
+#[event]
+pub struct DelegationGrantUpdated {
+    pub vault: Pubkey,
+    pub grant: Pubkey,
+    pub new_allowed_actions: u8,
+    pub new_spend_cap_lamports: u64,
+    pub new_expires_at: i64,
+    pub timestamp: i64,
+}
+
+/// Emitted on every successful `execute_grant_transfer` /
+/// `execute_grant_token_transfer`. The `mint` field is the SPL mint for
+/// token transfers; the canonical wrapped-SOL mint (`So111...`) is NOT
+/// substituted for native SOL — instead `mint == Pubkey::default()` is
+/// the convention for SOL grants. The `action_kind` field carries the
+/// `grant_actions::EXECUTE_TRANSFER` / `EXECUTE_TOKEN_TRANSFER` bit that
+/// authorized the spend so analytics can group by action without
+/// re-deriving from amount/mint.
+#[event]
+pub struct DelegationGrantExecuted {
+    pub vault: Pubkey,
+    pub grant: Pubkey,
+    pub grantee: Pubkey,
+    pub action_kind: u8,
+    pub mint: Pubkey,
+    pub recipient: Pubkey,
+    pub amount: u64,
+    pub spent_after: u64,
+    pub timestamp: i64,
+}

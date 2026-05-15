@@ -93,6 +93,14 @@ path = "fuzz_targets/update_status.rs"
 name = "clear_suspension"
 path = "fuzz_targets/clear_suspension.rs"
 
+# ADR-111: delegation grant policy fuzzer — pins the dual-gating contract
+# (grant cap AND vault cap), the action-bit subset rule, the recipient
+# allowlist semantics, the revoked / expired short-circuit, and the
+# tighten-only update invariant.
+[[bin]]
+name = "delegation_grant_policy"
+path = "fuzz_targets/delegation_grant_policy.rs"
+
 # Release profile mirrors the on-chain workspace so the harness's
 # arithmetic semantics match the deployed program (overflow-checks ON
 # is critical — a fuzz crash on debug-only overflow is the whole point).

@@ -2510,4 +2510,631 @@ describe("Agent Vault Tests", () => {
       expect(vaultAcc).to.be.null;
     });
   });
+
+  // ============================================================================
+  // ADR-111: Delegation Grants
+  //
+  // Exercises the dual-gating contract pinned by ADR-111 §"Enforcement":
+  // grant caps are ADDITIVE to vault caps, never substitutive. The vault's
+  // per-tx limit, daily limit, pause flag, and ADR-095 suspension gate all
+  // still apply to grant-signed transfers. The tighten-only update
+  // invariant is also pinned here.
+  // ============================================================================
+  describe("ADR-111: Delegation Grants", () => {
+    // Action bitflags — mirror programs/agent-vault/src/state.rs::grant_actions.
+    const EXECUTE_TRANSFER = 0b0000_0001;
+    const EXECUTE_TOKEN_TRANSFER = 0b0000_0010;
+
+    // Each suite test gets a freshly-funded vault so daily-cap / rate-limit
+    // counters don't leak between cases.
+    let dgAuthority: Keypair;
+    let dgAgentIdentity: Keypair;
+    let dgVaultPda: PublicKey;
+    let dgRecipient: Keypair;
+
+    function deriveGrantPDA(
+      vault: PublicKey,
+      grantee: PublicKey,
+      nonce: number
+    ): [PublicKey, number] {
+      return PublicKey.findProgramAddressSync(
+        [
+          Buffer.from("delegation"),
+          vault.toBuffer(),
+          grantee.toBuffer(),
+          Buffer.from([nonce]),
+        ],
+        programId
+      );
+    }
+
+    beforeEach(async () => {
+      dgAuthority = Keypair.generate();
+      dgAgentIdentity = Keypair.generate();
+      dgRecipient = Keypair.generate();
+
+      const airdropSig = await provider.connection.requestAirdrop(
+        dgAuthority.publicKey,
+        20 * LAMPORTS_PER_SOL
+      );
+      await provider.connection.confirmTransaction(airdropSig);
+
+      const [pda] = await anchor.web3.PublicKey.findProgramAddress(
+        [Buffer.from("vault"), dgAuthority.publicKey.toBuffer()],
+        programId
+      );
+      dgVaultPda = pda;
+
+      await registerMinimalAgent(dgAuthority, dgVaultPda);
+      await initVaultWithBindProof({
+        authority: dgAuthority,
+        agentIdentity: dgAgentIdentity,
+        vaultPda: dgVaultPda,
+        dailyLimitLamports: 5 * LAMPORTS_PER_SOL,
+        perTxLimitLamports: 1 * LAMPORTS_PER_SOL,
+        maxTxsPerHour: 20,
+      });
+
+      // Fund the vault so it has lamports to move during grant transfers.
+      const fundSig = await provider.connection.requestAirdrop(
+        dgVaultPda,
+        10 * LAMPORTS_PER_SOL
+      );
+      await provider.connection.confirmTransaction(fundSig);
+    });
+
+    it("creates a delegation grant under the vault authority", async () => {
+      const grantee = Keypair.generate();
+      const [grantPda] = deriveGrantPDA(dgVaultPda, grantee.publicKey, 0);
+
+      await program.methods
+        .createDelegationGrant(
+          grantee.publicKey,
+          0,
+          EXECUTE_TRANSFER,
+          new BN(LAMPORTS_PER_SOL / 2),
+          [],
+          [dgRecipient.publicKey],
+          new BN(0) // no expiry
+        )
+        .accounts({
+          vault: dgVaultPda,
+          agentProfile: deriveAgentProfilePDA(dgAuthority.publicKey)[0],
+          grant: grantPda,
+          authority: dgAuthority.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .signers([dgAuthority])
+        .rpc();
+
+      const grant: any = await (program.account as any).delegationGrant.fetch(
+        grantPda
+      );
+      expect(grant.vault.toString()).to.equal(dgVaultPda.toString());
+      expect(grant.grantor.toString()).to.equal(dgAuthority.publicKey.toString());
+      expect(grant.grantee.toString()).to.equal(grantee.publicKey.toString());
+      expect(grant.allowedActions).to.equal(EXECUTE_TRANSFER);
+      expect(grant.spendCapLamports.toNumber()).to.equal(LAMPORTS_PER_SOL / 2);
+      expect(grant.spentLamports.toNumber()).to.equal(0);
+      expect(grant.revoked).to.equal(false);
+      expect(grant.expiresAt.toNumber()).to.equal(0);
+
+      // Vault active-grant count bumped.
+      const vault = await program.account.vault.fetch(dgVaultPda);
+      expect((vault as any).activeGrantCount).to.equal(1);
+    });
+
+    it("executes a SOL transfer signed by the grantee within the cap", async () => {
+      const grantee = Keypair.generate();
+      const [grantPda] = deriveGrantPDA(dgVaultPda, grantee.publicKey, 0);
+
+      // Fund the grantee so they can sign their own tx.
+      const sig = await provider.connection.requestAirdrop(
+        grantee.publicKey,
+        LAMPORTS_PER_SOL
+      );
+      await provider.connection.confirmTransaction(sig);
+
+      await program.methods
+        .createDelegationGrant(
+          grantee.publicKey,
+          0,
+          EXECUTE_TRANSFER,
+          new BN(LAMPORTS_PER_SOL / 2),
+          [],
+          [dgRecipient.publicKey],
+          new BN(0)
+        )
+        .accounts({
+          vault: dgVaultPda,
+          agentProfile: deriveAgentProfilePDA(dgAuthority.publicKey)[0],
+          grant: grantPda,
+          authority: dgAuthority.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .signers([dgAuthority])
+        .rpc();
+
+      const before = await provider.connection.getBalance(dgRecipient.publicKey);
+      const amount = Math.floor(LAMPORTS_PER_SOL / 10);
+      await program.methods
+        .executeGrantTransfer(new BN(amount))
+        .accounts({
+          vault: dgVaultPda,
+          grant: grantPda,
+          grantee: grantee.publicKey,
+          agentProfile: deriveAgentProfilePDA(dgAuthority.publicKey)[0],
+          recipient: dgRecipient.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .signers([grantee])
+        .rpc();
+      const after = await provider.connection.getBalance(dgRecipient.publicKey);
+      expect(after - before).to.equal(amount);
+
+      const grant: any = await (program.account as any).delegationGrant.fetch(
+        grantPda
+      );
+      expect(grant.spentLamports.toNumber()).to.equal(amount);
+    });
+
+    it("rejects a grant transfer whose recipient is not in the grant's allowlist", async () => {
+      const grantee = Keypair.generate();
+      const otherRecipient = Keypair.generate();
+      const [grantPda] = deriveGrantPDA(dgVaultPda, grantee.publicKey, 0);
+
+      const sig = await provider.connection.requestAirdrop(
+        grantee.publicKey,
+        LAMPORTS_PER_SOL
+      );
+      await provider.connection.confirmTransaction(sig);
+
+      await program.methods
+        .createDelegationGrant(
+          grantee.publicKey,
+          0,
+          EXECUTE_TRANSFER,
+          new BN(LAMPORTS_PER_SOL / 2),
+          [],
+          [dgRecipient.publicKey],
+          new BN(0)
+        )
+        .accounts({
+          vault: dgVaultPda,
+          agentProfile: deriveAgentProfilePDA(dgAuthority.publicKey)[0],
+          grant: grantPda,
+          authority: dgAuthority.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .signers([dgAuthority])
+        .rpc();
+
+      let threw = false;
+      try {
+        await program.methods
+          .executeGrantTransfer(new BN(1000))
+          .accounts({
+            vault: dgVaultPda,
+            grant: grantPda,
+            grantee: grantee.publicKey,
+            agentProfile: deriveAgentProfilePDA(dgAuthority.publicKey)[0],
+            recipient: otherRecipient.publicKey,
+            systemProgram: anchor.web3.SystemProgram.programId,
+          })
+          .signers([grantee])
+          .rpc();
+      } catch (e: any) {
+        threw = true;
+        expect((e as AnchorError).error.errorCode.code).to.equal(
+          "RecipientNotAllowed"
+        );
+      }
+      expect(threw).to.equal(true);
+    });
+
+    it("rejects an action mask that does not include EXECUTE_TRANSFER", async () => {
+      const grantee = Keypair.generate();
+      const [grantPda] = deriveGrantPDA(dgVaultPda, grantee.publicKey, 0);
+      const sig = await provider.connection.requestAirdrop(
+        grantee.publicKey,
+        LAMPORTS_PER_SOL
+      );
+      await provider.connection.confirmTransaction(sig);
+      // Create a TOKEN_TRANSFER-only grant.
+      await program.methods
+        .createDelegationGrant(
+          grantee.publicKey,
+          0,
+          EXECUTE_TOKEN_TRANSFER,
+          new BN(LAMPORTS_PER_SOL / 2),
+          [],
+          [dgRecipient.publicKey],
+          new BN(0)
+        )
+        .accounts({
+          vault: dgVaultPda,
+          agentProfile: deriveAgentProfilePDA(dgAuthority.publicKey)[0],
+          grant: grantPda,
+          authority: dgAuthority.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .signers([dgAuthority])
+        .rpc();
+      let threw = false;
+      try {
+        await program.methods
+          .executeGrantTransfer(new BN(1000))
+          .accounts({
+            vault: dgVaultPda,
+            grant: grantPda,
+            grantee: grantee.publicKey,
+            agentProfile: deriveAgentProfilePDA(dgAuthority.publicKey)[0],
+            recipient: dgRecipient.publicKey,
+            systemProgram: anchor.web3.SystemProgram.programId,
+          })
+          .signers([grantee])
+          .rpc();
+      } catch (e: any) {
+        threw = true;
+        expect((e as AnchorError).error.errorCode.code).to.equal(
+          "ActionNotAllowed"
+        );
+      }
+      expect(threw).to.equal(true);
+    });
+
+    it("rejects an expired grant", async () => {
+      const grantee = Keypair.generate();
+      const [grantPda] = deriveGrantPDA(dgVaultPda, grantee.publicKey, 0);
+      const sig = await provider.connection.requestAirdrop(
+        grantee.publicKey,
+        LAMPORTS_PER_SOL
+      );
+      await provider.connection.confirmTransaction(sig);
+      // Expires 2 seconds in the future.
+      const expiresAt = Math.floor(Date.now() / 1000) + 2;
+      await program.methods
+        .createDelegationGrant(
+          grantee.publicKey,
+          0,
+          EXECUTE_TRANSFER,
+          new BN(LAMPORTS_PER_SOL / 2),
+          [],
+          [dgRecipient.publicKey],
+          new BN(expiresAt)
+        )
+        .accounts({
+          vault: dgVaultPda,
+          agentProfile: deriveAgentProfilePDA(dgAuthority.publicKey)[0],
+          grant: grantPda,
+          authority: dgAuthority.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .signers([dgAuthority])
+        .rpc();
+      // Sleep past the expiry boundary.
+      await new Promise((r) => setTimeout(r, 3000));
+      let threw = false;
+      try {
+        await program.methods
+          .executeGrantTransfer(new BN(1000))
+          .accounts({
+            vault: dgVaultPda,
+            grant: grantPda,
+            grantee: grantee.publicKey,
+            agentProfile: deriveAgentProfilePDA(dgAuthority.publicKey)[0],
+            recipient: dgRecipient.publicKey,
+            systemProgram: anchor.web3.SystemProgram.programId,
+          })
+          .signers([grantee])
+          .rpc();
+      } catch (e: any) {
+        threw = true;
+        expect((e as AnchorError).error.errorCode.code).to.equal("GrantExpired");
+      }
+      expect(threw).to.equal(true);
+    });
+
+    it("rejects a transfer that would exceed the grant lifetime cap", async () => {
+      const grantee = Keypair.generate();
+      const [grantPda] = deriveGrantPDA(dgVaultPda, grantee.publicKey, 0);
+      const sig = await provider.connection.requestAirdrop(
+        grantee.publicKey,
+        LAMPORTS_PER_SOL
+      );
+      await provider.connection.confirmTransaction(sig);
+      const cap = 1000;
+      await program.methods
+        .createDelegationGrant(
+          grantee.publicKey,
+          0,
+          EXECUTE_TRANSFER,
+          new BN(cap),
+          [],
+          [dgRecipient.publicKey],
+          new BN(0)
+        )
+        .accounts({
+          vault: dgVaultPda,
+          agentProfile: deriveAgentProfilePDA(dgAuthority.publicKey)[0],
+          grant: grantPda,
+          authority: dgAuthority.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .signers([dgAuthority])
+        .rpc();
+      let threw = false;
+      try {
+        await program.methods
+          .executeGrantTransfer(new BN(cap + 1))
+          .accounts({
+            vault: dgVaultPda,
+            grant: grantPda,
+            grantee: grantee.publicKey,
+            agentProfile: deriveAgentProfilePDA(dgAuthority.publicKey)[0],
+            recipient: dgRecipient.publicKey,
+            systemProgram: anchor.web3.SystemProgram.programId,
+          })
+          .signers([grantee])
+          .rpc();
+      } catch (e: any) {
+        threw = true;
+        expect((e as AnchorError).error.errorCode.code).to.equal(
+          "GrantSpendCapExceeded"
+        );
+      }
+      expect(threw).to.equal(true);
+    });
+
+    it("rejects a revoked grant", async () => {
+      const grantee = Keypair.generate();
+      const [grantPda] = deriveGrantPDA(dgVaultPda, grantee.publicKey, 0);
+      const sig = await provider.connection.requestAirdrop(
+        grantee.publicKey,
+        LAMPORTS_PER_SOL
+      );
+      await provider.connection.confirmTransaction(sig);
+      await program.methods
+        .createDelegationGrant(
+          grantee.publicKey,
+          0,
+          EXECUTE_TRANSFER,
+          new BN(LAMPORTS_PER_SOL),
+          [],
+          [dgRecipient.publicKey],
+          new BN(0)
+        )
+        .accounts({
+          vault: dgVaultPda,
+          agentProfile: deriveAgentProfilePDA(dgAuthority.publicKey)[0],
+          grant: grantPda,
+          authority: dgAuthority.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .signers([dgAuthority])
+        .rpc();
+      // Revoke as grantee.
+      await program.methods
+        .revokeDelegationGrant()
+        .accounts({
+          vault: dgVaultPda,
+          grant: grantPda,
+          signer: grantee.publicKey,
+        })
+        .signers([grantee])
+        .rpc();
+      const grant: any = await (program.account as any).delegationGrant.fetch(
+        grantPda
+      );
+      expect(grant.revoked).to.equal(true);
+      const vaultPost = await program.account.vault.fetch(dgVaultPda);
+      expect((vaultPost as any).activeGrantCount).to.equal(0);
+
+      let threw = false;
+      try {
+        await program.methods
+          .executeGrantTransfer(new BN(1000))
+          .accounts({
+            vault: dgVaultPda,
+            grant: grantPda,
+            grantee: grantee.publicKey,
+            agentProfile: deriveAgentProfilePDA(dgAuthority.publicKey)[0],
+            recipient: dgRecipient.publicKey,
+            systemProgram: anchor.web3.SystemProgram.programId,
+          })
+          .signers([grantee])
+          .rpc();
+      } catch (e: any) {
+        threw = true;
+        expect((e as AnchorError).error.errorCode.code).to.equal("GrantRevoked");
+      }
+      expect(threw).to.equal(true);
+    });
+
+    it("rejects a grant transfer while the vault is paused (vault gate still applies)", async () => {
+      const grantee = Keypair.generate();
+      const [grantPda] = deriveGrantPDA(dgVaultPda, grantee.publicKey, 0);
+      const sig = await provider.connection.requestAirdrop(
+        grantee.publicKey,
+        LAMPORTS_PER_SOL
+      );
+      await provider.connection.confirmTransaction(sig);
+      await program.methods
+        .createDelegationGrant(
+          grantee.publicKey,
+          0,
+          EXECUTE_TRANSFER,
+          new BN(LAMPORTS_PER_SOL),
+          [],
+          [dgRecipient.publicKey],
+          new BN(0)
+        )
+        .accounts({
+          vault: dgVaultPda,
+          agentProfile: deriveAgentProfilePDA(dgAuthority.publicKey)[0],
+          grant: grantPda,
+          authority: dgAuthority.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .signers([dgAuthority])
+        .rpc();
+      await program.methods
+        .pauseVault()
+        .accounts({ vault: dgVaultPda, authority: dgAuthority.publicKey })
+        .signers([dgAuthority])
+        .rpc();
+      let threw = false;
+      try {
+        await program.methods
+          .executeGrantTransfer(new BN(1000))
+          .accounts({
+            vault: dgVaultPda,
+            grant: grantPda,
+            grantee: grantee.publicKey,
+            agentProfile: deriveAgentProfilePDA(dgAuthority.publicKey)[0],
+            recipient: dgRecipient.publicKey,
+            systemProgram: anchor.web3.SystemProgram.programId,
+          })
+          .signers([grantee])
+          .rpc();
+      } catch (e: any) {
+        threw = true;
+        expect((e as AnchorError).error.errorCode.code).to.equal("VaultPaused");
+      }
+      expect(threw).to.equal(true);
+    });
+
+    it("update_delegation_grant tightens — and rejects attempts to loosen", async () => {
+      const grantee = Keypair.generate();
+      const [grantPda] = deriveGrantPDA(dgVaultPda, grantee.publicKey, 0);
+      await program.methods
+        .createDelegationGrant(
+          grantee.publicKey,
+          0,
+          EXECUTE_TRANSFER | EXECUTE_TOKEN_TRANSFER,
+          new BN(1_000_000),
+          [],
+          [dgRecipient.publicKey],
+          new BN(0)
+        )
+        .accounts({
+          vault: dgVaultPda,
+          agentProfile: deriveAgentProfilePDA(dgAuthority.publicKey)[0],
+          grant: grantPda,
+          authority: dgAuthority.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .signers([dgAuthority])
+        .rpc();
+
+      // Tighten: drop the TOKEN_TRANSFER bit, lower the cap to 100.
+      await program.methods
+        .updateDelegationGrant(
+          EXECUTE_TRANSFER,
+          new BN(100),
+          [],
+          [dgRecipient.publicKey],
+          new BN(0)
+        )
+        .accounts({
+          vault: dgVaultPda,
+          grant: grantPda,
+          authority: dgAuthority.publicKey,
+        })
+        .signers([dgAuthority])
+        .rpc();
+      const grant: any = await (program.account as any).delegationGrant.fetch(
+        grantPda
+      );
+      expect(grant.allowedActions).to.equal(EXECUTE_TRANSFER);
+      expect(grant.spendCapLamports.toNumber()).to.equal(100);
+
+      // Attempt to loosen: raise cap back to 1_000_000.
+      let threw = false;
+      try {
+        await program.methods
+          .updateDelegationGrant(
+            EXECUTE_TRANSFER,
+            new BN(1_000_000),
+            [],
+            [dgRecipient.publicKey],
+            new BN(0)
+          )
+          .accounts({
+            vault: dgVaultPda,
+            grant: grantPda,
+            authority: dgAuthority.publicKey,
+          })
+          .signers([dgAuthority])
+          .rpc();
+      } catch (e: any) {
+        threw = true;
+        expect((e as AnchorError).error.errorCode.code).to.equal(
+          "GrantUpdateCannotLoosen"
+        );
+      }
+      expect(threw, "raising the cap MUST reject").to.equal(true);
+
+      // Attempt to re-add the TOKEN_TRANSFER bit.
+      threw = false;
+      try {
+        await program.methods
+          .updateDelegationGrant(
+            EXECUTE_TRANSFER | EXECUTE_TOKEN_TRANSFER,
+            new BN(100),
+            [],
+            [dgRecipient.publicKey],
+            new BN(0)
+          )
+          .accounts({
+            vault: dgVaultPda,
+            grant: grantPda,
+            authority: dgAuthority.publicKey,
+          })
+          .signers([dgAuthority])
+          .rpc();
+      } catch (e: any) {
+        threw = true;
+        expect((e as AnchorError).error.errorCode.code).to.equal(
+          "GrantUpdateCannotLoosen"
+        );
+      }
+      expect(threw, "adding an action bit MUST reject").to.equal(true);
+    });
+
+    it("rejects a create where the lamport spend cap exceeds the vault per-tx cap", async () => {
+      const grantee = Keypair.generate();
+      const [grantPda] = deriveGrantPDA(dgVaultPda, grantee.publicKey, 0);
+      let threw = false;
+      try {
+        await program.methods
+          .createDelegationGrant(
+            grantee.publicKey,
+            0,
+            EXECUTE_TRANSFER,
+            // vault per-tx = 1 SOL — the grant cap of 2 SOL would license
+            // a single transfer beyond the vault's own ceiling.
+            new BN(2 * LAMPORTS_PER_SOL),
+            [],
+            [dgRecipient.publicKey],
+            new BN(0)
+          )
+          .accounts({
+            vault: dgVaultPda,
+            agentProfile: deriveAgentProfilePDA(dgAuthority.publicKey)[0],
+            grant: grantPda,
+            authority: dgAuthority.publicKey,
+            systemProgram: anchor.web3.SystemProgram.programId,
+          })
+          .signers([dgAuthority])
+          .rpc();
+      } catch (e: any) {
+        threw = true;
+        expect((e as AnchorError).error.errorCode.code).to.equal(
+          "InvalidGrantParameters"
+        );
+      }
+      expect(threw).to.equal(true);
+    });
+  });
 });

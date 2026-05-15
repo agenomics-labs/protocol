@@ -2,22 +2,31 @@ use anchor_lang::prelude::*;
 use anchor_spl::token::{Token, TokenAccount};
 use agent_registry::state::{AgentProfile, AgentStatus, OwnerNonce};
 
-use crate::state::Vault;
+use crate::state::{DelegationGrant, Vault};
 use crate::errors::VaultError;
 
-/// ADR-050 + findings #13/#14 + PR-X (AUD-023) + ADR-138: Explicit serialized size.
+/// ADR-050 + findings #13/#14 + PR-X (AUD-023) + ADR-138 + ADR-111: Explicit serialized size.
 /// 8 (disc) + 32 (agent_id) + 32 (authority) + 1 (paused) + 8 (spent_today) + 8 (last_day)
 /// + VaultPolicy: 8+8+4+324+324=668 + 4 (txs_window) + 8 (rate_start)
 /// + 4+(10*(32+8+8+8+8))=644 (token_spend_records, now carrying per-mint limits)
 /// + 1 (bump) + 8 (profile_nonce, ADR-095/097)
 /// + 8 (last_rotation_at, PR-X / AUD-023)
-/// + 4 (policy_version, ADR-138) = 1434 + 200 margin = 1634
+/// + 4 (policy_version, ADR-138) + 1 (active_grant_count, ADR-111)
+/// = 1435 + 199 margin = 1634
 ///
 /// ADR-138: `policy_version` is a u32 trailing field. Pre-ADR-138 vaults
 /// have it implicitly zero-filled on first post-upgrade deserialize
 /// (Anchor's standard trailing-field migration). The first
 /// `update_policy` lands at version 1; thereafter the field is the
 /// canonical pin stamped into every `ExecutionAttested` event.
+///
+/// ADR-111 sizing note: the `active_grant_count` u8 occupies 1 byte
+/// after `policy_version`; the existing 200-byte safety margin in this
+/// allocation absorbs it without changing the on-wire `space` constant,
+/// so already-deployed vaults can pick up the new field via Anchor's
+/// tail-zero-fill semantics on first post-upgrade deserialize (same
+/// migration shape used for `last_rotation_at` in PR-X and
+/// `policy_version` in ADR-138).
 ///
 /// AUD-008 (PR-J): The `profile_nonce` formerly arrived as a user-supplied
 /// `u64` argument and was written verbatim into `vault.profile_nonce`. A
@@ -337,6 +346,257 @@ pub struct ResumeVault<'info> {
     pub vault: Account<'info, Vault>,
 
     pub authority: Signer<'info>,
+}
+
+// ============================================================================
+// ADR-111: Delegation grant contexts
+// ============================================================================
+
+/// ADR-111: Context for `create_delegation_grant`. Only the vault
+/// authority can issue grants — Anchor's `has_one = authority` constraint
+/// on the parent `vault` PDA enforces this. The `nonce` argument is the
+/// third PDA seed and lets a single (vault, grantee) pair carry multiple
+/// historical grants; nonce reuse against an already-initialized PDA is
+/// rejected by `init` automatically.
+///
+/// The instruction handler asserts (i) the parent vault is not paused,
+/// (ii) the suspension gate (ADR-095) passes via the registry's
+/// `agent_profile`, (iii) the resulting `active_grant_count` does not
+/// exceed `MAX_ACTIVE_GRANTS_PER_VAULT`, (iv) all bounded-vec lengths,
+/// (v) the proposed `expires_at` is either 0 (no expiry) or strictly in
+/// the future, and (vi) the proposed spend caps do not exceed the
+/// vault's per-tx caps (so a grantee can never be authorized for a
+/// single-tx amount the vault itself wouldn't accept).
+#[derive(Accounts)]
+#[instruction(grantee: Pubkey, nonce: u8)]
+pub struct CreateDelegationGrant<'info> {
+    #[account(
+        mut,
+        has_one = authority @ VaultError::Unauthorized,
+        seeds = [b"vault", authority.key().as_ref()],
+        bump
+    )]
+    pub vault: Account<'info, Vault>,
+
+    /// ADR-095 / ADR-111: The agent's Registry profile. Re-derived using
+    /// `vault.profile_nonce` (ADR-097) so the suspension check at grant
+    /// creation matches the live profile PDA. A suspended agent must not
+    /// be able to issue new grants either — closing the seam where the
+    /// suspension gate only applied to direct transfers.
+    #[account(
+        seeds = [
+            authority.key().as_ref(),
+            b"agent-profile",
+            &vault.profile_nonce.to_le_bytes(),
+        ],
+        seeds::program = agent_registry::ID,
+        bump
+    )]
+    pub agent_profile: Account<'info, AgentProfile>,
+
+    /// The grant PDA. Seeds bind it to (vault, grantee, nonce) so the
+    /// derivation is purely a function of externally-known inputs (ADR-093
+    /// canonical-seeds pattern).
+    #[account(
+        init,
+        payer = authority,
+        space = DelegationGrant::SPACE,
+        seeds = [
+            b"delegation",
+            vault.key().as_ref(),
+            grantee.as_ref(),
+            &[nonce],
+        ],
+        bump,
+    )]
+    pub grant: Account<'info, DelegationGrant>,
+
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+/// ADR-111: Context for `revoke_delegation_grant`. Either the grantor
+/// (vault authority) or the grantee may revoke — the handler accepts
+/// either as `signer`. The vault PDA is included so the active-grant
+/// count can be decremented atomically with the revocation.
+///
+/// The grant is NOT closed here; flipping `revoked = true` preserves
+/// the audit-trail (ADR-111 §"Enforcement"). A future
+/// `close_delegation_grant` (ADR-111b) can reclaim rent for grants that
+/// have been revoked AND expired for ≥ 30 days.
+#[derive(Accounts)]
+pub struct RevokeDelegationGrant<'info> {
+    #[account(
+        mut,
+        seeds = [b"vault", vault.authority.as_ref()],
+        bump = vault.bump,
+    )]
+    pub vault: Account<'info, Vault>,
+
+    #[account(
+        mut,
+        seeds = [
+            b"delegation",
+            vault.key().as_ref(),
+            grant.grantee.as_ref(),
+            &[grant.nonce],
+        ],
+        bump = grant.bump,
+        constraint = grant.vault == vault.key() @ VaultError::GrantNotForVault,
+    )]
+    pub grant: Account<'info, DelegationGrant>,
+
+    /// Either `grant.grantor` (the vault authority at create time) or
+    /// `grant.grantee`. The handler verifies this explicitly — Anchor's
+    /// `has_one` only accepts a single pubkey field.
+    pub signer: Signer<'info>,
+}
+
+/// ADR-111: Context for `update_delegation_grant`. Only the vault
+/// authority can update, and ONLY in the tightening direction — the
+/// handler verifies every field's new value is no looser than the
+/// stored value.
+#[derive(Accounts)]
+pub struct UpdateDelegationGrant<'info> {
+    #[account(
+        has_one = authority @ VaultError::Unauthorized,
+        seeds = [b"vault", authority.key().as_ref()],
+        bump
+    )]
+    pub vault: Account<'info, Vault>,
+
+    #[account(
+        mut,
+        seeds = [
+            b"delegation",
+            vault.key().as_ref(),
+            grant.grantee.as_ref(),
+            &[grant.nonce],
+        ],
+        bump = grant.bump,
+        constraint = grant.vault == vault.key() @ VaultError::GrantNotForVault,
+    )]
+    pub grant: Account<'info, DelegationGrant>,
+
+    pub authority: Signer<'info>,
+}
+
+/// ADR-111: Context for `execute_grant_transfer` — SOL transfer signed
+/// by the grantee. Mirrors `ExecuteTransfer` (vault + agent_profile +
+/// recipient + system_program) and ADDS the grant PDA + grantee signer.
+///
+/// The vault's daily-cap, rate-limit, pause, and suspension gates ALL
+/// still apply — the grant's spend cap is an ADDITIONAL bound, never a
+/// replacement. See `instructions::execute_grant_transfer` for the
+/// gating order.
+#[derive(Accounts)]
+pub struct ExecuteGrantTransfer<'info> {
+    #[account(
+        mut,
+        seeds = [b"vault", vault.authority.as_ref()],
+        bump = vault.bump,
+    )]
+    pub vault: Account<'info, Vault>,
+
+    #[account(
+        mut,
+        seeds = [
+            b"delegation",
+            vault.key().as_ref(),
+            grantee.key().as_ref(),
+            &[grant.nonce],
+        ],
+        bump = grant.bump,
+        constraint = grant.vault == vault.key() @ VaultError::GrantNotForVault,
+        constraint = grant.grantee == grantee.key() @ VaultError::Unauthorized,
+    )]
+    pub grant: Account<'info, DelegationGrant>,
+
+    /// The grantee MUST sign — grant.grantee is the canonical authority
+    /// for `execute_grant_*` and the `constraint` above pins the field
+    /// against the signer key.
+    pub grantee: Signer<'info>,
+
+    /// ADR-095: suspension gate. The PDA is derived from
+    /// `vault.authority` (canonical seeds) + `vault.profile_nonce`.
+    /// CHECK: PDA derivation validated by the seeds constraint; the
+    /// suspension status is asserted explicitly in the handler.
+    #[account(
+        seeds = [
+            vault.authority.as_ref(),
+            b"agent-profile",
+            &vault.profile_nonce.to_le_bytes(),
+        ],
+        seeds::program = agent_registry::ID,
+        bump
+    )]
+    pub agent_profile: Account<'info, AgentProfile>,
+
+    /// CHECK: recipient validated against grant.allowed_recipients
+    /// in the handler.
+    #[account(mut)]
+    pub recipient: UncheckedAccount<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+/// ADR-111: Context for `execute_grant_token_transfer` — SPL transfer
+/// signed by the grantee. Mirrors `ExecuteTokenTransfer` and applies
+/// the same recipient-account guards (ADR-072 SEC-6: no self-transfer,
+/// matching mint).
+#[derive(Accounts)]
+pub struct ExecuteGrantTokenTransfer<'info> {
+    #[account(
+        mut,
+        seeds = [b"vault", vault.authority.as_ref()],
+        bump = vault.bump,
+    )]
+    pub vault: Account<'info, Vault>,
+
+    #[account(
+        mut,
+        seeds = [
+            b"delegation",
+            vault.key().as_ref(),
+            grantee.key().as_ref(),
+            &[grant.nonce],
+        ],
+        bump = grant.bump,
+        constraint = grant.vault == vault.key() @ VaultError::GrantNotForVault,
+        constraint = grant.grantee == grantee.key() @ VaultError::Unauthorized,
+    )]
+    pub grant: Account<'info, DelegationGrant>,
+
+    pub grantee: Signer<'info>,
+
+    #[account(
+        seeds = [
+            vault.authority.as_ref(),
+            b"agent-profile",
+            &vault.profile_nonce.to_le_bytes(),
+        ],
+        seeds::program = agent_registry::ID,
+        bump
+    )]
+    pub agent_profile: Account<'info, AgentProfile>,
+
+    #[account(
+        mut,
+        constraint = vault_token_account.owner == vault.key() @ VaultError::Unauthorized,
+    )]
+    pub vault_token_account: Account<'info, TokenAccount>,
+
+    #[account(
+        mut,
+        constraint = recipient_token_account.mint == vault_token_account.mint @ VaultError::TokenNotAllowed,
+        constraint = recipient_token_account.key() != vault_token_account.key() @ VaultError::SelfTransferNotAllowed,
+        constraint = recipient_token_account.owner != vault.key() @ VaultError::SelfTransferNotAllowed,
+    )]
+    pub recipient_token_account: Account<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token>,
 }
 
 /// Helper: check that the agent is not suspended. Called at the top of
