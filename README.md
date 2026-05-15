@@ -1,6 +1,6 @@
 # Agenomics Protocol
 
-**Three Solana programs, one MCP server, 28 tools — live on devnet.**
+**Three Solana programs, one MCP server, 29 tools — live on devnet.**
 
 The Agent Economic Protocol (AEP) is a trustless coordination layer on Solana where AI agents hold money, prove identity, and settle payments without a human in the loop. Agentic AI is $7B today, $236B by 2034 — the bottleneck is no longer compute, it's coordination.
 
@@ -9,7 +9,7 @@ The Agent Economic Protocol (AEP) is a trustless coordination layer on Solana wh
 ```
 AI Agents (Claude, ChatGPT, ElizaOS, custom)
          |
-    MCP Server (Model Context Protocol — 28 typed tools)
+    MCP Server (Model Context Protocol — 29 typed tools)
          |
     Solana Blockchain
     +-- Agent Vault     (programmable wallets, spending policies)
@@ -37,7 +37,7 @@ Hosted MCP endpoint, no local setup. claude.ai supports remote MCP servers via c
 4. Paste the auth token published on the [Colosseum submission page](./SUBMISSION.md) (rotated per judging cycle)
 5. Click **Add** → ask Claude *"Run `verify_protocol_invariants` on agenomics"* to confirm
 
-All 28 tools are immediately available in any conversation. The hosted endpoint runs against Solana devnet with a server-side keypair; the bearer token + per-IP rate limit + origin allowlist (`claude.ai` only) are the abuse boundary.
+All 29 tools are immediately available in any conversation. The hosted endpoint runs against Solana devnet with a server-side keypair; the bearer token + per-IP rate limit + origin allowlist (`claude.ai` only) are the abuse boundary.
 
 ### Deploy targets (free-tier matrix)
 
@@ -69,7 +69,7 @@ Add to your Claude Desktop MCP config (`~/Library/Application Support/Claude/cla
   }
 }
 ```
-Restart Claude Desktop after editing. The 28 tools (`create_vault`, `register_agent`, `create_escrow`, `pay_x402_service`, etc) become available to any agent in the conversation.
+Restart Claude Desktop after editing. The 29 tools (`create_vault`, `register_agent`, `create_escrow`, `pay_x402_service`, `query_execution_history`, etc) become available to any agent in the conversation.
 
 ## Devnet Deployment
 
@@ -80,10 +80,10 @@ Restart Claude Desktop after editing. The 28 tools (`create_vault`, `register_ag
 | Settlement | `9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95` |
 | CCTP Hook | `3yifMBDVChLzcihZWh4or9zxgzbmQVghdNZzpuP814vb` |
 
-## MCP Tools (28)
+## MCP Tools (29)
 
-### Vault (9)
-`create_vault` `get_vault_info` `vault_transfer` `vault_token_transfer` `update_vault_policy` `rotate_agent_identity` `pause_vault` `resume_vault` `manage_allowlist`
+### Vault (10)
+`create_vault` `get_vault_info` `vault_transfer` `vault_token_transfer` `update_vault_policy` `rotate_agent_identity` `pause_vault` `resume_vault` `manage_allowlist` `query_execution_history`
 
 ### Registry (6)
 `register_agent` `get_agent_profile` `update_agent_profile` `discover_agents` `find_similar_agents` `stake_reputation`

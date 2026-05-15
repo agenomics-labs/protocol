@@ -148,17 +148,30 @@ describe("handlers-v2/vault — anchor ix encoding", () => {
     );
   });
 
-  it("encodeExecuteTransferData = [disc(8) || amount_u64_LE(8)]", () => {
+  it("encodeExecuteTransferData = [disc(8) || amount_u64_LE(8) || tool_id_hash(32)] (ADR-138)", () => {
     const amount = 250_000_000n; // 0.25 SOL
     const data = encodeExecuteTransferData(amount);
-    assert.equal(data.length, 16, "disc(8) + u64(8) = 16 bytes");
+    // ADR-138: the on-chain handler now accepts a 32-byte tool_id_hash
+    // argument. Default omitted -> all-zeros sentinel.
+    assert.equal(
+      data.length,
+      48,
+      "disc(8) + u64(8) + tool_id_hash(32) = 48 bytes",
+    );
 
     const expectedDisc = anchorDiscriminator("global:execute_transfer");
     assert.deepEqual(Array.from(data.slice(0, 8)), Array.from(expectedDisc));
     assert.deepEqual(
-      Array.from(data.slice(8)),
+      Array.from(data.slice(8, 16)),
       Array.from(encodeU64Le(amount)),
     );
+    // Default toolIdHash is the all-zeros sentinel.
+    assert.deepEqual(Array.from(data.slice(16)), Array.from(new Uint8Array(32)));
+
+    // Round-trip a non-default toolIdHash through the encoder.
+    const nonZero = new Uint8Array(32).fill(0xab);
+    const data2 = encodeExecuteTransferData(amount, nonZero);
+    assert.deepEqual(Array.from(data2.slice(16)), Array.from(nonZero));
   });
 
   it("buildExecuteTransferInstruction produces the correct 4-account layout", () => {

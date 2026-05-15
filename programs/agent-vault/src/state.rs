@@ -88,6 +88,24 @@ pub struct Vault {
     /// rotation post-upgrade is therefore unrestricted; subsequent rotations
     /// are gated by the 24h window. Bumps the account `space` by 8 bytes.
     pub last_rotation_at: i64,
+
+    /// ADR-138: monotonically-increasing counter incremented on every
+    /// successful `update_policy` call. Stamped into every
+    /// `ExecutionAttested` event so off-chain consumers can pin which
+    /// policy version was in force when a value-moving action executed.
+    ///
+    /// Initialized to 0 by `initialize_vault`. Bumped via
+    /// `checked_add(1)` in `update_policy`; the protocol does NOT support
+    /// rollback, so the field is strictly increasing across the vault's
+    /// lifetime.
+    ///
+    /// Migration note: vaults deployed before ADR-138 have this field
+    /// implicitly set to 0 on first post-upgrade deserialization (Anchor
+    /// zero-fills new trailing fields). Their first `update_policy` after
+    /// the upgrade lands at version 1; subsequent actions are stamped
+    /// with whatever the cumulative version is. Bumps the account `space`
+    /// by 4 bytes.
+    pub policy_version: u32,
 }
 
 // ADR-039: AuditEntry struct removed — auditing is done via emit! events,

@@ -5,12 +5,19 @@ use agent_registry::state::{AgentProfile, AgentStatus, OwnerNonce};
 use crate::state::Vault;
 use crate::errors::VaultError;
 
-/// ADR-050 + findings #13/#14 + PR-X (AUD-023): Explicit serialized size.
+/// ADR-050 + findings #13/#14 + PR-X (AUD-023) + ADR-138: Explicit serialized size.
 /// 8 (disc) + 32 (agent_id) + 32 (authority) + 1 (paused) + 8 (spent_today) + 8 (last_day)
 /// + VaultPolicy: 8+8+4+324+324=668 + 4 (txs_window) + 8 (rate_start)
 /// + 4+(10*(32+8+8+8+8))=644 (token_spend_records, now carrying per-mint limits)
 /// + 1 (bump) + 8 (profile_nonce, ADR-095/097)
-/// + 8 (last_rotation_at, PR-X / AUD-023) = 1430 + 200 margin = 1630
+/// + 8 (last_rotation_at, PR-X / AUD-023)
+/// + 4 (policy_version, ADR-138) = 1434 + 200 margin = 1634
+///
+/// ADR-138: `policy_version` is a u32 trailing field. Pre-ADR-138 vaults
+/// have it implicitly zero-filled on first post-upgrade deserialize
+/// (Anchor's standard trailing-field migration). The first
+/// `update_policy` lands at version 1; thereafter the field is the
+/// canonical pin stamped into every `ExecutionAttested` event.
 ///
 /// AUD-008 (PR-J): The `profile_nonce` formerly arrived as a user-supplied
 /// `u64` argument and was written verbatim into `vault.profile_nonce`. A
@@ -25,7 +32,7 @@ pub struct InitializeVault<'info> {
     #[account(
         init,
         payer = authority,
-        space = 1630,
+        space = 1634,
         seeds = [b"vault", authority.key().as_ref()],
         bump
     )]

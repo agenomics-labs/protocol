@@ -98,8 +98,8 @@ describe("Surface 2 pay_x402_service (scaffold)", () => {
       );
     });
 
-    it("brings the total tool count to 28", () => {
-      assert.equal(allTools.length, 28);
+    it("brings the total tool count to 29 (including ADR-138 query_execution_history)", () => {
+      assert.equal(allTools.length, 29);
     });
 
     it("declares the pay:x402 capability (write/spend claim)", () => {

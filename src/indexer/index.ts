@@ -365,6 +365,50 @@ function initDb(dbPath: string): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_protocol_config_kind ON protocol_config_history(kind);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_protocol_config_unique
       ON protocol_config_history(signature, slot, kind);
+
+    -- ADR-138: execution-provenance attestations. Persists every
+    -- ExecutionAttested event emitted by the agent-vault program so
+    -- consumers can answer "which agent, under which delegation/policy,
+    -- executing which tool, with which manifest, at what slot?".
+    -- The PG mirror lives in migration 003-adr-138-execution-attestations.sql;
+    -- this SQLite block stays in lockstep with that file. Schema notes:
+    --   * tool_id / manifest_hash kept as TEXT hex strings (64 chars).
+    --   * amount as TEXT (u64 lossless round-trip per coerceU64String).
+    --   * delegation_grant / mint / recipient NULLable (Borsh Option).
+    --   * Idempotency primitive: UNIQUE(tx_signature, instruction_index).
+    --   * Hot-path indexes match the 003 migration: by agent, vault,
+    --     and tool_id; each trailing on slot DESC for paginating reads.
+    CREATE TABLE IF NOT EXISTS execution_attestations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tx_signature TEXT NOT NULL,
+      instruction_index INTEGER NOT NULL DEFAULT 0,
+      vault TEXT NOT NULL,
+      agent_identity TEXT NOT NULL,
+      authority TEXT NOT NULL,
+      action_kind TEXT NOT NULL CHECK (action_kind IN (
+        'Transfer','TokenTransfer','PolicyUpdate','AllowlistManage',
+        'IdentityRotation','PauseToggle','GrantTransfer','GrantTokenTransfer'
+      )),
+      tool_id TEXT NOT NULL,
+      manifest_hash TEXT NOT NULL,
+      policy_version INTEGER NOT NULL,
+      delegation_grant TEXT,
+      amount TEXT NOT NULL DEFAULT '0',
+      mint TEXT,
+      recipient TEXT,
+      slot INTEGER NOT NULL,
+      event_timestamp INTEGER NOT NULL,
+      ingested_at TEXT NOT NULL DEFAULT (datetime('now')),
+      decoded_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_exec_attest_unique
+      ON execution_attestations(tx_signature, instruction_index);
+    CREATE INDEX IF NOT EXISTS idx_exec_attest_agent_slot
+      ON execution_attestations(agent_identity, slot DESC);
+    CREATE INDEX IF NOT EXISTS idx_exec_attest_vault_slot
+      ON execution_attestations(vault, slot DESC);
+    CREATE INDEX IF NOT EXISTS idx_exec_attest_tool_slot
+      ON execution_attestations(tool_id, slot DESC);
   `);
 
   // Migration: older databases were created without `event_ordinal`.
@@ -433,6 +477,10 @@ const DISCRIMINATOR_MAP: Record<string, string> = {
 
   // agent-vault
   b42bcf021247034b: "VaultInitialized",
+  // ADR-138: ExecutionAttested. sha256("event:ExecutionAttested")[0..8].
+  // Emitted by every value-moving or authority-changing instruction in
+  // the agent-vault program. The decoder lives below in EVENT_DECODERS.
+  "6715b47fb9c66172": "ExecutionAttested",
   // ADR-082 / audit-2026-04-23 item 6: AgentIdentityUpdated (ADR-069 /
   // SEC-2 from 2026-04-22 deep audit). The signal that downstream
   // permitted-signer caches must invalidate. Was missing pre-fix; the
@@ -598,6 +646,34 @@ function optionHexBytes(r: BorshReader, n: number): string | null {
   if (tag === 1) return r.hexBytes(n);
   throw new Error(`optionHexBytes: invalid Borsh Option tag ${tag} (expected 0|1)`);
 }
+
+// ADR-138: Borsh `Option<Pubkey>` — wire-encoded as a u8 tag
+// (0=None, 1=Some) followed by 32 raw bytes when Some. Returns null
+// for None or a base58 `Address` string for Some so the JSON
+// projection mirrors every other Pubkey field decoded in this module.
+function optionPubkey(r: BorshReader): string | null {
+  const tag = r.u8();
+  if (tag === 0) return null;
+  if (tag === 1) return r.pubkey();
+  throw new Error(`optionPubkey: invalid Borsh Option tag ${tag} (expected 0|1)`);
+}
+
+// ADR-138: declaration order of `ActionKind` in
+// programs/agent-vault/src/events.rs. Borsh encodes the enum as a
+// positional 1-byte tag; reordering the Rust enum without updating this
+// array silently mis-decodes every ExecutionAttested event. The pin
+// test in `tests/indexer.test.ts` MUST fail loudly if either side
+// drifts.
+const ACTION_KIND_VARIANTS = [
+  "Transfer",
+  "TokenTransfer",
+  "PolicyUpdate",
+  "AllowlistManage",
+  "IdentityRotation",
+  "PauseToggle",
+  "GrantTransfer",
+  "GrantTokenTransfer",
+] as const;
 
 type EventDecoder = (r: BorshReader) => Record<string, unknown>;
 
@@ -811,6 +887,58 @@ const EVENT_DECODERS: Record<string, EventDecoder> = {
   VaultResumed: (r) => ({
     vault: r.pubkey(),
   }),
+
+  // ADR-138: ExecutionAttested — provenance record emitted at the end of
+  // every value-moving or authority-changing vault instruction.
+  // Wire layout from programs/agent-vault/src/events.rs:
+  //   pub vault: Pubkey
+  //   pub agent_identity: Pubkey
+  //   pub authority: Pubkey
+  //   pub action_kind: ActionKind          // 1-byte positional enum tag
+  //   pub tool_id: [u8; 32]
+  //   pub manifest_hash: [u8; 32]
+  //   pub policy_version: u32
+  //   pub delegation_grant: Option<Pubkey> // ADR-111 reserve; None here
+  //   pub amount: u64
+  //   pub mint: Option<Pubkey>
+  //   pub recipient: Option<Pubkey>
+  //   pub slot: u64
+  //   pub timestamp: i64
+  //
+  // ACTION_KIND_VARIANTS must stay in declaration-order lockstep with
+  // the Rust enum (same drift hazard as AGENT_STATUS_VARIANTS).
+  ExecutionAttested: (r) => {
+    const vault = r.pubkey();
+    const agent_identity = r.pubkey();
+    const authority = r.pubkey();
+    const actionTag = r.u8();
+    const action_kind =
+      ACTION_KIND_VARIANTS[actionTag] ?? `Unknown(${actionTag})`;
+    const tool_id = r.hexBytes(32);
+    const manifest_hash = r.hexBytes(32);
+    const policy_version = r.u32();
+    const delegation_grant = optionPubkey(r);
+    const amount = u64ToJson(r.u64());
+    const mint = optionPubkey(r);
+    const recipient = optionPubkey(r);
+    const slot = u64ToJson(r.u64());
+    const timestamp = i64ToJson(r.i64());
+    return {
+      vault,
+      agent_identity,
+      authority,
+      action_kind,
+      tool_id,
+      manifest_hash,
+      policy_version,
+      delegation_grant,
+      amount,
+      mint,
+      recipient,
+      slot,
+      timestamp,
+    };
+  },
 
   // ADR-082 decoder gap closure: agent-registry events (commit 2 of 4).
   // All 3 events below had DISCRIMINATOR_MAP entries but no
@@ -1205,6 +1333,120 @@ function updateAgentFromEvent(
   const data = event.data as Record<string, unknown>;
   const authority = typeof data.authority === "string" ? data.authority : undefined;
 
+  // ADR-138: ExecutionAttested — append to the execution_attestations
+  // projection. The full provenance record is the load-bearing surface
+  // for the MCP `query_execution_history` tool; we copy the decoded
+  // fields verbatim so the JSON projection on `events.data` stays the
+  // canonical source of truth (no derived columns drift).
+  if (event.name === "ExecutionAttested") {
+    const vault = typeof data.vault === "string" ? data.vault : undefined;
+    const agentIdentity =
+      typeof data.agent_identity === "string" ? data.agent_identity : undefined;
+    const authority2 =
+      typeof data.authority === "string" ? data.authority : undefined;
+    const actionKind =
+      typeof data.action_kind === "string" ? data.action_kind : undefined;
+    const toolId = typeof data.tool_id === "string" ? data.tool_id : undefined;
+    const manifestHash =
+      typeof data.manifest_hash === "string" ? data.manifest_hash : undefined;
+    const policyVersion =
+      typeof data.policy_version === "number"
+        ? data.policy_version
+        : undefined;
+    if (
+      !vault ||
+      !agentIdentity ||
+      !authority2 ||
+      !actionKind ||
+      !toolId ||
+      !manifestHash ||
+      policyVersion === undefined
+    ) {
+      // Malformed row (decoder fell through) — drop to the forensics
+      // fallback in the raw `events` table. We deliberately do not
+      // INSERT a partial attestation row.
+      return;
+    }
+    const delegationGrant =
+      typeof data.delegation_grant === "string" ? data.delegation_grant : null;
+    const mint = typeof data.mint === "string" ? data.mint : null;
+    const recipient =
+      typeof data.recipient === "string" ? data.recipient : null;
+    const amount = coerceU64String(data.amount);
+    const eventSlot =
+      typeof data.slot === "number" || typeof data.slot === "bigint"
+        ? Number(data.slot)
+        : typeof data.slot === "string"
+          ? Number(data.slot)
+          : slot;
+    const eventTs = coerceI64(data.timestamp);
+    // SQLite is authoritative — write here under the per-program write
+    // mutex held by the caller. `INSERT OR IGNORE` against the UNIQUE
+    // index makes the row idempotent on (tx_signature,
+    // instruction_index); the per-tx event ordinal carried in `events`
+    // is the natural `instruction_index` value (one ExecutionAttested
+    // per action ix).
+    db.prepare(`
+      INSERT OR IGNORE INTO execution_attestations
+        (tx_signature, instruction_index, vault, agent_identity, authority,
+         action_kind, tool_id, manifest_hash, policy_version,
+         delegation_grant, amount, mint, recipient,
+         slot, event_timestamp, ingested_at, decoded_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+              datetime('now'), datetime('now'))
+    `).run(
+      signature,
+      // The event row's own per-tx ordinal lands in the `events` table;
+      // ExecutionAttested is emitted at most once per action ix so the
+      // ordinal doubles as instruction_index here. Negative ordinals
+      // never happen — the inline loop in `persistEventsForTx` writes
+      // monotonically from 0.
+      // Best-effort: fall back to 0 if the signature carries no events
+      // (impossible in practice, but defensive).
+      readMaxEventOrdinalForSignature(db, signature),
+      vault,
+      agentIdentity,
+      authority2,
+      actionKind,
+      toolId,
+      manifestHash,
+      policyVersion,
+      delegationGrant,
+      amount,
+      mint,
+      recipient,
+      eventSlot,
+      typeof eventTs === "bigint" ? eventTs.toString() : eventTs,
+    );
+    // ADR-128 Phase 1 dual-write — execution_attestations projection.
+    void getPostgresStore().insertExecutionAttestation({
+      txSignature: signature,
+      instructionIndex: readMaxEventOrdinalForSignature(db, signature),
+      vault,
+      agentIdentity,
+      authority: authority2,
+      actionKind: actionKind as
+        | "Transfer"
+        | "TokenTransfer"
+        | "PolicyUpdate"
+        | "AllowlistManage"
+        | "IdentityRotation"
+        | "PauseToggle"
+        | "GrantTransfer"
+        | "GrantTokenTransfer",
+      toolId,
+      manifestHash,
+      policyVersion,
+      delegationGrant,
+      amount,
+      mint,
+      recipient,
+      slot: eventSlot,
+      eventTimestamp: eventTs,
+    });
+    return;
+  }
+
   // ADR-082: AgentIdentityUpdated does NOT carry an `authority` field —
   // it carries `vault`, `old_identity`, `new_identity`. Persist directly
   // into the vault_identity_history projection. Downstream consumers
@@ -1430,6 +1672,30 @@ function updateAgentFromEvent(
     });
     return;
   }
+}
+
+/**
+ * ADR-138: best-effort lookup of the per-tx event ordinal for an
+ * `ExecutionAttested` row. We persist the ordinal on the parent
+ * `events` row (the `event_ordinal` column); for the attestations table
+ * we want the ordinal of the most recently-inserted event with this
+ * signature, which is the ordinal of the ExecutionAttested itself
+ * because `persistEventsForTx` walks the parsed events in order and
+ * inserts ExecutionAttested AFTER its paired Transfer/Policy/etc event.
+ *
+ * Returning 0 on a miss is defensive only — every ExecutionAttested
+ * lands as a row in `events` before this lookup runs.
+ */
+function readMaxEventOrdinalForSignature(
+  db: Database.Database,
+  signature: string,
+): number {
+  const row = db
+    .prepare(
+      "SELECT COALESCE(MAX(event_ordinal), 0) AS max_ord FROM events WHERE signature = ?",
+    )
+    .get(signature) as { max_ord: number } | undefined;
+  return row?.max_ord ?? 0;
 }
 
 function coerceScore(v: unknown): number {
@@ -2553,6 +2819,98 @@ function createApi(
 
     res.json({ program, total: countRow.total, limit, offset, events: rows });
   });
+
+  // ADR-138: execution-provenance query surface. Returns the most
+  // recent `ExecutionAttested` rows for a given agent_identity OR vault,
+  // filtered by `action_kind` and/or `tool_id`. Cursor pagination via
+  // `since` (a slot lower bound). The default ordering is `slot DESC`
+  // so the most recent action lands first; the trailing index on
+  // (agent_identity|vault|tool_id, slot DESC) covers both the filter and
+  // the sort without a separate sort step.
+  //
+  // Path-routed by the primary filter dimension so the endpoint
+  // composes well with the URL-driven MCP tool wrapper:
+  //   GET /execution/agent/:agent_identity
+  //   GET /execution/vault/:vault
+  // Either path accepts optional `?action_kind=`, `?tool_id=` (hex),
+  // `?since=<slot>`, `?limit=<n>`.
+  app.get(
+    "/execution/:dim(agent|vault)/:key",
+    (req: Request, res: Response) => {
+      const dim = req.params.dim;
+      const key = req.params.key;
+      if (!key || key.length === 0) {
+        res.status(400).json({ error: "missing key" });
+        return;
+      }
+      const limit = Math.min(
+        Math.max(parseInt(req.query.limit as string) || 50, 1),
+        500,
+      );
+      const sinceRaw = req.query.since;
+      const since =
+        typeof sinceRaw === "string" && sinceRaw.length > 0
+          ? Number.parseInt(sinceRaw, 10)
+          : 0;
+      const actionKind =
+        typeof req.query.action_kind === "string" &&
+        (req.query.action_kind as string).length > 0
+          ? (req.query.action_kind as string)
+          : null;
+      const toolId =
+        typeof req.query.tool_id === "string" &&
+        (req.query.tool_id as string).length > 0
+          ? (req.query.tool_id as string)
+          : null;
+
+      const params: unknown[] = [];
+      const wheres: string[] = [];
+      if (dim === "agent") {
+        wheres.push("agent_identity = ?");
+        params.push(key);
+      } else {
+        wheres.push("vault = ?");
+        params.push(key);
+      }
+      if (Number.isFinite(since) && since > 0) {
+        wheres.push("slot >= ?");
+        params.push(since);
+      }
+      if (actionKind) {
+        wheres.push("action_kind = ?");
+        params.push(actionKind);
+      }
+      if (toolId) {
+        wheres.push("tool_id = ?");
+        params.push(toolId);
+      }
+      const sql = `
+        SELECT tx_signature, instruction_index, vault, agent_identity, authority,
+               action_kind, tool_id, manifest_hash, policy_version,
+               delegation_grant, amount, mint, recipient, slot, event_timestamp,
+               ingested_at, decoded_at
+        FROM execution_attestations
+        WHERE ${wheres.join(" AND ")}
+        ORDER BY slot DESC, id DESC
+        LIMIT ?
+      `;
+      params.push(limit);
+      const rows = db.prepare(sql).all(...params);
+      // Cursor for the caller's next page: the lowest slot we returned.
+      // Callers paginate downward by supplying that slot as `since` on
+      // the next request (a forward-walking cursor for older rows would
+      // also work; downward-walking matches "show recent first").
+      const lastRow = rows.length > 0 ? (rows[rows.length - 1] as { slot: number }) : null;
+      res.json({
+        dim,
+        key,
+        limit,
+        count: rows.length,
+        next_cursor: lastRow ? { before_slot: lastRow.slot } : null,
+        attestations: rows,
+      });
+    },
+  );
 
   app.get("/agents", (req: Request, res: Response) => {
     const category = req.query.category as string | undefined;

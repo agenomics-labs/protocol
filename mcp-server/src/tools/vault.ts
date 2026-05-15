@@ -211,6 +211,55 @@ export const manageAllowlistTool: Tool = {
   },
 };
 
+export const queryExecutionHistoryTool: Tool = {
+  name: "query_execution_history",
+  description:
+    "ADR-138: query the off-chain indexer for execution-provenance attestations bound to a given agent_identity or vault. Each row pins (agent_identity, authority, tool_id, manifest_hash, policy_version, action_kind, slot, amount, mint, recipient) — a cryptographically-verifiable record of every value-moving or authority-changing vault action. Cursor pagination via `since`; downward-walking (most-recent first).",
+  inputSchema: {
+    type: "object",
+    properties: {
+      agentIdentity: {
+        type: "string",
+        description:
+          "Base58 agent_identity hot-key pubkey. Mutually exclusive with `vault`.",
+      },
+      vault: {
+        type: "string",
+        description:
+          "Base58 vault PDA. Mutually exclusive with `agentIdentity`.",
+      },
+      actionKind: {
+        type: "string",
+        enum: [
+          "Transfer",
+          "TokenTransfer",
+          "PolicyUpdate",
+          "AllowlistManage",
+          "IdentityRotation",
+          "PauseToggle",
+          "GrantTransfer",
+          "GrantTokenTransfer",
+        ],
+        description: "Optional filter — limit to this action kind only.",
+      },
+      toolId: {
+        type: "string",
+        description:
+          "Optional 64-char hex SHA-256 tool_id. See `toolIdHash(name)` in `@agenomics/client`.",
+      },
+      since: {
+        type: "number",
+        description:
+          "Optional lower-bound slot. Pass the previous response's `next_cursor.before_slot` to walk further into the past.",
+      },
+      limit: {
+        type: "number",
+        description: "Page size (1..500, default 50).",
+      },
+    },
+  },
+};
+
 export const vaultTokenTransferTool: Tool = {
   name: "vault_token_transfer",
   description:

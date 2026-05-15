@@ -1,10 +1,26 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Transfer};
+use agent_registry::state::AgentProfile;
 
 use crate::state::*;
 use crate::errors::*;
 use crate::events::*;
 use crate::contexts::*;
+
+/// ADR-138: Zero-hash sentinel for `tool_id_hash`. Callers that have not
+/// yet migrated to the tool-id convention may pass this value; indexers
+/// MAY surface a `tool_id_zero_count` metric so operators can track
+/// migration progress without breaking the happy path.
+pub const TOOL_ID_ZERO: [u8; 32] = [0u8; 32];
+
+/// ADR-138: Pull the manifest_hash from an `AgentProfile`. Returns the
+/// 32-byte hash verbatim; the all-zeros sentinel means the profile has
+/// no manifest registered (ADR-060 pre-manifest registration) — distinct
+/// from "no manifest used".
+#[inline]
+pub fn manifest_hash_from_profile(profile: &AgentProfile) -> [u8; 32] {
+    profile.manifest_hash
+}
 
 /// AUD-006: Saturating, non-negative elapsed-seconds between two `i64`
 /// unix timestamps.
@@ -131,6 +147,12 @@ pub fn initialize_vault(
     // `update_agent_identity` always succeeds. Subsequent rotations are
     // gated by the 24h sliding window enforced in `update_agent_identity`.
     vault.last_rotation_at = 0;
+    // ADR-138: monotonically-bumped on each `update_policy`. Starts at 0
+    // (initial policy installed by `initialize_vault` is implicitly
+    // version 0); every `ExecutionAttested` event stamps the current
+    // value so a downstream auditor can pin the exact policy revision
+    // in force at execution time.
+    vault.policy_version = 0;
 
     emit!(VaultInitialized {
         vault: ctx.accounts.vault.key(),
@@ -155,16 +177,49 @@ pub fn update_policy(
     // rotation is a distinct operation with its own audit event
     // (`AgentIdentityUpdated`) so indexers can distinguish a policy tweak
     // from a hot-key rotation.
+    let clock = Clock::get()?;
     let vault = &mut ctx.accounts.vault;
     vault.policy.daily_limit_lamports = daily_limit_lamports;
     vault.policy.per_tx_limit_lamports = per_tx_limit_lamports;
     vault.policy.max_txs_per_hour = max_txs_per_hour;
+    // ADR-138: monotonic bump. Saturating on the u32 ceiling is a
+    // never-hit branch in practice (the policy would have to be updated
+    // 4 billion times) but the explicit checked arithmetic keeps the
+    // protocol-wide "no silent wraparound" invariant.
+    vault.policy_version = vault.policy_version.checked_add(1)
+        .ok_or(VaultError::ArithmeticOverflow)?;
+    let new_policy_version = vault.policy_version;
+    let agent_identity = vault.agent_identity;
+    let authority_key = vault.authority;
+    let vault_key = ctx.accounts.vault.key();
 
     emit!(PolicyUpdated {
-        vault: ctx.accounts.vault.key(),
+        vault: vault_key,
         daily_limit: daily_limit_lamports,
         per_tx_limit: per_tx_limit_lamports,
         max_txs_per_hour,
+    });
+
+    // ADR-138: `update_policy` carries no manifest binding (the registry
+    // profile is not in the accounts list, by design — operators must
+    // be able to retune limits even when the profile is mid-migration).
+    // The attestation emits the zero-manifest sentinel; consumers MAY
+    // join against `manifest_history` by `(authority, slot)` to recover
+    // the pin if needed.
+    emit!(ExecutionAttested {
+        vault: vault_key,
+        agent_identity,
+        authority: authority_key,
+        action_kind: ActionKind::PolicyUpdate,
+        tool_id: TOOL_ID_ZERO,
+        manifest_hash: [0u8; 32],
+        policy_version: new_policy_version,
+        delegation_grant: None,
+        amount: 0,
+        mint: None,
+        recipient: None,
+        slot: clock.slot,
+        timestamp: clock.unix_timestamp,
     });
 
     Ok(())
@@ -292,11 +347,34 @@ pub fn update_agent_identity(
     let old_identity = vault.agent_identity;
     vault.agent_identity = new_agent_identity;
     vault.last_rotation_at = now;
+    let new_policy_version = vault.policy_version;
+    let authority_key = vault.authority;
+    let vault_key = ctx.accounts.vault.key();
+    let slot = Clock::get()?.slot;
 
     emit!(AgentIdentityUpdated {
-        vault: ctx.accounts.vault.key(),
+        vault: vault_key,
         old_identity,
         new_identity: new_agent_identity,
+    });
+
+    // ADR-138: identity rotation is an authority change, not a value
+    // move. We attest under the NEW identity (post-rotation) because
+    // that is the key authorised to sign the next instruction.
+    emit!(ExecutionAttested {
+        vault: vault_key,
+        agent_identity: new_agent_identity,
+        authority: authority_key,
+        action_kind: ActionKind::IdentityRotation,
+        tool_id: TOOL_ID_ZERO,
+        manifest_hash: [0u8; 32],
+        policy_version: new_policy_version,
+        delegation_grant: None,
+        amount: 0,
+        mint: None,
+        recipient: None,
+        slot,
+        timestamp: now,
     });
 
     Ok(())
@@ -351,11 +429,26 @@ pub fn add_token_allowlist(
         }
     }
 
+    let vault_key = ctx.accounts.vault.key();
+    let vault_ref = &ctx.accounts.vault;
+    let agent_identity = vault_ref.agent_identity;
+    let authority_key = vault_ref.authority;
+    let policy_version = vault_ref.policy_version;
+    let clock = Clock::get()?;
+
     emit!(AllowlistUpdated {
-        vault: ctx.accounts.vault.key(),
+        vault: vault_key,
         item: token_mint,
         action: if newly_added { "token_add" } else { "token_limits_update" }.to_string(),
     });
+    emit_allowlist_attestation(
+        vault_key,
+        agent_identity,
+        authority_key,
+        policy_version,
+        token_mint,
+        &clock,
+    );
 
     Ok(())
 }
@@ -371,11 +464,26 @@ pub fn remove_token_allowlist(
     // ADR-044: Clean up spend records for removed tokens
     vault.token_spend_records.retain(|r| r.mint != token_mint);
 
+    let vault_key = ctx.accounts.vault.key();
+    let vault_ref = &ctx.accounts.vault;
+    let agent_identity = vault_ref.agent_identity;
+    let authority_key = vault_ref.authority;
+    let policy_version = vault_ref.policy_version;
+    let clock = Clock::get()?;
+
     emit!(AllowlistUpdated {
-        vault: ctx.accounts.vault.key(),
+        vault: vault_key,
         item: token_mint,
         action: "token_remove".to_string(),
     });
+    emit_allowlist_attestation(
+        vault_key,
+        agent_identity,
+        authority_key,
+        policy_version,
+        token_mint,
+        &clock,
+    );
 
     Ok(())
 }
@@ -395,11 +503,26 @@ pub fn add_program_allowlist(
         vault.policy.program_allowlist.push(program_id);
     }
 
+    let vault_key = ctx.accounts.vault.key();
+    let vault_ref = &ctx.accounts.vault;
+    let agent_identity = vault_ref.agent_identity;
+    let authority_key = vault_ref.authority;
+    let policy_version = vault_ref.policy_version;
+    let clock = Clock::get()?;
+
     emit!(AllowlistUpdated {
-        vault: ctx.accounts.vault.key(),
+        vault: vault_key,
         item: program_id,
         action: "program_add".to_string(),
     });
+    emit_allowlist_attestation(
+        vault_key,
+        agent_identity,
+        authority_key,
+        policy_version,
+        program_id,
+        &clock,
+    );
 
     Ok(())
 }
@@ -413,18 +536,70 @@ pub fn remove_program_allowlist(
     let vault = &mut ctx.accounts.vault;
     vault.policy.program_allowlist.retain(|&p| p != program_id);
 
+    let vault_key = ctx.accounts.vault.key();
+    let vault_ref = &ctx.accounts.vault;
+    let agent_identity = vault_ref.agent_identity;
+    let authority_key = vault_ref.authority;
+    let policy_version = vault_ref.policy_version;
+    let clock = Clock::get()?;
+
     emit!(AllowlistUpdated {
-        vault: ctx.accounts.vault.key(),
+        vault: vault_key,
         item: program_id,
         action: "program_remove".to_string(),
     });
+    emit_allowlist_attestation(
+        vault_key,
+        agent_identity,
+        authority_key,
+        policy_version,
+        program_id,
+        &clock,
+    );
 
     Ok(())
+}
+
+/// ADR-138: shared attestation emitter for the four allowlist surfaces
+/// (add/remove token, add/remove program). The `item` is surfaced as the
+/// `mint` field on the event when present — the field is named `mint` on
+/// the event for SOL/SPL-transfer consistency but carries the affected
+/// pubkey here. Indexer-side, the `action_kind` discriminator tells the
+/// consumer how to interpret the field.
+///
+/// Authority-changing surface. No value moves; `amount = 0`, no
+/// `recipient`. The allowlist edits do not touch the registry profile,
+/// so `manifest_hash` is the zero sentinel — operators MUST be able to
+/// retune allowlists even when the profile is mid-migration.
+fn emit_allowlist_attestation(
+    vault: Pubkey,
+    agent_identity: Pubkey,
+    authority: Pubkey,
+    policy_version: u32,
+    item: Pubkey,
+    clock: &Clock,
+) {
+    emit!(ExecutionAttested {
+        vault,
+        agent_identity,
+        authority,
+        action_kind: ActionKind::AllowlistManage,
+        tool_id: TOOL_ID_ZERO,
+        manifest_hash: [0u8; 32],
+        policy_version,
+        delegation_grant: None,
+        amount: 0,
+        mint: Some(item),
+        recipient: None,
+        slot: clock.slot,
+        timestamp: clock.unix_timestamp,
+    });
 }
 
 pub fn execute_transfer(
     ctx: Context<ExecuteTransfer>,
     amount_lamports: u64,
+    tool_id_hash: [u8; 32],
 ) -> Result<()> {
     // Validate amount > 0
     require!(amount_lamports > 0, VaultError::InvalidAmount);
@@ -533,12 +708,40 @@ pub fn execute_transfer(
     // ====================================================================
     // EMIT AUDIT LOG EVENT
     // ====================================================================
+    let vault_key = vault.key();
+    let agent_identity = vault.agent_identity;
+    let authority_key_attest = vault.authority;
+    let policy_version = vault.policy_version;
+    let manifest_hash = manifest_hash_from_profile(&ctx.accounts.agent_profile);
+    let recipient_key = ctx.accounts.recipient.key();
+
     emit!(TransactionExecuted {
-        vault: vault.key(),
-        recipient: ctx.accounts.recipient.key(),
+        vault: vault_key,
+        recipient: recipient_key,
         amount: amount_lamports,
         timestamp: clock.unix_timestamp,
         success: true,
+    });
+
+    // ADR-138: bind the SOL transfer to (tool_id, manifest_hash,
+    // policy_version, slot). Emitted AFTER the value move completes so a
+    // runtime-error rollback drops the attestation alongside the
+    // transfer — there can never be an attestation for a transfer that
+    // did not happen.
+    emit!(ExecutionAttested {
+        vault: vault_key,
+        agent_identity,
+        authority: authority_key_attest,
+        action_kind: ActionKind::Transfer,
+        tool_id: tool_id_hash,
+        manifest_hash,
+        policy_version,
+        delegation_grant: None,
+        amount: amount_lamports,
+        mint: None,
+        recipient: Some(recipient_key),
+        slot: clock.slot,
+        timestamp: clock.unix_timestamp,
     });
 
     Ok(())
@@ -554,6 +757,7 @@ pub fn execute_transfer(
 pub fn execute_token_transfer(
     ctx: Context<ExecuteTokenTransfer>,
     amount: u64,
+    tool_id_hash: [u8; 32],
 ) -> Result<()> {
     require!(amount > 0, VaultError::InvalidAmount);
 
@@ -696,11 +900,40 @@ pub fn execute_token_transfer(
         amount,
     )?;
 
+    let vault_ref = &ctx.accounts.vault;
+    let vault_key = vault_ref.key();
+    let agent_identity = vault_ref.agent_identity;
+    let authority_key_attest = vault_ref.authority;
+    let policy_version = vault_ref.policy_version;
+    let manifest_hash = manifest_hash_from_profile(&ctx.accounts.agent_profile);
+    let mint_key = ctx.accounts.vault_token_account.mint;
+    let recipient_key = ctx.accounts.recipient_token_account.key();
+
     emit!(TokenTransferExecuted {
-        vault: ctx.accounts.vault.key(),
-        mint: ctx.accounts.vault_token_account.mint,
-        recipient: ctx.accounts.recipient_token_account.key(),
+        vault: vault_key,
+        mint: mint_key,
+        recipient: recipient_key,
         amount,
+        timestamp: clock.unix_timestamp,
+    });
+
+    // ADR-138: bind the SPL transfer to (tool_id, manifest_hash,
+    // policy_version, slot). Emitted AFTER the CPI returns so a
+    // token-program failure rolls back both the transfer and the
+    // attestation atomically.
+    emit!(ExecutionAttested {
+        vault: vault_key,
+        agent_identity,
+        authority: authority_key_attest,
+        action_kind: ActionKind::TokenTransfer,
+        tool_id: tool_id_hash,
+        manifest_hash,
+        policy_version,
+        delegation_grant: None,
+        amount,
+        mint: Some(mint_key),
+        recipient: Some(recipient_key),
+        slot: clock.slot,
         timestamp: clock.unix_timestamp,
     });
 
@@ -713,8 +946,31 @@ pub fn pause_vault(ctx: Context<PauseVault>) -> Result<()> {
     let vault = &mut ctx.accounts.vault;
     vault.paused = true;
 
-    emit!(VaultPaused {
-        vault: ctx.accounts.vault.key(),
+    let vault_key = ctx.accounts.vault.key();
+    let vault_ref = &ctx.accounts.vault;
+    let agent_identity = vault_ref.agent_identity;
+    let authority_key = vault_ref.authority;
+    let policy_version = vault_ref.policy_version;
+    let clock = Clock::get()?;
+
+    emit!(VaultPaused { vault: vault_key });
+
+    // ADR-138: pause is an authority-changing action (it freezes every
+    // value-moving surface) so it gets a paired attestation.
+    emit!(ExecutionAttested {
+        vault: vault_key,
+        agent_identity,
+        authority: authority_key,
+        action_kind: ActionKind::PauseToggle,
+        tool_id: TOOL_ID_ZERO,
+        manifest_hash: [0u8; 32],
+        policy_version,
+        delegation_grant: None,
+        amount: 0,
+        mint: None,
+        recipient: None,
+        slot: clock.slot,
+        timestamp: clock.unix_timestamp,
     });
 
     Ok(())
@@ -726,8 +982,29 @@ pub fn resume_vault(ctx: Context<ResumeVault>) -> Result<()> {
     let vault = &mut ctx.accounts.vault;
     vault.paused = false;
 
-    emit!(VaultResumed {
-        vault: ctx.accounts.vault.key(),
+    let vault_key = ctx.accounts.vault.key();
+    let vault_ref = &ctx.accounts.vault;
+    let agent_identity = vault_ref.agent_identity;
+    let authority_key = vault_ref.authority;
+    let policy_version = vault_ref.policy_version;
+    let clock = Clock::get()?;
+
+    emit!(VaultResumed { vault: vault_key });
+
+    emit!(ExecutionAttested {
+        vault: vault_key,
+        agent_identity,
+        authority: authority_key,
+        action_kind: ActionKind::PauseToggle,
+        tool_id: TOOL_ID_ZERO,
+        manifest_hash: [0u8; 32],
+        policy_version,
+        delegation_grant: None,
+        amount: 0,
+        mint: None,
+        recipient: None,
+        slot: clock.slot,
+        timestamp: clock.unix_timestamp,
     });
 
     Ok(())

@@ -11,6 +11,7 @@ export {
   pauseVaultTool,
   resumeVaultTool,
   manageAllowlistTool,
+  queryExecutionHistoryTool,
 } from "./vault.js";
 
 // Re-export all registry tools
@@ -56,6 +57,7 @@ import {
   pauseVaultTool,
   resumeVaultTool,
   manageAllowlistTool,
+  queryExecutionHistoryTool,
 } from "./vault.js";
 
 import {
@@ -85,9 +87,10 @@ import { verifyProtocolInvariantsTool } from "./governance.js";
 import { payX402ServiceTool } from "./pay-x402-service.js";
 
 /**
- * All 28 Agenomics MCP tools organized by domain:
- * - Vault (9): Agent wallet management with spending policies
- *   (includes `rotate_agent_identity` per ADR-069 / AUD-015)
+ * All 29 Agenomics MCP tools organized by domain:
+ * - Vault (10): Agent wallet management with spending policies
+ *   (includes `rotate_agent_identity` per ADR-069 / AUD-015 and the
+ *   ADR-138 `query_execution_history` provenance surface)
  * - Registry (5) + reputation snapshot (1) + agent-memory (1): Agent
  *   discovery, reputation, and ADR-129 Phase 1 manifest similarity
  * - Settlement (10): Escrow lifecycle and milestone-based payments
@@ -106,6 +109,7 @@ export const allTools: Tool[] = [
   pauseVaultTool,
   resumeVaultTool,
   manageAllowlistTool,
+  queryExecutionHistoryTool,
   // Registry
   registerAgentTool,
   getAgentProfileTool,
@@ -141,6 +145,7 @@ export type ToolName =
   | "pause_vault"
   | "resume_vault"
   | "manage_allowlist"
+  | "query_execution_history"
   | "register_agent"
   | "get_agent_profile"
   | "update_agent_profile"

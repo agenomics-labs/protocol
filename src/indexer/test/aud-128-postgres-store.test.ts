@@ -78,12 +78,24 @@ async function makePgMemStore(): Promise<{ store: PostgresStore; mem: IMemoryDb;
   // doing the read inline here keeps the test diagnostic if the SQL ever
   // fails to parse against pg-mem (the failure surfaces at the SQL site,
   // not buried inside the store).
+  //
+  // ADR-138 (cycle-4): the SQLite schema now includes
+  // `execution_attestations` (migration 003); to keep the column-parity
+  // gate honest the test fixture applies every migration in order. The
+  // ADR-131 view migration (002) skips views that pg-mem cannot parse
+  // — it's pure DDL, so a silent skip is harmless against the parity
+  // check (parity is on tables + columns, not views).
   const fs: typeof import("fs") = require("fs");
-  const sql = fs.readFileSync(
-    path.join(__dirname, "..", "migrations", "001-initial-postgres.sql"),
-    "utf8",
-  );
-  await pool.query(sql);
+  for (const name of [
+    "001-initial-postgres.sql",
+    "003-adr-138-execution-attestations.sql",
+  ]) {
+    const sql = fs.readFileSync(
+      path.join(__dirname, "..", "migrations", name),
+      "utf8",
+    );
+    await pool.query(sql);
+  }
 
   const store = createPostgresStoreFromPool(pool);
   return { store, mem, pool };
@@ -166,6 +178,8 @@ describe("ADR-128 Phase 1 — schema parity (SQLite ↔ Postgres)", () => {
     "vault_identity_history",
     "manifest_history",
     "protocol_config_history",
+    // ADR-138: execution provenance attestations (migration 003).
+    "execution_attestations",
   ];
 
   for (const table of expectedTables) {
