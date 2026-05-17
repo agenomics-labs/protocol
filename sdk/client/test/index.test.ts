@@ -13,12 +13,18 @@ test("AepClient constructs without throwing for devnet", () => {
   assert.ok(client instanceof AepClient);
 });
 
-test("AepClient constructs without throwing for mainnet-beta", () => {
-  const client = new AepClient({
-    cluster: "mainnet-beta",
-    rpcUrl: "https://api.mainnet-beta.solana.com",
-  });
-  assert.ok(client instanceof AepClient);
+// AUD-207 / SDK-F1: mainnet-beta program IDs are not provisioned. AepClient
+// must fail closed at construction rather than build a client bound to
+// placeholder devnet addresses (fund-loss path on a production cluster).
+test("AepClient throws at construction for unprovisioned mainnet-beta", () => {
+  assert.throws(
+    () =>
+      new AepClient({
+        cluster: "mainnet-beta",
+        rpcUrl: "https://api.mainnet-beta.solana.com",
+      }),
+    /not yet|AUD-207|ADR-083/,
+  );
 });
 
 test("AepClient constructs without throwing for localnet", () => {

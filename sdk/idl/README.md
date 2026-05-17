@@ -38,8 +38,8 @@ const idl = AgentRegistryIdl as Idl;
 
 ## Key exports
 
-- `getProgramIds(cluster)` — returns the `{ agentRegistry, agentVault, settlement }` triple for one cluster.
-- `PROGRAM_IDS` — the full record keyed by `Cluster`. Useful for sanity-checking all three clusters at boot time.
+- `getProgramIds(cluster)` — returns the `{ agentRegistry, agentVault, settlement }` triple for one cluster. **Throws** for any cluster whose IDs are not genuinely provisioned (currently `mainnet-beta`; see the AUD-207 caveat below).
+- `PROGRAM_IDS` — the full record keyed by `Cluster`. Provisioned clusters map to a `ProgramIds` triple; un-provisioned clusters (`mainnet-beta`) map to `null`.
 - `Cluster` — the union type `"devnet" | "mainnet-beta" | "localnet"`.
 - `ProgramIds` — the shape of one cluster's program-ID triple.
 - `AgentRegistryIdl`, `AgentVaultIdl`, `SettlementIdl` — the IDL JSON for each program. Cast to `Idl` from `@coral-xyz/anchor` at the call site.
@@ -55,11 +55,16 @@ const idl = AgentRegistryIdl as Idl;
 
 0.1.0 — pre-publish; private until license + READMEs land per `docs/SDK_PUBLISH.md`.
 
-> **AUD-207 caveat — placeholder program IDs.** The `devnet`,
-> `mainnet-beta`, and `localnet` entries are byte-identical today.
+> **AUD-207 caveat — `mainnet-beta` is unprovisioned and fails closed.**
 > Distinct, governance-controlled program IDs (one keypair per cluster,
 > upgrade authority held by the Squads multisig) will land with
-> Track A2 of `docs/PRE_MAINNET_ROADMAP.md` and ADR-083. Until then,
-> treat any cluster suffix as cosmetic — the bytes are the same.
-> Builders should not assume `getProgramIds("mainnet-beta")` differs
-> from `getProgramIds("devnet")` until that ceremony completes.
+> Track A2 of `docs/PRE_MAINNET_ROADMAP.md` and ADR-083. Until that
+> ceremony completes, `mainnet-beta` has **no** program IDs:
+> `PROGRAM_IDS["mainnet-beta"]` is `null` and
+> `getProgramIds("mainnet-beta")` (and therefore
+> `new AepClient({ cluster: "mainnet-beta", ... })`) **throws** an
+> actionable error rather than returning placeholder devnet addresses —
+> returning them would build escrow/transfer transactions against
+> programs whose upgrade authority is a test key (a fund-loss path).
+> `devnet` and `localnet` resolve normally and intentionally share the
+> same on-chain test binaries.
