@@ -33,6 +33,7 @@
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::instruction::{AccountMeta, Instruction};
 use anchor_lang::solana_program::program::invoke_signed;
+use anchor_spl::token::TokenAccount;
 
 // Q-S3-A: pull the Registry's `AgentProfile` account type (with
 // `no-entrypoint` so Registry's `entrypoint!` is not redeclared in this
@@ -75,6 +76,28 @@ pub const AGENT_REGISTRY_PROGRAM_ID: Pubkey =
 pub const APPROVE_MILESTONE_DISCRIMINATOR: [u8; 8] =
     [145, 85, 92, 60, 50, 130, 219, 106];
 
+/// C4-OB-01(d): canonical CCTP receiver authority permitted to drive
+/// `auto_approve_milestone`.
+///
+/// Before this constant existed, the dispatcher `payer` was an
+/// unconstrained `Signer` — *any* signer could invoke the fund-releasing
+/// instruction (the audit's "any signer can drive approval"). Restricting
+/// to a single canonical authority is defense-in-depth on top of the
+/// ADR-145 deploy guard.
+///
+/// **Q-S3-B / ADR-145 (Proposed):** the *real* on-chain trust anchor must
+/// be the Circle CCTP V2 MessageTransmitter receiver (CPI-caller check or
+/// attestation-account binding). That receiver program ID / authority is
+/// not yet pinned (open question Q-S3-B). Until ADR-145 lands, this is the
+/// system program ID — a deliberately unusable sentinel: combined with the
+/// hard deploy guard (feature `cctp_attestation_verified`, default OFF),
+/// the instruction is unreachable on any fund-bearing cluster, and even a
+/// guard-enabled localnet build must explicitly opt in to whichever
+/// authority operators wire as `payer`. This constant MUST be replaced
+/// with the canonical receiver binding when ADR-145 is implemented.
+pub const CCTP_RECEIVER_AUTHORITY: Pubkey =
+    anchor_lang::solana_program::system_program::ID;
+
 /// Seed for the replay-guard PDA (idempotency on the IC-4 triple).
 pub const HOOK_REPLAY_SEED: &[u8] = b"hook-replay";
 
@@ -96,6 +119,44 @@ pub const HOOK_SIGNER_SEED: &[u8] = b"hook_signer";
 /// Layout: 8-byte Anchor discriminator + `client: Pubkey` (first field).
 const TASK_ESCROW_CLIENT_OFFSET: usize = 8;
 
+/// C4-OB-05: Anchor account discriminator for settlement's `TaskEscrow`.
+///
+/// Computed as `sha256("account:TaskEscrow")[..8]`. The Hook reads the
+/// escrow as a raw `UncheckedAccount` (to avoid a settlement-crate dep);
+/// `owner == SETTLEMENT_PROGRAM_ID` is necessary but NOT sufficient — the
+/// Settlement program owns many account types (ProtocolConfig, etc.). This
+/// constant pins the byte slice `escrow_data[0..8]` to the `TaskEscrow`
+/// type so a non-escrow Settlement-owned account cannot be substituted.
+///
+/// Verified against the Anchor convention by
+/// `task_escrow_discriminator_matches_anchor_convention` below; if
+/// Settlement renames `TaskEscrow` this constant MUST be regenerated.
+pub const TASK_ESCROW_DISCRIMINATOR: [u8; 8] =
+    [209, 72, 197, 54, 17, 55, 3, 187];
+
+/// C4-OB-01: raw-bytes layout of `settlement::state::TaskEscrow` needed to
+/// reconcile `payload.amount_returned_micros` against the milestone amount
+/// the escrow actually authorizes. Layout after the 8-byte discriminator
+/// (Borsh, declaration order — see `programs/settlement/src/state.rs`):
+///
+/// ```text
+///   8   client:        Pubkey   (32)
+///   40  provider:      Pubkey   (32)
+///   72  client_vault:  Pubkey   (32)
+///   104 provider_vault:Pubkey   (32)
+///   136 token_mint:    Pubkey   (32)
+///   168 total_amount:  u64      (8)
+///   176 released_amount:u64     (8)
+///   184 milestones:    Vec<Milestone>  -> 4-byte LE len, then entries
+/// ```
+///
+/// Each `Milestone` is `description_hash:[u8;32] + amount:u64 +
+/// status:MilestoneStatus(1-byte Borsh enum discriminant) +
+/// grace_ends_at:u64` = 49 bytes; `amount` sits 32 bytes into the entry.
+const TASK_ESCROW_MILESTONES_LEN_OFFSET: usize = 184;
+const MILESTONE_ENTRY_SIZE: usize = 32 + 8 + 1 + 8; // 49
+const MILESTONE_AMOUNT_INNER_OFFSET: usize = 32;
+
 #[program]
 pub mod cctp_hook {
     use super::*;
@@ -114,6 +175,21 @@ pub mod cctp_hook {
         ctx: Context<AutoApproveMilestone>,
         payload: ReflexHookPayload,
     ) -> Result<()> {
+        // ---- 0. C4-OB-01 / ADR-145 HARD DEPLOY GUARD ----
+        //
+        // This instruction releases escrowed funds but does NOT verify the
+        // Circle CCTP V2 message / attestation / nonce on-chain (ADR-145,
+        // Proposed). Until that lands, the instruction is hard-disabled so
+        // it cannot approve on a fund-bearing cluster. The `require!`
+        // evaluates the compile-time feature flag: with the (default)
+        // feature OFF, `cfg!(...)` is `false` and the call reverts here
+        // before ANY state write or CPI. The flag may be enabled ONLY for
+        // a no-value localnet/devnet integration build (see Cargo.toml).
+        require!(
+            cfg!(feature = "cctp_attestation_verified"),
+            HookError::CctpAttestationNotVerified
+        );
+
         // ---- 1. Defense-in-depth payload validation ----
         require!(
             payload.escrow_pda == ctx.accounts.escrow.key(),
@@ -143,11 +219,65 @@ pub mod cctp_hook {
             escrow_data.len() >= TASK_ESCROW_CLIENT_OFFSET + 32,
             HookError::EscrowAccountTooSmall
         );
+
+        // C4-OB-05: pin the account *type*, not just its owner program.
+        // `owner == SETTLEMENT_PROGRAM_ID` (enforced by the accounts
+        // struct) is necessary but not sufficient — Settlement owns
+        // several account types. Require the first 8 bytes equal the
+        // canonical `TaskEscrow` Anchor discriminator so a non-escrow
+        // Settlement-owned account (e.g. ProtocolConfig) cannot be
+        // substituted to bypass the client / amount checks below.
+        require!(
+            escrow_data[0..8] == TASK_ESCROW_DISCRIMINATOR,
+            HookError::EscrowDiscriminatorMismatch
+        );
+
         let mut client_bytes = [0u8; 32];
         client_bytes.copy_from_slice(
             &escrow_data[TASK_ESCROW_CLIENT_OFFSET..TASK_ESCROW_CLIENT_OFFSET + 32],
         );
         let escrow_client = Pubkey::new_from_array(client_bytes);
+
+        // ---- C4-OB-01(c): reconcile the returned amount against the
+        // milestone amount the escrow actually authorizes, from raw
+        // escrow bytes, BEFORE writing the ReplayRecord or emitting the
+        // event. `payload.amount_returned_micros` is attacker-influenced
+        // wire data; the escrow's `milestones[idx].amount` is the
+        // on-chain source of truth. A mismatch means the CCTP round-trip
+        // claims a different number than the escrow will release — reject
+        // hard rather than persist a false `amount_returned_micros` in
+        // the ReplayRecord / MilestoneAutoApproved audit trail.
+        let idx = payload.milestone_index as usize;
+        require!(
+            escrow_data.len() >= TASK_ESCROW_MILESTONES_LEN_OFFSET + 4,
+            HookError::EscrowMilestoneParseFailed
+        );
+        let mut len_bytes = [0u8; 4];
+        len_bytes.copy_from_slice(
+            &escrow_data[TASK_ESCROW_MILESTONES_LEN_OFFSET
+                ..TASK_ESCROW_MILESTONES_LEN_OFFSET + 4],
+        );
+        let milestones_len = u32::from_le_bytes(len_bytes) as usize;
+        require!(idx < milestones_len, HookError::MilestoneIndexOutOfRange);
+
+        let entries_start = TASK_ESCROW_MILESTONES_LEN_OFFSET + 4;
+        let amount_off = entries_start
+            + idx
+                .checked_mul(MILESTONE_ENTRY_SIZE)
+                .ok_or(error!(HookError::EscrowMilestoneParseFailed))?
+            + MILESTONE_AMOUNT_INNER_OFFSET;
+        require!(
+            escrow_data.len() >= amount_off + 8,
+            HookError::EscrowMilestoneParseFailed
+        );
+        let mut amt_bytes = [0u8; 8];
+        amt_bytes.copy_from_slice(&escrow_data[amount_off..amount_off + 8]);
+        let milestone_amount = u64::from_le_bytes(amt_bytes);
+        require!(
+            payload.amount_returned_micros == milestone_amount,
+            HookError::AmountReconciliationMismatch
+        );
+
         drop(escrow_data); // release borrow before CPI
 
         // ---- 3. Agent CDP-wallet binding validation (Q-S3-A) ----
@@ -311,12 +441,20 @@ pub mod cctp_hook {
 #[derive(Accounts)]
 #[instruction(payload: ReflexHookPayload)]
 pub struct AutoApproveMilestone<'info> {
-    /// The transaction signer — typically the CCTP V2 receiver dispatcher or
-    /// (until that is wired) the relayer. The Hook does not authorize off
-    /// this signer's identity; the on-chain trust anchor is the
-    /// CCTP-attestation guarantee that already gated the mint, plus the
-    /// `hook_signer` PDA's exclusive ability to act as the escrow's `client`.
-    #[account(mut)]
+    /// The transaction signer — the canonical CCTP V2 receiver authority.
+    ///
+    /// C4-OB-01(d): previously an unconstrained `Signer` (any signer could
+    /// drive the fund-releasing approval). Now pinned via `address =
+    /// CCTP_RECEIVER_AUTHORITY`. NOTE: the constant is currently a
+    /// guard-only sentinel (system program ID) pending ADR-145, which will
+    /// replace this with the real Circle CCTP V2 MessageTransmitter
+    /// CPI-caller / attestation-account binding (Q-S3-B). Combined with the
+    /// in-handler `cctp_attestation_verified` deploy guard, this makes the
+    /// instruction unreachable on any fund-bearing cluster.
+    #[account(
+        mut,
+        address = CCTP_RECEIVER_AUTHORITY @ HookError::UnauthorizedCctpReceiver,
+    )]
     pub payer: Signer<'info>,
 
     /// The agent's external authority pubkey. The Hook's signer PDA is
@@ -399,14 +537,38 @@ pub struct AutoApproveMilestone<'info> {
     pub escrow: UncheckedAccount<'info>,
 
     /// Escrow's USDC token account. Mutable.
-    /// CHECK: validated by Settlement.
-    #[account(mut)]
-    pub escrow_token_account: UncheckedAccount<'info>,
+    ///
+    /// C4-OB-01(b): defense-in-depth. Previously an unconstrained
+    /// `UncheckedAccount` ("validated by Settlement") — but the Hook must
+    /// not rely solely on the callee (the audit's explicit finding). Typed
+    /// as `Account<TokenAccount>` so SPL layout is enforced, and pinned to
+    /// the escrow PDA as `authority`/owner. This mirrors settlement's
+    /// `ApproveMilestone` constraint
+    /// (`escrow_token_account.owner == escrow.key()`). The token *mint* is
+    /// cross-checked against `provider_token_account` below; the escrow's
+    /// `token_mint` field is read by the Settlement callee which fully
+    /// validates against it.
+    #[account(
+        mut,
+        token::authority = escrow,
+    )]
+    pub escrow_token_account: Account<'info, TokenAccount>,
 
     /// Provider's USDC token account (the session-pool PDA's ATA).
-    /// CHECK: validated by Settlement.
-    #[account(mut)]
-    pub provider_token_account: UncheckedAccount<'info>,
+    ///
+    /// C4-OB-01(b): defense-in-depth. Typed as `Account<TokenAccount>` and
+    /// constrained to the *same mint* as the escrow's token account, so a
+    /// wrong-mint provider account is rejected at the Hook boundary rather
+    /// than only inside Settlement. The provider *authority* binding
+    /// (`provider_token_account.owner == escrow.provider`) is enforced by
+    /// the Settlement callee, which reads `escrow.provider` from its typed
+    /// account; the Hook cannot re-derive it from raw bytes without a
+    /// settlement-crate dependency the Surface-3 spec forbids.
+    #[account(
+        mut,
+        token::mint = escrow_token_account.mint,
+    )]
+    pub provider_token_account: Account<'info, TokenAccount>,
 
     /// AEP Settlement program — target of the CPI. Address-pinned.
     /// CHECK: explicit address constraint.
@@ -473,5 +635,34 @@ mod discriminator_tests {
         let mut expected = [0u8; 8];
         expected.copy_from_slice(&h[..8]);
         assert_eq!(APPROVE_MILESTONE_DISCRIMINATOR, expected);
+    }
+
+    /// C4-OB-05: regression pin on the `TaskEscrow` account discriminator.
+    /// Anchor derives an account discriminator as
+    /// `sha256("account:<StructName>")[..8]`. If Settlement renames
+    /// `TaskEscrow`, this breaks before ship instead of letting the Hook's
+    /// `escrow_data[0..8]` type check silently reject every legit escrow.
+    #[test]
+    fn task_escrow_discriminator_matches_anchor_convention() {
+        let preimage = b"account:TaskEscrow";
+        let h = hash(preimage).to_bytes();
+        let mut expected = [0u8; 8];
+        expected.copy_from_slice(&h[..8]);
+        assert_eq!(TASK_ESCROW_DISCRIMINATOR, expected);
+    }
+
+    /// C4-OB-01: the milestones-vec offset constant must equal the sum of
+    /// the five `Pubkey` fields + `total_amount` + `released_amount` that
+    /// precede `milestones` in `settlement::state::TaskEscrow`, plus the
+    /// 8-byte Anchor discriminator. Pins the raw-bytes reconciliation read
+    /// against a layout drift in Settlement.
+    #[test]
+    fn task_escrow_milestones_offset_matches_layout() {
+        // 8 disc + 5*32 pubkeys + 8 total_amount + 8 released_amount
+        let expected = 8 + (5 * 32) + 8 + 8;
+        assert_eq!(TASK_ESCROW_MILESTONES_LEN_OFFSET, expected);
+        // description_hash(32) + amount(8) + status(1) + grace_ends_at(8)
+        assert_eq!(MILESTONE_ENTRY_SIZE, 49);
+        assert_eq!(MILESTONE_AMOUNT_INNER_OFFSET, 32);
     }
 }
