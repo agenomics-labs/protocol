@@ -22,8 +22,8 @@ Both services carry non-trivial correctness-critical logic:
 - **Indexer** — WAL/tombstone gate (ADR-082 closure), name-based enum
   decoder (ADR-082), backfill ↔ live-stream ordering (subject of
   R-offchain-02 High, ADR-118). None has a unit test harness.
-- **x402-relay** — trust-proxy parsing (ADR-057 closure), rate-limit
-  eviction (ADR-057), JWT algorithm pinning (ADR-057),
+- **x402-relay** — trust-proxy parsing (ADR-056 closure), rate-limit
+  eviction (ADR-056), JWT algorithm pinning (ADR-056),
   error-redaction envelope (proposed ADR-117). None has a unit test
   harness.
 
