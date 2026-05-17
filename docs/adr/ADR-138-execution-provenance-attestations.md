@@ -1,8 +1,14 @@
 # ADR-138: Execution Provenance Attestations
 
-- **Status**: Accepted
-- **Date**: 2026-05-14
-- **Audit ID**: AUD-410
+## Status
+
+Accepted
+
+## Date
+
+2026-05-14
+
+**Audit ID:** AUD-410
 
 ## Context
 

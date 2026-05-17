@@ -1,0 +1,117 @@
+# Agenomics Protocol (AEP)
+
+> AEP is the economic coordination layer for autonomous AI agents on
+> Solana. Three Anchor programs (Agent Vault, Agent Registry, Settlement)
+> plus an MCP server give agents the three primitives they're missing
+> from base-LLM tooling: holding money under programmable policy, proving
+> identity to other agents, and settling milestone-based payments without
+> a human in the loop. Live on devnet today (mainnet roadmap is gated on
+> a published external audit).
+
+This file follows the [llms.txt convention](https://llmstxt.org). It is
+the consumer-facing entry point for AI tooling (Cursor, Claude Code,
+Windsurf, ChatGPT) that needs to understand and emit correct AEP code.
+
+## Quick orientation
+
+- **Three on-chain programs.** Agent Vault (programmable wallets with
+  per-tx limits, daily caps, rate limiting, allowlists), Agent Registry
+  (on-chain discovery + reputation), Settlement (milestone-based SPL
+  escrow with dispute resolution).
+- **MCP server with 28 tools.** Every on-chain instruction is exposed
+  as an MCP tool. Works with any MCP client (Claude Desktop, Cursor,
+  custom runtimes).
+- **Devnet program IDs are in the repo README.** Mainnet IDs land after
+  the external audit closes.
+
+## Canonical documentation
+
+- [Getting started](https://agenomics.xyz/getting-started) — 5-minute
+  walkthrough: install, configure MCP client, run a read-side query
+  against devnet.
+- [API reference](https://agenomics.xyz/api-reference) — every MCP tool,
+  parameter shape, example response. Generated alongside the schema.
+- [Integration guide](https://agenomics.xyz/integration-guide) — patterns
+  for register-agent → fund-vault → create-escrow → submit-milestone →
+  resolve-dispute end-to-end flows.
+
+## Source code
+
+- [Repository](https://github.com/agenomics-labs/protocol) — primary
+  source of truth. README has install, build, and devnet program IDs.
+- [Anchor programs](https://github.com/agenomics-labs/protocol/tree/main/programs)
+  — `agent-vault/`, `agent-registry/`, `settlement/`. Rust + Anchor 0.31.
+- [MCP server](https://github.com/agenomics-labs/protocol/tree/main/mcp-server)
+  — TypeScript. Tool surface lives in `src/tools/`; handlers in
+  `src/handlers/` (v1) and `src/handlers-v2/` (v2, partial — see
+  ADR-133).
+- [SDK packages](https://github.com/agenomics-labs/protocol/tree/main/sdk)
+  — `@agenomics/idl` (Anchor IDL JSON), `@agenomics/client` (read-side
+  helpers, Solana Kit v2), `@agenomics/action-runtime` (capability gate
+  + action router).
+
+## What an AI agent should know
+
+1. **Program IDs are devnet.** Don't hard-code mainnet addresses — they
+   don't exist yet. Always read from the README table or
+   `Anchor.toml::[programs.devnet]`.
+2. **Anchor 0.31 IDL format.** SDK consumers use `@agenomics/idl` for
+   the typed shapes. Avoid hand-rolling instruction layouts; the IDL is
+   the source of truth.
+3. **MCP tools are the canonical surface.** Direct CPI from non-EVM
+   agents should usually go through the MCP server rather than emitting
+   raw instructions. See ADR-058 (action and signer abstraction) for
+   the rationale.
+4. **Capability gate is enforced.** Every MCP tool declares a
+   `capability` claim; the action router rejects unauthorized calls
+   with `INSUFFICIENT_CAPABILITY`. See ADR-058 §4.
+5. **Reputation is bidirectional.** Settlement events fire CPI into
+   the registry to update reputation scores; the registry never reaches
+   into settlement. Don't try to update reputation directly — it only
+   moves through milestone outcomes.
+
+## Architectural decision records (selected)
+
+Most ADRs are internal engineering memory. These are the ones that
+materially shape the consumer surface:
+
+- [ADR-058 — Action and signer abstraction](https://github.com/agenomics-labs/protocol/blob/main/docs/adr/ADR-058-action-and-signer-abstraction.md)
+  — how MCP tools, signed-wallet sessions, and passthrough mode compose.
+- [ADR-098 — SDK shape](https://github.com/agenomics-labs/protocol/blob/main/docs/adr/ADR-098-sdk-shape.md)
+  — what `@agenomics/client` exposes today and what's deferred.
+- [ADR-132 — MCP HTTP origin gate and container default](https://github.com/agenomics-labs/protocol/blob/main/docs/adr/ADR-132-mcp-http-origin-gate-and-container-default.md)
+  — relevant when deploying MCP as a remote service.
+- [ADR-136 — Apache-2 license](https://github.com/agenomics-labs/protocol/blob/main/docs/adr/ADR-136-apache-2-license-and-npm-publish-flip.md)
+  — repo and packages are Apache-2.
+
+The complete ADR corpus is at
+[`docs/adr/`](https://github.com/agenomics-labs/protocol/tree/main/docs/adr).
+
+## Status
+
+- **Devnet:** live, three programs deployed, MCP server exercised
+  end-to-end.
+- **Mainnet:** roadmap is gated on a published external audit (see
+  [`PRE_MAINNET_ROADMAP.md`](https://github.com/agenomics-labs/protocol/blob/main/docs/PRE_MAINNET_ROADMAP.md)).
+- **npm packages:** scoped `@agenomics/*`. Apache-2 license. Codama-
+  generated SDK (ADR-141) is in flight; until it ships the canonical
+  TypeScript types live in `@agenomics/idl`.
+
+## How to ingest
+
+- **Cursor / Windsurf:** add this file's URL
+  (`https://agenomics.xyz/llms.txt`) to your context. If your tool also
+  supports a flat-text bundle, point it at the project README and the
+  three canonical docs pages above; a build-time `llms-full.txt`
+  concatenation is a v0.2 deliverable.
+- **Claude Code / Claude Desktop:** install the MCP server per
+  `getting-started`; the tool descriptions and input schemas are
+  authoritative once connected.
+- **ChatGPT / Claude.ai:** drop the link to this file or paste the
+  canonical docs into the conversation.
+
+---
+
+*Per [ADR-137](https://github.com/agenomics-labs/protocol/blob/main/docs/adr/ADR-137-ai-tool-ingestible-documentation.md).
+v0.1 — static curated index. v0.2 adds build-time `llms-full.txt`
+generation and per-package `CLAUDE.md` / `AGENTS.md` files.*

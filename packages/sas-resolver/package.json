@@ -46,7 +46,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "prepare": "tsc",
+    "prepublishOnly": "tsc",
     "test": "node --import tsx --test test/resolver.test.ts test/schema.test.ts test/merge.test.ts test/cache.test.ts test/agenomics-reputation.test.ts"
   },
   "dependencies": {

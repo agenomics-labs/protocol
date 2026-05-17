@@ -293,6 +293,16 @@ describe("Agent Vault Tests", () => {
   const DEFAULT_PER_TX_LIMIT = 1 * LAMPORTS_PER_SOL;
   const DEFAULT_MAX_TXS_PER_HOUR = 10;
 
+  // ADR-138 (#162, execution provenance): `execute_transfer` /
+  // `execute_token_transfer` take a second `tool_id_hash: [u8; 32]`
+  // provenance argument. It is recorded for attestation and not gated
+  // on-chain, so tests pass a fixed deterministic value. Mirrors the
+  // shape of the SDK's `toolIdHash()` (sha256 → 32 bytes) without
+  // pulling in a cross-package import.
+  const TEST_TOOL_ID_HASH = Array.from(
+    crypto.createHash("sha256").update("agenomics:test-tool").digest()
+  );
+
   before(async () => {
     // Initialize test keypairs
     authority = Keypair.generate();
@@ -562,7 +572,7 @@ describe("Agent Vault Tests", () => {
       const spentBefore = vaultBefore.spentTodayLamports.toNumber();
 
       const tx = await program.methods
-        .executeTransfer(new BN(transferAmount))
+        .executeTransfer(new BN(transferAmount), TEST_TOOL_ID_HASH)
         .accounts({
           vault: vaultPda,
           agent: agentIdentity.publicKey,
@@ -586,7 +596,7 @@ describe("Agent Vault Tests", () => {
       for (let i = 0; i < 3; i++) {
         const newRecipient = Keypair.generate().publicKey;
         await program.methods
-          .executeTransfer(new BN(transferAmount))
+          .executeTransfer(new BN(transferAmount), TEST_TOOL_ID_HASH)
           .accounts({
             vault: vaultPda,
             agent: agentIdentity.publicKey,
@@ -665,7 +675,7 @@ describe("Agent Vault Tests", () => {
 
       try {
         await program.methods
-          .executeTransfer(new BN(excessiveAmount))
+          .executeTransfer(new BN(excessiveAmount), TEST_TOOL_ID_HASH)
           .accounts({
             vault: vaultPda,
             agent: agentIdentity.publicKey,
@@ -691,7 +701,7 @@ describe("Agent Vault Tests", () => {
       // Transfer exactly at the limit should succeed
       const newRecipient = Keypair.generate().publicKey;
       await program.methods
-        .executeTransfer(new BN(perTxLimit))
+        .executeTransfer(new BN(perTxLimit), TEST_TOOL_ID_HASH)
         .accounts({
           vault: vaultPda,
           agent: agentIdentity.publicKey,
@@ -761,7 +771,7 @@ describe("Agent Vault Tests", () => {
       // First transfer should succeed (within daily limit)
       const recipient1 = Keypair.generate().publicKey;
       await program.methods
-        .executeTransfer(new BN(transferAmount))
+        .executeTransfer(new BN(transferAmount), TEST_TOOL_ID_HASH)
         .accounts({
           vault: dailyLimitVaultPda,
           agent: dailyLimitAgentId.publicKey,
@@ -777,7 +787,7 @@ describe("Agent Vault Tests", () => {
       const recipient2 = Keypair.generate().publicKey;
       try {
         await program.methods
-          .executeTransfer(new BN(transferAmount))
+          .executeTransfer(new BN(transferAmount), TEST_TOOL_ID_HASH)
           .accounts({
             vault: dailyLimitVaultPda,
             agent: dailyLimitAgentId.publicKey,
@@ -853,7 +863,7 @@ describe("Agent Vault Tests", () => {
       // Try to execute transfer
       try {
         await program.methods
-          .executeTransfer(new BN(0.1 * LAMPORTS_PER_SOL))
+          .executeTransfer(new BN(0.1 * LAMPORTS_PER_SOL), TEST_TOOL_ID_HASH)
           .accounts({
             vault: pauseVaultPda,
             agent: pauseAgentId.publicKey,
@@ -886,7 +896,7 @@ describe("Agent Vault Tests", () => {
       // Now transfer should succeed
       const newRecipient = Keypair.generate().publicKey;
       await program.methods
-        .executeTransfer(new BN(0.1 * LAMPORTS_PER_SOL))
+        .executeTransfer(new BN(0.1 * LAMPORTS_PER_SOL), TEST_TOOL_ID_HASH)
         .accounts({
           vault: pauseVaultPda,
           agent: pauseAgentId.publicKey,
@@ -956,7 +966,7 @@ describe("Agent Vault Tests", () => {
       for (let i = 0; i < maxTxs; i++) {
         const newRecipient = Keypair.generate().publicKey;
         await program.methods
-          .executeTransfer(new BN(transferAmount))
+          .executeTransfer(new BN(transferAmount), TEST_TOOL_ID_HASH)
           .accounts({
             vault: rateLimitVaultPda,
             agent: rateLimitAgentId.publicKey,
@@ -980,7 +990,7 @@ describe("Agent Vault Tests", () => {
 
       try {
         await program.methods
-          .executeTransfer(new BN(transferAmount))
+          .executeTransfer(new BN(transferAmount), TEST_TOOL_ID_HASH)
           .accounts({
             vault: rateLimitVaultPda,
             agent: rateLimitAgentId.publicKey,
@@ -1378,7 +1388,7 @@ describe("Agent Vault Tests", () => {
       let threw = false;
       try {
         await program.methods
-          .executeTokenTransfer(new BN(100))
+          .executeTokenTransfer(new BN(100), TEST_TOOL_ID_HASH)
           .accounts({
             vault: emptyVaultPda,
             agent: emptyAgent.publicKey,
@@ -1408,7 +1418,7 @@ describe("Agent Vault Tests", () => {
       const txsBefore = before.txsInCurrentWindow;
 
       await program.methods
-        .executeTokenTransfer(new BN(100))
+        .executeTokenTransfer(new BN(100), TEST_TOOL_ID_HASH)
         .accounts({
           vault: sec5VaultPda,
           agent: sec5AgentId.publicKey,
@@ -1534,7 +1544,7 @@ describe("Agent Vault Tests", () => {
       let threw = false;
       try {
         await program.methods
-          .executeTokenTransfer(new BN(100))
+          .executeTokenTransfer(new BN(100), TEST_TOOL_ID_HASH)
           .accounts({
             vault: sec6VaultPda,
             agent: sec6AgentId.publicKey,
@@ -1564,7 +1574,7 @@ describe("Agent Vault Tests", () => {
 
     it("should accept an external-recipient transfer (positive control)", async () => {
       await program.methods
-        .executeTokenTransfer(new BN(100))
+        .executeTokenTransfer(new BN(100), TEST_TOOL_ID_HASH)
         .accounts({
           vault: sec6VaultPda,
           agent: sec6AgentId.publicKey,
@@ -1662,7 +1672,7 @@ describe("Agent Vault Tests", () => {
       // Sanity: old identity can sign a transfer before rotation
       const r1 = Keypair.generate().publicKey;
       await program.methods
-        .executeTransfer(new BN(0.1 * LAMPORTS_PER_SOL))
+        .executeTransfer(new BN(0.1 * LAMPORTS_PER_SOL), TEST_TOOL_ID_HASH)
         .accounts({
           vault: rotVaultPda,
           agent: rotOldAgentId.publicKey,
@@ -1690,7 +1700,7 @@ describe("Agent Vault Tests", () => {
       // New identity can sign
       const r2 = Keypair.generate().publicKey;
       await program.methods
-        .executeTransfer(new BN(0.1 * LAMPORTS_PER_SOL))
+        .executeTransfer(new BN(0.1 * LAMPORTS_PER_SOL), TEST_TOOL_ID_HASH)
         .accounts({
           vault: rotVaultPda,
           agent: rotNewAgentId.publicKey,
@@ -1706,7 +1716,7 @@ describe("Agent Vault Tests", () => {
       const r3 = Keypair.generate().publicKey;
       try {
         await program.methods
-          .executeTransfer(new BN(0.1 * LAMPORTS_PER_SOL))
+          .executeTransfer(new BN(0.1 * LAMPORTS_PER_SOL), TEST_TOOL_ID_HASH)
           .accounts({
             vault: rotVaultPda,
             agent: rotOldAgentId.publicKey,

@@ -595,3 +595,133 @@ describe("ADR-082: MilestoneApproved decoder pins u32 milestone_index + u64 amou
     assert.equal(data.task_id, 2);
   });
 });
+
+// ---------------------------------------------------------------------------
+// AUD-004 / Issue #163: SuspensionCleared decoder wire-layout pin.
+//
+// Wire layout from programs/agent-registry/src/events.rs::SuspensionCleared:
+//   pub authority: Pubkey           (32 bytes)
+//   pub new_reputation_score: u64   ( 8 bytes LE)
+//   pub cleared_count: u8           ( 1 byte )   <-- AUD-004 / commit c4886f3
+//   pub timestamp: i64              ( 8 bytes LE)
+//
+// Pre-fix (the regression this test guards against): the indexer's
+// EVENT_DECODERS.SuspensionCleared entry skipped the `cleared_count` u8
+// read, so the BorshReader offset was 1 byte short when `timestamp` was
+// read. Every emitted timestamp was bit-shifted garbage (the low byte of
+// what should have been the next field) and `cleared_count` was silently
+// dropped from the decoded object.
+//
+// Fix landed in commit c4886f3; CI field-coverage gate in 6ea7d11. Issue
+// #163's 14-day live-traffic validation was inconclusive (rare event —
+// requires three prior AgentSlashed events on the same profile). This
+// byte-level test closes the gap *without* depending on live traffic:
+// any regression that re-omits `cleared_count` or reorders the fields
+// will fail here at the next CI run.
+// ---------------------------------------------------------------------------
+
+const DISC_SUSPENSION_CLEARED = "59294014abdd32d7";
+
+describe("AUD-004 / #163: SuspensionCleared.cleared_count decoder pin", () => {
+  it("decodes all four fields at the correct byte offsets", () => {
+    const authority = fixturePubkey();
+    // Concrete sentinel values chosen so any field-offset drift produces
+    // a visibly-wrong assertion. u64ToJson / i64ToJson return `number` for
+    // safe-integer values (the case here) and `string` for values beyond
+    // MAX_SAFE_INTEGER (covered in the regression-guard test below).
+    const NEW_SCORE = 42n;
+    const CLEARED_COUNT = 2;
+    const TIMESTAMP = 1_700_000_000n;
+
+    const payload = Buffer.concat([
+      encPubkey(authority.bytes),
+      encU64(NEW_SCORE),
+      Buffer.from([CLEARED_COUNT]),
+      encI64(TIMESTAMP),
+    ]);
+
+    const events = parseLogsForEvents(
+      [makeLog(DISC_SUSPENSION_CLEARED, payload)],
+      "registry",
+    );
+
+    assert.equal(events.length, 1);
+    assert.equal(events[0].name, "SuspensionCleared");
+
+    const data = events[0].data as Record<string, unknown>;
+    assert.equal(data.authority, authority.base58);
+    assert.equal(
+      data.new_reputation_score,
+      Number(NEW_SCORE),
+      "new_reputation_score must round-trip as the u64 sentinel",
+    );
+    assert.equal(
+      data.cleared_count,
+      CLEARED_COUNT,
+      "cleared_count must be present and equal to the byte at offset 40 — pre-fix the field was silently dropped",
+    );
+    assert.equal(
+      data.timestamp,
+      Number(TIMESTAMP),
+      "timestamp must be read at offset 41 (32+8+1) — pre-fix it was read at offset 40 and came out bit-shifted",
+    );
+  });
+
+  it("regression-guards the pre-fix bit-shift: timestamp beyond MAX_SAFE_INTEGER survives the offset check", () => {
+    // This test exists to make the regression explicit. If a future
+    // refactor accidentally re-omits `r.u8()` for cleared_count, the
+    // decoded timestamp would be the *low byte* of the on-wire
+    // cleared_count field shifted into the i64 read. We construct a
+    // payload with cleared_count = 0xff and a timestamp value beyond
+    // MAX_SAFE_INTEGER so i64ToJson string-encodes the result — making
+    // any partial-byte aliasing immediately visible.
+    const authority = fixturePubkey();
+    const CLEARED_COUNT = 0xff;
+    // 0x0102030405060708 > Number.MAX_SAFE_INTEGER (9_007_199_254_740_992
+    // ≈ 0x20000000000000), so i64ToJson returns the string form.
+    const TIMESTAMP = 0x0102030405060708n;
+    const TIMESTAMP_STR = TIMESTAMP.toString();
+
+    const payload = Buffer.concat([
+      encPubkey(authority.bytes),
+      encU64(0n),
+      Buffer.from([CLEARED_COUNT]),
+      encI64(TIMESTAMP),
+    ]);
+
+    const events = parseLogsForEvents(
+      [makeLog(DISC_SUSPENSION_CLEARED, payload)],
+      "registry",
+    );
+
+    assert.equal(events.length, 1);
+    const data = events[0].data as Record<string, unknown>;
+    assert.equal(data.cleared_count, CLEARED_COUNT);
+    assert.equal(data.timestamp, TIMESTAMP_STR);
+  });
+
+  it("survives cleared_count = 0 (no aliasing with a missing field)", () => {
+    // The pre-fix bug had a particularly nasty property: when
+    // cleared_count was 0 on-wire, the decoder still produced the right
+    // timestamp because shifting in a zero high-byte didn't disturb the
+    // numeric value. This test pins cleared_count = 0 explicitly so
+    // *that* path is also covered.
+    const authority = fixturePubkey();
+    const payload = Buffer.concat([
+      encPubkey(authority.bytes),
+      encU64(123n),
+      Buffer.from([0]),
+      encI64(1_700_000_000n),
+    ]);
+
+    const events = parseLogsForEvents(
+      [makeLog(DISC_SUSPENSION_CLEARED, payload)],
+      "registry",
+    );
+
+    assert.equal(events.length, 1);
+    const data = events[0].data as Record<string, unknown>;
+    assert.equal(data.cleared_count, 0);
+    assert.equal(data.timestamp, 1_700_000_000);
+  });
+});

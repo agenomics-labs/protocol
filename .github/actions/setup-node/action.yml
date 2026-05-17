@@ -1,0 +1,63 @@
+name: 'Setup Node (vendored)'
+description: >-
+  Self-hosted-runner Node toolchain assertion. Vendored AUD-406 follow-up:
+  replaces actions/setup-node (a `using: node20` JS action whose dist bundle is
+  fetched from codeload.github.com at job start and can cold-cache-timeout) with
+  a pure-bash composite. The self-hosted runner provisions Node via Volta, so
+  this action ASSERTS the toolchain instead of downloading it — no api.github.com
+  / codeload.github.com round-trip on the critical path.
+author: 'agenomics-labs (AUD-406 follow-up)'
+branding:
+  icon: 'check-circle'
+  color: 'green'
+
+inputs:
+  node-version:
+    description: >-
+      Required Node major version (e.g. "20"). Asserted against the
+      runner-provisioned node; a mismatch fails the job fast with a clear
+      misprovisioning message.
+    required: false
+    default: '20'
+  cache:
+    description: >-
+      Accepted for drop-in compatibility with actions/setup-node. No-op: the
+      persistent self-hosted runner reuses ~/.npm natively across jobs, so the
+      upstream actions/cache integration (itself a codeload fetch) is not needed.
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - shell: bash
+      env:
+        REQUESTED: ${{ inputs.node-version }}
+        CACHE_MODE: ${{ inputs.cache }}
+      run: |
+        set -euo pipefail
+
+        if ! command -v node >/dev/null 2>&1; then
+          echo "::error::node not found on PATH. Self-hosted runner is misprovisioned (expected Volta-managed Node ${REQUESTED}.x)."
+          exit 1
+        fi
+        if ! command -v npm >/dev/null 2>&1; then
+          echo "::error::npm not found on PATH. Self-hosted runner is misprovisioned."
+          exit 1
+        fi
+
+        want_major="${REQUESTED%%.*}"
+        have_full="$(node -v)"            # e.g. v20.20.2
+        have_major="${have_full#v}"
+        have_major="${have_major%%.*}"
+
+        if [ "$want_major" != "$have_major" ]; then
+          echo "::error::Node major mismatch: workflow requires ${want_major}.x but runner provides ${have_full}."
+          exit 1
+        fi
+
+        echo "node ${have_full} / npm $(npm -v) (runner-provisioned; setup-node vendored per AUD-406)"
+
+        if [ -n "${CACHE_MODE}" ]; then
+          echo "cache='${CACHE_MODE}' requested — no-op on persistent self-hosted runner (~/.npm reused across jobs)."
+        fi
