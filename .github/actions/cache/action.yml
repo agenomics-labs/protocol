@@ -1,0 +1,71 @@
+name: 'Cache (vendored)'
+description: >-
+  Self-hosted-runner cache shim. Vendored AUD-406 follow-up: replaces
+  actions/cache (a `using: node20` JS action whose dist bundle is fetched from
+  codeload.github.com at job start and repeatedly cold-cache-timeouts on this
+  runner pool) with a pure-bash composite. The persistent self-hosted runners
+  retain ~/.cargo, target/, ~/.local/share/solana and ~/.cargo/bin across jobs
+  natively, so restore/save is unnecessary — this shim only reports `cache-hit`
+  from on-disk path existence so install-gate steps
+  (`if: steps.cache-x.outputs.cache-hit != 'true'`) behave identically:
+  skip the expensive install when the tool already persists, run it on a
+  cold/fresh runner.
+author: 'agenomics-labs (AUD-406 follow-up)'
+branding:
+  icon: 'hard-drive'
+  color: 'green'
+
+inputs:
+  path:
+    description: 'Newline/space-separated paths (drop-in compat with actions/cache).'
+    required: true
+  key:
+    description: 'Accepted for drop-in compatibility; not used (no remote cache).'
+    required: false
+    default: ''
+  restore-keys:
+    description: 'Accepted for drop-in compatibility; not used.'
+    required: false
+    default: ''
+  enableCrossOsArchive:
+    description: 'Accepted for drop-in compatibility; ignored.'
+    required: false
+    default: 'false'
+
+outputs:
+  cache-hit:
+    description: "'true' iff every input path already exists on the runner."
+    value: ${{ steps.probe.outputs.cache-hit }}
+
+runs:
+  using: 'composite'
+  steps:
+    - id: probe
+      shell: bash
+      env:
+        CACHE_PATHS: ${{ inputs.path }}
+        CACHE_KEY: ${{ inputs.key }}
+      run: |
+        set -euo pipefail
+
+        hit=true
+        # actions/cache accepts newline- and whitespace-separated path lists.
+        while IFS= read -r raw; do
+          for p in $raw; do
+            [ -z "$p" ] && continue
+            # Expand a leading ~ (paths like ~/.cargo/registry).
+            case "$p" in "~"*) p="${HOME}${p#\~}" ;; esac
+            if [ ! -e "$p" ]; then
+              hit=false
+              echo "miss: $p (absent — install/build step will run)"
+            elif [ -d "$p" ] && [ -z "$(ls -A "$p" 2>/dev/null)" ]; then
+              hit=false
+              echo "miss: $p (empty dir — treated as cold)"
+            else
+              echo "hit:  $p"
+            fi
+          done
+        done <<< "$CACHE_PATHS"
+
+        echo "cache-hit=$hit" >> "$GITHUB_OUTPUT"
+        echo "vendored cache shim → cache-hit=$hit (key='${CACHE_KEY}'; persistent self-hosted runner, no codeload, no remote save)"
