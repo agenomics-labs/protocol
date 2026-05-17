@@ -1,0 +1,35 @@
+repo: actions/setup-node
+sha: 48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+version: v6 (the SHA-pinned ref this composite replaces)
+vendored_on: 2026-05-16
+vendored_by_commit: AUD-406 follow-up (codeload setup-node flake on PR #169)
+notes: |
+  NOT a verbatim copy of upstream action.yml.
+
+  Rationale: actions/setup-node is `using: node20` — its real surface is a
+  multi-MB compiled dist/index.js (Node distribution download, tool-cache
+  management, actions/cache integration). Copying only its action.yml does not
+  work, and vendoring the JS bundle is large, opaque, and defeats the AUD-406
+  auditability goal. On these [self-hosted, linux] runners Node 20 + npm are
+  already provisioned (Volta), so setup-node installs nothing here — its only
+  effective jobs were "node on PATH" (already true) and `cache: "npm"`
+  (redundant: the persistent runner reuses ~/.npm natively across jobs).
+
+  This composite therefore ASSERTS the runner toolchain in pure bash instead
+  of fetching the upstream JS action from codeload.github.com. It eliminates
+  both the setup-node fetch AND the implied actions/cache fetch from the
+  critical path. Input surface (node-version, cache) is kept drop-in
+  compatible so ci.yml `with:` blocks are unchanged.
+
+  Re-evaluate / revert procedure:
+    - If a runner stops pre-provisioning Node (assertion fails fast with a
+      clear ::error::), either restore Volta provisioning on the runner OR
+      reintroduce a vendored real installer.
+    - To re-pin upstream instead: revert ci.yml `uses: ./.github/actions/setup-node`
+      back to `actions/setup-node@<new-sha> # pin vN (AUD-406)` and delete
+      this directory.
+  scope: |
+    Applied to .github/workflows/ci.yml only (the workflow whose PR #169 run
+    hit the codeload timeout). Other workflows still use upstream
+    actions/setup-node; npm-publish.yml notably needs setup-node's
+    registry-url auth, which this assertion shim intentionally does not cover.

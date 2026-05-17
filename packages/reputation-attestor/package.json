@@ -43,7 +43,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "prepare": "tsc",
+    "prepublishOnly": "tsc",
     "test": "node --import tsx --test test/canonical.test.ts test/sign-verify.test.ts test/freshness.test.ts test/issuer.test.ts"
   },
   "dependencies": {

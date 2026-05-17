@@ -100,8 +100,12 @@ Restart Claude Desktop after editing. The 29 tools (`create_vault`, `register_ag
 ### Surface 2 (1, scaffold/stub)
 `pay_x402_service`
 
-### Reputation portability (3, ADR-139)
-`issue_reputation_attestation` `verify_reputation_attestation` `get_portable_reputation`
+### Reputation portability (ADR-139, MCP surface deferred)
+
+Portable reputation attestations ship as the `@agenomics/reputation-attestor`
+package, the indexer issuer service, and the SDK. The matching MCP tool
+surface (issue / verify / get) is intentionally deferred and not yet wired
+into the server, so it is excluded from the tool inventory above.
 
 A signed snapshot of an agent's reputation that any third party can verify
 in one Ed25519 check — no Agenomics RPC required. See

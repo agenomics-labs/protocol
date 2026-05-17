@@ -41,7 +41,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "prepare": "tsc",
+    "prepublishOnly": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test test/*.test.ts"
   },

@@ -40,7 +40,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "prepare": "tsc",
+    "prepublishOnly": "tsc",
     "test": "node --import tsx --test test/*.test.ts"
   },
   "devDependencies": {
