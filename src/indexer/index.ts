@@ -568,6 +568,9 @@ const DISCRIMINATOR_MAP: Record<string, string> = {
   "7940f9998b80ecbb": "DisputeResolved",
   "62f1c37ad500a2a1": "EscrowCancelled",
   bd16aafa4bda3a70: "EscrowExpired",
+  // C4-OB-02 (cycle-4, PR #176): EscrowClosed — emitted by the now
+  // non-no-op `close_escrow` after the residual ATA sweep + close.
+  "6d143933d97603ad": "EscrowClosed",
   // AUD-032 (2026-04-25 audit): ReputationUpdateScheduled
   // (discriminator 611134c2e8133ec3) was removed from the Settlement
   // program. The Registry's `ReputationUpdated` (1a24bb96eb5a6a59) is
@@ -663,6 +666,7 @@ const EVENT_PROGRAM: Record<string, Address> = (() => {
     "DisputeResolved",
     "EscrowCancelled",
     "EscrowExpired",
+    "EscrowClosed",
     "ProtocolConfigInitialized",
     "ProtocolConfigUpdated",
   ]) {
@@ -1518,6 +1522,26 @@ const EVENT_DECODERS: Record<string, EventDecoder> = {
     escrow: r.pubkey(),
     task_id: u64ToJson(r.u64()),
     refunded_amount: u64ToJson(r.u64()),
+  }),
+
+  // C4-OB-02 (cycle-4, PR #176): EscrowClosed — emitted by the now
+  // non-no-op `close_escrow` once a terminal escrow is torn down. The
+  // pre-fix handler was `Ok(())` (no event); the fix sweeps any residual
+  // escrow-ATA balance to the client then `close_account`s the ATA before
+  // Anchor closes the PDA. `residual_swept` is 0 on the normal
+  // drained-by-settlement path; non-zero flags an unsolicited direct
+  // transfer into the escrow ATA that the close path recovered. Wire
+  // layout verbatim from programs/settlement/src/events.rs `EscrowClosed`
+  // (Borsh is positional — order MUST match the struct):
+  //   pub escrow: Pubkey
+  //   pub client: Pubkey
+  //   pub task_id: u64
+  //   pub residual_swept: u64
+  EscrowClosed: (r) => ({
+    escrow: r.pubkey(),
+    client: r.pubkey(),
+    task_id: u64ToJson(r.u64()),
+    residual_swept: u64ToJson(r.u64()),
   }),
 
   // Surface-3 / cctp-hook: MilestoneAutoApproved.
