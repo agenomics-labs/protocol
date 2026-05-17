@@ -262,3 +262,299 @@ mod space_tests {
         assert_eq!(AgentProfile::SPACE, 1436);
     }
 }
+
+#[cfg(test)]
+mod layout_pin {
+    //! F-08-02 (cycle-4) — CI layout-parity tether for the indexer's
+    //! hand-rolled `AgentProfile` decoder.
+    //!
+    //! `src/indexer/reputation-attestor-wire.ts::decodeAgentProfileSlice`
+    //! reads the on-chain `AgentProfile` account by walking Borsh fields
+    //! in declaration order with NO IDL/Anchor dependency and NO runtime
+    //! schema check. ADR-139 then signs `reputation_score`, `slash_count`,
+    //! `registration_nonce`, `manifest_hash`, and `authority` from those
+    //! bytes into a reputation attestation. If a future registry change
+    //! reorders, inserts, or resizes any field at or before
+    //! `registration_nonce`, the indexer would silently decode the WRONG
+    //! values and sign them with a VALID issuer key — the highest
+    //! blast-radius failure in the cycle-4 audit (F-08-02).
+    //!
+    //! This module Borsh-serializes a fully-populated `AgentProfile`
+    //! (exactly what Anchor writes to the account) and asserts the BYTE
+    //! OFFSET of every field the TS decoder consumes. Any drift fails the
+    //! Agent Registry build's `cargo test` — which CI runs before any
+    //! redeploy — so the indexer can never silently sign wrong reputation.
+    //! The offset constants below MUST stay in lockstep with the comment
+    //! block at `src/indexer/reputation-attestor-wire.ts:115-151` and the
+    //! field walk at `:206-234`.
+    use super::*;
+    use anchor_lang::AccountSerialize;
+
+    // Borsh-serialized field offsets RELATIVE TO THE START OF THE ACCOUNT
+    // DATA (i.e. including Anchor's 8-byte discriminator, exactly as the
+    // indexer sees it via `getAccountInfo`). The TS decoder skips the
+    // first 8 bytes then reads in this order. Fixture string/Vec lengths
+    // are chosen below so these are deterministic.
+    const DISC: usize = 8;
+    const NAME_LEN: usize = 4; // "name"
+    const DESC_LEN: usize = 4; // "desc"
+    const CAT_LEN: usize = 3; // "cat"
+    const N_CAPS: usize = 2; // capabilities entries
+    const CAP_LEN: usize = 2; // each "cX"
+    const N_TOKENS: usize = 1; // accepted_tokens entries
+
+    #[test]
+    fn f_08_02_agentprofile_borsh_offsets_match_indexer_decoder() {
+        let authority = Pubkey::new_from_array([0x11; 32]);
+        let vault_address = Pubkey::new_from_array([0x22; 32]);
+        let token = Pubkey::new_from_array([0x33; 32]);
+        let manifest_hash = [0x44u8; 32];
+        let profile = AgentProfile {
+            authority,
+            name: "name".to_string(),
+            description: "desc".to_string(),
+            category: "cat".to_string(),
+            capabilities: vec!["c0".to_string(), "c1".to_string()],
+            pricing_model: PricingModel::PerTask,
+            pricing_amount: 7,
+            accepted_tokens: vec![token],
+            vault_address,
+            status: AgentStatus::Active,
+            reputation_score: 87,
+            __padding_aud007: [0u8; 17],
+            created_at: 1_700_000_000,
+            updated_at: 1_700_000_100,
+            reputation_stake: ReputationStake {
+                staked_amount: 5_000,
+                slash_count: 2,
+            },
+            bump: 254,
+            manifest_cid: [0x55u8; 64],
+            manifest_hash,
+            manifest_signature: [0x66u8; 64],
+            manifest_version: 0x0102,
+            version: AgentProfile::CURRENT_VERSION,
+            registration_nonce: 0xDEAD_BEEF,
+            cleared_count: 1,
+            cdp_wallet: None,
+        };
+
+        let mut buf: Vec<u8> = Vec::with_capacity(8 + AgentProfile::SPACE);
+        profile
+            .try_serialize(&mut buf)
+            .expect("AgentProfile must serialize");
+
+        // Walk the SAME field order the TS `decodeAgentProfileSlice`
+        // walks, computing each field's start offset, and assert the
+        // bytes at that offset equal the fixture value the indexer would
+        // decode. A reorder/insert/resize shifts these and fails here.
+        let mut off = DISC;
+
+        // authority @ [8..40]
+        assert_eq!(off, 8, "authority must start immediately after disc");
+        assert_eq!(&buf[off..off + 32], authority.as_ref(), "authority offset");
+        off += 32;
+
+        // name: u32 len + bytes
+        assert_eq!(
+            u32::from_le_bytes(buf[off..off + 4].try_into().unwrap()) as usize,
+            NAME_LEN,
+            "name length prefix"
+        );
+        off += 4 + NAME_LEN;
+        // description
+        assert_eq!(
+            u32::from_le_bytes(buf[off..off + 4].try_into().unwrap()) as usize,
+            DESC_LEN,
+            "description length prefix"
+        );
+        off += 4 + DESC_LEN;
+        // category
+        assert_eq!(
+            u32::from_le_bytes(buf[off..off + 4].try_into().unwrap()) as usize,
+            CAT_LEN,
+            "category length prefix"
+        );
+        off += 4 + CAT_LEN;
+        // capabilities: Vec<String> — u32 count, then each string
+        assert_eq!(
+            u32::from_le_bytes(buf[off..off + 4].try_into().unwrap()) as usize,
+            N_CAPS,
+            "capabilities vec count"
+        );
+        off += 4;
+        for _ in 0..N_CAPS {
+            assert_eq!(
+                u32::from_le_bytes(buf[off..off + 4].try_into().unwrap()) as usize,
+                CAP_LEN,
+                "capability string length"
+            );
+            off += 4 + CAP_LEN;
+        }
+        // pricing_model: enum → 1-byte variant tag
+        assert_eq!(buf[off], 0, "pricing_model PerTask tag = 0");
+        off += 1;
+        // pricing_amount: u64
+        assert_eq!(
+            u64::from_le_bytes(buf[off..off + 8].try_into().unwrap()),
+            7,
+            "pricing_amount"
+        );
+        off += 8;
+        // accepted_tokens: Vec<Pubkey> — u32 count then 32 bytes each
+        assert_eq!(
+            u32::from_le_bytes(buf[off..off + 4].try_into().unwrap()) as usize,
+            N_TOKENS,
+            "accepted_tokens vec count"
+        );
+        off += 4 + 32 * N_TOKENS;
+        // vault_address: Pubkey (skipped by the indexer but offset matters)
+        assert_eq!(
+            &buf[off..off + 32],
+            vault_address.as_ref(),
+            "vault_address offset"
+        );
+        off += 32;
+        // status: enum → 1-byte tag; indexer reads this (Active == 0)
+        assert_eq!(buf[off], 0, "status Active tag = 0 (indexer isActive gate)");
+        off += 1;
+        // reputation_score: u64 — SIGNED into ADR-139 attestation
+        assert_eq!(
+            u64::from_le_bytes(buf[off..off + 8].try_into().unwrap()),
+            87,
+            "reputation_score offset (ADR-139 attested value)"
+        );
+        off += 8;
+        // __padding_aud007: [u8; 17] — indexer `skip(17)`
+        off += 17;
+        // created_at: i64, updated_at: i64 — indexer skips both
+        off += 8 + 8;
+        // reputation_stake.staked_amount: u64 — attested
+        assert_eq!(
+            u64::from_le_bytes(buf[off..off + 8].try_into().unwrap()),
+            5_000,
+            "reputation_stake.staked_amount offset (ADR-139 attested)"
+        );
+        off += 8;
+        // reputation_stake.slash_count: u8 — attested
+        assert_eq!(
+            buf[off], 2,
+            "reputation_stake.slash_count offset (ADR-139 attested)"
+        );
+        off += 1;
+        // bump: u8 — indexer skips
+        off += 1;
+        // manifest_cid: [u8; 64] — indexer skips
+        off += 64;
+        // manifest_hash: [u8; 32] — attested
+        assert_eq!(
+            &buf[off..off + 32],
+            &manifest_hash,
+            "manifest_hash offset (ADR-139 attested)"
+        );
+        off += 32;
+        // manifest_signature: [u8; 64] — indexer skips
+        off += 64;
+        // manifest_version: u16 — indexer skips
+        off += 2;
+        // version: u8 — indexer skips
+        off += 1;
+        // registration_nonce: u64 — the LAST field the indexer reads;
+        // attested into the ADR-139 monotone-invariant set.
+        assert_eq!(
+            u64::from_le_bytes(buf[off..off + 8].try_into().unwrap()),
+            0xDEAD_BEEF,
+            "registration_nonce offset (ADR-139 attested, last decoded field)"
+        );
+        off += 8;
+
+        // Everything the indexer decodes ends exactly here. Pin the
+        // absolute offset so a field added ANYWHERE at or before
+        // `registration_nonce` (which would shift this) fails the build.
+        assert_eq!(
+            off, 379,
+            "F-08-02: total bytes the indexer decodes (disc..=registration_nonce) \
+             changed. The hand-rolled decoder in \
+             src/indexer/reputation-attestor-wire.ts is now reading WRONG \
+             offsets and ADR-139 will sign incorrect reputation with a valid \
+             key. Update BOTH this pin and the TS decoder in lockstep."
+        );
+    }
+
+    /// F-08-02: prove the threat is real — simulate a registry refactor
+    /// that inserts a `u64` field before `reputation_score`, and show the
+    /// indexer's fixed offset would then read the inserted field's bytes
+    /// as the attested reputation score. The compile-order of the real
+    /// struct + the pin above is what prevents this from shipping.
+    #[test]
+    fn f_08_02_simulated_inserted_field_corrupts_attested_score() {
+        // Real serialized prefix up to (but not including) reputation_score.
+        let authority = Pubkey::new_from_array([0xAA; 32]);
+        let profile = AgentProfile {
+            authority,
+            name: "n".to_string(),
+            description: "d".to_string(),
+            category: "c".to_string(),
+            capabilities: vec![],
+            pricing_model: PricingModel::PerTask,
+            pricing_amount: 1,
+            accepted_tokens: vec![],
+            vault_address: Pubkey::new_from_array([0xBB; 32]),
+            status: AgentStatus::Active,
+            reputation_score: 42,
+            __padding_aud007: [0u8; 17],
+            created_at: 0,
+            updated_at: 0,
+            reputation_stake: ReputationStake {
+                staked_amount: 0,
+                slash_count: 0,
+            },
+            bump: 0,
+            manifest_cid: [0u8; 64],
+            manifest_hash: [0u8; 32],
+            manifest_signature: [0u8; 64],
+            manifest_version: 0,
+            version: AgentProfile::CURRENT_VERSION,
+            registration_nonce: 0,
+            cleared_count: 0,
+            cdp_wallet: None,
+        };
+        let mut real: Vec<u8> = Vec::new();
+        profile.try_serialize(&mut real).unwrap();
+
+        // Locate reputation_score the same way the indexer would (fixed
+        // walk). With empty caps/tokens the offset is deterministic.
+        // disc8 + auth32 + name(4+1) + desc(4+1) + cat(4+1)
+        //  + caps_count4 + pricing_tag1 + pricing_amt8
+        //  + tokens_count4 + vault32 + status1 = reputation_score start.
+        let rep_off = 8 + 32 + (4 + 1) * 3 + 4 + 1 + 8 + 4 + 32 + 1;
+        assert_eq!(
+            u64::from_le_bytes(real[rep_off..rep_off + 8].try_into().unwrap()),
+            42,
+            "sanity: indexer would read reputation_score = 42 on the real layout"
+        );
+
+        // Simulate the drift: splice an 8-byte `u64` (value 999) in front
+        // of reputation_score, as a careless registry refactor would.
+        let mut drifted = real[..rep_off].to_vec();
+        drifted.extend_from_slice(&999u64.to_le_bytes()); // inserted field
+        drifted.extend_from_slice(&real[rep_off..]);
+
+        // The indexer's FIXED offset now reads the inserted field, not the
+        // real score — it would sign reputation_score = 999 (clamped to
+        // 100 by ADR-139) into a credential with a valid issuer key.
+        let read_after_drift =
+            u64::from_le_bytes(drifted[rep_off..rep_off + 8].try_into().unwrap());
+        assert_eq!(
+            read_after_drift, 999,
+            "F-08-02: confirms a pre-reputation_score field insertion makes \
+             the hand-rolled indexer decoder sign the WRONG value. The \
+             layout-pin test above is what fails the build before this \
+             drift can reach a cluster."
+        );
+        assert_ne!(
+            read_after_drift, 42,
+            "drifted layout no longer yields the true reputation_score"
+        );
+    }
+}

@@ -588,6 +588,155 @@ const DISCRIMINATOR_MAP: Record<string, string> = {
   "813e91dc8abf032e": "MilestoneAutoApproved",
 };
 
+// ADR-142 — cctp-hook program id. The indexer does NOT open a
+// `logsNotifications` subscription for cctp-hook; `MilestoneAutoApproved`
+// is emitted via CPI inside a settlement-mentioning transaction, so the
+// event is observed on the `settlement` subscription but its *emitting*
+// program is cctp-hook. The provenance gate must therefore know
+// cctp-hook's address to attribute that one event correctly.
+// Mirrors `programs/cctp-hook/src/lib.rs::declare_id!()`.
+const CCTP_HOOK_PROGRAM_ID: Address = toAddressBrand(
+  "3yifMBDVChLzcihZWh4or9zxgzbmQVghdNZzpuP814vb",
+);
+
+// ADR-142 — every decoded event is bound to the program that is
+// *legitimately allowed to emit it*. CC-1: `logsNotifications({mentions:
+// [programId]})` returns logs for EVERY program in any transaction merely
+// mentioning the subscribed program, so a foreign program can emit a
+// `Program data:` line whose 8-byte discriminator collides with a trusted
+// event. Classification by discriminator alone is no longer a trusted
+// authority for persistence — the emitting program (resolved from the
+// `Program <id> invoke/success/failed` scope brackets in the log stream,
+// see `parseLogsForEvents`) MUST equal the expected owner below before an
+// event is persisted. Sourced from each program's `src/events.rs`.
+const EVENT_PROGRAM: Record<string, Address> = (() => {
+  const m: Record<string, Address> = {};
+  const reg = PROGRAM_IDS.registry;
+  const vault = PROGRAM_IDS.vault;
+  const settle = PROGRAM_IDS.settlement;
+  // agent-registry/src/events.rs
+  for (const e of [
+    "AgentRegistered",
+    "AgentProfileUpdated",
+    "AgentStatusUpdated",
+    "ReputationUpdated",
+    "ReputationStaked",
+    "AgentSlashed",
+    "ReputationUnstaked",
+    "AgentDeregistered",
+    "SuspensionCleared",
+    "ManifestUpdated",
+    "AgentMigrated",
+    "CdpWalletUpdated",
+    "ReputationDeltaProposed",
+  ]) {
+    m[e] = reg;
+  }
+  // agent-vault/src/events.rs
+  for (const e of [
+    "VaultInitialized",
+    "AgentIdentityUpdated",
+    "PolicyUpdated",
+    "TransactionExecuted",
+    "ProgramCallExecuted",
+    "TokenTransferExecuted",
+    "AllowlistUpdated",
+    "VaultPaused",
+    "VaultResumed",
+    "ExecutionAttested",
+    "DelegationGrantCreated",
+    "DelegationGrantRevoked",
+    "DelegationGrantUpdated",
+    "DelegationGrantExecuted",
+  ]) {
+    m[e] = vault;
+  }
+  // settlement/src/events.rs
+  for (const e of [
+    "EscrowCreated",
+    "TaskAccepted",
+    "MilestoneSubmitted",
+    "MilestoneApproved",
+    "MilestoneRejected",
+    "EscrowCompleted",
+    "DisputeRaised",
+    "DisputeResolved",
+    "EscrowCancelled",
+    "EscrowExpired",
+    "ProtocolConfigInitialized",
+    "ProtocolConfigUpdated",
+  ]) {
+    m[e] = settle;
+  }
+  // cctp-hook/src/events.rs (CPI-emitted under a settlement-mentioning tx)
+  m["MilestoneAutoApproved"] = CCTP_HOOK_PROGRAM_ID;
+  return m;
+})();
+
+/**
+ * ADR-142 — resolve the emitting program for each `Program data:` line by
+ * walking the runtime invoke/return scope brackets Solana writes into
+ * `logMessages`:
+ *
+ *   "Program <id> invoke [1]"     → push <id>
+ *   "Program <id> success"        → pop (matching innermost <id>)
+ *   "Program <id> failed: ..."    → pop (matching innermost <id>)
+ *   "Program data: <base64>"      → attributed to stack top (innermost)
+ *
+ * Anchor's `emit!` writes the `Program data:` line while the emitting
+ * program frame is still active, so the innermost (top-of-stack) program
+ * is the true emitter. When the log stream carries NO bracket lines at
+ * all (sparse RPC responses, and the many unit-test fixtures that pass
+ * only `Program data:` lines) we cannot resolve a per-line program; the
+ * caller falls back to the discriminator→owner binding gated by the
+ * subscribed label (still closes CC-1 for the realistic attack: a foreign
+ * program's collision discriminator maps to a trusted event whose owner
+ * is NOT the subscribed program).
+ */
+function attributeLogsToPrograms(
+  logs: string[],
+): { emittingProgram: (string | null)[]; sawBrackets: boolean } {
+  const invokeRe = /^Program (\S+) invoke \[\d+\]$/;
+  const successRe = /^Program (\S+) success$/;
+  const failedRe = /^Program (\S+) failed/;
+  const stack: string[] = [];
+  const emittingProgram: (string | null)[] = [];
+  let sawBrackets = false;
+  for (const log of logs) {
+    const inv = log.match(invokeRe);
+    if (inv) {
+      sawBrackets = true;
+      stack.push(inv[1]);
+      emittingProgram.push(null);
+      continue;
+    }
+    const suc = log.match(successRe);
+    if (suc) {
+      sawBrackets = true;
+      // Pop the matching innermost frame (defensive: only if it matches
+      // the top, so a malformed/forged "success" for a program that
+      // isn't actually the innermost frame cannot prematurely unwind a
+      // legitimate parent frame).
+      if (stack.length > 0 && stack[stack.length - 1] === suc[1]) {
+        stack.pop();
+      }
+      emittingProgram.push(null);
+      continue;
+    }
+    const fail = log.match(failedRe);
+    if (fail) {
+      sawBrackets = true;
+      if (stack.length > 0 && stack[stack.length - 1] === fail[1]) {
+        stack.pop();
+      }
+      emittingProgram.push(null);
+      continue;
+    }
+    emittingProgram.push(stack.length > 0 ? stack[stack.length - 1] : null);
+  }
+  return { emittingProgram, sawBrackets };
+}
+
 /**
  * Minimal borsh reader for Anchor event payloads.
  *
@@ -668,6 +817,25 @@ class BorshReader {
 
   string(): string {
     const len = this.u32();
+    // C4-OFF-01: the u32 length prefix comes from an untrusted on-chain
+    // `Program data:` log. `subarray` SILENTLY CLAMPS to the buffer end,
+    // so a hostile/truncated payload whose declared `len` exceeds the
+    // remaining bytes would (pre-fix) yield a short string and then
+    // advance `offset` by the *declared* `len` — desynchronising every
+    // subsequent field (the generic AUD-004 offset-drift class). Bounds-
+    // check BEFORE the read and throw a RangeError (mirrors `hexBytes`'
+    // existing guard); the throw is caught at the `parseLogsForEvents`
+    // decode boundary and downgraded to a classified `rawData` row, so a
+    // corrupt log can no longer poison the projection. The check is
+    // written `len > remaining` (not `offset+len > buf.length`) so a
+    // ~4 GiB declared `len` cannot overflow the addition or drive a
+    // multi-GiB `toString("utf8")` allocation before the bound is tested.
+    const remaining = this.buf.length - this.offset;
+    if (len > remaining) {
+      throw new RangeError(
+        `string: declared length ${len} exceeds ${remaining} remaining bytes`,
+      );
+    }
     const s = this.buf.subarray(this.offset, this.offset + len).toString("utf8");
     this.offset += len;
     return s;
@@ -1374,11 +1542,31 @@ const EVENT_DECODERS: Record<string, EventDecoder> = {
   }),
 };
 
-function parseLogsForEvents(logs: string[], _programLabel: string): ParsedEvent[] {
+// ADR-142 — `programLabel` is the subscribed program for this log stream
+// (`vault` | `registry` | `settlement`, the `mentions:[programId]`
+// filter). It is now LOAD-BEARING: an event is only persisted if its
+// emitting program (resolved from invoke/return scope brackets) matches
+// the program that legitimately owns that discriminator. Foreign-program
+// discriminator collisions are rejected to a forensics-only
+// `event_rejected_provenance` classification and never reach the
+// authoritative store via `updateAgentFromEvent`.
+function parseLogsForEvents(logs: string[], programLabel: string): ParsedEvent[] {
   const events: ParsedEvent[] = [];
   const eventRegex = /Program data: (.+)/;
 
-  for (const log of logs) {
+  const { emittingProgram, sawBrackets } = attributeLogsToPrograms(logs);
+  // The address of the program this subscription is bound to. When the
+  // label is a synthetic test label not in PROGRAM_IDS, `subscribedAddr`
+  // is undefined and the no-bracket fallback degrades to "accept if the
+  // discriminator is known" (test fixtures), which still rejects unknown
+  // discriminators and is never reached on a real RPC stream (which
+  // always carries invoke/return brackets).
+  const subscribedAddr: string | undefined = (
+    PROGRAM_IDS as Record<string, Address>
+  )[programLabel];
+
+  for (let i = 0; i < logs.length; i++) {
+    const log = logs[i];
     if (!log.includes("Program data:")) {
       continue;
     }
@@ -1397,6 +1585,52 @@ function parseLogsForEvents(logs: string[], _programLabel: string): ParsedEvent[
       const eventName = DISCRIMINATOR_MAP[discriminator];
 
       if (eventName) {
+        // ADR-142 / CC-1: bind the decoded event to its emitting program.
+        // `expectedOwner` is the program that legitimately emits this
+        // event per its `src/events.rs`. If the log stream carried scope
+        // brackets, `actualEmitter` is the innermost active program at
+        // this `Program data:` line; otherwise we fall back to the
+        // subscribed program (a foreign collision still fails because the
+        // trusted event's owner is not the subscribed program).
+        const expectedOwner = EVENT_PROGRAM[eventName];
+        const actualEmitter = sawBrackets
+          ? emittingProgram[i]
+          : subscribedAddr;
+        if (
+          expectedOwner !== undefined &&
+          actualEmitter != null &&
+          actualEmitter !== expectedOwner
+        ) {
+          // Discriminator-collision / foreign-program forgery. Quarantine
+          // to a distinct classification so it is visible to forensics
+          // but never matched by `updateAgentFromEvent` (which keys off
+          // the canonical event name). It is NOT persisted as the trusted
+          // event.
+          indexerErrors.inc({ error_type: "event_rejected_provenance" });
+          programLogger(programLabel).warn(
+            {
+              adr: "ADR-142",
+              event_name: eventName,
+              discriminator,
+              expected_program: expectedOwner,
+              emitting_program: actualEmitter,
+              event: "provenance:reject",
+            },
+            "rejected discriminator-collision event from foreign program",
+          );
+          events.push({
+            name: `event_rejected_provenance`,
+            data: {
+              rejectedEventName: eventName,
+              discriminator,
+              expectedProgram: expectedOwner,
+              emittingProgram: actualEmitter,
+              rawData: decoded.subarray(8).toString("hex"),
+            },
+          });
+          continue;
+        }
+
         const decoder = EVENT_DECODERS[eventName];
         if (decoder) {
           try {
@@ -2259,6 +2493,30 @@ export function withProgramWriteLock<T>(label: string, fn: () => T | Promise<T>)
   return getWriteMutex(label).runExclusive(fn);
 }
 
+/**
+ * C4-OFF-03 / ADR-118 — drain every registered per-program write mutex.
+ *
+ * `gracefulShutdown` previously proceeded straight to `db.close()` after
+ * `abortAll()` without awaiting any in-flight `withProgramWriteLock`
+ * promise. A live `handleLogs` commit or a backfill per-tx commit already
+ * executing inside the mutex was not waited on, so `db.close()` (or the
+ * 30s force-exit) could land mid-`persistEventsForTx`. Acquiring each
+ * mutex here blocks until the current `runExclusive` body has fully run
+ * to completion (better-sqlite3 is synchronous, so once we hold the lock
+ * no SQLite write for that label is in progress); we release immediately.
+ * After this resolves, no synchronous commit sequence is in flight and
+ * the DB handle can be closed safely. Bounded by the caller's force-exit
+ * timer so a wedged mutex cannot hang shutdown past the grace budget.
+ */
+export async function drainProgramWriteLocks(): Promise<void> {
+  const releases = await Promise.all(
+    [...writeMutexes.values()].map((m) => m.acquire()),
+  );
+  for (const release of releases) {
+    release();
+  }
+}
+
 // ADR-118 — module-scoped shutdown flag. Set by the SIGTERM/SIGINT
 // handler so the backfill loop can finish the current batch transaction
 // and stop scheduling fresh `getTransaction` requests. The live-stream
@@ -2291,9 +2549,15 @@ function persistEventsForTx(
     VALUES (?, ?, ?, ?, ?, ?)
   `);
 
-  let inserted = 0;
-  let skipped = 0;
-  let ordinal = 0;
+  const cursorStmt = db.prepare(`
+    INSERT INTO cursor (program, last_processed_slot, last_signature, updated_at)
+    VALUES (?, ?, ?, datetime('now'))
+    ON CONFLICT(program) DO UPDATE SET
+      last_processed_slot = excluded.last_processed_slot,
+      last_signature = excluded.last_signature,
+      updated_at = datetime('now')
+  `);
+
   // OFF-200 — collect the rows that the SQLite path actually inserted
   // so they can be replayed into PG inside a single transaction with
   // the cursor advance. Per the original ADR-128 semantic, only rows
@@ -2307,67 +2571,100 @@ function persistEventsForTx(
     eventOrdinal: number;
   }> = [];
 
-  for (const event of events) {
-    try {
-      const dataJson = JSON.stringify(event.data);
-      const result = insertStmt.run(
-        label,
-        event.name,
-        dataJson,
-        signature,
-        slot,
-        ordinal
-      );
-      if (result.changes > 0) {
-        inserted++;
-        metrics.eventsInserted++;
-        // OFF-208: prom counter for events successfully persisted to
-        // SQLite (the authoritative store). Labelled by `event_name`
-        // so a Grafana panel can surface per-event-type rates without
-        // re-parsing the body of the metric. We DO NOT count duplicate-
-        // skips here — `metrics.eventsDuplicateSkipped` is the
-        // in-process counter for those, and a future ADR can wire a
-        // separate prom counter if operators ask for it.
-        eventsProcessed.inc({ event_type: event.name });
-        updateAgentFromEvent(db, event, slot, signature);
-        // OFF-200 / ADR-128 Phase 1 — defer the PG INSERT; the batch is
-        // flushed inside a single PG transaction with the cursor
-        // advance below, so the cursor cannot move past an event that
-        // PG never received.
-        pgEventBatch.push({
-          eventName: event.name,
-          data: dataJson,
+  // C4-OFF-03 / ADR-118: wrap the per-event INSERTs, the in-tx agents-
+  // projection updates (`updateAgentFromEvent`), AND the cursor UPSERT in
+  // a SINGLE better-sqlite3 transaction. `synchronous=FULL` makes each
+  // statement durable but does NOT make the multi-statement sequence
+  // atomic — pre-fix, a SIGTERM / `db.close()` / 30s force-exit landing
+  // between the event rows and the cursor UPSERT (or mid
+  // `updateAgentFromEvent`) left the cursor stale or the agents
+  // projection half-applied, so the next boot replayed from a torn
+  // state. `db.transaction()` makes the whole per-tx commit all-or-
+  // nothing; metric/PG side-effects are applied ONLY after it commits.
+  let inserted = 0;
+  let skipped = 0;
+  const insertedEventNames: string[] = [];
+  const txResult = db.transaction(() => {
+    let txInserted = 0;
+    let txSkipped = 0;
+    let ordinal = 0;
+    for (const event of events) {
+      try {
+        const dataJson = JSON.stringify(event.data);
+        const result = insertStmt.run(
+          label,
+          event.name,
+          dataJson,
           signature,
           slot,
-          eventOrdinal: ordinal,
-        });
-      } else {
-        skipped++;
-        metrics.eventsDuplicateSkipped++;
+          ordinal
+        );
+        if (result.changes > 0) {
+          txInserted++;
+          insertedEventNames.push(event.name);
+          updateAgentFromEvent(db, event, slot, signature);
+          // OFF-200 / ADR-128 Phase 1 — defer the PG INSERT; the batch is
+          // flushed inside a single PG transaction with the cursor
+          // advance below, so the cursor cannot move past an event that
+          // PG never received.
+          pgEventBatch.push({
+            eventName: event.name,
+            data: dataJson,
+            signature,
+            slot,
+            eventOrdinal: ordinal,
+          });
+        } else {
+          txSkipped++;
+        }
+      } catch (err) {
+        // A throw here rolls back the WHOLE per-tx transaction (atomicity
+        // is the point of C4-OFF-03). Re-throw so `db.transaction()`
+        // aborts; the outer catch records the metric and the cursor does
+        // not advance past a tx we failed to fully persist.
+        throw new PerEventPersistError(
+          (err as Error).message,
+          event.name,
+        );
       }
-    } catch (err) {
-      metrics.parseErrors++;
-      // OFF-208: prom counter for SQLite-write failures inside the
-      // per-event loop (a JSON.stringify throw, a disk-full, a UNIQUE
-      // constraint we somehow missed). Labelled `store_event` to match
-      // the value used in `metrics-server.test.ts` so the prom
-      // contract stays stable across the audit close.
-      indexerErrors.inc({ error_type: "store_event" });
-      programLogger(label).error({ err: String(err), corr_id: signature }, "failed to store event");
+      ordinal++;
     }
-    ordinal++;
+    if (txInserted > 0 || txSkipped > 0) {
+      // Cursor UPSERT is now INSIDE the same transaction as the event
+      // rows + projection writes — it can never commit independently.
+      cursorStmt.run(label, slot, signature);
+    }
+    return { txInserted, txSkipped };
+  });
+
+  try {
+    const r = txResult();
+    inserted = r.txInserted;
+    skipped = r.txSkipped;
+  } catch (err) {
+    metrics.parseErrors++;
+    // OFF-208: prom counter for SQLite-write failures. Labelled
+    // `store_event` to match `metrics-server.test.ts` so the prom
+    // contract stays stable across the audit close.
+    indexerErrors.inc({ error_type: "store_event" });
+    programLogger(label).error(
+      { err: String(err), corr_id: signature },
+      "failed to store event batch (transaction rolled back)",
+    );
+    // Nothing committed — no metric/PG side-effects, cursor unchanged.
+    return { inserted: 0, skipped: 0 };
   }
 
+  // --- Post-commit side-effects (only reached if the tx committed) ---
+  for (const name of insertedEventNames) {
+    metrics.eventsInserted++;
+    // OFF-208: prom counter for events successfully persisted to SQLite
+    // (the authoritative store). Labelled by `event_name`.
+    eventsProcessed.inc({ event_type: name });
+  }
+  metrics.eventsDuplicateSkipped += skipped;
+
   if (inserted > 0 || skipped > 0) {
-    // SQLite is authoritative — advance its cursor synchronously.
-    db.prepare(`
-      INSERT INTO cursor (program, last_processed_slot, last_signature, updated_at)
-      VALUES (?, ?, ?, datetime('now'))
-      ON CONFLICT(program) DO UPDATE SET
-        last_processed_slot = excluded.last_processed_slot,
-        last_signature = excluded.last_signature,
-        updated_at = datetime('now')
-    `).run(label, slot, signature);
     // OFF-208: prom gauge for the most recent slot the indexer has
     // committed to SQLite. Set after the cursor advance so the gauge
     // never reports a slot we haven't actually persisted. A monotonic-
@@ -2389,6 +2686,17 @@ function persistEventsForTx(
   }
 
   return { inserted, skipped };
+}
+
+// C4-OFF-03 — typed error so a per-event persistence failure aborts the
+// enclosing `db.transaction()` (rolling back the entire per-tx batch +
+// cursor advance) rather than being swallowed mid-loop and leaving a
+// torn projection.
+class PerEventPersistError extends Error {
+  constructor(message: string, readonly eventName: string) {
+    super(message);
+    this.name = "PerEventPersistError";
+  }
 }
 
 /**
@@ -2521,7 +2829,26 @@ async function backfillProgram(
           encoding: "json",
         })
         .send();
-      if (tx?.meta?.logMessages) {
+      // ADR-142 / CC-2: same failed-tx gate as the live path. A
+      // backfilled signature whose `meta.err` is set never committed
+      // on-chain — its pre-abort logs must not enter the authoritative
+      // store. Still advance the cursor (via the no-logs branch) so we
+      // do not re-fetch the failed signature forever.
+      if (tx?.meta?.err != null) {
+        indexerErrors.inc({ error_type: "skipped_failed_tx" });
+        programLogger(label).debug(
+          {
+            adr: "ADR-142",
+            corr_id: infoSig,
+            slot: infoSlot,
+            event: "failed-tx:skip",
+          },
+          "skipping failed transaction (backfill)",
+        );
+        await withProgramWriteLock(label, () =>
+          upsertCursor(db, label, infoSlot, infoSig),
+        );
+      } else if (tx?.meta?.logMessages) {
         const parsed = parseLogsForEvents(tx.meta.logMessages as string[], label);
         // ADR-118: per-program write mutex around the per-tx commit so
         // a concurrent live-stream `handleLogs` for this label cannot
@@ -2737,6 +3064,28 @@ function subscribeToPrograms(
           try {
             const slot = Number(notification.context.slot);
             const signature = notification.value.signature;
+            // ADR-142 / CC-2: a transaction that emitted log lines but
+            // then aborted is NOT committed on-chain. Solana still
+            // returns the pre-abort `Program data:` lines in the
+            // notification, so persisting them would diverge the
+            // off-chain authoritative log from chain state (and, chained
+            // with CC-1, is a cheap state-forgery primitive). Drop the
+            // entire notification when `value.err != null`. x402-relay's
+            // `verifyPaymentOnChain` already applies the symmetric gate;
+            // the indexer now matches it on the live path.
+            if (notification.value.err != null) {
+              indexerErrors.inc({ error_type: "skipped_failed_tx" });
+              programLogger(label).debug(
+                {
+                  adr: "ADR-142",
+                  corr_id: signature,
+                  slot,
+                  event: "failed-tx:skip",
+                },
+                "skipping failed transaction (live)",
+              );
+              continue;
+            }
             // ADR-118: handleLogs is now async (mutex acquisition).
             // Await per notification so the write mutex is held end-to-
             // end before we move to the next message; this preserves
@@ -3526,6 +3875,19 @@ async function main(): Promise<void> {
         // DisabledPostgresStore.
         await pgStore.close().catch((err) => {
           logger.warn({ err: String(err) }, "postgres pool close failed");
+        });
+        // C4-OFF-03 / ADR-118: drain in-flight per-program write mutexes
+        // BEFORE closing the SQLite handle. `abortAll()` above stops new
+        // live notifications and `isShuttingDown` halts the backfill loop
+        // between batches, but a `persistEventsForTx` commit already
+        // inside `withProgramWriteLock` must run to completion (the whole
+        // per-tx INSERT+projection+cursor transaction is atomic, but the
+        // handle must not close mid-flight). Bounded by `forceExitTimer`.
+        await drainProgramWriteLocks().catch((err) => {
+          logger.warn(
+            { err: String(err), off: "C4-OFF-03" },
+            "write-lock drain failed",
+          );
         });
         db.close();
         clearTimeout(forceExitTimer);

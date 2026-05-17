@@ -20,7 +20,7 @@ import { describe, it } from "node:test";
 import * as assert from "node:assert/strict";
 import * as crypto from "node:crypto";
 import { getAddressDecoder } from "@solana/kit";
-import { parseLogsForEvents } from "./index";
+import { parseLogsForEvents, PROGRAM_IDS } from "./index";
 
 // Cached so we're not constructing a new decoder per test.
 const ADDRESS_DECODER = getAddressDecoder();
@@ -723,5 +723,215 @@ describe("AUD-004 / #163: SuspensionCleared.cleared_count decoder pin", () => {
     const data = events[0].data as Record<string, unknown>;
     assert.equal(data.cleared_count, 0);
     assert.equal(data.timestamp, 1_700_000_000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ADR-142 / CC-1 + CC-2: indexer log-provenance + finality gate.
+// ---------------------------------------------------------------------------
+
+const REGISTRY_ID = PROGRAM_IDS.registry as string;
+const SETTLEMENT_ID = PROGRAM_IDS.settlement as string;
+// An attacker-deployed program whose only job is to emit a forged
+// `Program data:` line with a trusted discriminator.
+const ATTACKER_ID = "Atk1111111111111111111111111111111111111111";
+
+/** A well-formed ReputationDeltaProposed payload (registry-owned). */
+function repDeltaPayload(): Buffer {
+  const authority = fixturePubkey();
+  return encodeReputationDeltaProposed({
+    authorityBytes: authority.bytes,
+    delta: -5,
+    reason: 1,
+    oldScore: 50,
+    newScore: 45,
+    timestamp: 1_700_000_000,
+  });
+}
+
+describe("ADR-142 / CC-1: discriminator-collision from a foreign program is rejected", () => {
+  it("rejects a trusted discriminator emitted by an attacker program inside a registry-mentioning tx", () => {
+    const payload = repDeltaPayload();
+    // The attacker CPIs/references the real registry program (satisfies
+    // `mentions:[registry]`) and, inside its own invoke frame, emits a
+    // `Program data:` line whose discriminator collides with
+    // ReputationDeltaProposed. Scope brackets attribute that line to the
+    // ATTACKER program, not the registry.
+    const logs = [
+      `Program ${REGISTRY_ID} invoke [1]`,
+      `Program ${REGISTRY_ID} success`,
+      `Program ${ATTACKER_ID} invoke [1]`,
+      makeLog(DISC_REPUTATION_DELTA_PROPOSED, payload),
+      `Program ${ATTACKER_ID} success`,
+    ];
+    const events = parseLogsForEvents(logs, "registry");
+
+    assert.equal(events.length, 1);
+    assert.equal(
+      events[0].name,
+      "event_rejected_provenance",
+      "a foreign-program collision must NOT be classified as the trusted event",
+    );
+    const data = events[0].data as Record<string, unknown>;
+    assert.equal(data.rejectedEventName, "ReputationDeltaProposed");
+    assert.equal(data.expectedProgram, REGISTRY_ID);
+    assert.equal(data.emittingProgram, ATTACKER_ID);
+  });
+
+  it("accepts the same event when genuinely emitted by the registry program", () => {
+    const payload = repDeltaPayload();
+    const logs = [
+      `Program ${REGISTRY_ID} invoke [1]`,
+      makeLog(DISC_REPUTATION_DELTA_PROPOSED, payload),
+      `Program ${REGISTRY_ID} success`,
+    ];
+    const events = parseLogsForEvents(logs, "registry");
+    assert.equal(events.length, 1);
+    assert.equal(events[0].name, "ReputationDeltaProposed");
+  });
+
+  it("CC-1 + CC-2 chained: collision discriminator inside a FAILED foreign frame is rejected (provenance) and would also be dropped at the failed-tx gate", () => {
+    // The strongest form of the audited primitive: an attacker emits a
+    // collision discriminator and then deliberately fails its own
+    // instruction. The provenance gate already rejects the foreign
+    // emitter here; the failed-tx gate (live + backfill) is the second
+    // line of defense and is covered in the indexer integration suite.
+    const payload = repDeltaPayload();
+    const logs = [
+      `Program ${SETTLEMENT_ID} invoke [1]`,
+      `Program ${SETTLEMENT_ID} success`,
+      `Program ${ATTACKER_ID} invoke [1]`,
+      makeLog(DISC_REPUTATION_DELTA_PROPOSED, payload),
+      `Program ${ATTACKER_ID} failed: custom program error: 0x1`,
+    ];
+    const events = parseLogsForEvents(logs, "settlement");
+    assert.equal(events.length, 1);
+    assert.equal(events[0].name, "event_rejected_provenance");
+    const data = events[0].data as Record<string, unknown>;
+    assert.equal(data.emittingProgram, ATTACKER_ID);
+  });
+
+  it("rejects a registry event observed on the settlement subscription via a foreign emitter (cross-program leak)", () => {
+    // `logsNotifications({mentions:[settlement]})` can carry a registry
+    // discriminator if a tx mentions both. If it was NOT actually emitted
+    // by the registry program frame, it must be rejected.
+    const payload = repDeltaPayload();
+    const logs = [
+      `Program ${SETTLEMENT_ID} invoke [1]`,
+      `Program ${ATTACKER_ID} invoke [2]`,
+      makeLog(DISC_REPUTATION_DELTA_PROPOSED, payload),
+      `Program ${ATTACKER_ID} success`,
+      `Program ${SETTLEMENT_ID} success`,
+    ];
+    const events = parseLogsForEvents(logs, "settlement");
+    assert.equal(events[0].name, "event_rejected_provenance");
+  });
+
+  it("backward-compat: bracket-less fixture logs still decode when the discriminator owner matches the subscribed label", () => {
+    // The existing unit-test corpus passes only `Program data:` lines.
+    // With no scope brackets we fall back to the discriminator->owner
+    // binding gated by the subscribed label. registry-owned event +
+    // "registry" label => accepted.
+    const events = parseLogsForEvents(
+      [makeLog(DISC_REPUTATION_DELTA_PROPOSED, repDeltaPayload())],
+      "registry",
+    );
+    assert.equal(events.length, 1);
+    assert.equal(events[0].name, "ReputationDeltaProposed");
+  });
+
+  it("bracket-less fallback STILL rejects a registry discriminator arriving on a non-owning subscription", () => {
+    // No brackets, but the subscribed label is `settlement` while the
+    // discriminator is registry-owned: the only legitimate way this log
+    // reaches the settlement stream is a foreign emitter, so reject.
+    const events = parseLogsForEvents(
+      [makeLog(DISC_REPUTATION_DELTA_PROPOSED, repDeltaPayload())],
+      "settlement",
+    );
+    assert.equal(events.length, 1);
+    assert.equal(events[0].name, "event_rejected_provenance");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// C4-OFF-01: BorshReader.string() bounds-checks the u32 length prefix.
+// ---------------------------------------------------------------------------
+
+describe("C4-OFF-01: BorshReader.string() rejects an oversize length prefix", () => {
+  // AgentRegistered is a registry-owned event whose first field is a
+  // String (`name`). sha256("event:AgentRegistered")[..8].
+  const DISC_AGENT_REGISTERED = "bf4ed936e864bd55";
+
+  it("throws (not silently clamps) when the declared string length exceeds the remaining buffer", () => {
+    // AgentRegistered wire layout: authority(Pubkey 32) THEN name(String).
+    // Supply a valid 32-byte authority, then declare a `name` length of
+    // 0xFFFFFFFF (~4 GiB) but supply only a few trailing bytes. Pre-fix:
+    // `subarray` clamped silently, a short string was returned, and
+    // `offset` advanced by the *declared* len — desyncing every later
+    // field (generic AUD-004) AND attempting a multi-GiB
+    // `toString("utf8")`. Post-fix: a RangeError is thrown BEFORE the
+    // subarray/toString and caught at the parse boundary, downgrading to
+    // a classified `rawData` row.
+    const authority = fixturePubkey();
+    const payload = Buffer.concat([
+      encPubkey(authority.bytes), // authority: Pubkey (32)
+      encU32(0xffffffff), // hostile/corrupt name length prefix
+      Buffer.from([0x41, 0x42, 0x43]), // only 3 actual bytes follow
+    ]);
+
+    const events = parseLogsForEvents(
+      [makeLog(DISC_AGENT_REGISTERED, payload)],
+      "registry",
+    );
+
+    assert.equal(events.length, 1);
+    assert.equal(
+      events[0].name,
+      "AgentRegistered",
+      "classification is preserved (the catch keeps the event name)",
+    );
+    const data = events[0].data as Record<string, unknown>;
+    assert.ok(
+      typeof data.decodeError === "string" &&
+        /exceeds .* remaining bytes/.test(data.decodeError as string),
+      `expected a bounds-check RangeError, got: ${JSON.stringify(data)}`,
+    );
+    assert.ok(
+      typeof data.rawData === "string",
+      "raw bytes are preserved for forensics instead of a bit-shifted decode",
+    );
+  });
+
+  it("a string length exactly at the remaining-buffer boundary still decodes (off-by-one guard)", () => {
+    // The check is `len > remaining`, not `>=`. Build a fully-valid
+    // AgentRegistered so the `name` string read lands exactly within
+    // bounds and the whole event decodes cleanly.
+    const authority = fixturePubkey();
+    const vault = fixturePubkey();
+    const name = Buffer.from("agent-x", "utf8");
+    const category = Buffer.from("infra", "utf8");
+    const payload = Buffer.concat([
+      encPubkey(authority.bytes),
+      encU32(name.length),
+      name,
+      encU32(category.length),
+      category,
+      encPubkey(vault.bytes),
+      encI64(1_700_000_000n),
+    ]);
+    const events = parseLogsForEvents(
+      [makeLog(DISC_AGENT_REGISTERED, payload)],
+      "registry",
+    );
+    assert.equal(events.length, 1);
+    assert.equal(events[0].name, "AgentRegistered");
+    const data = events[0].data as Record<string, unknown>;
+    assert.equal(
+      data.name,
+      "agent-x",
+      "a string whose declared len == remaining bytes must decode, not throw",
+    );
+    assert.equal(data.authority, authority.base58);
+    assert.equal(data.vault_address, vault.base58);
   });
 });
