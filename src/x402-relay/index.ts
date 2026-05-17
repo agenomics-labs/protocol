@@ -514,6 +514,54 @@ function decodeBase58(data: string): Uint8Array | null {
   }
 }
 
+// ---------------------------------------------------------------------------
+// C4-X402-03 — bounded, well-formed txSignature.
+//
+// THE BUG (pre-fix): `txSignature` was accepted as ANY non-empty string
+// (`typeof === "string"` only). A valid Solana signature is 64 bytes —
+// 86 to 88 base58 characters. An attacker could send a ~100kb string,
+// which then became (a) a key in `redeemedSignatures` and
+// `inFlightVerify`, (b) a Redis key `aep:redeemed:<100kb>`, (c) an RPC
+// argument to `getTransaction`, and (d) the verbatim `correlationId`
+// echoed in every error envelope AND written to logs (logger.ts
+// `SAFE_KEYS` allow-lists `txSignature`, so it bypasses scrubbing).
+// 100k distinct such keys ≈ 10 GB resident + unbounded log volume.
+//
+// THE FIX: reject anything that is not a syntactically valid Solana
+// signature BEFORE it can touch any Map, Redis, RPC, or log field —
+// fail-closed with HTTP 400. We validate (1) string type, (2) length in
+// the base58-of-64-bytes window, (3) base58 alphabet AND that it decodes
+// to exactly 64 bytes. The length pre-check bounds the work the base58
+// decoder does on hostile input (no decode of a 100kb string at all).
+//
+// A 64-byte value base58-encodes to between 86 and 88 characters
+// (leading-zero bytes can shorten it, but a real ed25519 signature is
+// effectively always 87-88; we allow 86 as a conservative lower bound
+// so we never reject a structurally valid signature).
+const SOLANA_SIGNATURE_BYTES = 64;
+const SIG_B58_MIN_LEN = 86;
+const SIG_B58_MAX_LEN = 88;
+// Base58 (Bitcoin alphabet) — no 0, O, I, l.
+const BASE58_RE = /^[1-9A-HJ-NP-Za-km-z]+$/;
+
+function isValidSolanaSignature(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  // Cheap length gate FIRST — bounds the decoder's input on hostile
+  // payloads (a 100kb string is rejected here without ever decoding).
+  if (value.length < SIG_B58_MIN_LEN || value.length > SIG_B58_MAX_LEN) {
+    return false;
+  }
+  if (!BASE58_RE.test(value)) return false;
+  // Structural check: must decode to exactly a 64-byte signature. This
+  // also rejects in-range-length strings that are valid base58 but not
+  // 64 bytes (e.g. a 32-byte pubkey, ~43-44 chars — excluded by the
+  // length gate already, but the byte-length assertion is the real
+  // invariant and is cheap now that length is bounded).
+  const decoded = decodeBase58(value);
+  if (decoded === null) return false;
+  return decoded.length === SOLANA_SIGNATURE_BYTES;
+}
+
 function readU64LE(bytes: Uint8Array, offset: number): bigint {
   let v = 0n;
   for (let i = 0; i < 8; i++) {
@@ -1122,7 +1170,16 @@ const app = express();
 // consistently. Convert the env var through `parseTrustProxy` so integer
 // hop counts and boolean literals survive the string→Express conversion.
 app.set("trust proxy", parseTrustProxy(TRUST_PROXY));
-app.use(express.json());
+// C4-X402-03: bound the request body. The only documented body across
+// every route is `{ txSignature: string }` (≤88 chars). express.json()
+// defaults to 100kb; a 4kb ceiling is two orders of magnitude above the
+// largest legitimate body while removing the multi-MB-body memory/parse
+// amplification vector. An over-limit body is rejected by the json
+// parser with a 413 BEFORE any handler runs. The companion defence is
+// `isValidSolanaSignature` in the /pay handler, which rejects a
+// well-formed-JSON-but-oversize/garbage `txSignature` with a 400 before
+// it can become a Map/Redis/RPC/log key.
+app.use(express.json({ limit: "4kb" }));
 app.use("/pay", rateLimit);
 // C4-X402-01: the same per-IP token bucket gates /challenge so an
 // attacker cannot exhaust the bounded outstanding-nonce store (it is also
@@ -1206,8 +1263,49 @@ type PayResult =
     }
   | { kind: "redeemed" }
   | { kind: "invalid"; details?: string; verification: PaymentVerification }
+  // C4-X402-02 (ADR-117 status taxonomy): a genuine payment REJECTION
+  // (the tx exists but does not pay us / was not found / is missing a
+  // nonce) is `kind:"invalid"` → HTTP 402. A TRANSPORT or INTERNAL
+  // failure (RPC brown-out, classifier `INTERNAL`, or — via the route
+  // try/catch, C4-X402-05 — a verifier that THREW instead of resolving)
+  // is `kind:"upstream"` → HTTP 5xx. Conflating the two (the pre-fix
+  // behaviour: every `valid:false` → 402) tells an honest, fully-paid
+  // client "payment rejected, do not retry" during an RPC outage, which
+  // induces a re-payment / double-spend. The envelope body is identical
+  // to `invalid` (same ADR-117 `{code,message,correlationId}` shape);
+  // only the HTTP status differs so retry libraries and dumb
+  // intermediaries — which key on status, not the envelope `code` —
+  // see a retryable 5xx instead of a terminal 402.
+  | { kind: "upstream"; errorCode: ErrorCode }
   | { kind: "no-config" }
   | { kind: "saturated" };
+
+// C4-X402-02 (ADR-117 status taxonomy): the single source of truth for
+// "is this errorCode a transport/infra failure (retryable 5xx) or a
+// genuine payment rejection (terminal 402)?". `RPC_UNAVAILABLE` and
+// `INTERNAL` are the only infra codes; everything else is a definitive
+// statement about the payment itself and stays 402. Centralised here so
+// the route handler and `processPaymentRequest` cannot drift apart.
+const UPSTREAM_ERROR_CODES: ReadonlySet<ErrorCode> = new Set<ErrorCode>([
+  "RPC_UNAVAILABLE",
+  "INTERNAL",
+]);
+
+function isUpstreamErrorCode(code: ErrorCode): boolean {
+  return UPSTREAM_ERROR_CODES.has(code);
+}
+
+// C4-X402-02: map an ErrorCode to its HTTP status. `RPC_UNAVAILABLE` →
+// 503 (Service Unavailable — the canonical "upstream transient, retry"
+// signal honoured by virtually every HTTP retry library and proxy).
+// `INTERNAL` → 500. Every genuine payment-rejection code → 402, the
+// ADR-117 stable terminal code clients branch on to mean "your payment
+// did not satisfy the relay; do NOT silently re-pay".
+function httpStatusForErrorCode(code: ErrorCode): number {
+  if (code === "RPC_UNAVAILABLE") return 503;
+  if (code === "INTERNAL") return 500;
+  return 402;
+}
 
 async function processPaymentRequest(
   txSignature: string,
@@ -1306,12 +1404,62 @@ async function processPaymentRequest(
     // Drop the cache entry once the RPC settles, regardless of outcome.
     // `.finally` runs after every awaiter has resolved their `.then`,
     // so no awaiter races a second attempt against a half-deleted entry.
-    verifyPromise.finally(() => {
-      inFlightVerify.delete(txSignature);
-    });
+    //
+    // C4-X402-05: this is a DETACHED chain off `verifyPromise`. If the
+    // verifier REJECTS, the promise returned by `.finally()` also
+    // rejects; with nothing attached to it Node raises an
+    // `unhandledRejection` (process-fatal under the default policy) —
+    // independent of the awaited-path try/catch below, because that
+    // catch handles the awaited reference, not this detached chain.
+    // Swallow the rejection HERE (it is the same exception the awaited
+    // path classifies and logs via the try/catch); the only job of this
+    // chain is the cache-entry cleanup, which must run on both settle
+    // outcomes. `.then(noop, noop)` after `.finally` consumes the
+    // rejection so it cannot escape as an unhandled rejection.
+    verifyPromise
+      .finally(() => {
+        inFlightVerify.delete(txSignature);
+      })
+      .then(
+        () => undefined,
+        () => undefined,
+      );
   }
 
-  const verification = await verifyPromise;
+  // C4-X402-05 (ADR-117 invariant — "every catch"): `verifyPaymentOnChain`
+  // catches internally and RESOLVES (never rejects), so today this await
+  // cannot throw. But the contract is implicit: any future verifier, a
+  // refactor, or an injected test verifier that THROWS/REJECTS would
+  // propagate the raw exception out of `processPaymentRequest` to the
+  // route's `await`, escaping the ADR-117 envelope (Express default 500
+  // body — re-opening the exact raw-exception leak ADR-117 closed) AND
+  // leaking the redis lock acquired at the top of this function for the
+  // full SIGNATURE_TTL_MS (the release sites below are skipped by the
+  // throw). Catch here, at the function that OWNS the lock, so the lock
+  // is released with the captured owner token and the failure is mapped
+  // onto the typed `upstream` PayResult (→ 5xx) like any other infra
+  // failure. The shared in-flight Promise's `.finally` still clears the
+  // cache entry, so a subsequent caller can retry the same signature.
+  let verification: PaymentVerification;
+  try {
+    verification = await verifyPromise;
+  } catch (err) {
+    const code = classifyVerifyException(err);
+    logger.error(
+      {
+        event: "verifier_threw_in_process_payment",
+        corr_id: txSignature,
+        error_code: code,
+        err,
+      },
+      "verifier rejected/threw out of processPaymentRequest — " +
+        "classified, redis lock released, mapped to upstream envelope",
+    );
+    if (redisDedup.enabled) {
+      await redisDedup.releaseRedeemed(txSignature, redisReleaseToken);
+    }
+    return { kind: "upstream", errorCode: code };
+  }
 
   if (!verification.valid) {
     // ADR-126 Phase 1 dual-write site (2/3) — verify-failed release.
@@ -1328,6 +1476,20 @@ async function processPaymentRequest(
     // PHASE 2: this call stays as-is (with the releaseToken arg).
     if (redisDedup.enabled) {
       await redisDedup.releaseRedeemed(txSignature, redisReleaseToken);
+    }
+    // C4-X402-02 (ADR-117 status taxonomy): split the single pre-fix
+    // `kind:"invalid"` (→ 402) into a genuine-rejection path (still
+    // `invalid` → 402) and a transport/internal path (`upstream` →
+    // 5xx). The verifier populates `errorCode`; `RPC_UNAVAILABLE`
+    // (RPC brown-out) and `INTERNAL` (classifier catch-all) are infra
+    // failures the client SHOULD retry without re-paying — returning
+    // 402 for them tells an honest payer "payment rejected" and induces
+    // a double-spend. The redis lock was already released just above on
+    // BOTH paths (correct: an RPC outage must free the slot so a retry
+    // can re-verify the SAME payment; ADR-126 §"Decision" step 3).
+    const failCode = verification.errorCode;
+    if (failCode !== undefined && isUpstreamErrorCode(failCode)) {
+      return { kind: "upstream", errorCode: failCode };
     }
     return { kind: "invalid", details: verification.error, verification };
   }
@@ -1418,70 +1580,139 @@ app.post("/pay", async (req: Request, res: Response) => {
 
   const { txSignature } = req.body;
 
-  if (!txSignature || typeof txSignature !== "string") {
-    res.status(400).json({ error: "Missing txSignature in request body" });
+  // C4-X402-03: fail-closed BEFORE `txSignature` becomes a Map key, a
+  // Redis key, an RPC argument, or a log/correlation field. Reject
+  // anything that is not a syntactically valid 64-byte Solana signature
+  // (type + bounded length + base58 + decoded byte-length). This bounds
+  // memory (`redeemedSignatures`/`inFlightVerify`/Redis keys), the RPC
+  // round-trip, and log volume on hostile input. The error string is
+  // deliberately generic (no echo of the rejected value) so an oversize
+  // attacker string is never reflected, even truncated.
+  if (!isValidSolanaSignature(txSignature)) {
+    res
+      .status(400)
+      .json({ error: "txSignature must be a valid base58 Solana signature" });
     return;
   }
 
-  const result = await processPaymentRequest(
-    txSignature,
-    (sig) => verifyPaymentOnChain(sig, PAYMENT_RECIPIENT, REQUIRED_AMOUNT_SOL),
-    PAYMENT_RECIPIENT,
-  );
+  // C4-X402-05 (ADR-117 invariant — "every catch"): the route-level
+  // belt-and-suspenders. `processPaymentRequest` already catches a
+  // throwing verifier at the lock-owning site (releasing the redis
+  // lock + mapping to `upstream`), so this catch should be unreachable
+  // for the verifier path. It exists so that ANY unexpected throw on
+  // the /pay path (a bug in the switch, a future code change, an
+  // exception from a helper) still produces the ADR-117 typed envelope
+  // (HTTP 500) instead of Express's default error body — which would
+  // re-open the exact raw-exception leak ADR-117 closed.
+  try {
+    const result = await processPaymentRequest(
+      txSignature,
+      (sig) =>
+        verifyPaymentOnChain(sig, PAYMENT_RECIPIENT, REQUIRED_AMOUNT_SOL),
+      PAYMENT_RECIPIENT,
+    );
 
-  // ADR-117: the correlation ID stamped on every error envelope. The
-  // payment flow's corr_id is the on-chain signature (logger.ts
-  // `paymentLogger` uses txSignature for corr_id), so we reuse it here
-  // for client-side log correlation — operators searching pino for
-  // `corr_id=<sig>` see the full /pay → /verify → /protected trace AND
-  // the raw-exception log line that produced this envelope. The route
-  // accepts any string as txSignature (per the 400 gate above we only
-  // know it's non-empty), so we treat it as opaque correlation material.
-  const correlationId = txSignature;
+    // ADR-117: the correlation ID stamped on every error envelope. The
+    // payment flow's corr_id is the on-chain signature (logger.ts
+    // `paymentLogger` uses txSignature for corr_id), so we reuse it here
+    // for client-side log correlation — operators searching pino for
+    // `corr_id=<sig>` see the full /pay → /verify → /protected trace AND
+    // the raw-exception log line that produced this envelope. By the
+    // C4-X402-03 gate above, txSignature is now guaranteed ≤88 base58
+    // chars, so echoing it as the correlation id is bounded and
+    // charset-safe (no control/ANSI injection into operator consoles).
+    const correlationId = txSignature;
 
-  switch (result.kind) {
-    case "redeemed":
-      // ADR-117: PAYMENT_REPLAYED — the slot is already redeemed
-      // (in-memory dedup, redis dedup, or post-RPC redeemed-recheck race
-      // resolution all funnel here).
-      res.status(409).json(toErrorEnvelope("PAYMENT_REPLAYED", correlationId));
-      return;
-    case "no-config":
-      res
-        .status(500)
-        .json({ error: "Relay not configured: PAYMENT_RECIPIENT not set" });
-      return;
-    case "invalid": {
-      // ADR-117: verify-failed paths. The `verifier` populated
-      // `verification.errorCode` for both unhappy-path branches
-      // (`PAYMENT_NOT_FOUND` / `PAYMENT_UNVERIFIED`) AND the catch
-      // (classified via `classifyVerifyException`, e.g. `RPC_UNAVAILABLE`,
-      // `INTERNAL`). Default to `PAYMENT_UNVERIFIED` if a custom injected
-      // verifier returned valid=false without an errorCode (e.g. the
-      // existing AUD-126 test mock) — the catch-all keeps wire-shape
-      // backward compat for verifier mocks that pre-date ADR-117.
-      const code: ErrorCode = result.verification.errorCode ?? "PAYMENT_UNVERIFIED";
-      res.status(402).json(toErrorEnvelope(code, correlationId));
-      return;
+    switch (result.kind) {
+      case "redeemed":
+        // ADR-117: PAYMENT_REPLAYED — the slot is already redeemed
+        // (in-memory dedup, redis dedup, or post-RPC redeemed-recheck
+        // race resolution all funnel here).
+        res
+          .status(409)
+          .json(toErrorEnvelope("PAYMENT_REPLAYED", correlationId));
+        return;
+      case "no-config":
+        res
+          .status(500)
+          .json({ error: "Relay not configured: PAYMENT_RECIPIENT not set" });
+        return;
+      case "invalid": {
+        // C4-X402-02 (ADR-117 status taxonomy): GENUINE payment
+        // rejection → HTTP 402. `processPaymentRequest` already routed
+        // every transport/internal failure to `kind:"upstream"`, so an
+        // `invalid` here is by construction a definitive statement about
+        // the payment ("not found", "does not pay us", "no nonce"). The
+        // verifier populated `verification.errorCode`; default to
+        // `PAYMENT_UNVERIFIED` for verifier mocks that pre-date ADR-117
+        // and return valid=false without a code. Defence-in-depth: if a
+        // mock returned an upstream code on the `invalid` path, map it
+        // to its real 5xx status rather than mislabel it 402 (keeps the
+        // taxonomy correct even when the PayResult split is bypassed).
+        const code: ErrorCode =
+          result.verification.errorCode ?? "PAYMENT_UNVERIFIED";
+        res
+          .status(httpStatusForErrorCode(code))
+          .json(toErrorEnvelope(code, correlationId));
+        return;
+      }
+      case "upstream": {
+        // C4-X402-02 (ADR-117 status taxonomy): transport/internal
+        // failure (RPC brown-out → RPC_UNAVAILABLE → 503; classifier
+        // catch-all or verifier-threw → INTERNAL → 500). The envelope
+        // body is the SAME ADR-117 `{code,message,correlationId}` shape
+        // as the 402 path; only the HTTP status differs so retry
+        // libraries and intermediaries (which key on status, not the
+        // envelope `code`) see a retryable 5xx and the honest, fully-
+        // paid client does NOT re-pay. The redis lock was already
+        // released inside `processPaymentRequest`, so the slot is
+        // reclaimable for a retry of the SAME on-chain payment.
+        res
+          .status(httpStatusForErrorCode(result.errorCode))
+          .json(toErrorEnvelope(result.errorCode, correlationId));
+        return;
+      }
+      case "saturated":
+        // AUD-209 (cycle-2): redeemed-signature map at capacity.
+        // Returning 503 here is the fail-closed response; operators
+        // should treat this as a saturation alarm and either scale
+        // horizontally (ADR-126) or investigate a burst attacker.
+        res.status(503).json({
+          error: "Relay redeemed-signature capacity exhausted; retry shortly",
+        });
+        return;
+      case "ok":
+        res.json({
+          accessToken: result.accessToken,
+          expiresIn: result.expiresIn,
+          sender: result.sender,
+          amountSol: result.amountSol,
+          slot: result.slot,
+        });
+        return;
     }
-    case "saturated":
-      // AUD-209 (cycle-2): redeemed-signature map at capacity. Returning
-      // 503 here is the fail-closed response; operators should treat
-      // this as a saturation alarm and either scale horizontally
-      // (ADR-126) or investigate a burst attacker.
-      res.status(503).json({
-        error: "Relay redeemed-signature capacity exhausted; retry shortly",
-      });
-      return;
-    case "ok":
-      res.json({
-        accessToken: result.accessToken,
-        expiresIn: result.expiresIn,
-        sender: result.sender,
-        amountSol: result.amountSol,
-        slot: result.slot,
-      });
-      return;
+  } catch (err) {
+    // C4-X402-05: an exception escaped `processPaymentRequest` or the
+    // response mapping. Classify + log server-side (raw cause, never to
+    // the wire) and return the ADR-117 typed envelope with the
+    // taxonomy-correct status. NOTE: redis-lock release for the
+    // verifier-throw case is owned by `processPaymentRequest` (it holds
+    // the release token); this catch is the envelope-integrity backstop
+    // for all OTHER unexpected throws on this route.
+    const code = classifyVerifyException(err);
+    logger.error(
+      {
+        event: "pay_route_unhandled_exception",
+        corr_id: txSignature,
+        error_code: code,
+        err,
+      },
+      "unexpected throw on /pay — mapped to ADR-117 envelope",
+    );
+    res
+      .status(httpStatusForErrorCode(code))
+      .json(toErrorEnvelope(code, txSignature));
+    return;
   }
 });
 
@@ -1667,6 +1898,15 @@ export {
   toErrorEnvelope,
   classifyVerifyException,
   ERROR_MESSAGES,
+  // C4-X402-02 (ADR-117 status taxonomy) — exported so the taxonomy
+  // table is unit-pinnable as a normative contract (the route handler
+  // and processPaymentRequest both route through these; a regression in
+  // the map is then a failing assertion, not a silent status inversion).
+  httpStatusForErrorCode,
+  isUpstreamErrorCode,
+  // C4-X402-03 — exported so the bounded-signature gate is unit-pinnable
+  // independent of the HTTP path (length / charset / byte-length).
+  isValidSolanaSignature,
   __resetRedemptionStateForTests,
   __fillRedemptionStateForTests,
   __resetDrainStateForTests,
