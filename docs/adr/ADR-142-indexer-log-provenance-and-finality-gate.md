@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted
 
 ## Date
 
@@ -42,3 +42,32 @@ trusted authority for persistence.
 - **Follow-ups**: implement the provenance gate + failed-tx skip; add a
   regression test emitting a collision discriminator from a foreign/failed tx;
   cross-reference C4-OFF-01 (separate BorshReader hardening).
+
+## Implementation
+
+Implemented in `src/indexer/index.ts`:
+
+- `EVENT_PROGRAM` binds every decoded event name to the program that
+  legitimately emits it (sourced from each program's `src/events.rs`),
+  plus `CCTP_HOOK_PROGRAM_ID` for the one CPI-emitted cross-program event
+  (`MilestoneAutoApproved`).
+- `attributeLogsToPrograms` walks the `Program <id> invoke/success/failed`
+  scope brackets so each `Program data:` line is attributed to the
+  innermost active program frame.
+- `parseLogsForEvents` rejects any discriminator hit whose emitting
+  program is not the expected owner, quarantining it to a forensics-only
+  `event_rejected_provenance` classification that `updateAgentFromEvent`
+  never matches (so it never reaches the authoritative projection). When
+  the log stream carries no scope brackets (sparse RPC / unit fixtures)
+  it falls back to the discriminator→owner binding gated by the
+  subscribed program label.
+- Failed transactions are skipped on the live path
+  (`notification.value.err != null`) and the backfill path
+  (`tx.meta.err != null`), with the backfill path still advancing the
+  cursor so a failed signature is not re-fetched forever.
+- Decode commitment was already pinned to `"finalized"`
+  (`const COMMITMENT = "finalized"`), satisfying requirement (3).
+
+Regression coverage: `src/indexer/decoder.test.ts` (ADR-142 / CC-1 +
+CC-2 describe blocks — foreign-program collision, failed-frame collision,
+cross-program leak, bracket-less fallback both directions).
