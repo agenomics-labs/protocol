@@ -33,6 +33,11 @@
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::instruction::{AccountMeta, Instruction};
 use anchor_lang::solana_program::program::invoke_signed;
+// C4-OB-01(b): the typed SPL `TokenAccount` is only referenced by the
+// hardened `escrow_token_account` / `provider_token_account` fields, which
+// exist only on a `cctp_attestation_verified` build (see the
+// guard/deserialization-ordering rationale in `AutoApproveMilestone`).
+#[cfg(feature = "cctp_attestation_verified")]
 use anchor_spl::token::TokenAccount;
 
 // Q-S3-A: pull the Registry's `AgentProfile` account type (with
@@ -97,6 +102,23 @@ pub const APPROVE_MILESTONE_DISCRIMINATOR: [u8; 8] =
 /// with the canonical receiver binding when ADR-145 is implemented.
 pub const CCTP_RECEIVER_AUTHORITY: Pubkey =
     anchor_lang::solana_program::system_program::ID;
+
+/// C4-OB-01 / ADR-145 HARD DEPLOY GUARD — compile-time flag.
+///
+/// `true` only when the crate is built with the (default-OFF)
+/// `cctp_attestation_verified` Cargo feature. This constant is referenced
+/// by an **account-level** constraint on the *first* field of
+/// `AutoApproveMilestone` (see `payer` below) so the guard is the
+/// deterministic FIRST failure during Anchor's account-validation phase —
+/// *before* any account is deserialized (escrow, the typed SPL token
+/// accounts, the Registry PDAs). A handler-body `require!` cannot achieve
+/// this: Anchor runs the entire `#[derive(Accounts)]` struct before the
+/// handler body, so an in-handler guard would fire only AFTER token-account
+/// deserialization — defeating the "unreachable before any work" intent and
+/// surfacing a confusing `AccountNotInitialized` instead of the guard
+/// error. The handler-body `require!` is retained as belt-and-braces.
+pub const CCTP_ATTESTATION_VERIFIED: bool =
+    cfg!(feature = "cctp_attestation_verified");
 
 /// Seed for the replay-guard PDA (idempotency on the IC-4 triple).
 pub const HOOK_REPLAY_SEED: &[u8] = b"hook-replay";
@@ -175,18 +197,19 @@ pub mod cctp_hook {
         ctx: Context<AutoApproveMilestone>,
         payload: ReflexHookPayload,
     ) -> Result<()> {
-        // ---- 0. C4-OB-01 / ADR-145 HARD DEPLOY GUARD ----
+        // ---- 0. C4-OB-01 / ADR-145 HARD DEPLOY GUARD (belt-and-braces) ----
         //
-        // This instruction releases escrowed funds but does NOT verify the
-        // Circle CCTP V2 message / attestation / nonce on-chain (ADR-145,
-        // Proposed). Until that lands, the instruction is hard-disabled so
-        // it cannot approve on a fund-bearing cluster. The `require!`
-        // evaluates the compile-time feature flag: with the (default)
-        // feature OFF, `cfg!(...)` is `false` and the call reverts here
-        // before ANY state write or CPI. The flag may be enabled ONLY for
-        // a no-value localnet/devnet integration build (see Cargo.toml).
+        // The PRIMARY guard is the account-level `constraint =
+        // CCTP_ATTESTATION_VERIFIED` on the first field of
+        // `AutoApproveMilestone` (`payer`), which Anchor evaluates during
+        // the account-validation phase BEFORE the handler body and before
+        // any account is deserialized. This in-handler `require!` is a
+        // second, independent check on the same compile-time flag: if a
+        // future refactor reorders or drops the account-level constraint,
+        // this still hard-disables the fund-release path on any default /
+        // fund-bearing build before ANY state write or CPI.
         require!(
-            cfg!(feature = "cctp_attestation_verified"),
+            CCTP_ATTESTATION_VERIFIED,
             HookError::CctpAttestationNotVerified
         );
 
@@ -443,16 +466,27 @@ pub mod cctp_hook {
 pub struct AutoApproveMilestone<'info> {
     /// The transaction signer — the canonical CCTP V2 receiver authority.
     ///
-    /// C4-OB-01(d): previously an unconstrained `Signer` (any signer could
-    /// drive the fund-releasing approval). Now pinned via `address =
-    /// CCTP_RECEIVER_AUTHORITY`. NOTE: the constant is currently a
-    /// guard-only sentinel (system program ID) pending ADR-145, which will
-    /// replace this with the real Circle CCTP V2 MessageTransmitter
-    /// CPI-caller / attestation-account binding (Q-S3-B). Combined with the
-    /// in-handler `cctp_attestation_verified` deploy guard, this makes the
-    /// instruction unreachable on any fund-bearing cluster.
+    /// C4-OB-01(e) HARD DEPLOY GUARD (account-level, FIRST field): the
+    /// `constraint = CCTP_ATTESTATION_VERIFIED` is evaluated by Anchor
+    /// during the account-validation phase, on the first struct field,
+    /// *before* any other account (escrow, the typed SPL token accounts,
+    /// the Registry PDAs) is deserialized. On a default / fund-bearing
+    /// build the feature is OFF, `CCTP_ATTESTATION_VERIFIED == false`, and
+    /// every call deterministically reverts here with
+    /// `CctpAttestationNotVerified` — no state write, no CPI, no
+    /// account-deserialization side effects, and a clear error rather than
+    /// a misleading `AccountNotInitialized`. The handler body re-checks the
+    /// same flag (belt-and-braces). The flag may be enabled ONLY on a
+    /// no-value localnet/devnet integration build (see Cargo.toml).
+    ///
+    /// C4-OB-01(d): also pinned via `address = CCTP_RECEIVER_AUTHORITY`
+    /// (previously any signer could drive the fund-releasing approval). The
+    /// constant is currently a guard-only sentinel (system program ID)
+    /// pending ADR-145, which will replace it with the real Circle CCTP V2
+    /// MessageTransmitter CPI-caller / attestation-account binding (Q-S3-B).
     #[account(
         mut,
+        constraint = CCTP_ATTESTATION_VERIFIED @ HookError::CctpAttestationNotVerified,
         address = CCTP_RECEIVER_AUTHORITY @ HookError::UnauthorizedCctpReceiver,
     )]
     pub payer: Signer<'info>,
@@ -538,37 +572,67 @@ pub struct AutoApproveMilestone<'info> {
 
     /// Escrow's USDC token account. Mutable.
     ///
-    /// C4-OB-01(b): defense-in-depth. Previously an unconstrained
-    /// `UncheckedAccount` ("validated by Settlement") — but the Hook must
-    /// not rely solely on the callee (the audit's explicit finding). Typed
-    /// as `Account<TokenAccount>` so SPL layout is enforced, and pinned to
-    /// the escrow PDA as `authority`/owner. This mirrors settlement's
-    /// `ApproveMilestone` constraint
-    /// (`escrow_token_account.owner == escrow.key()`). The token *mint* is
-    /// cross-checked against `provider_token_account` below; the escrow's
-    /// `token_mint` field is read by the Settlement callee which fully
-    /// validates against it.
+    /// C4-OB-01(b): defense-in-depth — typed `Account<TokenAccount>` with
+    /// `token::authority = escrow`, mirroring settlement's
+    /// `ApproveMilestone` (`escrow_token_account.owner == escrow.key()`)
+    /// so the Hook does not rely solely on the Settlement callee.
+    ///
+    /// C4-OB-01(e) — guard/deserialization ordering. Anchor deserializes
+    /// every typed `Account<T>` field during `try_accounts`; an
+    /// uninitialized SPL account fails with `AccountNotInitialized (3012)`
+    /// at THIS field *before* a field-level `constraint`/`address` check on
+    /// an earlier `Signer` field is reported. On a default / fund-bearing
+    /// build the HARD DEPLOY GUARD (feature OFF) means this instruction is
+    /// unreachable regardless, so the strict SPL deserialization here would
+    /// only mask the guard error with a confusing 3012. The field is
+    /// therefore `UncheckedAccount` on the default build (the guard is the
+    /// clean first failure) and the hardened typed+constrained
+    /// `Account<TokenAccount>` ONLY on a `cctp_attestation_verified` build —
+    /// i.e. exactly the build where the instruction is reachable and the
+    /// C4-OB-01(b) constraint must actively run. The handler additionally
+    /// guards the typed access behind the same `cfg` (see below).
+    #[cfg(feature = "cctp_attestation_verified")]
     #[account(
         mut,
         token::authority = escrow,
     )]
     pub escrow_token_account: Account<'info, TokenAccount>,
 
+    /// See the documented C4-OB-01(b)/(e) rationale on the
+    /// `cctp_attestation_verified` variant above. On the default /
+    /// fund-bearing build this is an unchecked plumb-through; the HARD
+    /// DEPLOY GUARD blocks the instruction before any CPI, so no
+    /// fund-release path is exposed by the looser type here.
+    /// CHECK: deserialized + constrained only on a guard-enabled build;
+    /// the deploy guard makes this account unreachable otherwise.
+    #[cfg(not(feature = "cctp_attestation_verified"))]
+    #[account(mut)]
+    pub escrow_token_account: UncheckedAccount<'info>,
+
     /// Provider's USDC token account (the session-pool PDA's ATA).
     ///
-    /// C4-OB-01(b): defense-in-depth. Typed as `Account<TokenAccount>` and
+    /// C4-OB-01(b): defense-in-depth — typed `Account<TokenAccount>`
     /// constrained to the *same mint* as the escrow's token account, so a
-    /// wrong-mint provider account is rejected at the Hook boundary rather
-    /// than only inside Settlement. The provider *authority* binding
-    /// (`provider_token_account.owner == escrow.provider`) is enforced by
-    /// the Settlement callee, which reads `escrow.provider` from its typed
-    /// account; the Hook cannot re-derive it from raw bytes without a
-    /// settlement-crate dependency the Surface-3 spec forbids.
+    /// wrong-mint provider account is rejected at the Hook boundary. Same
+    /// C4-OB-01(e) guard/deserialization-ordering rationale as
+    /// `escrow_token_account` above: hardened typed form ONLY on a
+    /// `cctp_attestation_verified` build, unchecked plumb-through on the
+    /// default / fund-bearing build where the deploy guard blocks the
+    /// instruction outright.
+    #[cfg(feature = "cctp_attestation_verified")]
     #[account(
         mut,
         token::mint = escrow_token_account.mint,
     )]
     pub provider_token_account: Account<'info, TokenAccount>,
+
+    /// See the documented C4-OB-01(b)/(e) rationale on the
+    /// `cctp_attestation_verified` variant above.
+    /// CHECK: deserialized + constrained only on a guard-enabled build;
+    /// the deploy guard makes this account unreachable otherwise.
+    #[cfg(not(feature = "cctp_attestation_verified"))]
+    #[account(mut)]
+    pub provider_token_account: UncheckedAccount<'info>,
 
     /// AEP Settlement program — target of the CPI. Address-pinned.
     /// CHECK: explicit address constraint.
