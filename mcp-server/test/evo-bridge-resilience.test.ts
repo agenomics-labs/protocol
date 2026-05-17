@@ -20,14 +20,21 @@
  *     5. queue.length >= maxQueueDepth → new send() rejects synchronously
  *        with EvoBridgeBackpressureError.
  *
- *   MCP-305 — version handshake
- *     6. EVO returns { ok: true, protocol_version: "1.4" } → ok, transport
- *        records "1.4" and proceeds.
+ *   MCP-305 — handshake (cmd: "health"; previously cmd: "version" but EVO
+ *   has no `version` variant — see ADR-129 §"Contracts EVO must continue to
+ *   hold" and `crates/evo/src/cli/json_rpc.rs`)
+ *     6. EVO returns { ok: true, protocol_version: "1.4" } → forward-compat
+ *        path: transport records "1.4" and proceeds.
  *     7. EVO returns { ok: true, protocol_version: "2.0" } → breaker locks
- *        open with EvoBridgeVersionMismatchError (or breaker-open).
- *     8. EVO rejects { ok: false, error: "unknown command" } → treated as
- *        legacy v1, transport proceeds (no version bump available, but
- *        legacy version string set).
+ *        open with EvoBridgeVersionMismatchError.
+ *     8. EVO returns { ok: true, result: { status: "healthy",
+ *        embedder_kind: "onnx" } } → real-EVO health-shape path: transport
+ *        proceeds, records legacy version string, logs embedder kind.
+ *     9. EVO returns { ok: true, result: { status: "healthy",
+ *        embedder_kind: "blake3" } } → proceeds but logs a WARN that
+ *        retrieval results will be semantically meaningless.
+ *    10. EVO rejects { ok: false, error: "unknown variant `health`" } →
+ *        treated as legacy v1, transport proceeds.
  *
  *   MCP-307 — multi-line startup error capture
  *     9. Two unsolicited stdout lines before close → both appear in the
@@ -340,7 +347,7 @@ describe("EvoSubprocessTransport — MCP-302 bounded queue", () => {
   });
 });
 
-describe("EvoSubprocessTransport — MCP-305 version handshake", () => {
+describe("EvoSubprocessTransport — MCP-305 handshake", () => {
   it("accepts matching protocol major and proceeds", async () => {
     const scheduler = new ManualScheduler();
     const fleet = makeSpawnFleet();
@@ -399,8 +406,8 @@ describe("EvoSubprocessTransport — MCP-305 version handshake", () => {
 
     const p = transport.send({ cmd: "ping" });
     await drain();
-    // Handshake response: legacy binary returns ok=false for `version` cmd.
-    // Transport's onHandshakeOk parses it: no protocol_version field → legacy.
+    // Handshake response: legacy binary returns ok=false for the handshake
+    // cmd. Transport's onHandshakeFail treats this as the legacy path.
     fleet.handles[0]!.emitLine(JSON.stringify({ ok: false, error: "unknown command" }));
     await drain();
     // User cmd response — should resolve the user promise.
@@ -410,6 +417,112 @@ describe("EvoSubprocessTransport — MCP-305 version handshake", () => {
     const result = await p;
     assert.deepEqual(result, { ok: true, pong: true });
     assert.match(transport.getProtocolVersion() ?? "", /legacy/);
+  });
+
+  it("treats EVO 'unknown variant' rejection as legacy v1 and proceeds", async () => {
+    // Real EVO HEAD's error string for an unknown JsonCommand variant is
+    // `"unknown variant ..."`, not `"unknown command"`. Verify the legacy
+    // path catches both.
+    const scheduler = new ManualScheduler();
+    const fleet = makeSpawnFleet();
+    const transport = new EvoSubprocessTransport({
+      binaryPath: "evo",
+      dbPath: "/tmp/evo.db",
+      policy: { protocolMajor: 1, callTimeoutMs: 60_000 },
+      spawnFn: fleet.spawnFn,
+      lineSourceFactory: fleet.lineSourceFactory,
+      scheduler,
+    });
+
+    const p = transport.send({ cmd: "ping" });
+    await drain();
+    fleet.handles[0]!.emitLine(
+      JSON.stringify({
+        ok: false,
+        error: "parse error: unknown variant `health`, expected one of `observe`, ...",
+      }),
+    );
+    await drain();
+    fleet.handles[0]!.emitLine(JSON.stringify({ ok: true, pong: true }));
+    await drain();
+
+    const result = await p;
+    assert.deepEqual(result, { ok: true, pong: true });
+    assert.match(transport.getProtocolVersion() ?? "", /legacy/);
+  });
+
+  it("accepts EVO health-shape response and records legacy version", async () => {
+    // Real EVO HEAD's `health` command response shape per ADR-057. No
+    // explicit protocol_version is present today; transport records the
+    // legacy marker so observability (`getProtocolVersion()`) is non-null.
+    const scheduler = new ManualScheduler();
+    const fleet = makeSpawnFleet();
+    const transport = new EvoSubprocessTransport({
+      binaryPath: "evo",
+      dbPath: "/tmp/evo.db",
+      policy: { protocolMajor: 1, callTimeoutMs: 60_000 },
+      spawnFn: fleet.spawnFn,
+      lineSourceFactory: fleet.lineSourceFactory,
+      scheduler,
+    });
+
+    const p = transport.send({ cmd: "ping" });
+    await drain();
+    fleet.handles[0]!.emitLine(
+      JSON.stringify({
+        ok: true,
+        result: {
+          status: "healthy",
+          embedder_kind: "onnx",
+          db_size_bytes: 90112,
+          fractal_dim: -1,
+          l3_chain_valid: true,
+          mincut_tension: -1,
+        },
+      }),
+    );
+    await drain();
+    fleet.handles[0]!.emitLine(JSON.stringify({ ok: true, pong: true }));
+    await drain();
+
+    const result = await p;
+    assert.deepEqual(result, { ok: true, pong: true });
+    assert.match(transport.getProtocolVersion() ?? "", /legacy/);
+    assert.notEqual(transport.getState(), "breaker_open");
+  });
+
+  it("accepts BLAKE3 health-shape response (semantic-meaningless mode) and still proceeds", async () => {
+    // ADR-129 §"Contracts" #3 calls out that EVO on BLAKE3-fallback
+    // embeddings is operationally meaningless. The transport still
+    // proceeds (a misconfigured production EVO must not brick the bridge
+    // — operators get the WARN-level signal instead and can decide
+    // whether to keep serving requests).
+    const scheduler = new ManualScheduler();
+    const fleet = makeSpawnFleet();
+    const transport = new EvoSubprocessTransport({
+      binaryPath: "evo",
+      dbPath: "/tmp/evo.db",
+      policy: { protocolMajor: 1, callTimeoutMs: 60_000 },
+      spawnFn: fleet.spawnFn,
+      lineSourceFactory: fleet.lineSourceFactory,
+      scheduler,
+    });
+
+    const p = transport.send({ cmd: "ping" });
+    await drain();
+    fleet.handles[0]!.emitLine(
+      JSON.stringify({
+        ok: true,
+        result: { status: "healthy", embedder_kind: "blake3" },
+      }),
+    );
+    await drain();
+    fleet.handles[0]!.emitLine(JSON.stringify({ ok: true, pong: true }));
+    await drain();
+
+    const result = await p;
+    assert.deepEqual(result, { ok: true, pong: true });
+    assert.notEqual(transport.getState(), "breaker_open");
   });
 });
 

@@ -741,6 +741,89 @@ describe("MCP-306 — parseRetrievalResult drops entries lacking score", () => {
   });
 });
 
+describe("parseRetrievalResult — EVO HEAD wire shape (ADR-196)", () => {
+  // Real EVO HEAD emits `result.memories[]` with `node_id`, `rank_score`,
+  // `similarity`. The original parser only knew `results`/`hits` with `id`,
+  // `score`, `similarity` — and silently dropped every hit because none of
+  // the required fields existed. These tests pin the new shape so the
+  // skew can't return.
+  it("reads memories[] with node_id and rank_score (real EVO retrieve_text)", () => {
+    const parsed = parseRetrievalResult({
+      memories: [
+        {
+          content: "JWT authentication and OAuth2 token flows",
+          node_id: "node:100cdb34",
+          rank_score: 0.7123,
+          similarity: 0.6545,
+        },
+        {
+          content: "image classification with vision transformers",
+          node_id: "node:fc358b79",
+          rank_score: 0.385,
+          similarity: 0.0985,
+        },
+      ],
+      strategies: 0,
+      tokens_used: 29,
+    });
+    assert.equal(parsed.hits.length, 2);
+    assert.equal(parsed.hits[0]!.id, "node:100cdb34");
+    assert.equal(parsed.hits[0]!.score, 0.7123);
+    assert.equal(parsed.hits[0]!.content, "JWT authentication and OAuth2 token flows");
+    assert.equal(parsed.hits[1]!.id, "node:fc358b79");
+    assert.equal(parsed.hits[1]!.score, 0.385);
+  });
+
+  it("prefers rank_score over similarity when both are present", () => {
+    // EVO's rank_score incorporates economic value + recency (ADR-077 in
+    // EVO) and is the engine's authoritative ranking; raw similarity is
+    // the unweighted cosine. Make sure we use the right one.
+    const parsed = parseRetrievalResult({
+      memories: [
+        { node_id: "x", rank_score: 0.9, similarity: 0.1, content: "x" },
+      ],
+    });
+    assert.equal(parsed.hits[0]!.score, 0.9);
+  });
+
+  it("falls back to similarity when rank_score absent", () => {
+    const parsed = parseRetrievalResult({
+      memories: [
+        { node_id: "x", similarity: 0.42, content: "x" },
+      ],
+    });
+    assert.equal(parsed.hits[0]!.score, 0.42);
+  });
+
+  it("drops EVO hits missing both node_id and id", () => {
+    const parsed = parseRetrievalResult({
+      memories: [
+        { rank_score: 0.5, content: "no-id" },
+        { node_id: "ok", rank_score: 0.4, content: "ok" },
+      ],
+    });
+    assert.equal(parsed.hits.length, 1);
+    assert.equal(parsed.hits[0]!.id, "ok");
+  });
+
+  it("passes metadata through unchanged", () => {
+    const parsed = parseRetrievalResult({
+      memories: [
+        {
+          node_id: "x",
+          rank_score: 0.5,
+          content: "x",
+          metadata: { agent_id: "A", authority: "auth-A" },
+        },
+      ],
+    });
+    assert.deepEqual(parsed.hits[0]!.metadata, {
+      agent_id: "A",
+      authority: "auth-A",
+    });
+  });
+});
+
 describe("MCP-304 — find_similar_agents wraps facade errors as 'evo-error'", () => {
   afterEach(() => {
     setAgentMemory(null);

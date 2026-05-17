@@ -400,68 +400,116 @@ export class EvoSubprocessTransport {
       );
     });
 
-    // MCP-305: enqueue the version handshake at the head of the queue. This
-    // command must succeed before any user command sees a response.
+    // MCP-305: enqueue the `health` handshake at the head of the queue.
+    // This command must succeed before any user command sees a response.
+    //
+    // Why `health` and not `version`: EVO's JsonCommand enum
+    // (`crates/evo/src/cli/json_rpc.rs`) has no `version` variant; sending
+    // it always trips `unknown variant` and the transport silently fell
+    // back to "legacy v1." `health` is a real EVO command (ADR-057 in EVO)
+    // that returns `{ status, embedder_kind, db_size_bytes, ... }` — a
+    // boot-time readiness probe that *also* surfaces whether ONNX or
+    // BLAKE3-fallback embeddings are in use (ADR-129 §"Contracts" #3 makes
+    // a BLAKE3 EVO operationally meaningless). For forward-compat we still
+    // accept `protocol_version` in either the top-level response or under
+    // `result.*` if EVO ever adds it.
     this.state = "running";
-    void this.enqueue({ cmd: "version" }, /* isHandshake */ true)
+    void this.enqueue({ cmd: "health" }, /* isHandshake */ true)
       .then((response) => this.onHandshakeOk(response))
       .catch((err: unknown) => this.onHandshakeFail(err));
   }
 
   private onHandshakeOk(response: unknown): void {
-    // Tolerant parse: accept { ok: true, version: "1.x" } OR
-    // { ok: true, protocol_version: "1.x" } OR { ok: true, result: {...} }.
-    // Legacy EVO binaries that do not implement `version` return
-    // { ok: false, error: "unknown command" }; we treat that as protocol v1
-    // implicit (today's binary speaks v1) and log a warning.
-    let detected: string | null = null;
+    // Tolerant parse. Accepted shapes (in priority order):
+    //   1. `{ ok: true, result: { status: "healthy", embedder_kind, ... } }`
+    //      — EVO HEAD `health` command response.
+    //   2. `{ ok: true, protocol_version: "1.x" }` or
+    //      `{ ok: true, version: "1.x" }` — forward-compat with a future
+    //      EVO that ships an explicit protocol version field.
+    //   3. `{ ok: true, result: { protocol_version: "1.x" } }` — same,
+    //      under `result`.
+    //
+    // If none match but `ok` is true, we still proceed as legacy v1 (the
+    // command succeeded, that's the load-bearing signal). If `ok` is false
+    // we go to `onHandshakeFail` (called via the rejected promise).
     if (response && typeof response === "object") {
       const r = response as Record<string, unknown>;
-      const candidate =
+      const result =
+        r.result && typeof r.result === "object"
+          ? (r.result as Record<string, unknown>)
+          : null;
+      const detectedVersion =
         (typeof r.protocol_version === "string" && r.protocol_version) ||
         (typeof r.version === "string" && r.version) ||
-        (r.result &&
-          typeof r.result === "object" &&
-          typeof (r.result as Record<string, unknown>).protocol_version === "string"
-          ? ((r.result as Record<string, unknown>).protocol_version as string)
-          : null);
-      if (typeof candidate === "string") detected = candidate;
+        (result && typeof result.protocol_version === "string"
+          ? (result.protocol_version as string)
+          : null) ||
+        null;
+      if (typeof detectedVersion === "string") {
+        const major = Number.parseInt(detectedVersion.split(".")[0] ?? "", 10);
+        if (!Number.isFinite(major) || major !== this.policy.protocolMajor) {
+          this.tripBreakerPermanently(
+            new EvoBridgeVersionMismatchError(this.policy.protocolMajor, detectedVersion),
+          );
+          return;
+        }
+        this.negotiatedProtocolVersion = detectedVersion;
+        log.info(
+          { adr: "ADR-129", audit: "MCP-305", protocol_version: detectedVersion },
+          "evo-bridge: handshake ok (explicit version)",
+        );
+        return;
+      }
+      // `health`-style response — log embedder_kind/status if present so
+      // operators see "EVO is up; ONNX or BLAKE3?" at boot.
+      if (result) {
+        const status =
+          typeof result.status === "string" ? (result.status as string) : "unknown";
+        const embedderKind =
+          typeof result.embedder_kind === "string"
+            ? (result.embedder_kind as string)
+            : "unknown";
+        this.negotiatedProtocolVersion = `${this.policy.protocolMajor}.legacy`;
+        log.info(
+          {
+            adr: "ADR-129",
+            audit: "MCP-305",
+            status,
+            embedder_kind: embedderKind,
+          },
+          "evo-bridge: handshake ok (health probe)",
+        );
+        if (embedderKind === "blake3" || embedderKind === "fallback") {
+          log.warn(
+            { adr: "ADR-129", embedder_kind: embedderKind },
+            "evo-bridge: EVO is running on BLAKE3 fallback embeddings — retrieval results will be semantically meaningless; set AEP_EVO_MODEL_DIR to a real ONNX model",
+          );
+        }
+        return;
+      }
     }
-    if (detected === null) {
-      log.warn(
-        {
-          adr: "ADR-129",
-          audit: "MCP-305",
-          response: typeof response === "object" ? response : String(response),
-        },
-        "evo-bridge: version handshake response had no protocol_version; assuming v1 (legacy binary)",
-      );
-      this.negotiatedProtocolVersion = `${this.policy.protocolMajor}.legacy`;
-      return;
-    }
-    const major = Number.parseInt(detected.split(".")[0] ?? "", 10);
-    if (!Number.isFinite(major) || major !== this.policy.protocolMajor) {
-      this.tripBreakerPermanently(
-        new EvoBridgeVersionMismatchError(this.policy.protocolMajor, detected),
-      );
-      return;
-    }
-    this.negotiatedProtocolVersion = detected;
-    log.info(
-      { adr: "ADR-129", audit: "MCP-305", protocol_version: detected },
-      "evo-bridge: version handshake ok",
+    log.warn(
+      {
+        adr: "ADR-129",
+        audit: "MCP-305",
+        response: typeof response === "object" ? response : String(response),
+      },
+      "evo-bridge: handshake response had no recognizable shape; assuming v1 (legacy binary)",
     );
+    this.negotiatedProtocolVersion = `${this.policy.protocolMajor}.legacy`;
   }
 
   private onHandshakeFail(err: unknown): void {
-    // EVO binaries predating the version cmd reject with `{ ok: false }`.
-    // We surface that as a known shape (`error` field is "unknown command")
-    // and treat it like the legacy path. Any other error trips the breaker.
+    // EVO binaries predating the `health` cmd would reject with
+    // `{ ok: false, error: "unknown command" }`. Real EVO HEAD always
+    // implements `health`; the legacy path is kept for the case where
+    // somebody runs against an unusually old binary. Any other error
+    // trips the breaker.
     const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes("unknown command") || msg.includes("unknown cmd")) {
+    if (msg.includes("unknown command") || msg.includes("unknown cmd") || msg.includes("unknown variant")) {
       log.warn(
         { adr: "ADR-129", audit: "MCP-305" },
-        "evo-bridge: version cmd rejected (legacy EVO binary); assuming v1",
+        "evo-bridge: health cmd rejected (legacy EVO binary); assuming v1",
       );
       this.negotiatedProtocolVersion = `${this.policy.protocolMajor}.legacy`;
       return;
@@ -472,7 +520,7 @@ export class EvoSubprocessTransport {
     }
     log.warn(
       { err: msg, adr: "ADR-129", audit: "MCP-305" },
-      "evo-bridge: version handshake failed; transport will use normal restart",
+      "evo-bridge: handshake failed; transport will use normal restart",
     );
   }
 
