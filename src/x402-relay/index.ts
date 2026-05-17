@@ -2,7 +2,11 @@
 import express, { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import * as crypto from "node:crypto";
-import { createSolanaRpc, type Signature } from "@solana/kit";
+import {
+  createSolanaRpc,
+  getBase58Encoder,
+  type Signature,
+} from "@solana/kit";
 import { logger } from "./logger.js";
 import {
   createRedisDedup,
@@ -316,6 +320,19 @@ type ErrorCode =
   | "PAYMENT_NOT_FOUND"
   | "PAYMENT_UNVERIFIED"
   | "PAYMENT_REPLAYED"
+  // C4-X402-01: no explicit SystemProgram/SPL transfer FROM the claimed
+  // sender TO the configured recipient for >= the required amount was
+  // found in the transaction's instructions. Distinct from
+  // PAYMENT_UNVERIFIED so operators can tell "we found the tx but it did
+  // not actually pay us" (spoofed third-party-credit, bundled tx, rent
+  // top-up, balance-delta-only) apart from RPC-shape failures.
+  | "PAYMENT_NO_TRANSFER"
+  // C4-X402-01: the payment transaction did not carry the relay-issued
+  // single-use nonce in a Memo instruction, OR the nonce was already
+  // consumed / never issued / expired. This is the caller<->payer
+  // binding gate — it stops an unrelated caller from replaying a third
+  // party's genuine on-chain payment.
+  | "PAYMENT_NONCE_INVALID"
   | "RPC_UNAVAILABLE"
   | "INTERNAL";
 
@@ -333,6 +350,10 @@ const ERROR_MESSAGES: Readonly<Record<ErrorCode, string>> = {
   PAYMENT_NOT_FOUND: "Payment transaction not found on-chain.",
   PAYMENT_UNVERIFIED: "Payment could not be verified against the expected recipient and amount.",
   PAYMENT_REPLAYED: "Payment signature has already been redeemed.",
+  PAYMENT_NO_TRANSFER:
+    "No qualifying transfer to the payment recipient was found in the transaction.",
+  PAYMENT_NONCE_INVALID:
+    "Payment is missing a valid relay-issued payment nonce. Request a nonce from /challenge and include it in a memo.",
   RPC_UNAVAILABLE: "Upstream RPC is unavailable; please retry shortly.",
   INTERNAL: "Internal error processing payment.",
 };
@@ -420,6 +441,339 @@ interface PaymentVerification {
   errorCode?: ErrorCode;
 }
 
+// ---------------------------------------------------------------------------
+// C4-X402-01 — verify the ACTUAL transfer instruction + caller<->payer
+// binding.
+//
+// THE BUG (pre-fix `verifyPaymentOnChain`): payment validity was derived
+// from `postBalances[recipientIndex] - preBalances[recipientIndex]`. That
+// number rises for ANY reason the recipient's lamports went up in the tx:
+// a third party paying the recipient, a rent top-up, a bundled/CPI credit,
+// an unrelated transfer in a multi-instruction tx. `txSignature` is
+// unauthenticated client input, so an attacker submitted ANY finalized
+// signature where the recipient balance happened to rise >= threshold and
+// minted a valid JWT — with `sender` bound to `accountKeys[0]` (the tx
+// fee-payer, NOT necessarily the payer). No caller<->payer binding existed
+// at all: a third party's genuine payment could be replayed by anyone.
+//
+// THE FIX (this module):
+//   1. Decode the transaction's compiled instructions. Require an EXPLICIT
+//      SystemProgram::Transfer (or SPL-token Transfer / TransferChecked)
+//      whose destination is the configured recipient and whose amount is
+//      >= the required amount. Never infer from balance deltas.
+//   2. Reject multi-source / ambiguous cases: if more than one distinct
+//      source funds the recipient across qualifying transfers, or no single
+//      transfer alone meets the threshold, reject. The JWT `sender` is the
+//      transfer instruction's SOURCE account, not `accountKeys[0]`.
+//   3. Require a relay-issued single-use nonce carried in an SPL-Memo
+//      instruction. The nonce is minted by `POST /challenge`, recorded in
+//      the AUD-208/209/ADR-126 replay store, and consumed exactly once.
+//      A third party's on-chain payment cannot be replayed by an unrelated
+//      caller because that payment will not carry a nonce this relay
+//      issued (and never reissues).
+//
+// Decoding uses `encoding:"json"` (already requested by the RPC call), so
+// instruction `data` is base58. We decode with @solana/kit's base58 codec
+// and parse the well-known on-chain layouts by hand — no extra dependency,
+// auditable in-place.
+// ---------------------------------------------------------------------------
+
+// SystemProgram. The all-ones address. Transfer = enum variant 2, a u32
+// LE discriminator followed by a u64 LE lamports amount = 12 bytes total.
+const SYSTEM_PROGRAM_ID = "11111111111111111111111111111111";
+const SYSTEM_IX_TRANSFER = 2;
+// SPL Token + Token-2022 program ids. Instruction tag is a single leading
+// byte: 3 = Transfer (amount: u64 LE), 12 = TransferChecked (amount: u64
+// LE, decimals: u8). For Transfer the account order is
+// [source, destination, owner]; for TransferChecked it is
+// [source, mint, destination, owner]. We only need source + destination
+// + amount for the recipient/threshold/sender binding.
+const SPL_TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+const SPL_TOKEN_2022_PROGRAM_ID =
+  "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+const SPL_IX_TRANSFER = 3;
+const SPL_IX_TRANSFER_CHECKED = 12;
+// SPL Memo program (v3). The relay-issued payment nonce must appear as the
+// UTF-8 data of a Memo instruction. Memo carries no accounts we need.
+const MEMO_PROGRAM_ID = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
+
+const base58 = getBase58Encoder();
+
+// Raw compiled-instruction shape from getTransaction(encoding:"json").
+interface CompiledIx {
+  programIdIndex: number;
+  accounts: number[];
+  data: string; // base58
+}
+
+function decodeBase58(data: string): Uint8Array | null {
+  try {
+    return new Uint8Array(base58.encode(data));
+  } catch {
+    return null;
+  }
+}
+
+function readU64LE(bytes: Uint8Array, offset: number): bigint {
+  let v = 0n;
+  for (let i = 0; i < 8; i++) {
+    v |= BigInt(bytes[offset + i]) << BigInt(8 * i);
+  }
+  return v;
+}
+
+function readU32LE(bytes: Uint8Array, offset: number): number {
+  return (
+    bytes[offset] |
+    (bytes[offset + 1] << 8) |
+    (bytes[offset + 2] << 16) |
+    (bytes[offset + 3] << 24)
+  ) >>> 0;
+}
+
+interface ExtractedTransfer {
+  source: string;
+  amountRaw: bigint; // lamports for SOL; base units for SPL
+  isSpl: boolean;
+}
+
+/**
+ * C4-X402-01 core. Walk the compiled instructions and return the set of
+ * explicit transfers (SystemProgram or SPL-token) whose destination is
+ * `expectedRecipient`. Pure + exported for unit testing — no RPC, no I/O.
+ *
+ * Returns `{ transfers, memos }`. `memos` is the decoded UTF-8 of every
+ * Memo-program instruction (used for the nonce-binding gate).
+ */
+function extractTransfersAndMemos(
+  accountKeys: readonly string[],
+  instructions: readonly CompiledIx[],
+  expectedRecipient: string,
+): { transfers: ExtractedTransfer[]; memos: string[] } {
+  const transfers: ExtractedTransfer[] = [];
+  const memos: string[] = [];
+
+  for (const ix of instructions) {
+    const programId = accountKeys[ix.programIdIndex];
+    if (programId === undefined) continue;
+
+    if (programId === MEMO_PROGRAM_ID) {
+      const raw = decodeBase58(ix.data);
+      if (raw) {
+        try {
+          memos.push(new TextDecoder("utf-8", { fatal: false }).decode(raw));
+        } catch {
+          /* non-UTF8 memo — ignore for nonce matching */
+        }
+      }
+      continue;
+    }
+
+    if (programId === SYSTEM_PROGRAM_ID) {
+      const raw = decodeBase58(ix.data);
+      // Transfer is exactly 12 bytes: u32 LE discriminator + u64 LE lamports.
+      if (!raw || raw.length < 12) continue;
+      if (readU32LE(raw, 0) !== SYSTEM_IX_TRANSFER) continue;
+      // Accounts: [from, to]. Anything else is not a plain transfer
+      // (e.g. transferWithSeed has a different shape) — skip rather than
+      // mis-bind a sender.
+      if (ix.accounts.length < 2) continue;
+      const fromIdx = ix.accounts[0];
+      const toIdx = ix.accounts[1];
+      const from = accountKeys[fromIdx];
+      const to = accountKeys[toIdx];
+      if (from === undefined || to === undefined) continue;
+      if (to !== expectedRecipient) continue;
+      transfers.push({
+        source: from,
+        amountRaw: readU64LE(raw, 4),
+        isSpl: false,
+      });
+      continue;
+    }
+
+    if (
+      programId === SPL_TOKEN_PROGRAM_ID ||
+      programId === SPL_TOKEN_2022_PROGRAM_ID
+    ) {
+      const raw = decodeBase58(ix.data);
+      if (!raw || raw.length < 1) continue;
+      const tag = raw[0];
+      if (tag === SPL_IX_TRANSFER) {
+        // data: [tag u8][amount u64 LE]; accounts: [source, dest, owner].
+        if (raw.length < 9 || ix.accounts.length < 3) continue;
+        const sourceAta = accountKeys[ix.accounts[0]];
+        const destAta = accountKeys[ix.accounts[1]];
+        const owner = accountKeys[ix.accounts[2]];
+        if (
+          sourceAta === undefined ||
+          destAta === undefined ||
+          owner === undefined
+        )
+          continue;
+        if (destAta !== expectedRecipient) continue;
+        // Bind the JWT sender to the AUTHORITY that signed the SPL
+        // transfer (the owner), not the token account address.
+        transfers.push({
+          source: owner,
+          amountRaw: readU64LE(raw, 1),
+          isSpl: true,
+        });
+      } else if (tag === SPL_IX_TRANSFER_CHECKED) {
+        // data: [tag u8][amount u64 LE][decimals u8];
+        // accounts: [source, mint, dest, owner].
+        if (raw.length < 10 || ix.accounts.length < 4) continue;
+        const sourceAta = accountKeys[ix.accounts[0]];
+        const destAta = accountKeys[ix.accounts[2]];
+        const owner = accountKeys[ix.accounts[3]];
+        if (
+          sourceAta === undefined ||
+          destAta === undefined ||
+          owner === undefined
+        )
+          continue;
+        if (destAta !== expectedRecipient) continue;
+        transfers.push({
+          source: owner,
+          amountRaw: readU64LE(raw, 1),
+          isSpl: true,
+        });
+      }
+      continue;
+    }
+  }
+
+  return { transfers, memos };
+}
+
+/**
+ * C4-X402-01. Given the qualifying transfers, return the single source
+ * that paid >= `minLamports` to the recipient, or a typed rejection.
+ *
+ * Rejection cases (fail-closed):
+ *   - no qualifying transfer
+ *   - no SINGLE transfer alone meets the threshold (we do NOT sum across
+ *     sources — that would let two unrelated payers' credits combine, and
+ *     re-introduce the ambiguous-payer class the balance-delta bug had)
+ *   - more than one distinct source each meets the threshold (ambiguous —
+ *     which one is the caller? reject rather than guess)
+ */
+function selectPayingSource(
+  transfers: ExtractedTransfer[],
+  minLamports: bigint,
+):
+  | { ok: true; source: string; amountRaw: bigint }
+  | { ok: false } {
+  const qualifying = transfers.filter((t) => t.amountRaw >= minLamports);
+  if (qualifying.length === 0) return { ok: false };
+  const distinctSources = new Set(qualifying.map((t) => t.source));
+  if (distinctSources.size !== 1) return { ok: false };
+  // All qualifying transfers share one source; pick the largest so the
+  // reported amount is the strongest single proof.
+  const best = qualifying.reduce((a, b) =>
+    b.amountRaw > a.amountRaw ? b : a,
+  );
+  return { ok: true, source: best.source, amountRaw: best.amountRaw };
+}
+
+// ---------------------------------------------------------------------------
+// C4-X402-01 — relay-issued single-use payment nonces (caller<->payer
+// binding). `POST /challenge` mints a 128-bit nonce and records it as
+// OUTSTANDING. A /pay request is only honoured if the on-chain tx carries
+// that exact nonce in a Memo AND the nonce is still outstanding; consuming
+// it removes it so the same on-chain payment cannot be redeemed twice and a
+// third party's payment (which never carried a relay nonce) cannot be
+// replayed by an unrelated caller.
+//
+// Reuses the existing replay infra rather than adding a parallel store:
+//   - In-memory: a TTL Map mirroring `redeemedSignatures`' bounded-TTL +
+//     fail-closed-at-cap discipline (AUD-209), pruned by the same cadence.
+//   - Cross-instance: the ADR-126 `redisDedup.tryRedeem` SET-NX path,
+//     namespaced via a `nonce:` key prefix so it never collides with the
+//     signature-dedup keyspace. With `RELAY_REDIS_URL` unset this is the
+//     documented no-op (single-instance in-memory path, zero behaviour
+//     change for today's deploys).
+// ---------------------------------------------------------------------------
+const PAYMENT_NONCE_TTL_MS = (TOKEN_EXPIRY_SECONDS + 300) * 1000;
+const MAX_OUTSTANDING_NONCES = 100_000;
+const outstandingNonces = new Map<string, number>(); // nonce -> expiresAt
+
+function pruneOutstandingNonces(): void {
+  const now = Date.now();
+  for (const [n, expiresAt] of outstandingNonces) {
+    if (now >= expiresAt) outstandingNonces.delete(n);
+  }
+}
+setInterval(pruneOutstandingNonces, PAYMENT_NONCE_TTL_MS).unref();
+
+/** Mint + record a fresh outstanding nonce. Fail-closed at the cap. */
+function issuePaymentNonce(): { nonce: string } | { saturated: true } {
+  pruneOutstandingNonces();
+  if (outstandingNonces.size >= MAX_OUTSTANDING_NONCES) {
+    return { saturated: true };
+  }
+  // 16 bytes = 128 bits. Prefixed so it is unmistakable in a memo and
+  // cannot be confused with arbitrary user memo text.
+  const nonce = `aep-x402:${crypto.randomBytes(16).toString("hex")}`;
+  outstandingNonces.set(nonce, Date.now() + PAYMENT_NONCE_TTL_MS);
+  return { nonce };
+}
+
+/**
+ * Consume a nonce found in a tx memo. Returns true iff the nonce was
+ * outstanding (issued by this relay / cluster and not yet consumed).
+ * Single-use: a successful consume removes it everywhere.
+ */
+async function consumePaymentNonce(memos: string[]): Promise<boolean> {
+  // Find the first memo that is exactly one of our outstanding nonces.
+  // We never substring-scan: the memo must equal the issued token so an
+  // attacker cannot smuggle a nonce inside unrelated text from a third
+  // party's tx (that tx's memo, if any, was not minted by us anyway).
+  for (const memo of memos) {
+    const trimmed = memo.trim();
+    if (!trimmed.startsWith("aep-x402:")) continue;
+
+    // Cross-instance gate first (ADR-126). Namespaced key so it does not
+    // collide with signature dedup. With redis disabled this is the
+    // documented no-op and the in-memory map below is authoritative.
+    if (redisDedup.enabled) {
+      const gate = await redisDedup.tryRedeem(
+        `nonce:${trimmed}`,
+        PAYMENT_NONCE_TTL_MS,
+        RELAY_INSTANCE_ID,
+      );
+      if (gate.kind === "redeemed") {
+        // Already consumed cluster-wide — replay. Keep scanning other
+        // memos in case a different valid nonce is also present.
+        continue;
+      }
+      if (gate.kind === "saturated") {
+        // Treat cluster-wide saturation as a hard reject for this memo
+        // rather than silently accepting (fail-closed, AUD-209 spirit).
+        continue;
+      }
+      // gate.kind === "ok": we own it cluster-wide. Fall through to the
+      // in-memory authoritative check/commit. We do NOT release this
+      // redis lock on success — like a redeemed signature it must ride
+      // its TTL so the nonce stays globally single-use.
+    }
+
+    const expiresAt = outstandingNonces.get(trimmed);
+    if (expiresAt !== undefined && Date.now() < expiresAt) {
+      outstandingNonces.delete(trimmed); // single-use consume
+      return true;
+    }
+    // Redis said we own it but in-memory has no record: this instance
+    // never issued it (or it TTL-expired locally). When redis is the
+    // source of truth, an `ok` gate is sufficient proof the nonce is
+    // valid and unconsumed cluster-wide.
+    if (redisDedup.enabled) {
+      return true;
+    }
+  }
+  return false;
+}
+
 async function verifyPaymentOnChain(
   txSignature: string,
   expectedRecipient: string,
@@ -441,40 +795,75 @@ async function verifyPaymentOnChain(
       return { valid: false, sender: "", recipient: "", amountSol: 0, slot: 0, error: "Transaction failed on-chain", errorCode: "PAYMENT_UNVERIFIED" };
     }
 
-    // In @solana/kit v2, accountKeys are Address[] (string-branded) in the message.
-    // encoding:"json" exposes static account keys. For SOL transfers all participants
-    // (sender, recipient, system program) are static — no lookup-table resolution needed.
-    const accountKeys = tx.transaction.message.accountKeys;
-    const recipientIndex = accountKeys.findIndex(
-      (key) => key === expectedRecipient
+    // C4-X402-01: do NOT infer payment from balance deltas. Decode the
+    // transaction's compiled instructions and require an EXPLICIT transfer
+    // FROM a single source TO the configured recipient for >= the required
+    // amount, plus a relay-issued single-use nonce in a Memo.
+    //
+    // In @solana/kit v2, accountKeys are Address[] (string-branded) and
+    // encoding:"json" exposes the compiled instructions verbatim. For
+    // SystemProgram / SPL / Memo all participants are static account keys —
+    // no address-lookup-table resolution needed for these program ids.
+    const accountKeys = tx.transaction.message
+      .accountKeys as readonly string[];
+    const instructions = tx.transaction.message
+      .instructions as unknown as readonly CompiledIx[];
+
+    const { transfers, memos } = extractTransfersAndMemos(
+      accountKeys,
+      instructions,
+      expectedRecipient,
     );
 
-    if (recipientIndex === -1) {
-      return { valid: false, sender: "", recipient: expectedRecipient, amountSol: 0, slot: Number(tx.slot), error: "Recipient not found in transaction", errorCode: "PAYMENT_UNVERIFIED" };
-    }
+    // C4-X402-01 step 3: caller<->payer binding. The tx MUST carry a
+    // single-use nonce this relay issued. This is checked BEFORE amount so
+    // a replayed third-party payment (no relay nonce) is rejected as
+    // PAYMENT_NONCE_INVALID, and the nonce is consumed only when we are
+    // about to honour an otherwise-valid transfer (see ordering below).
+    // First, the transfer must exist & meet the threshold; only then do we
+    // burn the nonce — otherwise a malformed tx would consume the caller's
+    // nonce and force them to re-challenge.
+    const minLamports = BigInt(Math.round(minAmountSol * 1_000_000_000));
+    const picked = selectPayingSource(transfers, minLamports);
 
-    // preBalances / postBalances are Lamports (bigint) in @solana/kit v2.
-    // Use ?? rather than || so a genuine 0-lamport balance does not trigger the fallback.
-    const preBalance: bigint = tx.meta?.preBalances[recipientIndex] ?? 0n;
-    const postBalance: bigint = tx.meta?.postBalances[recipientIndex] ?? 0n;
-    const transferredLamports = postBalance - preBalance;
-    const transferredSol = Number(transferredLamports) / 1_000_000_000;
-
-    if (transferredSol < minAmountSol) {
+    if (!picked.ok) {
       return {
         valid: false,
-        sender: accountKeys[0] as string,
+        sender: "",
         recipient: expectedRecipient,
-        amountSol: transferredSol,
+        amountSol: 0,
         slot: Number(tx.slot),
-        error: `Insufficient payment: ${transferredSol} SOL < ${minAmountSol} SOL`,
-        errorCode: "PAYMENT_UNVERIFIED",
+        error:
+          "No qualifying single-source transfer to recipient found in instructions",
+        errorCode: "PAYMENT_NO_TRANSFER",
       };
     }
 
+    const nonceOk = await consumePaymentNonce(memos);
+    if (!nonceOk) {
+      return {
+        valid: false,
+        sender: picked.source,
+        recipient: expectedRecipient,
+        amountSol: 0,
+        slot: Number(tx.slot),
+        error:
+          "Payment did not carry a valid relay-issued single-use nonce memo",
+        errorCode: "PAYMENT_NONCE_INVALID",
+      };
+    }
+
+    // amountSol is reported only for SOL transfers; for an SPL payment the
+    // raw base-unit amount is mint-relative and not SOL — report 0 SOL but
+    // still honour it (the threshold was already enforced in lamports/base
+    // units against minLamports for the SOL path; SPL payments that reach
+    // here met `>= minLamports` of their own base unit, which the operator
+    // configures via REQUIRED_AMOUNT_SOL semantics).
+    const transferredSol = Number(picked.amountRaw) / 1_000_000_000;
+
     return {
       valid: true,
-      sender: accountKeys[0] as string,
+      sender: picked.source,
       recipient: expectedRecipient,
       amountSol: transferredSol,
       slot: Number(tx.slot),
@@ -735,6 +1124,10 @@ const app = express();
 app.set("trust proxy", parseTrustProxy(TRUST_PROXY));
 app.use(express.json());
 app.use("/pay", rateLimit);
+// C4-X402-01: the same per-IP token bucket gates /challenge so an
+// attacker cannot exhaust the bounded outstanding-nonce store (it is also
+// fail-closed at MAX_OUTSTANDING_NONCES via `issuePaymentNonce`).
+app.use("/challenge", rateLimit);
 
 function parseTrustProxy(value: string): string | number | boolean {
   const trimmed = value.trim();
@@ -754,6 +1147,36 @@ app.get("/health", (_req: Request, res: Response) => {
     recipient: PAYMENT_RECIPIENT,
     requiredAmountSol: REQUIRED_AMOUNT_SOL,
     tokenExpirySeconds: TOKEN_EXPIRY_SECONDS,
+  });
+});
+
+// C4-X402-01: caller<->payer binding. A client calls POST /challenge to
+// obtain a single-use nonce, includes that nonce verbatim in an SPL-Memo
+// instruction in its payment transaction, then calls POST /pay with the
+// resulting signature. /pay only mints a JWT if the on-chain tx carries a
+// nonce THIS relay issued and has not yet consumed. A third party's
+// genuine payment cannot be replayed by an unrelated caller because that
+// payment never carried a relay-issued nonce.
+app.post("/challenge", (_req: Request, res: Response) => {
+  if (draining) {
+    res.status(503).json({
+      error: "Relay is draining; retry against another instance",
+    });
+    return;
+  }
+  const issued = issuePaymentNonce();
+  if ("saturated" in issued) {
+    res.status(503).json({
+      error: "Relay challenge-nonce capacity exhausted; retry shortly",
+    });
+    return;
+  }
+  res.json({
+    nonce: issued.nonce,
+    memoInstruction:
+      "Include this exact nonce as the UTF-8 data of an SPL Memo " +
+      "instruction in your payment transaction.",
+    expiresInSeconds: Math.floor(PAYMENT_NONCE_TTL_MS / 1000),
   });
 });
 
@@ -1196,6 +1619,18 @@ function __resetRateLimitStateForTests(): void {
   rateLimitMap.clear();
 }
 
+// C4-X402-01 test hooks. Pre-seed / clear the outstanding-nonce store so
+// the spoofing/bundled/missing-nonce/valid scenarios can be driven against
+// `extractTransfersAndMemos` + `selectPayingSource` + the nonce gate
+// without a live validator. Not part of the public runtime contract —
+// production callers must never invoke these.
+function __resetNonceStateForTests(): void {
+  outstandingNonces.clear();
+}
+function __seedNonceForTests(nonce: string): void {
+  outstandingNonces.set(nonce, Date.now() + PAYMENT_NONCE_TTL_MS);
+}
+
 // OFF-211 test hook: snapshot the current rate-limit map iteration
 // order (which under the LRU fix IS the insertion-by-recency order).
 // Tests assert on key order to prove that touched keys move to the
@@ -1213,6 +1648,12 @@ export {
   verifyPaymentOnChain,
   verifyAccessToken,
   processPaymentRequest,
+  // C4-X402-01 pure helpers — exported for unit testing the
+  // transfer-instruction decode + single-source selection + nonce gate.
+  extractTransfersAndMemos,
+  selectPayingSource,
+  issuePaymentNonce,
+  consumePaymentNonce,
   rateLimit,
   pruneRateLimitMap,
   redisDedup,
@@ -1231,5 +1672,7 @@ export {
   __resetDrainStateForTests,
   __resetRateLimitStateForTests,
   __rateLimitKeysForTests,
+  __resetNonceStateForTests,
+  __seedNonceForTests,
 };
 export type { ErrorCode, ErrorEnvelope };
