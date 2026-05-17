@@ -37,6 +37,24 @@ no-idl = []
 cpi = ["no-entrypoint"]
 default = []
 
+# C4-OB-01 / ADR-145 HARD DEPLOY GUARD.
+#
+# `auto_approve_milestone` releases escrowed funds. The current
+# implementation does NOT verify the Circle CCTP V2 message /
+# attestation / nonce on-chain — it trusts the dispatcher to have done
+# so off-chain (see ADR-145, Proposed). Until that attestation
+# verification lands, the instruction MUST NOT be reachable on any
+# fund-bearing cluster.
+#
+# This feature is DEFAULT-OFF. Without it, every call to
+# `auto_approve_milestone` reverts with `CctpAttestationNotVerified`
+# *before* any state write or CPI. Enable it ONLY for a localnet /
+# devnet integration build where the escrows hold no real value, and
+# NEVER ship a mainnet/fund-bearing binary with it set until ADR-145's
+# on-chain attestation source is implemented and this gate is replaced
+# by the real verification.
+cctp_attestation_verified = []
+
 [dev-dependencies]
 proptest = "1"
 

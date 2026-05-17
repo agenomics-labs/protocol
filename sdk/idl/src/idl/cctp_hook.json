@@ -35,14 +35,30 @@
         {
           "name": "payer",
           "docs": [
-            "The transaction signer — typically the CCTP V2 receiver dispatcher or",
-            "(until that is wired) the relayer. The Hook does not authorize off",
-            "this signer's identity; the on-chain trust anchor is the",
-            "CCTP-attestation guarantee that already gated the mint, plus the",
-            "`hook_signer` PDA's exclusive ability to act as the escrow's `client`."
+            "The transaction signer — the canonical CCTP V2 receiver authority.",
+            "",
+            "C4-OB-01(e) HARD DEPLOY GUARD (account-level, FIRST field): the",
+            "`constraint = CCTP_ATTESTATION_VERIFIED` is evaluated by Anchor",
+            "during the account-validation phase, on the first struct field,",
+            "*before* any other account (escrow, the typed SPL token accounts,",
+            "the Registry PDAs) is deserialized. On a default / fund-bearing",
+            "build the feature is OFF, `CCTP_ATTESTATION_VERIFIED == false`, and",
+            "every call deterministically reverts here with",
+            "`CctpAttestationNotVerified` — no state write, no CPI, no",
+            "account-deserialization side effects, and a clear error rather than",
+            "a misleading `AccountNotInitialized`. The handler body re-checks the",
+            "same flag (belt-and-braces). The flag may be enabled ONLY on a",
+            "no-value localnet/devnet integration build (see Cargo.toml).",
+            "",
+            "C4-OB-01(d): also pinned via `address = CCTP_RECEIVER_AUTHORITY`",
+            "(previously any signer could drive the fund-releasing approval). The",
+            "constant is currently a guard-only sentinel (system program ID)",
+            "pending ADR-145, which will replace it with the real Circle CCTP V2",
+            "MessageTransmitter CPI-caller / attestation-account binding (Q-S3-B)."
           ],
           "writable": true,
-          "signer": true
+          "signer": true,
+          "address": "11111111111111111111111111111111"
         },
         {
           "name": "agent_authority",
@@ -197,14 +213,21 @@
         {
           "name": "escrow_token_account",
           "docs": [
-            "Escrow's USDC token account. Mutable."
+            "See the documented C4-OB-01(b)/(e) rationale on the",
+            "`cctp_attestation_verified` variant above. On the default /",
+            "fund-bearing build this is an unchecked plumb-through; the HARD",
+            "DEPLOY GUARD blocks the instruction before any CPI, so no",
+            "fund-release path is exposed by the looser type here.",
+            "the deploy guard makes this account unreachable otherwise."
           ],
           "writable": true
         },
         {
           "name": "provider_token_account",
           "docs": [
-            "Provider's USDC token account (the session-pool PDA's ATA)."
+            "See the documented C4-OB-01(b)/(e) rationale on the",
+            "`cctp_attestation_verified` variant above.",
+            "the deploy guard makes this account unreachable otherwise."
           ],
           "writable": true
         },
@@ -365,6 +388,36 @@
       "code": 6010,
       "name": "CdpWalletMismatch",
       "msg": "agent_profile.cdp_wallet does not match payload.cdp_recipient — the \\\n         Base-side x402 settle was delivered to a different EVM address than \\\n         the one bound to this agent."
+    },
+    {
+      "code": 6011,
+      "name": "AmountReconciliationMismatch",
+      "msg": "C4-OB-01: payload.amount_returned_micros does not equal the \\\n         milestone amount recorded on the escrow account — the CCTP \\\n         round-trip returned a different number than the escrow authorizes \\\n         to release."
+    },
+    {
+      "code": 6012,
+      "name": "MilestoneIndexOutOfRange",
+      "msg": "C4-OB-01: milestone_index is out of range for the escrow's \\\n         milestones vector (raw-bytes read)."
+    },
+    {
+      "code": 6013,
+      "name": "EscrowMilestoneParseFailed",
+      "msg": "C4-OB-01: escrow account data could not be parsed far enough to \\\n         read the milestone amount for reconciliation."
+    },
+    {
+      "code": 6014,
+      "name": "EscrowDiscriminatorMismatch",
+      "msg": "C4-OB-05: escrow account discriminator does not match the \\\n         settlement TaskEscrow Anchor discriminator \\\n         (sha256(\\account:TaskEscrow\\)[..8])."
+    },
+    {
+      "code": 6015,
+      "name": "UnauthorizedCctpReceiver",
+      "msg": "C4-OB-01: the transaction payer is not the canonical CCTP receiver \\\n         authority permitted to drive auto-approval."
+    },
+    {
+      "code": 6016,
+      "name": "CctpAttestationNotVerified",
+      "msg": "C4-OB-01 / ADR-145: auto_approve_milestone is hard-disabled until \\\n         on-chain CCTP attestation verification (ADR-145) lands. Build with \\\n         the `cctp_attestation_verified` feature ONLY on a non-fund-bearing \\\n         cluster for integration testing."
     }
   ],
   "types": [

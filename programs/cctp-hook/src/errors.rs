@@ -50,4 +50,46 @@ pub enum HookError {
          the one bound to this agent."
     )]
     CdpWalletMismatch,
+
+    // ---- C4-OB-01 (cycle-4): risk-containment hotfix ----
+    #[msg(
+        "C4-OB-01: payload.amount_returned_micros does not equal the \
+         milestone amount recorded on the escrow account — the CCTP \
+         round-trip returned a different number than the escrow authorizes \
+         to release."
+    )]
+    AmountReconciliationMismatch,
+
+    #[msg(
+        "C4-OB-01: milestone_index is out of range for the escrow's \
+         milestones vector (raw-bytes read)."
+    )]
+    MilestoneIndexOutOfRange,
+
+    #[msg(
+        "C4-OB-01: escrow account data could not be parsed far enough to \
+         read the milestone amount for reconciliation."
+    )]
+    EscrowMilestoneParseFailed,
+
+    #[msg(
+        "C4-OB-05: escrow account discriminator does not match the \
+         settlement TaskEscrow Anchor discriminator \
+         (sha256(\"account:TaskEscrow\")[..8])."
+    )]
+    EscrowDiscriminatorMismatch,
+
+    #[msg(
+        "C4-OB-01: the transaction payer is not the canonical CCTP receiver \
+         authority permitted to drive auto-approval."
+    )]
+    UnauthorizedCctpReceiver,
+
+    #[msg(
+        "C4-OB-01 / ADR-145: auto_approve_milestone is hard-disabled until \
+         on-chain CCTP attestation verification (ADR-145) lands. Build with \
+         the `cctp_attestation_verified` feature ONLY on a non-fund-bearing \
+         cluster for integration testing."
+    )]
+    CctpAttestationNotVerified,
 }
