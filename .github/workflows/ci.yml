@@ -25,7 +25,7 @@ jobs:
           rustup toolchain list
 
       - name: Cache cargo registry & build
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # pin v5 (AUD-406)
+        uses: ./.github/actions/cache # vendored (AUD-406 follow-up: no codeload fetch)
         with:
           path: |
             ~/.cargo/registry
@@ -76,7 +76,7 @@ jobs:
           rustup toolchain list
 
       - name: Cache cargo registry
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # pin v5 (AUD-406)
+        uses: ./.github/actions/cache # vendored (AUD-406 follow-up: no codeload fetch)
         with:
           path: |
             ~/.cargo/registry
@@ -602,7 +602,7 @@ jobs:
           rustup toolchain list
 
       - name: Cache cargo registry & target
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # pin v5 (AUD-406)
+        uses: ./.github/actions/cache # vendored (AUD-406 follow-up: no codeload fetch)
         with:
           path: |
             ~/.cargo/registry
@@ -613,7 +613,7 @@ jobs:
 
       - name: Cache solana CLI
         id: cache-solana
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # pin v5 (AUD-406)
+        uses: ./.github/actions/cache # vendored (AUD-406 follow-up: no codeload fetch)
         with:
           path: ~/.local/share/solana
           key: ${{ runner.os }}-solana-${{ env.SOLANA_VERSION }}
@@ -633,7 +633,7 @@ jobs:
 
       - name: Cache anchor CLI
         id: cache-anchor
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # pin v5 (AUD-406)
+        uses: ./.github/actions/cache # vendored (AUD-406 follow-up: no codeload fetch)
         with:
           path: ~/.cargo/bin/anchor
           key: ${{ runner.os }}-anchor-${{ env.ANCHOR_VERSION }}
@@ -725,7 +725,7 @@ jobs:
           rustup toolchain list
 
       - name: Cache cargo registry & target
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # pin v5 (AUD-406)
+        uses: ./.github/actions/cache # vendored (AUD-406 follow-up: no codeload fetch)
         with:
           path: |
             ~/.cargo/registry
@@ -736,7 +736,7 @@ jobs:
 
       - name: Cache solana CLI
         id: cache-solana
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # pin v5 (AUD-406)
+        uses: ./.github/actions/cache # vendored (AUD-406 follow-up: no codeload fetch)
         with:
           path: ~/.local/share/solana
           key: ${{ runner.os }}-solana-${{ env.SOLANA_VERSION }}
@@ -756,7 +756,7 @@ jobs:
 
       - name: Cache anchor CLI
         id: cache-anchor
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # pin v5 (AUD-406)
+        uses: ./.github/actions/cache # vendored (AUD-406 follow-up: no codeload fetch)
         with:
           path: ~/.cargo/bin/anchor
           key: ${{ runner.os }}-anchor-${{ env.ANCHOR_VERSION }}

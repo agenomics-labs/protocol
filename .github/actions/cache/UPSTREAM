@@ -1,0 +1,45 @@
+repo: actions/cache
+sha: 27d5ce7f107fe9357f9df03efb73ab90386fccae
+version: v5 (the SHA-pinned ref this composite replaces)
+vendored_on: 2026-05-17
+vendored_by_commit: AUD-406 follow-up (actions/cache codeload flake blocking #165)
+notes: |
+  NOT a verbatim copy of upstream action.yml.
+
+  Rationale: actions/cache is `using: node20` — its surface is a compiled
+  dist/index.js (remote cache restore + post-job save). Its tarball is fetched
+  from codeload.github.com at job start; on this [self-hosted, linux] runner
+  pool that fetch repeatedly cold-cache-timeouts (100s x3), failing the job
+  before any real work. This is the SAME class as the setup-node flake — see
+  .github/actions/setup-node/UPSTREAM, which explicitly predicted actions/cache
+  as the next codeload offender.
+
+  These runners are persistent: ~/.cargo, target/, ~/.local/share/solana and
+  ~/.cargo/bin survive across jobs on the same runner natively. So:
+    - perf caches (cargo registry/target): redundant — native persistence
+      already provides reuse; cache-hit output is unused there.
+    - install-gate caches (solana/anchor CLI): the only behavioural surface is
+      `cache-hit`, consumed by `if: steps.cache-x.outputs.cache-hit != 'true'`
+      to skip an expensive install (cargo install anchor compiles from source).
+
+  This composite therefore reports cache-hit purely from on-disk path
+  existence: tool already persists -> cache-hit=true -> install skipped (fast,
+  no codeload); cold/fresh runner -> cache-hit=false -> install runs. Behaviour
+  is preserved without any api.github.com / codeload.github.com round-trip and
+  without a remote save (unnecessary on a persistent runner).
+
+  Input surface (path, key, restore-keys, enableCrossOsArchive) and the
+  cache-hit output are kept drop-in so ci.yml `with:` blocks and the
+  `steps.cache-*.outputs.cache-hit` references are unchanged.
+
+  scope: |
+    Applied to .github/workflows/ci.yml only (8 usages — the workflow whose
+    #165 run hit the actions/cache codeload timeout). Other workflows still use
+    upstream actions/cache; vendor them similarly if the flake recurs there.
+
+  Re-evaluate / revert:
+    - If runners stop persisting tool dirs, install-gate steps will simply
+      always run (slower, still correct) — restore native persistence or
+      reintroduce a real remote cache.
+    - To re-pin upstream: revert ci.yml `uses: ./.github/actions/cache` back to
+      `actions/cache@<new-sha> # pin vN (AUD-406)` and delete this directory.
