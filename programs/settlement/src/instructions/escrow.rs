@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Transfer};
+use anchor_spl::token::{self, CloseAccount, Transfer};
 
 use crate::state::*;
 use crate::errors::*;
@@ -587,6 +587,10 @@ pub fn expire_escrow(ctx: Context<ExpireEscrow>) -> Result<()> {
     let provider_key = escrow.provider;
     let task_id = escrow.task_id;
     let task_id_bytes = task_id.to_le_bytes();
+    // C4-OB-03: snapshot the deadline before the `&mut` reborrow below so the
+    // slash-challenge-window check can run without an immutable/mutable
+    // borrow overlap on `ctx.accounts`.
+    let escrow_deadline = escrow.deadline;
     // Slash the provider only when they accepted the task (status == Active)
     // and then failed to submit work for at least one milestone by the
     // deadline. A never-accepted task (status == Created) is not a
@@ -633,7 +637,25 @@ pub fn expire_escrow(ctx: Context<ExpireEscrow>) -> Result<()> {
         )?;
     }
 
-    let should_slash = prior_status == EscrowStatus::Active && has_pending;
+    // C4-OB-03 (cycle-4): the *undelivered slash* (NOT the refund / auto-pay
+    // above, which already executed) is gated behind a fixed post-deadline
+    // challenge window. `submit_milestone` hard-rejects `now > deadline`, so a
+    // provider whose submission was censored / front-run for a single block at
+    // `deadline + 1` cannot self-rescue; deferring the reputation penalty until
+    // `now > deadline + SLASH_CHALLENGE_WINDOW_SECS` removes the "instant slash
+    // at deadline+1" grief and the front-run profitability. An `expire_escrow`
+    // inside the window still settles all funds (refund + Submitted auto-pay)
+    // and lands the escrow in its terminal state — only the negative
+    // reputation delta is withheld. A later `expire_escrow` is unnecessary for
+    // funds (already moved) but the slash simply does not fire for this escrow
+    // if the first expiry ran inside the window: this is the accepted, lower-
+    // risk asymmetry (a censored provider keeps reputation; a genuine non-
+    // deliverer is only slashed if expiry happens to run post-window). The
+    // economic refund is never weakened. See `SLASH_CHALLENGE_WINDOW_SECS`.
+    let slash_window_open = now
+        > escrow_deadline.saturating_add(SLASH_CHALLENGE_WINDOW_SECS);
+    let should_slash =
+        prior_status == EscrowStatus::Active && has_pending && slash_window_open;
     let reputation_delta_expiry_undelivered =
         ctx.accounts.protocol_config.reputation_delta_expiry_undelivered;
     // AUD-010: When the auto-approval loop leaves every milestone in the
@@ -738,6 +760,79 @@ pub fn expire_escrow(ctx: Context<ExpireEscrow>) -> Result<()> {
     Ok(())
 }
 
-pub fn close_escrow(_ctx: Context<CloseEscrow>) -> Result<()> {
+/// C4-OB-02 (cycle-4): previously `Ok(())` — a no-op that let Anchor's
+/// `close = client` reclaim only the `TaskEscrow` PDA rent while leaving the
+/// escrow ATA (authority = the escrow PDA) untouched. A griefer could move
+/// 1 unit of the mint into the ATA before settlement; `close_escrow` would
+/// then permanently strand that residual (the ATA's authority PDA no longer
+/// deserialises as `TaskEscrow` post-close, so no instruction can move it)
+/// AND brick the deterministic `(client,provider,task_id)` slot for
+/// re-creation (a fresh `init` of the same ATA fails — the account exists).
+///
+/// The handler now, *before* Anchor closes the PDA (the `escrow` account is
+/// still live for the duration of this instruction — Anchor performs the
+/// `close = client` lamport drain only after the handler returns Ok), signs
+/// as the escrow PDA to:
+///   1. sweep any residual ATA balance to the client's token account, then
+///   2. `close_account` the ATA, returning its rent lamports to `client`.
+/// Only then does control return and Anchor close the PDA. Net: rent + dust
+/// are fully reclaimed and the escrow slot is reusable.
+pub fn close_escrow(ctx: Context<CloseEscrow>) -> Result<()> {
+    let escrow = &ctx.accounts.escrow;
+    let client_key = escrow.client;
+    let provider_key = escrow.provider;
+    let task_id_bytes = escrow.task_id.to_le_bytes();
+    let bump = escrow.bump;
+
+    let signer_seeds: &[&[&[u8]]] = &[&[
+        b"escrow",
+        client_key.as_ref(),
+        provider_key.as_ref(),
+        &task_id_bytes,
+        &[bump],
+    ]];
+
+    // 1. Sweep any residual balance (third-party dust or rounding remainder)
+    //    to the client. The terminal-status invariant says the ATA should be
+    //    drained by the settling instruction, but a direct unsolicited
+    //    transfer into the ATA is always possible — handle it rather than
+    //    `require!(amount == 0)` so a griefer cannot make `close_escrow`
+    //    permanently un-callable for an otherwise-terminal escrow.
+    let residual = ctx.accounts.escrow_token_account.amount;
+    if residual > 0 {
+        let sweep = Transfer {
+            from: ctx.accounts.escrow_token_account.to_account_info(),
+            to: ctx.accounts.client_token_account.to_account_info(),
+            authority: ctx.accounts.escrow.to_account_info(),
+        };
+        token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                sweep,
+                signer_seeds,
+            ),
+            residual,
+        )?;
+    }
+
+    // 2. Close the now-empty ATA, returning its rent to `client`.
+    let close_ata = CloseAccount {
+        account: ctx.accounts.escrow_token_account.to_account_info(),
+        destination: ctx.accounts.client.to_account_info(),
+        authority: ctx.accounts.escrow.to_account_info(),
+    };
+    token::close_account(CpiContext::new_with_signer(
+        ctx.accounts.token_program.to_account_info(),
+        close_ata,
+        signer_seeds,
+    ))?;
+
+    emit!(EscrowClosed {
+        escrow: ctx.accounts.escrow.key(),
+        client: client_key,
+        task_id: ctx.accounts.escrow.task_id,
+        residual_swept: residual,
+    });
+
     Ok(())
 }
