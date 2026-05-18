@@ -20,11 +20,19 @@ import { Program, AnchorProvider, web3 } from "@coral-xyz/anchor";
 import {
   getProgramDerivedAddress,
   getAddressEncoder,
+  getBytesEncoder,
   type Address,
 } from "@solana/kit";
 import * as crypto from "node:crypto";
 
 import type { AgentVault } from "./idl-types.js";
+
+// ADR-141: the `vault` PDA seed is now sourced from the Codama-generated
+// client (rendered from the committed Anchor IDL). The hand-written
+// `VAULT_SEED = "vault"` string literal (SDK-F2 trust-root weakness) is
+// deleted; a rename lands in `idl/agent_vault.json`, regenerates
+// `pdas/vault.ts`, and fails the CI codegen-diff gate on the same commit.
+import { findVaultPda } from "./generated/vault/pdas/vault.js";
 
 /**
  * ADR-087: PublicKey is reached via Anchor's `web3` re-export so the
@@ -32,9 +40,6 @@ import type { AgentVault } from "./idl-types.js";
  */
 type PublicKey = web3.PublicKey;
 const PublicKey = web3.PublicKey;
-
-/** On-chain seed for the vault PDA. */
-const VAULT_SEED = "vault";
 
 /**
  * ADR-138: domain prefix for the MCP tool identifier hash. The on-chain
@@ -81,12 +86,18 @@ export function toolIdHash(toolName: string): Uint8Array {
 }
 
 /**
- * ADR-111: On-chain seed for the delegation grant PDA. The full seed
- * tuple is `[b"delegation", vault, grantee, [nonce]]` — encoding the
- * (vault, grantee, nonce) triple so a single vault/grantee pair can
- * hold multiple historical grants.
+ * ADR-111 / ADR-141: seed bytes for the delegation-grant PDA. Full tuple:
+ * `[b"delegation", vault, grantee, [nonce]]`. The `[nonce]` element is a
+ * single u8 supplied at runtime, so — like the registry `agent-profile`
+ * PDA — Codama emits no static `findDelegationGrantPda` (the IDL declares
+ * `nonce` as an instruction arg, not a const seed). This PDA therefore
+ * stays a hand-derivation composed from the same `@solana/kit` encoders
+ * the generated code uses; its trust root remains
+ * `sdk/client/test/seed-parity.test.ts` (reads on-chain Rust, fails on a
+ * rename). Pinned as UTF-8 bytes of "delegation" to match on-chain
+ * `b"delegation"` exactly.
  */
-const DELEGATION_SEED = "delegation";
+const DELEGATION_SEED_BYTES = new TextEncoder().encode("delegation");
 
 /**
  * ADR-111: Grant action bitflags. MUST stay in lockstep with
@@ -312,11 +323,15 @@ export class AgentVaultClient {
    * `@agenomics/client` failed on-chain.
    */
   async vaultPda(authority: Address): Promise<Address> {
-    const addressEncoder = getAddressEncoder();
-    const [pda] = await getProgramDerivedAddress({
-      programAddress: this.programIdAsAddress(),
-      seeds: [VAULT_SEED, addressEncoder.encode(authority)],
-    });
+    // ADR-141: delegated to the Codama-generated `findVaultPda`. The
+    // `b"vault"` seed bytes come straight from the committed IDL; the
+    // AUD-003 seed-order fix (`[b"vault", authority]`, not the reversed
+    // pre-fix order) is now structurally guaranteed by codegen rather
+    // than a hand-maintained literal.
+    const [pda] = await findVaultPda(
+      { authority },
+      { programAddress: this.programIdAsAddress() },
+    );
     return pda;
   }
 
@@ -343,11 +358,16 @@ export class AgentVaultClient {
         `delegationGrantPda: nonce must be a u8 (0-255), got ${nonce}`,
       );
     }
+    // ADR-141: composed from the same `@solana/kit` encoders the Codama
+    // renderer uses; only the resolver is hand-written because the IDL's
+    // runtime u8 `nonce` seed has no static codegen (see
+    // DELEGATION_SEED_BYTES). Byte layout is identical to a generated
+    // helper: `[b"delegation", vault, grantee, [nonce]]`.
     const addressEncoder = getAddressEncoder();
     const [pda] = await getProgramDerivedAddress({
       programAddress: this.programIdAsAddress(),
       seeds: [
-        DELEGATION_SEED,
+        getBytesEncoder().encode(DELEGATION_SEED_BYTES),
         addressEncoder.encode(vault),
         addressEncoder.encode(grantee),
         new Uint8Array([nonce]),

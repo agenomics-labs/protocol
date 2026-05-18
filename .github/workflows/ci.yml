@@ -329,6 +329,16 @@ jobs:
       # typecheck. Mirrors the validator → action-runtime build-first pattern.
       - name: Build @agenomics/idl
         run: npm run build --workspace @agenomics/idl
+      # ADR-141: Codama codegen drift gate. The generated client trees
+      # under sdk/client/src/generated/ are COMMITTED and rendered from
+      # the same Anchor IDL the ADR-082 parity hook pins. Regenerate and
+      # fail if the committed tree is stale — mirrors the ADR-082 IDL
+      # diff-gate philosophy: drift fails on the same commit that
+      # introduces it (e.g. a coordinated on-chain+SDK seed rename that
+      # the IDL-JSON-only gate cannot see — closes SDK-F2 trust root).
+      - name: Codama codegen drift check
+        working-directory: sdk/client
+        run: npm run codegen:check
       - name: Type check
         working-directory: sdk/client
         run: npx tsc --noEmit

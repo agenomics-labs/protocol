@@ -8,16 +8,24 @@
  *   `pda-equivalence.test.ts` pins SDK output against (a) hard-coded golden
  *   base58 strings and (b) a hand-written canonical re-derivation that
  *   *mirrors* the on-chain seed convention as SDK-local string literals in
- *   the test file. Both columns live in the SDK package. ADR-141 (codama
- *   generation) is `Proposed`/unused, so the trust root today is the
- *   hand-coded PDA seed strings in `sdk/client/src/{vault,settlement,
- *   registry,cctp-hook}.ts`. The seed *strings* are NOT in the IDL, so the
- *   CI IDL-drift gate (`scripts/check-idl.sh`) — which only diffs IDL JSON —
- *   cannot see a coordinated seed rename. A PR that renames an on-chain seed
- *   in `programs/<crate>/src/contexts.rs` AND the SDK constant in lockstep
- *   passes every existing gate green while every consumer silently derives a
- *   valid-looking but un-owned PDA. This is the exact bug-class AUD-003
- *   already caught once.
+ *   the test file. Both columns live in the SDK package.
+ *
+ *   ADR-141 (codama generation) is now `Accepted` (2026-05-18). The
+ *   `owner-nonce`, `vault`, `escrow`, and `protocol_config` PDAs derive
+ *   through Codama-generated `find*Pda` helpers whose seed bytes come
+ *   straight from the committed Anchor IDL, guarded by the CI codegen-diff
+ *   gate. The two PDAs whose seeds reference a runtime/cross-account value
+ *   (`agent-profile`: third seed is `owner_nonce.nonce`; `delegation`:
+ *   fourth seed is a runtime u8 `nonce`) have no static codegen and remain
+ *   hand-derivations — for THOSE the seed *strings* are still not in the
+ *   IDL, so the CI IDL-drift gate (`scripts/check-idl.sh`) cannot see a
+ *   coordinated rename. A PR that renames such an on-chain seed AND the SDK
+ *   constant in lockstep passes every other gate green while every consumer
+ *   silently derives a valid-looking but un-owned PDA. This is the exact
+ *   bug-class AUD-003 caught once. This test closes that gap for ALL six
+ *   PDAs by reading the on-chain Rust source as the trust root, and
+ *   ADDITIONALLY (ADR-141 block below) asserts the generated helpers agree
+ *   byte-for-byte with both the façade and the program-sourced derivation.
  *
  * WHAT THIS TEST DOES DIFFERENTLY:
  *
@@ -36,10 +44,16 @@
  *   author updated the SDK constant only on the SDK side. The seed-rename gap
  *   the IDL gate cannot see is now closed in code.
  *
- * Interim mandate recorded per `06-sdk.md` F2: progress this gate alongside
- * ADR-141 (when it moves Proposed -> Accepted, pin the codama version +
- * lockfile-integrity and review generated output in-tree; this seed-parity
- * test remains the cross-stack proof regardless).
+ * `06-sdk.md` F2 mandate, now discharged: ADR-141 moved Proposed ->
+ * Accepted (2026-05-18). The codama major is pinned in
+ * `sdk/client/package.json` devDependencies, the generated output is
+ * committed in-tree under `src/generated/`, and the CI codegen-diff gate
+ * (`npm run codegen:check`) fails on a stale tree. This seed-parity test
+ * remains the cross-stack proof regardless of generation, and the new
+ * ADR-141 block below adds a third column: the generated `find*Pda`
+ * helpers must agree byte-for-byte with the façade AND the program-sourced
+ * derivation, so a regenerated-but-wrong tree (or a façade that stops
+ * delegating to codegen) fails here too.
  */
 
 import { test } from "node:test";
@@ -52,6 +66,11 @@ import type { AnchorProvider, Idl } from "@coral-xyz/anchor";
 import type { Address } from "@solana/kit";
 import { AgentRegistryClient, AgentVaultClient, SettlementClient } from "../src/index.js";
 import { hookSignerPda } from "../src/cctp-hook.js";
+// ADR-141: assert the generated helpers directly — the third parity column.
+import { findOwnerNoncePda } from "../src/generated/registry/pdas/ownerNonce.js";
+import { findVaultPda } from "../src/generated/vault/pdas/vault.js";
+import { findEscrowPda } from "../src/generated/settlement/pdas/escrow.js";
+import { findProtocolConfigPda } from "../src/generated/settlement/pdas/protocolConfig.js";
 
 const { PublicKey } = web3;
 type PublicKey = web3.PublicKey;
@@ -332,6 +351,117 @@ test("hook_signer PDA — SDK matches HOOK_SIGNER_SEED parsed from cctp-hook sou
     sdkPda,
     expected.toBase58(),
     "SDK hook_signer PDA != on-chain HOOK_SIGNER_SEED derivation",
+  );
+});
+
+// ===========================================================================
+// ADR-141 — Codama-generated `find*Pda` helpers are the third parity
+// column. The committed generated trees under `src/generated/` are
+// rendered from the Anchor IDL; their seed bytes MUST equal both the
+// public façade output and an independent derivation from the on-chain
+// Rust seed. If `npm run codegen` produced a stale/wrong tree, or a
+// façade silently stopped delegating to codegen, this fails — even though
+// `find*Pda` is byte-clean against itself.
+// ===========================================================================
+test("ADR-141 — generated find*Pda helpers match façade AND on-chain-sourced seeds", async () => {
+  // owner-nonce (registry): generated `findOwnerNoncePda`.
+  assertSeedInProgram(
+    readProgramSource("programs/agent-registry/src/contexts.rs"),
+    "owner-nonce",
+    "agent-registry owner-nonce PDA (ADR-141 generated)",
+  );
+  for (const auth of [AUTH_A, AUTH_B, AUTH_C]) {
+    const addr = auth.toBase58() as Address;
+    const [gen] = await findOwnerNoncePda(
+      { authority: addr },
+      { programAddress: REGISTRY_PROGRAM_ADDR },
+    );
+    const [onchain] = PublicKey.findProgramAddressSync(
+      [auth.toBuffer(), Buffer.from("owner-nonce")],
+      REGISTRY_PROGRAM_ID,
+    );
+    assert.equal(gen, onchain.toBase58(), `gen owner-nonce != on-chain seed (${addr})`);
+    assert.equal(
+      gen,
+      await registryClient.ownerNoncePda(addr),
+      `gen owner-nonce != façade ownerNoncePda (${addr}) — façade stopped delegating to codegen`,
+    );
+  }
+
+  // vault: generated `findVaultPda`.
+  assertSeedInProgram(
+    readProgramSource("programs/agent-vault/src/contexts.rs"),
+    "vault",
+    "agent-vault vault PDA (ADR-141 generated)",
+  );
+  for (const auth of [AUTH_A, AUTH_B, AUTH_C]) {
+    const addr = auth.toBase58() as Address;
+    const [gen] = await findVaultPda(
+      { authority: addr },
+      { programAddress: VAULT_PROGRAM_ADDR },
+    );
+    const [onchain] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault"), auth.toBuffer()],
+      VAULT_PROGRAM_ID,
+    );
+    assert.equal(gen, onchain.toBase58(), `gen vault != on-chain seed (${addr})`);
+    assert.equal(
+      gen,
+      await vaultClient.vaultPda(addr),
+      `gen vault != façade vaultPda (${addr}) — façade stopped delegating to codegen`,
+    );
+  }
+
+  // escrow + protocol_config (settlement): generated helpers.
+  assertSeedInProgram(
+    readProgramSource("programs/settlement/src/contexts.rs"),
+    "escrow",
+    "settlement escrow PDA (ADR-141 generated)",
+  );
+  for (const [client, provider, taskId] of [
+    [AUTH_A, AUTH_B, 1n],
+    [AUTH_B, AUTH_C, 99n],
+  ] as const) {
+    const [gen] = await findEscrowPda(
+      {
+        client: client.toBase58() as Address,
+        provider: provider.toBase58() as Address,
+        taskId,
+      },
+      { programAddress: SETTLEMENT_PROGRAM_ADDR },
+    );
+    const [onchain] = PublicKey.findProgramAddressSync(
+      [Buffer.from("escrow"), client.toBuffer(), provider.toBuffer(), le8(taskId)],
+      SETTLEMENT_PROGRAM_ID,
+    );
+    assert.equal(gen, onchain.toBase58(), `gen escrow != on-chain seed`);
+    assert.equal(
+      gen,
+      await settlementClient.escrowPda(
+        client.toBase58() as Address,
+        provider.toBase58() as Address,
+        taskId,
+      ),
+      `gen escrow != façade escrowPda — façade stopped delegating to codegen`,
+    );
+  }
+
+  const protocolConfigSeed = constSeed(
+    readProgramSource("programs/settlement/src/state.rs"),
+    "PROTOCOL_CONFIG_SEED",
+  );
+  const [genCfg] = await findProtocolConfigPda({
+    programAddress: SETTLEMENT_PROGRAM_ADDR,
+  });
+  const [onchainCfg] = PublicKey.findProgramAddressSync(
+    [Buffer.from(protocolConfigSeed)],
+    SETTLEMENT_PROGRAM_ID,
+  );
+  assert.equal(genCfg, onchainCfg.toBase58(), "gen protocol_config != on-chain seed");
+  assert.equal(
+    genCfg,
+    await settlementClient.protocolConfigPda(),
+    "gen protocol_config != façade protocolConfigPda — façade stopped delegating to codegen",
   );
 });
 

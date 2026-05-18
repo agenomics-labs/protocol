@@ -106,6 +106,31 @@ export {
 } from "./types.js";
 
 // ---------------------------------------------------------------------------
+// ADR-141 — Codama-generated typed clients (additive, tree-shakable).
+//
+// `@agenomics/client@0.1.0` deferred instruction builders (ADR-098 "Out
+// of scope"). ADR-141 closes that gap via codegen: the three program
+// clients are rendered from the committed Anchor IDL by `npm run codegen`
+// (see `codama.config.mjs`) and committed under `src/generated/`. Each is
+// re-exported under a per-program namespace because the generated trees
+// have intentional cross-program name collisions (e.g. `AgentStatus`
+// exists in both the registry and vault IDLs); namespacing keeps every
+// generated symbol reachable without a flat-export clash and preserves
+// tree-shaking (consumers import only `registry.getRegisterAgentInstruction`
+// etc. and pay only for that surface).
+//
+// The hand-written `AgentRegistryClient` / `AgentVaultClient` /
+// `SettlementClient` façades above are UNCHANGED in public shape and now
+// derive PDAs through these generated helpers (SDK-F2 trust root closed).
+// New surface (instruction builders, account decoders, error maps) is
+// purely additive — `0.1.0` consumers upgrade with no source changes.
+// ---------------------------------------------------------------------------
+
+export * as registry from "./generated/registry/index.js";
+export * as vault from "./generated/vault/index.js";
+export * as settlement from "./generated/settlement/index.js";
+
+// ---------------------------------------------------------------------------
 // Re-exports from @agenomics/idl
 // ---------------------------------------------------------------------------
 

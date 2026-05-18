@@ -17,13 +17,19 @@
  */
 
 import { Program, AnchorProvider, web3 } from "@coral-xyz/anchor";
-import {
-  getProgramDerivedAddress,
-  getAddressEncoder,
-  type Address,
-} from "@solana/kit";
+import { type Address } from "@solana/kit";
 
 import type { Settlement } from "./idl-types.js";
+
+// ADR-141: both settlement PDAs are now sourced from the Codama-generated
+// client (rendered from the committed Anchor IDL). The hand-written
+// `ESCROW_SEED = "escrow"` and `PROTOCOL_CONFIG_SEED = "protocol_config"`
+// string literals — the SDK-F2 trust-root weakness, and the exact bug
+// class AUD-003 caught (`"task_escrow"` vs `b"escrow"`) — are deleted. A
+// rename lands in `idl/settlement.json`, regenerates these helpers, and
+// fails the CI codegen-diff gate on the same commit.
+import { findEscrowPda } from "./generated/settlement/pdas/escrow.js";
+import { findProtocolConfigPda } from "./generated/settlement/pdas/protocolConfig.js";
 
 /**
  * ADR-087: PublicKey is reached via Anchor's `web3` re-export so the SDK
@@ -31,12 +37,6 @@ import type { Settlement } from "./idl-types.js";
  */
 type PublicKey = web3.PublicKey;
 const PublicKey = web3.PublicKey;
-
-/** On-chain seed for task escrow PDAs. */
-const ESCROW_SEED = "escrow";
-
-/** On-chain seed for the protocol-config PDA. */
-const PROTOCOL_CONFIG_SEED = "protocol_config";
 
 /**
  * Client for the settlement program.
@@ -86,18 +86,16 @@ export class SettlementClient {
     provider: Address,
     taskId: bigint,
   ): Promise<Address> {
-    const addressEncoder = getAddressEncoder();
-    const taskIdBuf = new Uint8Array(8);
-    new DataView(taskIdBuf.buffer).setBigUint64(0, taskId, true);
-    const [pda] = await getProgramDerivedAddress({
-      programAddress: this.programIdAsAddress(),
-      seeds: [
-        ESCROW_SEED,
-        addressEncoder.encode(client),
-        addressEncoder.encode(provider),
-        taskIdBuf,
-      ],
-    });
+    // ADR-141: delegated to the Codama-generated `findEscrowPda`. The
+    // `b"escrow"` seed bytes and the little-endian u64 `taskId` encoding
+    // come straight from the committed IDL — the AUD-003 fix (`b"escrow"`,
+    // not the pre-fix `"task_escrow"`) is now structurally guaranteed by
+    // codegen. `EscrowSeeds.taskId` accepts `number | bigint`; we pass the
+    // `bigint` the public signature already requires.
+    const [pda] = await findEscrowPda(
+      { client, provider, taskId },
+      { programAddress: this.programIdAsAddress() },
+    );
     return pda;
   }
 
@@ -110,9 +108,11 @@ export class SettlementClient {
    * minimum escrow amount, dispute timeout, and reputation deltas (ADR-075).
    */
   async protocolConfigPda(): Promise<Address> {
-    const [pda] = await getProgramDerivedAddress({
+    // ADR-141: delegated to the Codama-generated `findProtocolConfigPda`.
+    // The `b"protocol_config"` seed bytes come straight from the committed
+    // IDL (which mirrors the on-chain `PROTOCOL_CONFIG_SEED` const).
+    const [pda] = await findProtocolConfigPda({
       programAddress: this.programIdAsAddress(),
-      seeds: [PROTOCOL_CONFIG_SEED],
     });
     return pda;
   }
