@@ -1,0 +1,24 @@
+{
+  "name": "@agenomics-samples/escrow-explorer",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "description": "ADR-140 gallery sample — read-only escrow explorer. Derives + fetches TaskEscrow and ProtocolConfig via SettlementClient and renders escrow lifecycle state. Not a workspace member; mirrors an external consumer's repo.",
+  "scripts": {
+    "start": "tsx explorer.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@agenomics/idl": "file:../../sdk/idl",
+    "@agenomics/client": "file:../../sdk/client",
+    "@coral-xyz/anchor": "^0.31.1",
+    "@solana/kit": "6.8.0",
+    "@solana/web3.js": "^1.98.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.9.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

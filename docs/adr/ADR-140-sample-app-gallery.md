@@ -2,11 +2,11 @@
 
 ## Status
 
-Proposed
+Accepted
 
 ## Date
 
-2026-04-30
+2026-05-18
 
 ## Context
 
@@ -132,6 +132,51 @@ shows the React layer's composability.
 **Cohort:** Solana power users, ops/treasury teams, and
 component-library evaluators.
 
+### v1 ship scope (2026-05-18)
+
+The six entries above are the **target** gallery. The **v1 ship**,
+delivered with this ADR's acceptance, is a defensible starter:
+
+- The gallery **structure + index** (`samples/README.md` as the
+  in-repo gallery index, the `samples/<slug>/` layout, and the
+  `samples/` workspace-exclusion convention mirroring `examples/`).
+- **Exactly two canonical reference apps**, chosen as the two
+  highest-signal flows the SDK *actually supports today*:
+
+  1. **`reputation-leaderboard`** — the read-only discovery-by-
+     reputation dashboard (ADR-140 entry #4). Iterates registered
+     agent profiles via `AgentRegistryClient`, ranks by reputation,
+     and renders a leaderboard. No wallet required. This is the
+     social-proof / "see who else is here" lighthouse and the
+     single highest-conversion read flow.
+  2. **`escrow-explorer`** — derives and fetches `TaskEscrow` +
+     `ProtocolConfig` accounts via `SettlementClient`, rendering an
+     escrow's lifecycle state read-side. This is the honest
+     read-surface counterpart of the agent-to-agent settlement
+     thesis (ADR-140 entries #1/#2), explicitly flagging the
+     write-side (`createEscrow`, milestone approval) as the
+     documented SDK roadmap.
+
+**Why these two, not the originally-sketched marketplace/procurement
+pair:** `@agenomics/client@0.1.0` is **read-only** — `vault.ts`,
+`settlement.ts`, and `registry.ts` ship PDA derivation + typed
+account fetch only; instruction builders are out of scope for the
+0.1.0 SDK per ADR-098 (see `examples/README.md` "Honest scope").
+The two write-heavy entries (`agent-marketplace`,
+`claude-procurement-agent`) cannot be delivered as *runnable* v1
+apps without fabricating an unshipped write surface. The two read
+flows above exercise the registry and settlement surfaces
+end-to-end with the SDK as it exists today, mirror the
+`examples/register-agent.ts` discipline, and graduate cleanly into
+write-side variants the moment instruction builders land. Working
+code over breadth: two real apps beat six stubs.
+
+The remaining four entries (`agent-marketplace`,
+`claude-procurement-agent`, `x402-paywall`, `eliza-aep-agent`,
+`agent-vault-policy-cockpit`) remain the gallery target and are
+tracked as follow-up PRs (see Consequences → Follow-ups), gated on
+the SDK write-side surface (ADR-134 / ADR-098 roadmap).
+
 ### Curation criteria
 
 To qualify for the v0.1 gallery, each entry must:
@@ -222,7 +267,18 @@ To qualify for the v0.1 gallery, each entry must:
 
 ### Follow-ups
 
-- After this ADR is Accepted, the six samples are tracked as
+- **v1 shipped (this ADR):** the gallery structure/index +
+  `reputation-leaderboard` + `escrow-explorer` (both read-surface,
+  runnable on devnet, per the v1 ship scope above).
+- **Deferred, gated on the SDK write-side surface** (ADR-098 /
+  ADR-134 roadmap): `agent-marketplace`,
+  `claude-procurement-agent`, `x402-paywall`, `eliza-aep-agent`,
+  `agent-vault-policy-cockpit`. Each lands as its own follow-up PR
+  adding `samples/<slug>/` + a one-line gallery index entry, once
+  instruction builders make a *runnable* write-side demo honest.
+  `reputation-leaderboard` and `escrow-explorer` grow write-side
+  variants in place at the same milestone.
+- The six samples are tracked as
   separate PRs (one per sample), each adding `samples/<slug>/`
   + a one-line index entry on `agenomics.xyz/showcase`.
 - A "Built with Agenomics" inbound link program: every sample
@@ -295,3 +351,16 @@ mobilization.
 - Vercel Templates — https://vercel.com/templates
 - `examples/` (this repo) — the existing read-only example
   pattern; samples graduate from this directory's discipline.
+
+## Revisions
+
+- **2026-05-18** — Status `Proposed` → `Accepted`. Date bumped from
+  the original draft date (2026-04-30) to the acceptance date. Added
+  the **v1 ship scope** subsection to the Decision: v1 ships the
+  gallery structure/index + two read-surface reference apps
+  (`reputation-leaderboard`, `escrow-explorer`) rather than all six
+  entries at once, because `@agenomics/client@0.1.0` is read-only
+  (no instruction builders per ADR-098). The remaining four+ entries
+  stay the gallery target, tracked as write-side-gated follow-up
+  PRs. Original six-entry intent unchanged; only the *ship cadence*
+  was made defensible against the shipped SDK surface.
