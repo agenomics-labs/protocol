@@ -91,21 +91,44 @@ const agentIdentitySecretKeySchema = z
       .max(96, {
         message:
           "agentIdentitySecretKey base58 string is too long for a 64-byte secret",
-      }),
+      })
+      .describe(
+        "Base58-encoded 64-byte Solana secret key for the agent_identity hot key. Required if agentIdentity != wallet.publicKey.",
+      ),
     z
       .array(z.number().int().min(0).max(255))
       .length(64, {
         message:
           "agentIdentitySecretKey array must contain exactly 64 byte values (0..255)",
-      }),
+      })
+      .describe(
+        "JSON-style 64-byte secret key array for the agent_identity hot key.",
+      ),
   ])
-  .optional();
+  .optional()
+  // ADR-135: `.describe()` carries the MCP-client-visible field doc that
+  // pre-ADR-135 lived only in the hand-written tools/vault.ts JSON Schema.
+  .describe(
+    "ADR-124 (AUD-116 path-a) — OPTIONAL. The agent_identity's secret key, used locally to produce the proof-of-control signature. Never leaves the process. Omit for self-bind (wallet == agent_identity).",
+  );
 
 const createVaultInput = {
-  agentIdentity: solanaAddress,
-  dailyLimitSol: z.number().nonnegative(),
-  perTxLimitSol: z.number().nonnegative(),
-  maxTxsPerHour: z.number().int().nonnegative(),
+  agentIdentity: solanaAddress.describe(
+    "Public key of the agent identity linked to this vault (usually the agent's own address). Must match either `wallet.publicKey` (self-bind mode) or the pubkey derived from `agentIdentitySecretKey` (operator-managed mode).",
+  ),
+  dailyLimitSol: z
+    .number()
+    .nonnegative()
+    .describe("Maximum SOL that can be spent per day"),
+  perTxLimitSol: z
+    .number()
+    .nonnegative()
+    .describe("Maximum SOL per single transaction"),
+  maxTxsPerHour: z
+    .number()
+    .int()
+    .nonnegative()
+    .describe("Maximum number of transactions allowed per hour"),
   // ADR-124 (AUD-116 path-a): optional. When omitted, the handler self-binds
   // (agent_identity == wallet pubkey). When supplied, the handler uses the
   // secret key to produce the bind signature locally; the secret never
@@ -136,7 +159,11 @@ export const createVaultAction: Action<
 // ---------- get_vault_info ----------
 
 const getVaultInfoInput = {
-  vaultAddress: solanaAddress.optional(),
+  vaultAddress: solanaAddress
+    .optional()
+    .describe(
+      "Public key (base58) of the vault. If omitted, derives from the agent's wallet.",
+    ),
 } as const;
 
 export const getVaultInfoAction: Action<
@@ -159,8 +186,8 @@ export const getVaultInfoAction: Action<
 // ---------- vault_transfer ----------
 
 const vaultTransferInput = {
-  recipientAddress: solanaAddress,
-  amountSol: z.number().positive(),
+  recipientAddress: solanaAddress.describe("Public key of the recipient"),
+  amountSol: z.number().positive().describe("Amount to transfer in SOL"),
 } as const;
 
 /**
@@ -246,9 +273,16 @@ export const vaultTransferV2Action: Action<
 // ---------- vault_token_transfer ----------
 
 const vaultTokenTransferInput = {
-  tokenMintAddress: solanaAddress,
-  recipientTokenAccount: solanaAddress,
-  amount: z.number().positive(),
+  tokenMintAddress: solanaAddress.describe("Public key of the SPL token mint"),
+  recipientTokenAccount: solanaAddress.describe(
+    "Public key of the recipient's associated token account for the given mint",
+  ),
+  amount: z
+    .number()
+    .positive()
+    .describe(
+      "Amount of tokens to transfer in base units (e.g., 1000000 for 1 USDC)",
+    ),
 } as const;
 
 export const vaultTokenTransferAction: Action<
@@ -288,9 +322,19 @@ export const vaultTokenTransferAction: Action<
 // ---------- update_vault_policy ----------
 
 const updateVaultPolicyInput = {
-  dailyLimitSol: z.number().nonnegative(),
-  perTxLimitSol: z.number().nonnegative(),
-  maxTxsPerHour: z.number().int().nonnegative(),
+  dailyLimitSol: z
+    .number()
+    .nonnegative()
+    .describe("New daily spending limit in SOL"),
+  perTxLimitSol: z
+    .number()
+    .nonnegative()
+    .describe("New per-transaction limit in SOL"),
+  maxTxsPerHour: z
+    .number()
+    .int()
+    .nonnegative()
+    .describe("New max transactions per hour"),
 } as const;
 
 export const updateVaultPolicyAction: Action<
@@ -344,18 +388,30 @@ const newAgentIdentitySecretKeySchema = z
       .max(96, {
         message:
           "newAgentIdentitySecretKey base58 string is too long for a 64-byte secret",
-      }),
+      })
+      .describe(
+        "Base58-encoded 64-byte Solana secret key for the new agent_identity. Decoded server-side and used to sign the bind message; never sent on-chain.",
+      ),
     z
       .array(z.number().int().min(0).max(255))
       .length(64, {
         message:
           "newAgentIdentitySecretKey array must contain exactly 64 byte values (0..255)",
-      }),
+      })
+      .describe(
+        "JSON-style number[64] secret key for the new agent_identity. Same usage as the base58 form.",
+      ),
   ])
-  .optional();
+  .optional()
+  // ADR-135: MCP-client-visible field doc, formerly only in tools/vault.ts.
+  .describe(
+    "AUD-200 / ADR-124: optional. Base58 string or number[64] secret key for the new agent_identity. Required when `newAgentIdentity` differs from the wallet pubkey (operator-managed flow). Omit for self-bind (wallet IS the new agent_identity).",
+  );
 
 const rotateAgentIdentityInput = {
-  newAgentIdentity: zPubkey,
+  newAgentIdentity: zPubkey.describe(
+    "Base58-encoded Solana public key of the new agent_identity hot key. Must be a valid pubkey; on-chain requires an Ed25519 proof-of-control signature over `vault_identity_bind_message(authority, newAgentIdentity)` (see `newAgentIdentitySecretKey`).",
+  ),
   // AUD-200 / ADR-124: optional. When omitted, the handler self-binds (new
   // agent_identity == wallet pubkey). When supplied, the handler uses the
   // secret key to produce the bind signature locally; the secret never
@@ -446,10 +502,24 @@ export const resumeVaultAction: Action<Record<string, never>, unknown> = {
 // ---------- manage_allowlist ----------
 
 const manageAllowlistInput = {
-  action: z.enum(["add_token", "remove_token", "add_program", "remove_program"]),
-  address: solanaAddress,
-  perTxLimit: z.number().optional(),
-  dailyLimit: z.number().optional(),
+  action: z
+    .enum(["add_token", "remove_token", "add_program", "remove_program"])
+    .describe("The allowlist operation to perform"),
+  address: solanaAddress.describe(
+    "Public key of the token mint or program to add/remove",
+  ),
+  perTxLimit: z
+    .number()
+    .optional()
+    .describe(
+      "REQUIRED for add_token. Max per-tx amount in the mint's base units.",
+    ),
+  dailyLimit: z
+    .number()
+    .optional()
+    .describe(
+      "REQUIRED for add_token. Max daily amount in the mint's base units. Must be >= perTxLimit.",
+    ),
 } as const;
 
 export const manageAllowlistAction: Action<
@@ -473,8 +543,16 @@ export const manageAllowlistAction: Action<
 // ---------- query_execution_history (ADR-138) ----------
 
 const queryExecutionHistoryInput = {
-  agentIdentity: solanaAddress.optional(),
-  vault: solanaAddress.optional(),
+  agentIdentity: solanaAddress
+    .optional()
+    .describe(
+      "Base58 agent_identity hot-key pubkey. Mutually exclusive with `vault`.",
+    ),
+  vault: solanaAddress
+    .optional()
+    .describe(
+      "Base58 vault PDA. Mutually exclusive with `agentIdentity`.",
+    ),
   actionKind: z
     .enum([
       "Transfer",
@@ -486,15 +564,32 @@ const queryExecutionHistoryInput = {
       "GrantTransfer",
       "GrantTokenTransfer",
     ])
-    .optional(),
+    .optional()
+    .describe("Optional filter — limit to this action kind only."),
   toolId: z
     .string()
     .regex(/^[0-9a-fA-F]{64}$/, {
       message: "toolId must be a 64-char hex SHA-256 digest",
     })
-    .optional(),
-  since: z.number().int().nonnegative().optional(),
-  limit: z.number().int().min(1).max(500).optional(),
+    .optional()
+    .describe(
+      "Optional 64-char hex SHA-256 tool_id. See `toolIdHash(name)` in `@agenomics/client`.",
+    ),
+  since: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .describe(
+      "Optional lower-bound slot. Pass the previous response's `next_cursor.before_slot` to walk further into the past.",
+    ),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(500)
+    .optional()
+    .describe("Page size (1..500, default 50)."),
 } as const;
 
 export const queryExecutionHistoryAction: Action<

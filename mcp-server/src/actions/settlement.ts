@@ -34,17 +34,43 @@ function wrap<I>(fn: (args: Record<string, unknown>) => Promise<any>) {
 
 // ---------- create_escrow ----------
 
+// ADR-135: `.describe()` carries the MCP-client-visible field docs that
+// pre-ADR-135 lived only in the hand-written tools/settlement.ts JSON
+// Schema. NOTE the pre-ADR-135 tools/settlement.ts also advertised a
+// required `providerVaultAddress` field; the handler stopped accepting
+// it (handlers/settlement.ts "Finding #21" — the provider vault PDA is
+// derived from `providerAddress`), so it was stale drift the router
+// already ignored. ADR-135 makes the Zod schema authoritative, so the
+// derived schema correctly drops it (advertise the truthful contract).
 const createEscrowInput = {
-  providerAddress: solanaAddress,
-  tokenMintAddress: solanaAddress,
-  taskId: z.number(),
-  totalAmountTokens: z.number().positive(),
-  taskDescription: z.string(),
-  deadlineUnix: z.number(),
-  milestones: z.array(
-    z.object({ description: z.string(), amount: z.number() }),
-  ).min(1).max(5),
-  disputeResolverAddress: solanaAddress.optional(),
+  providerAddress: solanaAddress.describe("Public key of the provider agent"),
+  tokenMintAddress: solanaAddress.describe("SPL token mint for payment"),
+  taskId: z.number().describe("Unique numeric task ID"),
+  totalAmountTokens: z
+    .number()
+    .positive()
+    .describe("Total payment in token base units (e.g., 1000000 for 1 USDC)"),
+  taskDescription: z
+    .string()
+    .describe("Human-readable task description (hashed on-chain)"),
+  deadlineUnix: z
+    .number()
+    .describe("Unix timestamp deadline for task completion"),
+  milestones: z
+    .array(
+      z.object({
+        description: z.string().describe("Milestone description"),
+        amount: z
+          .number()
+          .describe("Payment amount for this milestone in token base units"),
+      }),
+    )
+    .min(1)
+    .max(5)
+    .describe("1-5 milestones. Amounts must sum to totalAmountTokens."),
+  disputeResolverAddress: solanaAddress
+    .optional()
+    .describe("Optional: public key of a third-party dispute resolver"),
 } as const;
 
 export const createEscrowAction: Action<
@@ -68,7 +94,9 @@ export const createEscrowAction: Action<
 
 // ---------- accept_task ----------
 
-const acceptTaskInput = { escrowAddress: solanaAddress } as const;
+const acceptTaskInput = {
+  escrowAddress: solanaAddress.describe("Public key of the escrow account"),
+} as const;
 
 export const acceptTaskAction: Action<
   z.infer<z.ZodObject<typeof acceptTaskInput>>,
@@ -91,8 +119,12 @@ export const acceptTaskAction: Action<
 // ---------- submit_milestone ----------
 
 const submitMilestoneInput = {
-  escrowAddress: solanaAddress,
-  milestoneIndex: z.number().int().nonnegative(),
+  escrowAddress: solanaAddress.describe("Public key of the escrow account"),
+  milestoneIndex: z
+    .number()
+    .int()
+    .nonnegative()
+    .describe("Zero-based index of the milestone to submit"),
 } as const;
 
 export const submitMilestoneAction: Action<
@@ -118,10 +150,23 @@ export const submitMilestoneAction: Action<
 // ---------- approve_milestone ----------
 
 const approveMilestoneInput = {
-  escrowAddress: solanaAddress,
-  milestoneIndex: z.number().int().nonnegative(),
-  providerTokenAccount: solanaAddress,
-  rating: z.number().min(0).max(5).optional(),
+  escrowAddress: solanaAddress.describe("Public key of the escrow account"),
+  milestoneIndex: z
+    .number()
+    .int()
+    .nonnegative()
+    .describe("Zero-based index of the milestone to approve"),
+  providerTokenAccount: solanaAddress.describe(
+    "Provider's token account to receive the milestone payment",
+  ),
+  rating: z
+    .number()
+    .min(0)
+    .max(5)
+    .optional()
+    .describe(
+      "Optional 0..=5 star rating. 0 means no rating (default). AUD-007 (PR-Q): `avg_rating` was removed from on-chain `AgentProfile`; the value is accepted for forward-compat (future rating ix) and currently has no on-chain effect.",
+    ),
 } as const;
 
 export const approveMilestoneAction: Action<
@@ -148,8 +193,12 @@ export const approveMilestoneAction: Action<
 // ---------- reject_milestone ----------
 
 const rejectMilestoneInput = {
-  escrowAddress: solanaAddress,
-  milestoneIndex: z.number().int().nonnegative(),
+  escrowAddress: solanaAddress.describe("Public key of the escrow account"),
+  milestoneIndex: z
+    .number()
+    .int()
+    .nonnegative()
+    .describe("Zero-based index of the milestone to reject"),
 } as const;
 
 export const rejectMilestoneAction: Action<
@@ -172,7 +221,9 @@ export const rejectMilestoneAction: Action<
 
 // ---------- get_escrow_status ----------
 
-const getEscrowStatusInput = { escrowAddress: solanaAddress } as const;
+const getEscrowStatusInput = {
+  escrowAddress: solanaAddress.describe("Public key of the escrow account"),
+} as const;
 
 export const getEscrowStatusAction: Action<
   z.infer<z.ZodObject<typeof getEscrowStatusInput>>,
@@ -193,7 +244,9 @@ export const getEscrowStatusAction: Action<
 
 // ---------- cancel_escrow ----------
 
-const cancelEscrowInput = { escrowAddress: solanaAddress } as const;
+const cancelEscrowInput = {
+  escrowAddress: solanaAddress.describe("Public key of the escrow account"),
+} as const;
 
 export const cancelEscrowAction: Action<
   z.infer<z.ZodObject<typeof cancelEscrowInput>>,
@@ -215,7 +268,9 @@ export const cancelEscrowAction: Action<
 
 // ---------- raise_dispute ----------
 
-const raiseDisputeInput = { escrowAddress: solanaAddress } as const;
+const raiseDisputeInput = {
+  escrowAddress: solanaAddress.describe("Public key of the escrow account"),
+} as const;
 
 export const raiseDisputeAction: Action<
   z.infer<z.ZodObject<typeof raiseDisputeInput>>,
@@ -239,11 +294,21 @@ export const raiseDisputeAction: Action<
 // ---------- resolve_dispute ----------
 
 const resolveDisputeInput = {
-  escrowAddress: solanaAddress,
-  clientRefundTokens: z.number().nonnegative(),
-  providerPaymentTokens: z.number().nonnegative(),
-  clientTokenAccount: solanaAddress,
-  providerTokenAccount: solanaAddress,
+  escrowAddress: solanaAddress.describe("Public key of the escrow account"),
+  clientRefundTokens: z
+    .number()
+    .nonnegative()
+    .describe("Amount to refund to client in token base units"),
+  providerPaymentTokens: z
+    .number()
+    .nonnegative()
+    .describe("Amount to pay provider in token base units"),
+  clientTokenAccount: solanaAddress.describe(
+    "Client's token account for the refund",
+  ),
+  providerTokenAccount: solanaAddress.describe(
+    "Provider's token account for the payment",
+  ),
 } as const;
 
 export const resolveDisputeAction: Action<
@@ -275,7 +340,11 @@ export const resolveDisputeAction: Action<
 
 // ---------- resolve_dispute_timeout ----------
 
-const resolveDisputeTimeoutInput = { escrowAddress: solanaAddress } as const;
+const resolveDisputeTimeoutInput = {
+  escrowAddress: solanaAddress.describe(
+    "Public key of the escrow account with an expired dispute",
+  ),
+} as const;
 
 export const resolveDisputeTimeoutAction: Action<
   z.infer<z.ZodObject<typeof resolveDisputeTimeoutInput>>,

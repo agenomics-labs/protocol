@@ -1,21 +1,27 @@
-import { Tool } from "@modelcontextprotocol/sdk/types";
+// ADR-135 — Governance MCP tool descriptor, DERIVED from the
+// single-source Zod schema in `actions/governance.ts`.
+//
+// `verify_protocol_invariants` sweeps a batch of `AgentProfile`
+// accounts and re-runs `assert_valid_profile` on-chain. The batch cap
+// (MAX_INVARIANT_BATCH = 16, AUD-106) lives in `actions/governance.ts`
+// as the single source; the rendered JSON Schema's `maxItems` is now a
+// projection of that Zod `.max()` rather than a hand-mirrored literal,
+// so the advertised cap and the router-enforced cap cannot diverge.
+
+import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import { renderInputSchema } from "./render-schema.js";
+import {
+  verifyProtocolInvariantsAction,
+  MAX_INVARIANT_BATCH as ACTION_MAX_INVARIANT_BATCH,
+} from "../actions/governance.js";
 
 /**
- * Governance Tools (1) — protocol-wide instructions whose signer is the
- * upgrade-authority / multisig rather than a domain-scoped admin.
- *
- * AUD-206 (cycle-3, roadmap §3 B2): typed MCP-tool wrapper for
- * `verify_protocol_invariants`. The on-chain ix sweeps a batch of
- * `AgentProfile` accounts and re-runs `assert_valid_profile` over each.
- * Bounded by MAX_INVARIANT_BATCH = 16 (AUD-106).
+ * Re-export of the single-source batch cap (defined in
+ * `actions/governance.ts`) for any pre-ADR-135 importer that read it
+ * from this module. New code should import it from
+ * `actions/governance.ts` directly.
  */
-
-/**
- * Mirror of the schema-layer cap in `actions/governance.ts`. Exposed in
- * the JSON schema's `maxItems` so MCP clients see the limit in their
- * tool-list response and can refuse oversized batches before submission.
- */
-export const MAX_INVARIANT_BATCH = 16 as const;
+export const MAX_INVARIANT_BATCH = ACTION_MAX_INVARIANT_BATCH;
 
 export const verifyProtocolInvariantsTool: Tool = {
   name: "verify_protocol_invariants",
@@ -29,22 +35,5 @@ export const verifyProtocolInvariantsTool: Tool = {
     "sweeps into multiple calls. On-chain authorization is " +
     "`ProtocolConfig.authority` (Settlement program); the MCP-layer claim " +
     "`gov:invariant:check` is the default-deny wall (ADR-058 §4).",
-  inputSchema: {
-    type: "object",
-    properties: {
-      accounts: {
-        type: "array",
-        items: {
-          type: "string",
-          description: "Base58-encoded `AgentProfile` PDA pubkey",
-        },
-        minItems: 1,
-        maxItems: MAX_INVARIANT_BATCH,
-        description:
-          `Batch of agent-profile PDAs to sweep (1-${MAX_INVARIANT_BATCH}). ` +
-          "AUD-106: the on-chain handler enforces the same upper bound.",
-      },
-    },
-    required: ["accounts"],
-  },
+  inputSchema: renderInputSchema(verifyProtocolInvariantsAction.inputSchema),
 };

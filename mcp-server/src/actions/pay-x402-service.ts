@@ -95,7 +95,12 @@ export const STUB_DAILY_LIMIT_MICROS = 25_000_000 as const;
  *    AWS judging-criterion artifact."
  */
 const payX402ServiceInput = {
-  agent_address: zPubkey,
+  // ADR-135: `.describe()` carries the MCP-client-visible field docs
+  // that pre-ADR-135 lived only in the hand-written
+  // tools/pay-x402-service.ts JSON Schema.
+  agent_address: zPubkey.describe(
+    "AEP-registered agent (the spender), base58-encoded Solana pubkey.",
+  ),
   service_url: z
     .string()
     .url({ message: "service_url must be a valid https:// URL" })
@@ -103,11 +108,16 @@ const payX402ServiceInput = {
       message:
         "service_url must use https:// (http:// is rejected to prevent " +
         "credential-leaking man-in-the-middle on x402 settlement)",
-    }),
+    })
+    .describe("x402-protected URL to call."),
   max_price_usdc_micros: z
     .number()
     .int({ message: "max_price_usdc_micros must be an integer (USDC micros)" })
-    .positive({ message: "max_price_usdc_micros must be > 0" }),
+    .positive({ message: "max_price_usdc_micros must be > 0" })
+    .describe(
+      "Hard cap on the payment in USDC micros (10^-6 USDC). Tool " +
+        "refuses if the x402 quote exceeds this value.",
+    ),
   request: z.object({
     method: z.enum(["GET", "POST"]),
     headers: z.record(z.string()).optional(),
@@ -118,7 +128,11 @@ const payX402ServiceInput = {
     .min(1, {
       message:
         "reasoning is mandatory and must be non-empty (spec IC-3 line 136)",
-    }),
+    })
+    .describe(
+      "Mandatory natural-language justification for this call. Empty " +
+        "reasoning is rejected (spec IC-3, line 136).",
+    ),
   /**
    * Optional 16-byte hex nonce for payment-id idempotency (spec error-table
    * row 6, "Network timeout post-payment"). When omitted, the action

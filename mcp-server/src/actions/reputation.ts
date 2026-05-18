@@ -24,8 +24,15 @@ function wrap<I>(fn: (args: Record<string, unknown>) => Promise<any>) {
   };
 }
 
+// ADR-135: `.describe()` carries the MCP-client-visible field doc that
+// pre-ADR-135 lived only in the hand-written tools/registry.ts JSON Schema.
 const getAgentReputationInput = {
-  agentAddress: z.string().optional(),
+  agentAddress: z
+    .string()
+    .optional()
+    .describe(
+      "Public key (authority) of the agent to look up. If omitted, returns this agent's snapshot.",
+    ),
 } as const;
 
 export const getAgentReputationAction: Action<
