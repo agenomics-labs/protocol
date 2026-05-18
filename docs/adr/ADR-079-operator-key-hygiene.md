@@ -1,10 +1,10 @@
 # ADR-079: Operator key hygiene and KMS migration trigger
 
 ## Status
-Proposed
+Accepted
 
 ## Date
-2026-04-22
+2026-05-18
 
 ## Context
 
@@ -132,10 +132,51 @@ Triggered when a signer's hardware device, KMS credentials, or paper backup is b
 - **Devnet iteration stays cheap pre-trigger.** Until the multisig takes real upgrade authority, devnet development is unchanged from today.
 
 ## References
-- `docs/adr/ADR-063-sas-credential-authority-governance.md` §3, §4, §6 — governance thresholds, rotation procedure, emergency response template
-- `docs/adr/ADR-078-program-upgrade-authority-transfer.md` §5 — mainnet prerequisites checklist (this ADR is one of the items)
+
+Related ADRs (this ADR composes with, does not supersede, each):
+
+- `docs/adr/ADR-078-program-upgrade-authority-transfer.md` §5 — **upgrade
+  authority.** This ADR's §1 bright-line trigger is exactly one of
+  ADR-078 §5's mainnet prerequisites; ADR-078 governs *how* upgrade
+  authority transfers, this ADR governs *what custody* the receiving
+  signers must hold before that transfer is permitted.
+- `docs/adr/ADR-063-sas-credential-authority-governance.md` §3, §4, §6 —
+  **credential authority.** Governance thresholds, the 14-day-notice
+  rotation procedure §5 reuses, and the emergency-response template §6
+  reuses. A multisig holding only SAS credential authority follows §2/§3
+  of this ADR but is out of scope for the §1 bright-line rule (the blast
+  radius is scoped to attestation validity, not protocol execution).
+- `docs/adr/ADR-077-aep-validators-credential-bootstrap.md` —
+  **credential authority (validators).** The `AEP_VALIDATORS` multisig
+  bootstrapped there is one of the three multisigs §-Consequences counts
+  for the hardware-cost estimate; its signers are subject to §2/§3/§4
+  custody requirements once it holds any authority.
 - `docs/adr/DEEP-AUDIT-2026-04-22.md` Audit 3 gaps #10, #11 — the two operator-key hygiene gaps this ADR closes
 - `docs/STATUS.md` §4, §8 — current single-key signer-1 state, devnet throwaway signers 2/3
 - `docs/SQUADS_DEVNET.md` — devnet operator runbook (to be updated with §3's load-bearing "losable" sentence)
 - `docs/governance/custody.md` — (to be created) custody drill log, secondary-custodian roster, device-destruction record
 - `docs/governance/signers.md` — (referenced by ADR-063 §7, to be created alongside ADR-063's acceptance) per-signer custody attestations per §4
+
+## Revisions
+
+### 2026-05-18 — Accepted
+
+Status flipped Proposed → Accepted. This ADR codifies the operational
+key-hygiene policy the project already implicitly follows and makes it
+enforceable/auditable:
+
+- **§1 bright-line trigger** is the binding precondition on ADR-078 §5's
+  mainnet-prerequisites checklist: no production program's upgrade
+  authority transfers to a multisig until every signer on that multisig
+  is on hardware or KMS.
+- **§2 signer-1 cold-storage backup** is in force *now* (pre-trigger),
+  independent of §1, closing the GOV-11 single-copy gap.
+- **§3** keeps the devnet `.keys/` throwaway policy explicitly bounded to
+  the no-authority state, with the load-bearing "losable — do not use
+  for any multisig that holds authority" sentence required in
+  `docs/SQUADS_DEVNET.md`.
+- **§4 (hardware/KMS, ≤2 KMS slots), §5 (24-/12-month rotation cadence),
+  §6 (T+0…T+7d compromise-response timeline)** are the auditable controls.
+
+No protocol code changes (DOCS-only, per Context); enforcement is
+operational procedure cross-referenced to ADR-063 §3/§4/§6 thresholds.
