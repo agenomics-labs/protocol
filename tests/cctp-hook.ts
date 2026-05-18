@@ -121,6 +121,7 @@ describe("Surface 3 — cctp-hook program", () => {
     baseTxHash: number[];
     amountReturnedMicros: anchor.BN;
     cdpRecipient: number[];
+    cctpMessage: Buffer;
   }> = {}) {
     return {
       escrowPda: overrides.escrowPda ?? fakeEscrow.publicKey,
@@ -129,6 +130,19 @@ describe("Surface 3 — cctp-hook program", () => {
       amountReturnedMicros:
         overrides.amountReturnedMicros ?? new anchor.BN(80_000),
       cdpRecipient: overrides.cdpRecipient ?? Array(20).fill(0xcc),
+      // ADR-145: `cctp_message` is an Anchor `bytes` field. The 0.31
+      // borsh encoder's `Blob.encode` requires a Node `Buffer` as the
+      // source — a plain JS array (`[]`) throws
+      // `Blob.encode[data] requires Buffer as src` at CLIENT-SIDE
+      // serialization, before the tx is ever sent (it never reaches
+      // the program). Default to an empty `Buffer`: on the default
+      // (feature-OFF) build the HARD DEPLOY GUARD fails closed before
+      // `cctp_message` is ever inspected, so an empty buffer is the
+      // correct default-build payload. The genuine CCTP V2
+      // verification path (non-empty message + used_nonce witness) is
+      // exercised by the Rust unit tests on the
+      // `cctp_attestation_verified` build.
+      cctpMessage: overrides.cctpMessage ?? Buffer.from([]),
     };
   }
 
@@ -222,9 +236,12 @@ describe("Surface 3 — cctp-hook program", () => {
       // about set-equality on the IC-4 quartet.
       const fieldSet = new Set(fieldNames);
       // Q-S3-A: the IC-4 quartet is now a quintet with `cdp_recipient`.
+      // ADR-145: + `cctp_message` (full Circle CCTP V2 message bytes the
+      // Hook re-derives the used_nonce PDA from).
       const expectedSnake = [
         "amount_returned_micros",
         "base_tx_hash",
+        "cctp_message",
         "cdp_recipient",
         "escrow_pda",
         "milestone_index",
@@ -232,6 +249,7 @@ describe("Surface 3 — cctp-hook program", () => {
       const expectedCamel = [
         "amountReturnedMicros",
         "baseTxHash",
+        "cctpMessage",
         "cdpRecipient",
         "escrowPda",
         "milestoneIndex",
@@ -281,6 +299,61 @@ describe("Surface 3 — cctp-hook program", () => {
   // (those deeper gates are unit-tested at the Rust layer regardless).
   const GUARD_ERR = "CctpAttestationNotVerified";
 
+  // Robust error-surface extractor.
+  //
+  // The negative-path tests below assert (via substring match) WHICH gate
+  // rejected the tx. They previously used `JSON.stringify(err)`, but
+  // `@solana/web3.js@^1.98` `SendTransactionError` carries its diagnostic
+  // payload (`message`, `logs`, `transactionLogs`) on NON-ENUMERABLE
+  // properties, so `JSON.stringify` collapses to `{}` and every
+  // substring assertion silently fails even though the program rejected
+  // exactly as intended (the on-chain `AnchorError ... Error Code:
+  // CctpAttestationNotVerified` is right there in the program logs).
+  //
+  // This helper flattens every place the rejection text can live —
+  // `err.message`, `err.logs`, `err.transactionLogs`,
+  // `err.programErrorStack`, the Anchor-parsed `err.error.errorCode`,
+  // and `String(err)` — into one searchable string. It does NOT weaken
+  // any assertion: the tests still require the rejection to be the
+  // deploy guard (or, on a guard-enabled build, a specific downstream
+  // gate). It only makes the match see the real program error instead
+  // of an empty `{}`.
+  function errText(err: any): string {
+    const parts: string[] = [];
+    try { parts.push(String(err)); } catch {}
+    if (err && typeof err === "object") {
+      if (err.message) parts.push(String(err.message));
+      if (err.toString && err.toString !== Object.prototype.toString) {
+        try { parts.push(err.toString()); } catch {}
+      }
+      if (Array.isArray(err.logs)) parts.push(err.logs.join("\n"));
+      if (Array.isArray(err.transactionLogs))
+        parts.push(err.transactionLogs.join("\n"));
+      if (Array.isArray(err.programErrorStack))
+        parts.push(err.programErrorStack.map((x: any) => String(x)).join("\n"));
+      if (err.error?.errorCode)
+        parts.push(JSON.stringify(err.error.errorCode));
+      if (err.error?.errorMessage) parts.push(String(err.error.errorMessage));
+      if (typeof err.getLogs === "function") {
+        try {
+          const l = err.getLogs();
+          if (Array.isArray(l)) parts.push(l.join("\n"));
+        } catch {}
+      }
+      try {
+        parts.push(
+          JSON.stringify(
+            err,
+            Object.getOwnPropertyNames(err).filter(
+              (k) => k !== "stack",
+            ),
+          ),
+        );
+      } catch {}
+    }
+    return parts.join(" || ");
+  }
+
   describe("pre-CPI validation", () => {
     // C4-OB-01(e): STRICT positive assertion of the SECURITY invariant.
     //
@@ -319,7 +392,7 @@ describe("Surface 3 — cctp-hook program", () => {
           .rpc();
         expect.fail("auto_approve_milestone MUST reject on a default (feature-off) build");
       } catch (err: any) {
-        const msg = JSON.stringify(err);
+        const msg = errText(err);
         // 1. The failure is the deploy guard OR a pre-handler account
         //    constraint — i.e. the program rejected, deterministically,
         //    before the fund-release logic.
@@ -384,7 +457,7 @@ describe("Surface 3 — cctp-hook program", () => {
           .rpc();
         expect.fail("expected the Hook to reject a wrong-escrow payload");
       } catch (err: any) {
-        const msg = JSON.stringify(err);
+        const msg = errText(err);
         expect(
           msg.includes(GUARD_ERR) ||
             msg.includes("PayloadEscrowMismatch") ||
@@ -414,7 +487,7 @@ describe("Surface 3 — cctp-hook program", () => {
           .rpc();
         expect.fail("expected the Hook to reject an all-zero base_tx_hash payload");
       } catch (err: any) {
-        const msg = JSON.stringify(err);
+        const msg = errText(err);
         // The account-level deploy guard fires first on the default build;
         // the older InvalidBaseTxHash / escrow / Registry gates are
         // accepted alternates on a guard-enabled build.
@@ -446,7 +519,7 @@ describe("Surface 3 — cctp-hook program", () => {
           .rpc();
         expect.fail("expected the Hook to reject a zero amount_returned_micros payload");
       } catch (err: any) {
-        const msg = JSON.stringify(err);
+        const msg = errText(err);
         expect(
           msg.includes(GUARD_ERR) ||
             msg.includes("ZeroAmountReturned") ||
@@ -482,7 +555,7 @@ describe("Surface 3 — cctp-hook program", () => {
           .rpc();
         expect.fail("expected the Hook to reject a wrong settlement_program");
       } catch (err: any) {
-        const msg = JSON.stringify(err);
+        const msg = errText(err);
         expect(
           msg.includes(GUARD_ERR) ||
             msg.includes("InvalidSettlementProgram") ||
@@ -515,7 +588,7 @@ describe("Surface 3 — cctp-hook program", () => {
           .rpc();
         expect.fail("expected the Hook to reject a wrong registry_program");
       } catch (err: any) {
-        const msg = JSON.stringify(err);
+        const msg = errText(err);
         expect(
           msg.includes(GUARD_ERR) ||
             msg.includes("InvalidRegistryProgram") ||
@@ -548,7 +621,7 @@ describe("Surface 3 — cctp-hook program", () => {
           .rpc();
         expect.fail("expected the Hook to reject a non-Settlement-owned escrow");
       } catch (err: any) {
-        const msg = JSON.stringify(err);
+        const msg = errText(err);
         expect(
           msg.includes(GUARD_ERR) ||
             msg.includes("EscrowOwnerMismatch") ||
@@ -649,7 +722,7 @@ describe("Surface 3 — cctp-hook program", () => {
           .rpc();
         expect.fail("expected the Hook to reject when agent_profile is uninitialized");
       } catch (err: any) {
-        const msg = JSON.stringify(err);
+        const msg = errText(err);
         expect(
           msg.includes(GUARD_ERR) ||
             msg.includes("AgentProfileDeserializeFailed") ||
@@ -689,7 +762,7 @@ describe("Surface 3 — cctp-hook program", () => {
           .rpc();
         expect.fail("expected the Hook to reject a non-Registry agent_profile");
       } catch (err: any) {
-        const msg = JSON.stringify(err);
+        const msg = errText(err);
         expect(
           msg.includes(GUARD_ERR) ||
             msg.includes("AgentProfileDeserializeFailed") ||

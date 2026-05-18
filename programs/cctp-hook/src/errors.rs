@@ -92,4 +92,71 @@ pub enum HookError {
          cluster for integration testing."
     )]
     CctpAttestationNotVerified,
+
+    // ---- ADR-145: genuine on-chain CCTP V2 attestation verification ----
+    #[msg(
+        "ADR-145: the cctp_message_transmitter account is not the canonical \
+         Circle CCTP V2 MessageTransmitterV2 program ID."
+    )]
+    InvalidCctpMessageTransmitter,
+
+    #[msg(
+        "ADR-145: the used_nonce account is not owned by the Circle CCTP V2 \
+         MessageTransmitterV2 program — it cannot be a genuine consumed-nonce \
+         PDA."
+    )]
+    UsedNonceOwnerMismatch,
+
+    #[msg(
+        "ADR-145: the supplied used_nonce account address does not equal the \
+         canonical [b\"used_nonce\", message[12..44]] PDA derived from the \
+         CCTP message under MessageTransmitterV2 — the message does not \
+         correspond to this nonce account."
+    )]
+    UsedNonceAddressMismatch,
+
+    #[msg(
+        "ADR-145: the used_nonce PDA exists but UsedNonce.is_used is false — \
+         the Circle CCTP V2 message was not actually consumed (no attested \
+         mint occurred for this nonce)."
+    )]
+    CctpNonceNotConsumed,
+
+    #[msg(
+        "ADR-145: the CCTP V2 message header is malformed or shorter than \
+         MESSAGE_BODY_INDEX (148) — cannot parse nonce/source/body."
+    )]
+    CctpMessageMalformed,
+
+    #[msg(
+        "ADR-145: the CCTP V2 message destination_domain does not equal the \
+         Solana CCTP domain (5)."
+    )]
+    CctpWrongDestinationDomain,
+
+    #[msg(
+        "ADR-145: the CCTP V2 message source_domain does not equal the \
+         expected Base CCTP domain (6)."
+    )]
+    CctpWrongSourceDomain,
+
+    #[msg(
+        "ADR-145: the CCTP V2 BurnMessage body is malformed or shorter than \
+         the minimum burn-payload length (228 bytes)."
+    )]
+    CctpBurnBodyMalformed,
+
+    #[msg(
+        "ADR-145: the verified CCTP V2 BurnMessage `amount` does not equal \
+         payload.amount_returned_micros — the attested mint is for a \
+         different number than the payload claims."
+    )]
+    CctpAmountBindingMismatch,
+
+    #[msg(
+        "ADR-145: payload.base_tx_hash does not equal keccak-bound digest of \
+         the verified CCTP V2 message (source_domain || nonce) — base_tx_hash \
+         is not bound to the attested message."
+    )]
+    CctpBaseTxBindingMismatch,
 }
