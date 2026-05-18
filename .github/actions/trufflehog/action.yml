@@ -91,6 +91,20 @@ runs:
           fi
         fi
         ##########################################
+        ##  ADR-146: scoped connection-string   ##
+        ##  fixture allowlist (NOT a detector   ##
+        ##  weaken; path-anchored, see          ##
+        ##  .github/trufflehog-exclude.txt)     ##
+        ##########################################
+        # The repo is bind-mounted at /tmp inside the container, so the
+        # exclude file's in-container path is /tmp/.github/...; only
+        # passed when the file is present so the action stays a no-op
+        # for repos that have not opted in.
+        EXCLUDE_ARG=""
+        if [ -f .github/trufflehog-exclude.txt ]; then
+          EXCLUDE_ARG="--exclude-paths /tmp/.github/trufflehog-exclude.txt"
+        fi
+        ##########################################
         ##          Run TruffleHog              ##
         ##########################################
         docker run --rm -v .:/tmp -w /tmp \
@@ -103,4 +117,5 @@ runs:
         --fail \
         --no-update \
         --github-actions \
+        ${EXCLUDE_ARG} \
         ${ARGS:-''}

@@ -1,0 +1,40 @@
+# TruffleHog --exclude-paths regex allowlist (ADR-146).
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# The Secret Scan gate runs TruffleHog with `--results=verified,unknown`
+# (.github/workflows/ci.yml). For the Postgres detector an `unknown`
+# result is emitted for ANY connection-string-shaped token — including
+# the `postgres://` / `postgresql://` / `sslmode=` literals that
+# connection-string-HANDLING code legitimately contains in error
+# messages, doc comments, test names, and credential-free unit-test
+# fixtures. The scanner cannot distinguish "code that parses DSNs" from
+# "a leaked DSN", so the gate produces an irreducible false positive on
+# the C4-OFF-04 PG-TLS work.
+#
+# POLICY (ADR-146): the sanctioned remediation is a MINIMALLY-SCOPED
+# path exclusion — NOT weakening detectors and NOT dropping `unknown`
+# globally. Each pattern below is anchored (`^...$`) to exactly ONE
+# file that the C4-OFF-04 audit fix introduced/owns. The fixtures in
+# these files carry NO credentials and use the RFC 6761 reserved,
+# guaranteed-non-resolvable `.invalid` TLD, so excluding them removes
+# zero real secret-detection coverage.
+#
+# Adding a path here REQUIRES: (1) the file genuinely handles
+# connection strings as data, (2) it contains no real credentials,
+# (3) an ADR-146-style rationale, (4) the narrowest possible anchored
+# regex. See docs/adr/ADR-146-trufflehog-connection-string-fixture-allowlist.md
+# and the C4-OFF-04 finding (ADR-128 transport-security addendum).
+#
+# One Go-RE2 regex per line; matched against the repo-relative path.
+
+# C4-OFF-04: resolvePoolSsl() + the PG pool config. Contains
+# `postgres://`/`postgresql://`/`sslmode=` tokens in error messages
+# and the transport-security doc block — no secrets.
+^src/indexer/postgres-store\.ts$
+
+# C4-OFF-04: resolvePoolSsl() unit tests. DSNs are built from
+# clearly-fake parts (host `db.invalid`, no userinfo) via a `dsn()`
+# helper; the only credentialed literals are pre-existing green-main
+# loopback (`127.0.0.1`) fixtures TruffleHog already does not flag.
+^src/indexer/test/aud-128-postgres-store\.test\.ts$

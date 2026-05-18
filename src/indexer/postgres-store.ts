@@ -145,6 +145,83 @@ export const parsePositiveMsEnv = parsePositiveIntEnv;
 export const INDEXER_PG_POOL_MAX_DEFAULT = 10;
 
 // ---------------------------------------------------------------------------
+// C4-OFF-04 (cycle-4 security re-audit) — transport security for the
+// ADR-128 shadow stream.
+//
+// Pre-fix `poolConfig` set no `ssl` field, so `pg.Pool` connected with
+// whatever the connection string implied — and a URL that omits
+// `?sslmode=require` connects in PLAINTEXT. Event bodies (instruction
+// data, pubkeys, the dual-write shadow stream) crossed the wire in the
+// clear and were downgrade-able by an on-path attacker; an injected
+// `sslmode=disable` in the URL was silently honoured.
+//
+// Fix: fail-closed. Outside an explicit dev/insecure escape hatch the
+// pool REQUIRES TLS with certificate verification
+// (`{ rejectUnauthorized: true }`), and a URL whose `sslmode` asks for
+// plaintext (`disable`/`allow`/`prefer`) is rejected at boot rather
+// than silently honoured. Localhost loopback is exempt (a local socket
+// is not on-path); `INDEXER_PG_INSECURE=1` is the documented, loud
+// opt-out for non-prod environments that genuinely have no TLS.
+//
+// Least-privilege role split is operator config, not code: the indexer
+// runtime path only ever issues DML (INSERT/SELECT/UPDATE) — DDL is
+// confined to the explicit `applyMigration()` boot step. Operators
+// SHOULD provision two roles: a migration role with DDL for the one-
+// shot migration and a constrained runtime role with DML-only grants
+// for `INDEXER_PG_URL`. See ADR-128 addendum.
+const PLAINTEXT_SSLMODES = new Set(["disable", "allow", "prefer"]);
+
+/**
+ * Loopback hosts where a plaintext PG socket is not on-path and TLS
+ * enforcement would only obstruct local development.
+ */
+const LOOPBACK_HOSTS = new Set([
+  "localhost",
+  "127.0.0.1",
+  "::1",
+  "[::1]",
+]);
+
+/**
+ * C4-OFF-04 — derive the `pg.Pool` `ssl` option fail-closed.
+ *
+ * Exported for unit testing: the live `pg.Pool` defers connection
+ * until first query, so the only observable contract at construction
+ * time is the resolved `PoolConfig`.
+ *
+ * @throws if a non-loopback URL requests a plaintext `sslmode` and the
+ *   `INDEXER_PG_INSECURE=1` escape hatch is NOT set.
+ */
+export function resolvePoolSsl(
+  parsedUrl: URL,
+  env: NodeJS.ProcessEnv,
+): PoolConfig["ssl"] {
+  const insecure = env.INDEXER_PG_INSECURE === "1";
+  const host = parsedUrl.hostname.toLowerCase();
+  const isLoopback = LOOPBACK_HOSTS.has(host);
+  const sslmode = (parsedUrl.searchParams.get("sslmode") || "").toLowerCase();
+
+  // Explicit, loud opt-out — or a loopback socket that isn't on-path.
+  if (insecure || isLoopback) {
+    return undefined;
+  }
+
+  // Fail-closed: a remote URL that asks for plaintext is an operator
+  // config error, not a runtime fault. Surface it at boot.
+  if (sslmode !== "" && PLAINTEXT_SSLMODES.has(sslmode)) {
+    throw new Error(
+      `INDEXER_PG_URL requests sslmode=${sslmode} for a non-loopback host ` +
+        `(${host}); plaintext Postgres is refused fail-closed. Use a TLS ` +
+        `connection (sslmode=require/verify-full) or set INDEXER_PG_INSECURE=1 ` +
+        `to explicitly opt out in a non-production environment.`,
+    );
+  }
+
+  // Default: require TLS with full certificate verification.
+  return { rejectUnauthorized: true };
+}
+
+// ---------------------------------------------------------------------------
 // OFF-214 (cycle-3 off-chain audit) — single source of truth for the
 // Phase 1 table set.
 //
@@ -828,6 +905,7 @@ export function createPostgresStore(env: NodeJS.ProcessEnv = process.env): Postg
     return new DisabledPostgresStore();
   }
   // Fail-closed validation (URL parse).
+  let parsedUrl: URL;
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== "postgres:" && parsed.protocol !== "postgresql:") {
@@ -835,6 +913,7 @@ export function createPostgresStore(env: NodeJS.ProcessEnv = process.env): Postg
         `INDEXER_PG_URL protocol must be postgres:// or postgresql:// (got ${parsed.protocol})`,
       );
     }
+    parsedUrl = parsed;
   } catch (err) {
     // Re-throw with clearer attribution; a malformed URL at boot is an
     // operator config error, not a runtime fault.
@@ -859,9 +938,14 @@ export function createPostgresStore(env: NodeJS.ProcessEnv = process.env): Postg
   // positive fallback to the documented default. The pool also wires
   // a process-survivable `error` handler so an idle-client socket
   // failure logs and is contained instead of crashing the indexer.
+  // C4-OFF-04: fail-closed TLS. Throws here (outside the malformed-URL
+  // catch above, so the message is not masked) if a remote URL asks
+  // for plaintext without the explicit INDEXER_PG_INSECURE=1 opt-out.
+  const ssl = resolvePoolSsl(parsedUrl, env);
   const poolConfig: PoolConfig = {
     connectionString: url,
     max: poolMax,
+    ...(ssl !== undefined ? { ssl } : {}),
     connectionTimeoutMillis: parsePositiveIntEnv(
       env.INDEXER_PG_CONNECTION_TIMEOUT_MS,
       INDEXER_PG_CONNECTION_TIMEOUT_DEFAULT_MS,
