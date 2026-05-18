@@ -9,6 +9,19 @@ pub struct VaultInitialized {
     pub per_tx_limit: u64,
 }
 
+/// OA-MED-1 (cycle-4): emitted when the vault authority re-points
+/// `vault.profile_nonce` at the live Registry `OwnerNonce` to recover
+/// from a deregister/re-register desync. Indexers can detect the
+/// re-binding and re-resolve the agent's profile PDA.
+#[event]
+pub struct ProfileNonceResynced {
+    pub vault: Pubkey,
+    pub authority: Pubkey,
+    pub old_profile_nonce: u64,
+    pub new_profile_nonce: u64,
+    pub timestamp: i64,
+}
+
 /// Emitted when the vault authority rotates `agent_identity` via
 /// `update_agent_identity`. Indexers should treat this as the authoritative
 /// signal that the old identity key is no longer authorized to sign

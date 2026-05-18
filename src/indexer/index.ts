@@ -556,6 +556,14 @@ const DISCRIMINATOR_MAP: Record<string, string> = {
   "597b42ded5f14ef3": "DelegationGrantRevoked",
   de3e0cc9bca0dfc7: "DelegationGrantUpdated",
   b588434af4e727f9: "DelegationGrantExecuted",
+  // OA-MED-1 (cycle-4, PR #182): ProfileNonceResynced — emitted by the new
+  // resync_profile_nonce recovery instruction when the vault authority
+  // re-points vault.profile_nonce at the live Registry OwnerNonce after an
+  // ADR-097 deregister/re-register cycle. Disc-map value matches
+  // sha256("event:ProfileNonceResynced")[..8]; cross-verified by
+  // scripts/check-event-coverage.ts. The decoder lives below in
+  // EVENT_DECODERS.
+  "2c45cea87b907e5a": "ProfileNonceResynced",
 
   // settlement
   "467f69665c6107ad": "EscrowCreated",
@@ -651,6 +659,8 @@ const EVENT_PROGRAM: Record<string, Address> = (() => {
     "DelegationGrantRevoked",
     "DelegationGrantUpdated",
     "DelegationGrantExecuted",
+    // OA-MED-1 (cycle-4, PR #182): resync_profile_nonce recovery ix.
+    "ProfileNonceResynced",
   ]) {
     m[e] = vault;
   }
@@ -1222,6 +1232,27 @@ const EVENT_DECODERS: Record<string, EventDecoder> = {
     recipient: r.pubkey(),
     amount: u64ToJson(r.u64()),
     spent_after: u64ToJson(r.u64()),
+    timestamp: i64ToJson(r.i64()),
+  }),
+
+  // OA-MED-1 (cycle-4, PR #182): ProfileNonceResynced — emitted by the new
+  // resync_profile_nonce recovery instruction when the vault authority
+  // re-points vault.profile_nonce at the live Registry OwnerNonce after an
+  // ADR-097 deregister/re-register cycle would otherwise have bricked
+  // grant/transfer execution (stale profile PDA → AccountNotInitialized).
+  // Indexers can detect the re-binding and re-resolve the agent profile.
+  // Wire layout verbatim from programs/agent-vault/src/events.rs
+  // `ProfileNonceResynced` (Borsh is positional — order MUST match):
+  //   pub vault: Pubkey
+  //   pub authority: Pubkey
+  //   pub old_profile_nonce: u64
+  //   pub new_profile_nonce: u64
+  //   pub timestamp: i64
+  ProfileNonceResynced: (r) => ({
+    vault: r.pubkey(),
+    authority: r.pubkey(),
+    old_profile_nonce: u64ToJson(r.u64()),
+    new_profile_nonce: u64ToJson(r.u64()),
     timestamp: i64ToJson(r.i64()),
   }),
 

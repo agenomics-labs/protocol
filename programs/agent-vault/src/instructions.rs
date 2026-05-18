@@ -167,6 +167,49 @@ pub fn initialize_vault(
     Ok(())
 }
 
+/// OA-MED-1 (cycle-4): recover from the ADR-097 deregister/re-register ↔
+/// vault `profile_nonce` desync. Re-points `vault.profile_nonce` at the
+/// live Registry `OwnerNonce` (same authoritative source `initialize_vault`
+/// reads). Without this, a legitimate deregister/re-register cycle bumps
+/// the Registry nonce, the vault keeps the stale value, and every
+/// `execute_*`/grant path re-derives a non-existent `agent_profile` PDA →
+/// `AccountNotInitialized`, permanently bricking the vault with no on-chain
+/// recovery.
+///
+/// Safety:
+///   * `has_one = authority` + signer — only the vault owner can resync.
+///   * `owner_nonce` is PDA-bound to `authority` under
+///     `seeds::program = agent_registry::ID` (cross-account-reuse closed).
+///   * Monotone: the live nonce must be `>=` the stored one. ADR-097 only
+///     ever *bumps* the Registry nonce, so a lower live value means a
+///     wrong/foreign account or replay — fail closed.
+///   * No funds move; the spend caps / rate limits / policy are untouched.
+pub fn resync_profile_nonce(ctx: Context<ResyncProfileNonce>) -> Result<()> {
+    let live_nonce = ctx.accounts.owner_nonce.nonce;
+    let old_nonce = ctx.accounts.vault.profile_nonce;
+
+    require!(
+        live_nonce >= old_nonce,
+        VaultError::ProfileNonceNotMonotone
+    );
+
+    // No-op resync is allowed (idempotent); only emit/write on change.
+    if live_nonce != old_nonce {
+        let vault = &mut ctx.accounts.vault;
+        vault.profile_nonce = live_nonce;
+
+        emit!(ProfileNonceResynced {
+            vault: ctx.accounts.vault.key(),
+            authority: ctx.accounts.authority.key(),
+            old_profile_nonce: old_nonce,
+            new_profile_nonce: live_nonce,
+            timestamp: Clock::get()?.unix_timestamp,
+        });
+    }
+
+    Ok(())
+}
+
 pub fn update_policy(
     ctx: Context<UpdatePolicy>,
     daily_limit_lamports: u64,
@@ -1434,6 +1477,32 @@ pub fn execute_grant_transfer(
             grant.is_recipient_allowed(&ctx.accounts.recipient.key()),
             VaultError::RecipientNotAllowed
         );
+
+        // OA-MED-2 (cycle-4): ADR-111 §Enforcement (lines 124-126) — "MUST
+        // intersect `allowed_recipients` with the base vault
+        // `policy.program_allowlist`; the delegation never widens the
+        // vault's own allowlist." The SPL path already retains
+        // `vault.policy.is_token_allowed(&mint)`
+        // (`execute_grant_token_transfer`); the SOL path had NO vault-level
+        // recipient/program-allowlist check, so an empty-`allowed_recipients`
+        // grant (the documented "delegate the recipient guard to the vault"
+        // sentinel — `state.rs` `is_recipient_allowed`) actually meant
+        // "unrestricted", letting a grantee send SOL to recipients the
+        // vault's own `program_allowlist` would gate on a comparable
+        // direct call. When the grant defers to the vault (empty list),
+        // enforce the vault's own allowlist so the sentinel genuinely means
+        // "subject to the vault's own guards", never "wider than direct".
+        // A non-empty grant allowlist is already the tighter, explicit
+        // scope and is left as-is (intersection ≡ the explicit list, which
+        // the grantor chose at create time within their own authority).
+        if grant.allowed_recipients.is_empty() {
+            require!(
+                vault
+                    .policy
+                    .is_program_allowed(&ctx.accounts.recipient.key()),
+                VaultError::RecipientNotAllowed
+            );
+        }
 
         // Grant-scoped lamport cap.
         require!(

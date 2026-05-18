@@ -1381,6 +1381,128 @@
       "args": []
     },
     {
+      "name": "resync_profile_nonce",
+      "docs": [
+        "OA-MED-1 (cycle-4): recovery path for the ADR-097 deregister/",
+        "re-register ↔ vault `profile_nonce` desync. Re-points",
+        "`vault.profile_nonce` at the live Registry `OwnerNonce` so a",
+        "legitimate deregister/re-register cycle cannot permanently brick",
+        "grant/transfer execution. Authority-gated; monotone (never rolls",
+        "the binding backward). See `ResyncProfileNonce`."
+      ],
+      "discriminator": [
+        162,
+        155,
+        63,
+        147,
+        159,
+        89,
+        249,
+        183
+      ],
+      "accounts": [
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "authority"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "vault"
+          ]
+        },
+        {
+          "name": "owner_nonce",
+          "docs": [
+            "The Registry's authoritative `OwnerNonce` PDA for `authority`. Same",
+            "derivation + program binding as `InitializeVault::owner_nonce`, so",
+            "register-first and cross-account-reuse guards both still hold."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114,
+                  45,
+                  110,
+                  111,
+                  110,
+                  99,
+                  101
+                ]
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                12,
+                67,
+                44,
+                97,
+                176,
+                134,
+                218,
+                125,
+                226,
+                228,
+                147,
+                82,
+                155,
+                182,
+                97,
+                232,
+                245,
+                247,
+                174,
+                112,
+                200,
+                200,
+                245,
+                158,
+                82,
+                184,
+                176,
+                71,
+                124,
+                211,
+                144,
+                137
+              ]
+            }
+          }
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "revoke_delegation_grant",
       "docs": [
         "ADR-111: Revoke a delegation grant. Either the original grantor",
@@ -1846,6 +1968,19 @@
       ]
     },
     {
+      "name": "ProfileNonceResynced",
+      "discriminator": [
+        44,
+        69,
+        206,
+        168,
+        123,
+        144,
+        126,
+        90
+      ]
+    },
+    {
       "name": "ProgramCallExecuted",
       "discriminator": [
         210,
@@ -2104,6 +2239,11 @@
       "code": 6035,
       "name": "GrantTokenNotConfigured",
       "msg": "Delegation grant has no spend authority for this token mint"
+    },
+    {
+      "code": 6036,
+      "name": "ProfileNonceNotMonotone",
+      "msg": "resync_profile_nonce: live Registry nonce is older than the stored profile_nonce (non-monotone)"
     }
   ],
   "types": [
@@ -2974,6 +3114,40 @@
           },
           {
             "name": "PerToken"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ProfileNonceResynced",
+      "docs": [
+        "OA-MED-1 (cycle-4): emitted when the vault authority re-points",
+        "`vault.profile_nonce` at the live Registry `OwnerNonce` to recover",
+        "from a deregister/re-register desync. Indexers can detect the",
+        "re-binding and re-resolve the agent's profile PDA."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "old_profile_nonce",
+            "type": "u64"
+          },
+          {
+            "name": "new_profile_nonce",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
           }
         ]
       }

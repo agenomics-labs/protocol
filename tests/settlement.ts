@@ -2604,6 +2604,18 @@ describe("Settlement Protocol Tests", () => {
             escrow: toEscrowPDA,
             escrowTokenAccount: toEscrowTA,
             clientTokenAccount: toClientTA,
+            // C4-OB-06 (cycle-4, PR #182): `ResolveDisputeTimeout` now
+            // requires `provider_token_account` (the Submitted-milestone
+            // auto-pay sink for dispute-timeout reconciliation parity with
+            // expire_escrow). Anchor resolves/validates accounts BEFORE the
+            // handler runs, so a missing/invalid providerTokenAccount fails
+            // at account resolution and masks the runtime
+            // `DisputeTimeoutNotReached` guard this negative-path test
+            // exercises. Supply the valid provider ATA (owner =
+            // escrow.provider = toProvider, mint = escrow token mint) so
+            // the call reaches the handler and the intended timeout guard
+            // is the error actually observed.
+            providerTokenAccount: toProviderTA,
             registryProgram: REGISTRY_PROGRAM_ID,
             providerProfile: provProfilePDA,
             // AUD-117 (cycle-2): owner_nonce PDA must be derived from the
@@ -2684,6 +2696,13 @@ describe("Settlement Protocol Tests", () => {
             escrow: ndEscrowPDA,
             escrowTokenAccount: ndEscrowTA,
             clientTokenAccount: toClientTA,
+            // C4-OB-06 (cycle-4, PR #182): same as the sibling negative
+            // test — `ResolveDisputeTimeout` now requires
+            // `provider_token_account`. Supply the valid provider ATA so
+            // account resolution passes and the intended runtime guard
+            // (`InvalidStatus` for a non-disputed escrow) is the error
+            // actually observed, not an account-resolution error.
+            providerTokenAccount: toProviderTA,
             registryProgram: REGISTRY_PROGRAM_ID,
             providerProfile: provProfilePDA,
             // AUD-117 (cycle-2): same fix as the sibling negative test —

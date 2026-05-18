@@ -234,6 +234,70 @@ mod tests {
         assert_eq!(status, MilestoneStatus::Rejected);
     }
 
+    /// C4-OB-06 (cycle-4): the dispute-timeout reconciliation must mirror
+    /// `expire_escrow`'s C1 split — Submitted milestones auto-pay the
+    /// provider, only genuinely-undelivered (Pending) / Disputed value
+    /// refunds the client, and the slash fires ONLY when something was
+    /// never delivered. This pins the arithmetic + the slash predicate
+    /// the handler implements (`dispute.rs::resolve_dispute_timeout`).
+    #[test]
+    fn test_c4ob06_dispute_timeout_reconciliation_math() {
+        // Helper mirroring the handler's per-milestone classification.
+        fn reconcile(statuses: &[(MilestoneStatus, u64)], released: u64, total: u64)
+            -> (u64 /*provider_earned*/, u64 /*client_refund*/, bool /*slash*/)
+        {
+            let mut provider_earned = 0u64;
+            let mut has_pending_or_disputed = false;
+            for (st, amt) in statuses {
+                match st {
+                    MilestoneStatus::Submitted => provider_earned += *amt,
+                    MilestoneStatus::Pending | MilestoneStatus::Disputed => {
+                        has_pending_or_disputed = true;
+                    }
+                    MilestoneStatus::Approved | MilestoneStatus::Rejected => {}
+                }
+            }
+            let remaining = total - released;
+            let client_refund = remaining - provider_earned;
+            (provider_earned, client_refund, has_pending_or_disputed)
+        }
+
+        // Scenario from the audit: 4/5 milestones delivered+paid (Approved,
+        // counted in released_amount), 5th Submitted at dispute time, the
+        // resolver never acts → timeout. Provider must KEEP the 5th, NOT be
+        // slashed, client recovers NOTHING.
+        let (earned, refund, slash) = reconcile(
+            &[
+                (MilestoneStatus::Approved, 20),
+                (MilestoneStatus::Approved, 20),
+                (MilestoneStatus::Approved, 20),
+                (MilestoneStatus::Approved, 20),
+                (MilestoneStatus::Submitted, 20),
+            ],
+            /*released*/ 80,
+            /*total*/ 100,
+        );
+        assert_eq!(earned, 20, "delivered 5th milestone auto-pays the provider");
+        assert_eq!(refund, 0, "client recovers nothing — all work delivered");
+        assert!(!slash, "no slash: nothing was ever undelivered");
+
+        // Genuine non-delivery: one Pending milestone → client refund + slash.
+        let (earned, refund, slash) = reconcile(
+            &[
+                (MilestoneStatus::Submitted, 30),
+                (MilestoneStatus::Pending, 70),
+            ],
+            0,
+            100,
+        );
+        assert_eq!(earned, 30, "Submitted still auto-pays");
+        assert_eq!(refund, 70, "only the never-delivered Pending refunds");
+        assert!(slash, "a genuinely Pending milestone still slashes");
+
+        // Pre-fix behaviour (full refund + unconditional slash) would have
+        // been refund=100, slash=true here — the regression this guards.
+    }
+
     #[test]
     fn test_amount_overflow_checked_add() {
         let a: u64 = u64::MAX;
@@ -287,6 +351,44 @@ mod tests {
     fn test_cpi_propose_reputation_delta_symbol_exists() {
         type _ProposeReputationDeltaAccounts<'a> =
             agent_registry::cpi::accounts::ProposeReputationDelta<'a>;
+    }
+
+    /// C4-OB-04 (cycle-4): layout pin for the Settlement-side suspension
+    /// defense-in-depth in `cpi.rs::require_provider_not_suspended`. That
+    /// guard reads `AgentProfile.status` at a fixed byte offset
+    /// (8 disc + 32 authority) and compares against the `Suspended` enum
+    /// tag. If the Registry reorders `AgentProfile`'s prefix fields or
+    /// reorders the `AgentStatus` variants, the raw-byte read would
+    /// silently target the wrong field / wrong tag and the gate would fail
+    /// open. This re-asserts both invariants against the Registry's *typed*
+    /// surface so a Registry refactor breaks the Settlement test rather
+    /// than silently re-opening C4-OB-04.
+    #[test]
+    fn test_agent_profile_status_offset_and_suspended_tag() {
+        use agent_registry::state::AgentStatus;
+        use anchor_lang::AnchorSerialize;
+
+        assert_eq!(
+            crate::instructions::AGENT_PROFILE_STATUS_OFFSET,
+            8 + 32,
+            "AgentProfile status offset = 8 (disc) + 32 (authority Pubkey)"
+        );
+
+        // `AgentStatus` is borsh-serialized as a 1-byte variant tag in
+        // declaration order: Active=0, Paused=1, Retired=2, Suspended=3.
+        let suspended_bytes = AgentStatus::Suspended.try_to_vec().unwrap();
+        assert_eq!(
+            suspended_bytes,
+            vec![crate::instructions::AGENT_STATUS_SUSPENDED_TAG],
+            "Suspended must serialize to the pinned tag byte"
+        );
+        // Non-Suspended states must NOT collide with the Suspended tag.
+        for s in [AgentStatus::Active, AgentStatus::Paused, AgentStatus::Retired] {
+            assert_ne!(
+                s.try_to_vec().unwrap()[0],
+                crate::instructions::AGENT_STATUS_SUSPENDED_TAG
+            );
+        }
     }
 
     /// Finding #19: ProtocolConfig defaults must match the compile-time

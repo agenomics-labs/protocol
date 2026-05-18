@@ -193,4 +193,12 @@ pub enum VaultError {
     /// mints the grantor explicitly enumerated at create time.
     #[msg("Delegation grant has no spend authority for this token mint")]
     GrantTokenNotConfigured,
+
+    /// OA-MED-1 (cycle-4): `resync_profile_nonce` refuses to roll
+    /// `vault.profile_nonce` *backward*. ADR-097 only ever bumps the
+    /// Registry `OwnerNonce` (deregister/re-register), so a live nonce
+    /// lower than the stored one signals a wrong/foreign account or a
+    /// replay — fail closed rather than re-bind to a stale incarnation.
+    #[msg("resync_profile_nonce: live Registry nonce is older than the stored profile_nonce (non-monotone)")]
+    ProfileNonceNotMonotone,
 }

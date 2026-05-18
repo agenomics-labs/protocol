@@ -405,6 +405,21 @@ pub struct ResolveDisputeTimeout<'info> {
     )]
     pub client_token_account: Account<'info, TokenAccount>,
 
+    /// C4-OB-06 (cycle-4): the dispute-timeout path now reconciles
+    /// delivered (`Submitted`) milestones — auto-paying them to the
+    /// provider instead of refunding the full remaining to the client —
+    /// for parity with `expire_escrow`'s C1 "silence = acceptance" rail.
+    /// This account is the auto-pay sink. Mirrors `ExpireEscrow` /
+    /// `ApproveMilestone` constraints (`escrow.provider`-owned, escrow
+    /// mint). Required because the prior timeout context only had a
+    /// client-refund sink.
+    #[account(
+        mut,
+        constraint = provider_token_account.mint == escrow.token_mint @ SettlementError::InvalidTokenAccount,
+        constraint = provider_token_account.owner == escrow.provider @ SettlementError::InvalidTokenAccount,
+    )]
+    pub provider_token_account: Account<'info, TokenAccount>,
+
     /// ADR-050: Registry accounts for slashing on timeout
     /// CHECK: Validated by constraint.
     #[account(

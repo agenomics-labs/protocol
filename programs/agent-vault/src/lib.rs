@@ -110,6 +110,16 @@ pub mod agent_vault {
         )
     }
 
+    /// OA-MED-1 (cycle-4): recovery path for the ADR-097 deregister/
+    /// re-register ↔ vault `profile_nonce` desync. Re-points
+    /// `vault.profile_nonce` at the live Registry `OwnerNonce` so a
+    /// legitimate deregister/re-register cycle cannot permanently brick
+    /// grant/transfer execution. Authority-gated; monotone (never rolls
+    /// the binding backward). See `ResyncProfileNonce`.
+    pub fn resync_profile_nonce(ctx: Context<ResyncProfileNonce>) -> Result<()> {
+        instructions::resync_profile_nonce(ctx)
+    }
+
     /// Updates the vault's spending policy (limits and rate limits).
     /// Only the vault authority can call this instruction.
     pub fn update_policy(
@@ -513,6 +523,97 @@ mod tests {
         let policy = VaultPolicy::new(100, 1000, 10);
         let mint = sample_pubkey();
         assert!(policy.is_token_allowed(&mint));
+    }
+
+    /// OA-MED-2 (cycle-4): when a grant's `allowed_recipients` is the empty
+    /// "delegate to vault guards" sentinel, the SOL grant path
+    /// (`execute_grant_transfer`) MUST fall back to the vault's own
+    /// `program_allowlist` so the sentinel cannot widen the vault's policy
+    /// (ADR-111 §Enforcement). This pins the predicate the handler now
+    /// applies: `grant.allowed_recipients.is_empty() => recipient ∈
+    /// vault.policy.program_allowlist (or allowlist empty = open)`.
+    #[test]
+    fn test_oa_med_2_empty_grant_recipients_falls_back_to_vault_allowlist() {
+        use crate::state::{grant_actions, DelegationGrant};
+
+        let allowed = sample_pubkey();
+        let denied = sample_pubkey();
+
+        // Restrictive vault policy: only `allowed` is in program_allowlist.
+        let mut policy = VaultPolicy::new(1_000, 10_000, 10);
+        policy.program_allowlist.push(allowed);
+
+        // Empty-recipient grant (the documented sentinel).
+        let grant = DelegationGrant {
+            vault: Pubkey::default(),
+            grantor: Pubkey::default(),
+            grantee: Pubkey::default(),
+            allowed_actions: grant_actions::EXECUTE_TRANSFER,
+            spend_cap_lamports: 1_000,
+            spent_lamports: 0,
+            token_spend_caps: vec![],
+            allowed_recipients: vec![],
+            expires_at: 0,
+            revoked: false,
+            created_at: 0,
+            nonce: 0,
+            bump: 255,
+        };
+        assert!(
+            grant.allowed_recipients.is_empty(),
+            "precondition: empty sentinel triggers vault-level fallback"
+        );
+
+        // Handler logic: grant defers → enforce vault program_allowlist.
+        let gate = |recipient: &Pubkey| -> bool {
+            if grant.allowed_recipients.is_empty() {
+                policy.is_program_allowed(recipient)
+            } else {
+                grant.is_recipient_allowed(recipient)
+            }
+        };
+
+        // Pre-fix the empty grant let ANY recipient through (unrestricted);
+        // post-fix it is bounded by the vault's own restrictive allowlist.
+        assert!(gate(&allowed), "allowlisted recipient still passes");
+        assert!(
+            !gate(&denied),
+            "OA-MED-2: empty-recipient grant must NOT widen the vault's program_allowlist"
+        );
+
+        // Sanity: a vault with an *empty* program_allowlist keeps the
+        // documented "open" semantics (no behavioural regression).
+        let open_policy = VaultPolicy::new(1_000, 10_000, 10);
+        assert!(open_policy.is_program_allowed(&denied));
+        let _ = grant_actions::EXECUTE_TRANSFER;
+    }
+
+    /// OA-MED-1 (cycle-4): `resync_profile_nonce` must be monotone — the
+    /// live Registry `OwnerNonce` may only ever move forward (ADR-097
+    /// deregister/re-register bumps it). A live value below the stored
+    /// `vault.profile_nonce` signals a wrong/foreign account or replay and
+    /// must fail closed (`ProfileNonceNotMonotone`); equal is an idempotent
+    /// no-op; greater performs the recovery re-bind.
+    #[test]
+    fn test_oa_med_1_resync_profile_nonce_monotone() {
+        // Mirrors the handler's `require!(live >= old)` predicate +
+        // change-detection. (The Anchor account plumbing is exercised by
+        // the anchor integration suite; this pins the pure decision.)
+        fn decide(old: u64, live: u64) -> core::result::Result<bool /*rebind?*/, ()> {
+            if live < old {
+                return Err(()); // ProfileNonceNotMonotone
+            }
+            Ok(live != old)
+        }
+
+        // Forward bump (deregister/re-register recovery) → re-bind.
+        assert_eq!(decide(3, 5), Ok(true));
+        // Equal → idempotent no-op (no event, no write).
+        assert_eq!(decide(5, 5), Ok(false));
+        // Backward → rejected, vault binding never rolls back.
+        assert_eq!(decide(7, 4), Err(()));
+        // Genesis (never resynced) forward.
+        assert_eq!(decide(0, 1), Ok(true));
     }
 
     #[test]

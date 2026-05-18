@@ -1826,6 +1826,20 @@
           "writable": true
         },
         {
+          "name": "provider_token_account",
+          "docs": [
+            "C4-OB-06 (cycle-4): the dispute-timeout path now reconciles",
+            "delivered (`Submitted`) milestones — auto-paying them to the",
+            "provider instead of refunding the full remaining to the client —",
+            "for parity with `expire_escrow`'s C1 \"silence = acceptance\" rail.",
+            "This account is the auto-pay sink. Mirrors `ExpireEscrow` /",
+            "`ApproveMilestone` constraints (`escrow.provider`-owned, escrow",
+            "mint). Required because the prior timeout context only had a",
+            "client-refund sink."
+          ],
+          "writable": true
+        },
+        {
           "name": "registry_program",
           "docs": [
             "ADR-050: Registry accounts for slashing on timeout"
@@ -2593,6 +2607,11 @@
       "code": 6029,
       "name": "DeadlineTooFar",
       "msg": "Deadline is too far in the future (max 365 days from now)"
+    },
+    {
+      "code": 6030,
+      "name": "ProviderSuspended",
+      "msg": "Provider is Registry-suspended; positive reputation deltas are not permitted (C4-OB-04)"
     }
   ],
   "types": [

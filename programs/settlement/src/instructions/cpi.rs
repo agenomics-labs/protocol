@@ -55,6 +55,53 @@ pub const REASON_TASK_COMPLETED: u8 = 0;
 pub const REASON_DISPUTE_LOSS: u8 = 1;
 pub const REASON_EXPIRY_UNDELIVERED: u8 = 2;
 
+/// C4-OB-04 (cycle-4): Settlement-side defense-in-depth read of the provider
+/// profile's Registry suspension flag *before* the positive-reputation CPI.
+///
+/// The Registry's `propose_reputation_delta` handler today rejects only the
+/// terminal `Retired` status (AUD-206); it does NOT reject `Suspended`
+/// (`agent-registry/src/lib.rs` — the slash path *writes* `Suspended`, but
+/// no entry guard rejects an inbound delta on an already-`Suspended`
+/// profile). That means a suspended provider can still accrue
+/// `+task_completed` reputation through Settlement's `approve_milestone` /
+/// all-Approved `expire_escrow` paths, defeating ADR-095/097.
+///
+/// Rather than rely entirely on the cross-program callee (a Registry
+/// refactor would silently re-open this — there was no Settlement-side
+/// pin, unlike the AUD-117/AUD-202 layout pins), Settlement now reads the
+/// `AgentProfile.status` byte at the Registry-owned profile account it has
+/// already re-derived (AUD-117 seeds defense-in-depth, `contexts.rs`) and
+/// refuses to *reward* a suspended provider. Negative (slash) deltas are
+/// intentionally still allowed through — a suspended provider must keep
+/// taking dispute/expiry penalties.
+///
+/// The check decodes only the discriminator (8) + the `authority: Pubkey`
+/// (32) prefix to reach the `status` enum tag. `AgentStatus` derives in
+/// declaration order `Active=0, Paused=1, Retired=2, Suspended=3`
+/// (`agent-registry/src/state.rs`); `Suspended` is tag byte `3`. This
+/// offset is layout-pinned by the Registry's own `state.rs` byte-offset
+/// test and re-asserted here by `test_agent_profile_status_offset` so a
+/// Registry struct reorder fails Settlement's suite, not silently in prod.
+pub(crate) const AGENT_PROFILE_STATUS_OFFSET: usize = 8 + 32;
+pub(crate) const AGENT_STATUS_SUSPENDED_TAG: u8 = 3;
+
+fn require_provider_not_suspended(provider_profile: &AccountInfo) -> Result<()> {
+    let data = provider_profile.try_borrow_data()?;
+    // Defense-in-depth: a too-short / uninitialized account cannot be a
+    // valid AgentProfile; the Registry CPI will reject it regardless, but
+    // fail closed here rather than index a garbage byte.
+    require!(
+        data.len() > AGENT_PROFILE_STATUS_OFFSET,
+        crate::errors::SettlementError::InvalidStatus
+    );
+    let status_tag = data[AGENT_PROFILE_STATUS_OFFSET];
+    require!(
+        status_tag != AGENT_STATUS_SUSPENDED_TAG,
+        crate::errors::SettlementError::ProviderSuspended
+    );
+    Ok(())
+}
+
 pub fn update_provider_reputation<'info>(
     reputation_delta: i64,
     reason: u8,
@@ -65,6 +112,15 @@ pub fn update_provider_reputation<'info>(
     settlement_authority: AccountInfo<'info>,
     settlement_authority_bump: u8,
 ) -> Result<()> {
+    // C4-OB-04: never *reward* a Registry-suspended provider from the
+    // Settlement boundary, regardless of whether the Registry callee
+    // currently gates `Suspended` on its side. Slash reasons (1, 2) are
+    // deliberately exempt — a suspended provider must keep taking
+    // dispute-loss / expiry-undelivered penalties.
+    if reason == REASON_TASK_COMPLETED {
+        require_provider_not_suspended(&provider_profile)?;
+    }
+
     let signer_seeds: &[&[u8]] = &[b"settlement_authority", &[settlement_authority_bump]];
     let cpi_signer: &[&[&[u8]]] = &[signer_seeds];
 

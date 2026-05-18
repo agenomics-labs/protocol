@@ -105,6 +105,45 @@ pub struct UpdatePolicy<'info> {
     pub authority: Signer<'info>,
 }
 
+/// OA-MED-1 (cycle-4): recovery path for the deregister/re-register ↔ vault
+/// `profile_nonce` desync. ADR-097 bumps the Registry `OwnerNonce` on a
+/// deregister; a subsequent re-register lands the agent's profile at the
+/// *new* nonce. The vault still holds the *old* `profile_nonce`, so every
+/// `execute_*`/grant path re-derives a stale `agent_profile` PDA that no
+/// longer exists (`AccountNotInitialized`), permanently bricking the vault
+/// with no on-chain recovery — the residual-risk scenario the audit flagged.
+///
+/// `resync_profile_nonce` lets the vault `authority` re-point
+/// `vault.profile_nonce` at the live Registry `OwnerNonce`. Authority-gated
+/// (`has_one`); the `owner_nonce` account is bound to `authority` by the
+/// same `seeds::program = agent_registry::ID` PDA derivation
+/// `initialize_vault` uses, so it cannot be aimed at a foreign agent's
+/// nonce. Monotonicity is enforced in the handler (the live nonce must be
+/// `>=` the stored one — a deregister/re-register only ever bumps the
+/// Registry nonce, so a resync can never roll the binding *backward*).
+#[derive(Accounts)]
+pub struct ResyncProfileNonce<'info> {
+    #[account(
+        mut,
+        has_one = authority @ VaultError::Unauthorized,
+        seeds = [b"vault", authority.key().as_ref()],
+        bump
+    )]
+    pub vault: Account<'info, Vault>,
+
+    pub authority: Signer<'info>,
+
+    /// The Registry's authoritative `OwnerNonce` PDA for `authority`. Same
+    /// derivation + program binding as `InitializeVault::owner_nonce`, so
+    /// register-first and cross-account-reuse guards both still hold.
+    #[account(
+        seeds = [authority.key().as_ref(), b"owner-nonce"],
+        seeds::program = agent_registry::ID,
+        bump,
+    )]
+    pub owner_nonce: Account<'info, OwnerNonce>,
+}
+
 #[derive(Accounts)]
 pub struct ManageAllowlist<'info> {
     #[account(
@@ -235,7 +274,10 @@ pub struct ExecuteTransfer<'info> {
             &vault.profile_nonce.to_le_bytes(),
         ],
         seeds::program = agent_registry::ID,
-        bump
+        bump,
+        // OA-MED-1 (cycle-4): direct authority cross-binding (was
+        // transitive-only via shared seeds). See `CreateDelegationGrant`.
+        constraint = agent_profile.authority == vault.authority @ VaultError::Unauthorized,
     )]
     pub agent_profile: Account<'info, AgentProfile>,
 
@@ -285,7 +327,10 @@ pub struct ExecuteTokenTransfer<'info> {
             &vault.profile_nonce.to_le_bytes(),
         ],
         seeds::program = agent_registry::ID,
-        bump
+        bump,
+        // OA-MED-1 (cycle-4): direct authority cross-binding (was
+        // transitive-only via shared seeds). See `CreateDelegationGrant`.
+        constraint = agent_profile.authority == vault.authority @ VaultError::Unauthorized,
     )]
     pub agent_profile: Account<'info, AgentProfile>,
 
@@ -390,7 +435,16 @@ pub struct CreateDelegationGrant<'info> {
             &vault.profile_nonce.to_le_bytes(),
         ],
         seeds::program = agent_registry::ID,
-        bump
+        bump,
+        // OA-MED-1 (cycle-4): bind the authorization-relevant field
+        // directly, not only transitively via shared seeds. Pre-fix the
+        // `agent_profile.authority == vault.authority` invariant held only
+        // through two independent seed derivations both keyed on
+        // `vault.authority`/`authority`; a future seed-loosening (ADR-093)
+        // or a stale `vault.profile_nonce` after an ADR-097 deregister/
+        // re-register could resolve to a wrong-incarnation profile and
+        // fail open/closed unpredictably. Reconcile it explicitly.
+        constraint = agent_profile.authority == vault.authority @ VaultError::Unauthorized,
     )]
     pub agent_profile: Account<'info, AgentProfile>,
 
@@ -530,7 +584,10 @@ pub struct ExecuteGrantTransfer<'info> {
             &vault.profile_nonce.to_le_bytes(),
         ],
         seeds::program = agent_registry::ID,
-        bump
+        bump,
+        // OA-MED-1 (cycle-4): direct authority cross-binding (was
+        // transitive-only via shared seeds). See `CreateDelegationGrant`.
+        constraint = agent_profile.authority == vault.authority @ VaultError::Unauthorized,
     )]
     pub agent_profile: Account<'info, AgentProfile>,
 
@@ -578,7 +635,10 @@ pub struct ExecuteGrantTokenTransfer<'info> {
             &vault.profile_nonce.to_le_bytes(),
         ],
         seeds::program = agent_registry::ID,
-        bump
+        bump,
+        // OA-MED-1 (cycle-4): direct authority cross-binding (was
+        // transitive-only via shared seeds). See `CreateDelegationGrant`.
+        constraint = agent_profile.authority == vault.authority @ VaultError::Unauthorized,
     )]
     pub agent_profile: Account<'info, AgentProfile>,
 
