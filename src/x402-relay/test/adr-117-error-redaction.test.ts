@@ -50,6 +50,18 @@ import * as assert from "node:assert/strict";
 import * as crypto from "node:crypto";
 import type { AddressInfo } from "node:net";
 import type { Server as HttpServer } from "node:http";
+import { getBase58Decoder } from "@solana/kit";
+
+// C4-X402-03: the relay now rejects any `txSignature` that is not a
+// syntactically valid 64-byte Solana signature BEFORE it reaches the
+// dedup/RPC path. Test fixtures must therefore use real-shape
+// signatures: 64 random bytes, base58-encoded (87-88 chars). The old
+// `"adr-117-replay-<hex>"` fixtures are no longer accepted at /pay
+// (correctly — they were never valid signatures).
+const __b58dec = getBase58Decoder();
+function validSig(): string {
+  return __b58dec.decode(new Uint8Array(crypto.randomBytes(64)));
+}
 
 // Critical: env MUST be set BEFORE the dynamic import below — see the
 // AUD-209 / AUD-126 header comments for the hoisting rationale.
@@ -233,7 +245,18 @@ describe("ADR-117: typed error envelope redaction", () => {
     // which the route then renders. The full HTTP path is covered in the
     // route-body subtest below.
 
-    it("processPaymentRequest with throwing verifier returns kind:'invalid' carrying a typed errorCode (RPC_UNAVAILABLE)", async () => {
+    // C4-X402-02 (2026-05-17): this subtest originally asserted that a
+    // verifier reporting `RPC_UNAVAILABLE` produced `kind:"invalid"`
+    // (which the route rendered as HTTP 402). That codified the exact
+    // status-inversion bug C4-X402-02 fixes: a transport failure must
+    // NOT be reported to the client as a genuine payment rejection.
+    // Post-fix, `processPaymentRequest` routes the upstream codes
+    // (`RPC_UNAVAILABLE`/`INTERNAL`) to the distinct `kind:"upstream"`
+    // (→ 5xx) while genuine rejections stay `kind:"invalid"` (→ 402).
+    // The redaction contract this subtest exists to pin (no leak of the
+    // RPC URL / signature into the flowed result) is unchanged and is
+    // re-asserted below against the corrected `upstream` shape.
+    it("processPaymentRequest with RPC_UNAVAILABLE verifier returns kind:'upstream' (C4-X402-02 taxonomy) with no leak", async () => {
       // A verifier that throws an exception whose toString() includes
       // BOTH the RPC URL and the tx signature — the same shape
       // @solana/kit's RPC layer produces in the wild. After ADR-117
@@ -276,22 +299,27 @@ describe("ADR-117: typed error envelope redaction", () => {
       const sig = "adr-117-throwing-verifier-" + crypto.randomBytes(4).toString("hex");
       const result = await relay.processPaymentRequest(sig, throwingVerifier, "MOCK_RECIPIENT");
 
-      assert.equal(result.kind, "invalid");
-      if (result.kind !== "invalid") return; // narrow for ts
+      // C4-X402-02: a transport failure (`RPC_UNAVAILABLE`) is now the
+      // distinct `kind:"upstream"`, NOT `kind:"invalid"`. The route maps
+      // this to 503 (retryable), not 402 (terminal "payment rejected").
+      assert.equal(result.kind, "upstream");
+      if (result.kind !== "upstream") return; // narrow for ts
 
-      // The verifier's leak substrings must NEVER appear in the
-      // PaymentVerification flowed downstream. (Test the contract at
-      // the boundary the route handler sees.)
-      const serialized = JSON.stringify(result.verification);
+      assert.equal(result.errorCode, "RPC_UNAVAILABLE");
+
+      // The verifier's leak substrings must NEVER appear in the flowed
+      // result (the redaction contract this subtest exists to pin —
+      // unchanged by the taxonomy fix). Assert against the whole
+      // PayResult the route handler sees.
+      const serialized = JSON.stringify(result);
       assert.ok(
         !serialized.includes(RPC_URL_LEAK),
-        `PaymentVerification must not contain the RPC URL leak: got ${serialized}`,
+        `PayResult must not contain the RPC URL leak: got ${serialized}`,
       );
       assert.ok(
         !serialized.includes(SIG_LEAK),
-        `PaymentVerification must not contain the signature leak: got ${serialized}`,
+        `PayResult must not contain the signature leak: got ${serialized}`,
       );
-      assert.equal(result.verification.errorCode, "RPC_UNAVAILABLE");
     });
 
     it("real verifyPaymentOnChain catch redacts AND pino-logs the raw exception (correlation: corr_id)", async () => {
@@ -373,7 +401,7 @@ describe("ADR-117: typed error envelope redaction", () => {
     });
 
     it("PAYMENT_REPLAYED — 409 with envelope shape", async () => {
-      const sig = "adr-117-replay-" + crypto.randomBytes(4).toString("hex");
+      const sig = validSig();
       // No public seeder takes (sig, expiry), so we drive a happy-path
       // through processPaymentRequest first to populate the in-memory
       // dedup map, then POST /pay with the same sig to hit the dedup
