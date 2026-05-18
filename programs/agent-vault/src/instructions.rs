@@ -1525,6 +1525,38 @@ pub fn execute_grant_transfer(
         timestamp: now,
     });
 
+    // OA-HIGH-1 (cycle-4): ADR-138 mandates an `ExecutionAttested` provenance
+    // event at the end of *every* value-moving instruction. The ADR-111 grant
+    // SOL-transfer path moves real lamports signed by a sub-authority hot key
+    // yet previously emitted only `DelegationGrantExecuted` (a separate schema
+    // the ADR-138 provenance pipeline does NOT consume). Grant-authorised
+    // drains were therefore invisible to every `ExecutionAttested`-keyed
+    // detector / SAS correlation / reputation cross-check. Emit it here, AFTER
+    // the lamport move (mirroring `execute_transfer`:733 ordering) so a
+    // runtime-error rollback atomically drops the attestation alongside the
+    // transfer — there can never be an attestation for a move that did not
+    // happen. `delegation_grant = Some(grant)` is the grant PDA the ActionKind
+    // and field were reserved for (events.rs:101,146). `tool_id` uses the
+    // documented `TOOL_ID_ZERO` sentinel: the grant signature is unchanged (no
+    // tool_id arg) and ADR-138 explicitly permits the zero sentinel for
+    // non-migrated callers (same as `pause_vault` / `update_policy`).
+    let grant_vault = &ctx.accounts.vault;
+    emit!(ExecutionAttested {
+        vault: grant_vault.key(),
+        agent_identity: grant_vault.agent_identity,
+        authority: grant_vault.authority,
+        action_kind: ActionKind::GrantTransfer,
+        tool_id: TOOL_ID_ZERO,
+        manifest_hash: manifest_hash_from_profile(&ctx.accounts.agent_profile),
+        policy_version: grant_vault.policy_version,
+        delegation_grant: Some(ctx.accounts.grant.key()),
+        amount: amount_lamports,
+        mint: None,
+        recipient: Some(ctx.accounts.recipient.key()),
+        slot: clock.slot,
+        timestamp: now,
+    });
+
     Ok(())
 }
 
@@ -1674,6 +1706,30 @@ pub fn execute_grant_token_transfer(
         recipient: ctx.accounts.recipient_token_account.key(),
         amount,
         spent_after: new_grant_token_spent,
+        timestamp: now,
+    });
+
+    // OA-HIGH-1 (cycle-4): ADR-138 provenance attestation for the ADR-111 SPL
+    // grant-transfer surface — symmetric with `execute_grant_transfer` above
+    // and with `execute_token_transfer`:926. Emitted AFTER the SPL CPI returns
+    // so a rollback drops the attestation atomically. `mint: Some(mint)` and
+    // `recipient` is the recipient *token account* (matching how
+    // `execute_token_transfer` reports it). `delegation_grant = Some(grant)`
+    // populates the field reserved at events.rs:146 for exactly this path.
+    let grant_vault = &ctx.accounts.vault;
+    emit!(ExecutionAttested {
+        vault: grant_vault.key(),
+        agent_identity: grant_vault.agent_identity,
+        authority: grant_vault.authority,
+        action_kind: ActionKind::GrantTokenTransfer,
+        tool_id: TOOL_ID_ZERO,
+        manifest_hash: manifest_hash_from_profile(&ctx.accounts.agent_profile),
+        policy_version: grant_vault.policy_version,
+        delegation_grant: Some(ctx.accounts.grant.key()),
+        amount,
+        mint: Some(mint),
+        recipient: Some(ctx.accounts.recipient_token_account.key()),
+        slot: clock.slot,
         timestamp: now,
     });
 

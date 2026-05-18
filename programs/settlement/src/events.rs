@@ -90,6 +90,20 @@ pub struct EscrowExpired {
     pub refunded_amount: u64,
 }
 
+/// C4-OB-02 (cycle-4): emitted when `close_escrow` tears down a terminal
+/// escrow. `residual_swept` is any dust/remainder that was forwarded to the
+/// client's token account before the escrow ATA was `close_account`'d (it is
+/// `0` on the normal drained-by-settlement path; a non-zero value flags an
+/// unsolicited direct transfer into the escrow ATA that the close path
+/// recovered). Indexers project this as the escrow lifecycle's final event.
+#[event]
+pub struct EscrowClosed {
+    pub escrow: Pubkey,
+    pub client: Pubkey,
+    pub task_id: u64,
+    pub residual_swept: u64,
+}
+
 // AUD-032 + AUD-001/002 (2026-04-25 audit): `ReputationUpdateScheduled`
 // was emitted by `cpi::update_provider_reputation` after the synchronous
 // CPI returned. The name implied async/queued semantics that don't exist;

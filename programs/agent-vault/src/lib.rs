@@ -1267,6 +1267,81 @@ mod tests {
         assert_eq!(TOOL_ID_ZERO, [0u8; 32]);
     }
 
+    /// OA-HIGH-1 (cycle-4): the two ADR-111 value-moving grant surfaces
+    /// (`execute_grant_transfer` / `execute_grant_token_transfer`) MUST emit
+    /// `ExecutionAttested` so grant-authorised value movement is visible to
+    /// the ADR-138 provenance pipeline (indexer `execution_attestations`,
+    /// ADR-139 reputation-attestor, SAS correlation). This asserts the
+    /// grant attestation shape: the reserved `GrantTransfer` /
+    /// `GrantTokenTransfer` ActionKinds are used and the previously-dead
+    /// `delegation_grant` field is populated with `Some(grant)`.
+    #[test]
+    fn oa_high_1_grant_attestation_shape() {
+        use anchor_lang::AnchorDeserialize;
+
+        let grant = sample_pubkey();
+
+        // SOL grant attestation: GrantTransfer, mint None, grant set.
+        let sol = ExecutionAttested {
+            vault: sample_pubkey(),
+            agent_identity: sample_pubkey(),
+            authority: sample_pubkey(),
+            action_kind: ActionKind::GrantTransfer,
+            tool_id: TOOL_ID_ZERO,
+            manifest_hash: [3u8; 32],
+            policy_version: 7,
+            delegation_grant: Some(grant),
+            amount: 500_000,
+            mint: None,
+            recipient: Some(sample_pubkey()),
+            slot: 99,
+            timestamp: 1_700_000_001,
+        };
+
+        // SPL grant attestation: GrantTokenTransfer, mint Some, grant set.
+        let spl = ExecutionAttested {
+            vault: sample_pubkey(),
+            agent_identity: sample_pubkey(),
+            authority: sample_pubkey(),
+            action_kind: ActionKind::GrantTokenTransfer,
+            tool_id: TOOL_ID_ZERO,
+            manifest_hash: [4u8; 32],
+            policy_version: 7,
+            delegation_grant: Some(grant),
+            amount: 250_000,
+            mint: Some(sample_pubkey()),
+            recipient: Some(sample_pubkey()),
+            slot: 100,
+            timestamp: 1_700_000_002,
+        };
+
+        for ev in [&sol, &spl] {
+            // The grant field reserved at events.rs:146 must NOT be None on
+            // the grant path — that is the OA-HIGH-1 regression.
+            assert_eq!(
+                ev.delegation_grant,
+                Some(grant),
+                "grant attestation MUST carry Some(grant) — a None here is \
+                 the OA-HIGH-1 invisibility defect"
+            );
+            assert_eq!(ev.tool_id, TOOL_ID_ZERO);
+            // Round-trips losslessly through the indexer's borsh path.
+            let mut buf = Vec::new();
+            ev.serialize(&mut buf).expect("serialize");
+            let decoded: ExecutionAttested =
+                AnchorDeserialize::try_from_slice(&buf).expect("deserialize");
+            assert_eq!(decoded.action_kind, ev.action_kind);
+            assert_eq!(decoded.delegation_grant, ev.delegation_grant);
+            assert_eq!(decoded.mint, ev.mint);
+        }
+
+        // The two grant ActionKinds are distinct and are the reserved tags
+        // (6, 7) — not the primary Transfer/TokenTransfer (0, 1).
+        assert_ne!(ActionKind::GrantTransfer, ActionKind::Transfer);
+        assert_ne!(ActionKind::GrantTokenTransfer, ActionKind::TokenTransfer);
+        assert_ne!(ActionKind::GrantTransfer, ActionKind::GrantTokenTransfer);
+    }
+
     /// ADR-138: `manifest_hash_from_profile` returns the profile's
     /// `manifest_hash` field verbatim, including the all-zeros sentinel
     /// for pre-ADR-060 profiles. Pinned so a future refactor (e.g.

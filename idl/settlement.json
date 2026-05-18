@@ -515,6 +515,29 @@
         {
           "name": "escrow",
           "writable": true
+        },
+        {
+          "name": "escrow_token_account",
+          "docs": [
+            "C4-OB-02: the escrow's SPL token account (ATA whose authority is the",
+            "`escrow` PDA). Constrained to the escrow's `token_mint` + the escrow",
+            "PDA as owner so a substituted account is rejected at deserialization,",
+            "mirroring `ExpireEscrow`'s `escrow_token_account` constraint."
+          ],
+          "writable": true
+        },
+        {
+          "name": "client_token_account",
+          "docs": [
+            "C4-OB-02: destination for any residual ATA balance + the reclaimed ATA",
+            "rent. Bound to the escrow `client` (= the signer, via the escrow's",
+            "`has_one = client`) so the sweep cannot be redirected."
+          ],
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
         }
       ],
       "args": []
@@ -2290,6 +2313,19 @@
       ]
     },
     {
+      "name": "EscrowClosed",
+      "discriminator": [
+        109,
+        20,
+        57,
+        51,
+        217,
+        118,
+        3,
+        173
+      ]
+    },
+    {
       "name": "EscrowCompleted",
       "discriminator": [
         229,
@@ -2627,6 +2663,38 @@
           },
           {
             "name": "refunded_amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "EscrowClosed",
+      "docs": [
+        "C4-OB-02 (cycle-4): emitted when `close_escrow` tears down a terminal",
+        "escrow. `residual_swept` is any dust/remainder that was forwarded to the",
+        "client's token account before the escrow ATA was `close_account`'d (it is",
+        "`0` on the normal drained-by-settlement path; a non-zero value flags an",
+        "unsolicited direct transfer into the escrow ATA that the close path",
+        "recovered). Indexers project this as the escrow lifecycle's final event."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "escrow",
+            "type": "pubkey"
+          },
+          {
+            "name": "client",
+            "type": "pubkey"
+          },
+          {
+            "name": "task_id",
+            "type": "u64"
+          },
+          {
+            "name": "residual_swept",
             "type": "u64"
           }
         ]

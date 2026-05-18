@@ -685,6 +685,18 @@ pub struct UpdateProtocolConfig<'info> {
 }
 
 /// Close a terminal-state escrow account and reclaim rent to the client.
+///
+/// C4-OB-02 (cycle-4): the context now also carries the escrow's token
+/// account. Previously `close_escrow` was a no-op that only reclaimed the
+/// `TaskEscrow` PDA rent (via Anchor's `close = client`) WITHOUT asserting
+/// the escrow ATA was drained — so any token dust transferred directly into
+/// the ATA by a third party (a 1-unit grief transfer) was stranded forever
+/// once the PDA closed (the ATA's authority is the now-defunct escrow PDA,
+/// and re-`init` of the ATA under the same `(client,provider,task_id)` seeds
+/// fails because the account still exists — bricking that deterministic
+/// escrow slot for re-creation, e.g. the CCTP session escrow). The handler
+/// now sweeps any residual to `client` and closes the ATA so rent + dust are
+/// reclaimed and the slot can be reused.
 #[derive(Accounts)]
 pub struct CloseEscrow<'info> {
     #[account(mut)]
@@ -700,6 +712,29 @@ pub struct CloseEscrow<'info> {
             @ SettlementError::InvalidStatus
     )]
     pub escrow: Account<'info, TaskEscrow>,
+
+    /// C4-OB-02: the escrow's SPL token account (ATA whose authority is the
+    /// `escrow` PDA). Constrained to the escrow's `token_mint` + the escrow
+    /// PDA as owner so a substituted account is rejected at deserialization,
+    /// mirroring `ExpireEscrow`'s `escrow_token_account` constraint.
+    #[account(
+        mut,
+        constraint = escrow_token_account.mint == escrow.token_mint @ SettlementError::InvalidTokenAccount,
+        constraint = escrow_token_account.owner == escrow.key() @ SettlementError::InvalidTokenAccount,
+    )]
+    pub escrow_token_account: Account<'info, TokenAccount>,
+
+    /// C4-OB-02: destination for any residual ATA balance + the reclaimed ATA
+    /// rent. Bound to the escrow `client` (= the signer, via the escrow's
+    /// `has_one = client`) so the sweep cannot be redirected.
+    #[account(
+        mut,
+        constraint = client_token_account.mint == escrow.token_mint @ SettlementError::InvalidTokenAccount,
+        constraint = client_token_account.owner == escrow.client @ SettlementError::InvalidTokenAccount,
+    )]
+    pub client_token_account: Account<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token>,
 }
 
 // ============================================================================

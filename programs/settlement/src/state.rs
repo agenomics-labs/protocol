@@ -66,6 +66,50 @@ pub const MAX_DISPUTE_TIMEOUT_SECONDS: i64 = 365 * 24 * 3600;
 /// a tighter cap, reduce one of the two constants.
 pub const MAX_ESCROW_DEADLINE_SECS: i64 = 365 * 24 * 3600;
 
+/// C4-OB-03 (cycle-4): post-deadline challenge window before an
+/// `expire_escrow` may apply the *undelivered* reputation slash.
+///
+/// `expire_escrow` is permissionless (any signer is `payer`) and the only
+/// per-milestone front-running guard (ADR-102 `grace_ends_at`) protects a
+/// milestone that the provider actually *Submitted*. A milestone the
+/// provider never `submit_milestone`'d has `grace_ends_at == 0` and no
+/// protection. Because `submit_milestone` hard-rejects `now > deadline`,
+/// a client (or anyone) who censors / front-runs the provider's
+/// `submit_milestone` for a single block can call `expire_escrow` at
+/// `deadline + 1`, recover the full unreleased balance *and* permanently
+/// slash the provider's reputation for "non-delivery" — the exact inverse
+/// of the C1 stall attack the codebase already hardened the provider→client
+/// direction against.
+///
+/// The chosen fix is the lower-risk of the two the audit proposed
+/// (option b: gate the *slash*, not the refund, behind a short post-deadline
+/// challenge window). Rationale for preferring it over option a
+/// (a protocol-level minimum execution window keyed on an `accepted_at`
+/// field):
+///   * Option a requires a new `TaskEscrow` field → struct layout change →
+///     `CreateEscrow` `space` bump → IDL regen → indexer Borsh-decoder
+///     change (F-08 / decoder-hardening territory, explicitly out of scope
+///     here) and a migration story for already-created escrows.
+///   * Option b adds only a compile-time constant and a conditional around
+///     the existing reputation CPI. Fund flow is byte-for-byte unchanged:
+///     the refund + any Submitted-milestone auto-pay (the C1 "silence =
+///     acceptance" settlement) still execute *immediately* at `deadline`.
+///     Only the negative reputation delta is deferred until the protocol is
+///     confident the provider was genuinely silent rather than censored for
+///     one block. This removes both the "instant slash at deadline+1" grief
+///     and the front-run profitability (the griefing client must now wait
+///     the full window for the slash, while gaining no earlier access to
+///     funds than before), with zero blast radius on serialization-coupled
+///     consumers.
+///
+/// 1 hour (3600 s) is long enough that a single-block / short-burst censor
+/// of `submit_milestone` no longer yields a slash, while still bounding the
+/// provider's reputational exposure to a delayed-but-certain penalty for a
+/// genuine non-delivery. It is intentionally short relative to
+/// `MAX_ESCROW_DEADLINE_SECS`; governance tuning of this value is a possible
+/// future ADR (analogous to ADR-102) but is out of scope for this fix.
+pub const SLASH_CHALLENGE_WINDOW_SECS: i64 = 3600;
+
 /// Reputation deltas for CPI updates to the Agent Registry.
 /// Finding #19: Defaults for the governance-owned `ProtocolConfig` fields
 /// `reputation_delta_task_completed`, `_dispute_loss`, `_expiry_undelivered`.

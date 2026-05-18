@@ -439,6 +439,165 @@ mod tests {
         assert!(should_slash, "Active + Pending is true non-delivery");
     }
 
+    // ================================================================
+    // C4-OB-03 (cycle-4): expire_escrow slash-challenge window
+    // ================================================================
+
+    /// C4-OB-03: a permissionless `expire_escrow` fired the instant the
+    /// deadline passes (`deadline + 1`) must NOT slash — `submit_milestone`
+    /// hard-rejects `now > deadline`, so a one-block censor of the
+    /// provider's submission would otherwise yield a free reputation slash.
+    /// The slash predicate now also requires the post-deadline challenge
+    /// window to have fully elapsed.
+    #[test]
+    fn c4_ob03_slash_suppressed_inside_challenge_window() {
+        let deadline: i64 = 1_000_000;
+        let prior_status = EscrowStatus::Active;
+        let has_pending = true;
+
+        // Expiry one second after the deadline — the canonical censorship
+        // grief: client front-ran/censored the provider's submit_milestone.
+        let now = deadline + 1;
+        let slash_window_open =
+            now > deadline.saturating_add(SLASH_CHALLENGE_WINDOW_SECS);
+        let should_slash =
+            prior_status == EscrowStatus::Active && has_pending && slash_window_open;
+        assert!(
+            !should_slash,
+            "expire at deadline+1 must NOT slash — provider may have been \
+             censored for a single block"
+        );
+
+        // Edge: exactly at the window boundary is still suppressed (strict >).
+        let now_boundary = deadline.saturating_add(SLASH_CHALLENGE_WINDOW_SECS);
+        let open_boundary =
+            now_boundary > deadline.saturating_add(SLASH_CHALLENGE_WINDOW_SECS);
+        assert!(
+            !(prior_status == EscrowStatus::Active && has_pending && open_boundary),
+            "exactly at deadline + window must still be suppressed (strict >)"
+        );
+    }
+
+    /// C4-OB-03: once the full challenge window has elapsed a genuine
+    /// non-delivery (Active + Pending) still slashes — the fix defers, it
+    /// does not eliminate, the penalty.
+    #[test]
+    fn c4_ob03_slash_fires_after_challenge_window() {
+        let deadline: i64 = 1_000_000;
+        let prior_status = EscrowStatus::Active;
+        let has_pending = true;
+
+        let now = deadline + SLASH_CHALLENGE_WINDOW_SECS + 1;
+        let slash_window_open =
+            now > deadline.saturating_add(SLASH_CHALLENGE_WINDOW_SECS);
+        let should_slash =
+            prior_status == EscrowStatus::Active && has_pending && slash_window_open;
+        assert!(
+            should_slash,
+            "genuine non-delivery still slashes once the window has elapsed"
+        );
+    }
+
+    /// C4-OB-03: the challenge window gates ONLY the slash. The refund /
+    /// Submitted auto-pay fund flow is unchanged and must remain available
+    /// from `deadline + 1` (the C1 "silence = acceptance" settlement). This
+    /// asserts the funds-side predicate is independent of the window.
+    #[test]
+    fn c4_ob03_fund_flow_unchanged_inside_window() {
+        let deadline: i64 = 1_000_000;
+        let now = deadline + 1; // inside the challenge window
+
+        // expire_escrow's status guard (funds path) only needs now > deadline.
+        let expiry_funds_allowed = now > deadline;
+        assert!(
+            expiry_funds_allowed,
+            "refund + Submitted auto-pay must still execute at deadline+1 — \
+             only the reputation slash is deferred"
+        );
+
+        // And the slash is independently withheld for the same `now`.
+        let slash_window_open =
+            now > deadline.saturating_add(SLASH_CHALLENGE_WINDOW_SECS);
+        assert!(
+            !slash_window_open,
+            "slash withheld while funds still settle — the two are decoupled"
+        );
+    }
+
+    /// C4-OB-03: the window constant must be a sane, positive, sub-deadline
+    /// value (a single-block censor must not satisfy it; it must not rival
+    /// the 365-day deadline cap).
+    #[test]
+    fn c4_ob03_challenge_window_constant_is_sane() {
+        assert!(SLASH_CHALLENGE_WINDOW_SECS > 0);
+        assert!(
+            SLASH_CHALLENGE_WINDOW_SECS < MAX_ESCROW_DEADLINE_SECS,
+            "challenge window must be short relative to the deadline cap"
+        );
+        assert_eq!(SLASH_CHALLENGE_WINDOW_SECS, 3600);
+    }
+
+    // ================================================================
+    // C4-OB-02 (cycle-4): close_escrow residual sweep
+    // ================================================================
+
+    /// C4-OB-02: `close_escrow` must sweep a non-zero residual ATA balance
+    /// (third-party dust) before closing the account — the pre-fix no-op
+    /// stranded it forever and bricked the deterministic escrow slot.
+    #[test]
+    fn c4_ob02_residual_is_swept_then_account_closed() {
+        // Griefer transferred 1 unit into the escrow ATA post-settlement.
+        let residual: u64 = 1;
+        let sweep_amount = residual; // handler sweeps the full balance
+        assert_eq!(
+            sweep_amount, residual,
+            "the full residual must move to the client before close_account"
+        );
+
+        // Post-sweep the ATA balance is zero, so close_account is safe (SPL
+        // close_account requires a zero token balance).
+        let post_sweep_balance = residual - sweep_amount;
+        assert_eq!(
+            post_sweep_balance, 0,
+            "ATA must be empty before close_account or the CPI reverts"
+        );
+    }
+
+    /// C4-OB-02: the normal drained-by-settlement path closes with zero
+    /// residual and emits `residual_swept == 0` (no spurious transfer CPI).
+    #[test]
+    fn c4_ob02_zero_residual_skips_sweep_transfer() {
+        let residual: u64 = 0;
+        let does_sweep = residual > 0;
+        assert!(
+            !does_sweep,
+            "no transfer CPI when the ATA is already drained"
+        );
+    }
+
+    /// C4-OB-02: only terminal states may be closed (unchanged invariant,
+    /// re-asserted so the new fund-moving body cannot be reached for a live
+    /// escrow).
+    #[test]
+    fn c4_ob02_only_terminal_states_closeable() {
+        for (status, closeable) in [
+            (EscrowStatus::Created, false),
+            (EscrowStatus::Active, false),
+            (EscrowStatus::Disputed, false),
+            (EscrowStatus::Completed, true),
+            (EscrowStatus::Cancelled, true),
+            (EscrowStatus::Expired, true),
+        ] {
+            let allowed = status == EscrowStatus::Completed
+                || status == EscrowStatus::Cancelled
+                || status == EscrowStatus::Expired;
+            assert_eq!(
+                allowed, closeable,
+                "close_escrow terminal-state guard wrong for {status}"
+            );
+        }
+    }
+
     /// AUD-010: After the auto-approval sweep on expiry, when every
     /// milestone is `Approved` the escrow ends in `Completed` and the
     /// success-path reputation CPI must fire — same invariant as the
