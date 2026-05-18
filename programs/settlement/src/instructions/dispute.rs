@@ -5,7 +5,7 @@ use crate::state::*;
 use crate::errors::*;
 use crate::events::*;
 use crate::contexts::*;
-use super::{update_provider_reputation, REASON_DISPUTE_LOSS};
+use super::{update_provider_reputation, REASON_DISPUTE_LOSS, REASON_TASK_COMPLETED};
 
 pub fn raise_dispute(ctx: Context<RaiseDispute>) -> Result<()> {
     let escrow = &mut ctx.accounts.escrow;
@@ -189,72 +189,149 @@ pub fn resolve_dispute_timeout(ctx: Context<ResolveDisputeTimeout>) -> Result<()
         .checked_sub(escrow.released_amount)
         .ok_or(SettlementError::AmountOverflow)?;
 
+    // C4-OB-06 (cycle-4): reconcile delivered (`Submitted`) milestones on the
+    // dispute-timeout rail, exactly as `expire_escrow` does on the expiry
+    // rail (C1 "silence = acceptance"). Pre-fix this path refunded the
+    // *entire* `remaining` to the client and unconditionally applied
+    // `reputation_delta_dispute_loss`, regardless of how much work the
+    // provider had legitimately delivered. A provider who completed 4/5
+    // milestones then got disputed on the 5th, where the resolver never
+    // acts, took the same slash as a total non-deliverer and the client
+    // recovered delivered-but-unapproved work — a profitable variant of the
+    // C1 stall attack moved onto the dispute rail.
+    //
+    // New economics, parity with `expire_escrow`:
+    //   * Submitted  → auto-paid to provider (delivered; silence = accept)
+    //   * Pending    → refunded to client; counts as genuine non-delivery
+    //   * Approved   → already paid (in `released_amount`, skipped here)
+    //   * Rejected   → refunded to client; not a non-delivery signal
+    //   * Disputed   → the milestone(s) the dispute is actually about;
+    //                  treated as non-delivery (refund to client + slash).
+    let mut provider_earned: u64 = 0;
+    let mut has_pending_or_disputed: bool = false;
+    for milestone in &escrow.milestones {
+        match milestone.status {
+            MilestoneStatus::Submitted => {
+                provider_earned = provider_earned
+                    .checked_add(milestone.amount)
+                    .ok_or(SettlementError::AmountOverflow)?;
+            }
+            MilestoneStatus::Pending | MilestoneStatus::Disputed => {
+                has_pending_or_disputed = true;
+            }
+            MilestoneStatus::Approved | MilestoneStatus::Rejected => {}
+        }
+    }
+
+    let client_refund = remaining
+        .checked_sub(provider_earned)
+        .ok_or(SettlementError::AmountOverflow)?;
+
     let bump = escrow.bump;
     let client_key = escrow.client;
     let provider_key = escrow.provider;
     let task_id = escrow.task_id;
     let task_id_bytes = task_id.to_le_bytes();
 
-    if remaining > 0 {
-        let signer_seeds: &[&[&[u8]]] = &[&[
-            b"escrow",
-            client_key.as_ref(),
-            provider_key.as_ref(),
-            &task_id_bytes,
-            &[bump],
-        ]];
+    let signer_seeds: &[&[&[u8]]] = &[&[
+        b"escrow",
+        client_key.as_ref(),
+        provider_key.as_ref(),
+        &task_id_bytes,
+        &[bump],
+    ]];
 
-        let transfer_instruction = Transfer {
+    if provider_earned > 0 {
+        let transfer_to_provider = Transfer {
+            from: ctx.accounts.escrow_token_account.to_account_info(),
+            to: ctx.accounts.provider_token_account.to_account_info(),
+            authority: ctx.accounts.escrow.to_account_info(),
+        };
+        token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                transfer_to_provider,
+                signer_seeds,
+            ),
+            provider_earned,
+        )?;
+    }
+
+    if client_refund > 0 {
+        let transfer_to_client = Transfer {
             from: ctx.accounts.escrow_token_account.to_account_info(),
             to: ctx.accounts.client_token_account.to_account_info(),
             authority: ctx.accounts.escrow.to_account_info(),
         };
-
         token::transfer(
             CpiContext::new_with_signer(
                 ctx.accounts.token_program.to_account_info(),
-                transfer_instruction,
+                transfer_to_client,
                 signer_seeds,
             ),
-            remaining,
+            client_refund,
         )?;
     }
 
     let reputation_delta_dispute_loss =
         ctx.accounts.protocol_config.reputation_delta_dispute_loss;
+    let reputation_delta_task_completed =
+        ctx.accounts.protocol_config.reputation_delta_task_completed;
     let escrow = &mut ctx.accounts.escrow;
     escrow.released_amount = escrow.total_amount;
+    // Mark auto-paid Submitted milestones as Approved for audit clarity
+    // (mirrors `expire_escrow`'s post-reconciliation sweep).
+    for milestone in escrow.milestones.iter_mut() {
+        if milestone.status == MilestoneStatus::Submitted {
+            milestone.status = MilestoneStatus::Approved;
+        }
+    }
     escrow.status = EscrowStatus::Completed;
 
-    // Finding #19: governance-owned delta; rating=0 — timeout slash, no user rating.
-    // SEC-1: pass `provider_authority` (= escrow.provider) — see cpi.rs.
+    // C4-OB-06: only slash when at least one milestone was genuinely
+    // Pending (never delivered) or is the Disputed milestone itself. If
+    // every milestone was delivered (Submitted→auto-paid / already
+    // Approved) the provider performed — apply the success-path delta
+    // instead of the dispute-loss slash, exactly as `expire_escrow`'s
+    // all-Approved branch does. SEC-1: pass `provider_authority`
+    // (= escrow.provider). ADR-097: pass `provider_owner_nonce`.
+    // AUD-109/113 (cycle-2): explicit reason codes.
     //
-    // SEC-7 note: this instruction is now the ONLY exit path for a dispute
-    // with `dispute_resolver == None`. `resolve_dispute` rejects such
-    // disputes at the account-constraint layer with
-    // `NoResolverRequiresTimeout`. The timeout path refunds the full
-    // remaining balance symmetrically to the client and applies the
-    // standard dispute-loss slash, which is economically neutral (the
-    // client gets their money back; the provider takes a reputation hit
-    // for failing to deliver).
-    // ADR-097: pass `provider_owner_nonce` for the Registry's nonce-based PDA seed.
-    // AUD-109/113 (cycle-2): explicit REASON_DISPUTE_LOSS code.
-    update_provider_reputation(
-        reputation_delta_dispute_loss,
-        REASON_DISPUTE_LOSS,
-        ctx.accounts.registry_program.to_account_info(),
-        ctx.accounts.provider_profile.to_account_info(),
-        ctx.accounts.provider_authority.to_account_info(),
-        ctx.accounts.provider_owner_nonce.to_account_info(),
-        ctx.accounts.settlement_authority.to_account_info(),
-        ctx.bumps.settlement_authority,
-    )?;
+    // SEC-7 note: this instruction remains the ONLY exit path for a dispute
+    // with `dispute_resolver == None` (`resolve_dispute` rejects those with
+    // `NoResolverRequiresTimeout`). It is still economically neutral, but
+    // now correctly so: the client only recovers funds for work that was
+    // never delivered, and the provider is only slashed for genuine
+    // non-delivery.
+    if has_pending_or_disputed {
+        update_provider_reputation(
+            reputation_delta_dispute_loss,
+            REASON_DISPUTE_LOSS,
+            ctx.accounts.registry_program.to_account_info(),
+            ctx.accounts.provider_profile.to_account_info(),
+            ctx.accounts.provider_authority.to_account_info(),
+            ctx.accounts.provider_owner_nonce.to_account_info(),
+            ctx.accounts.settlement_authority.to_account_info(),
+            ctx.bumps.settlement_authority,
+        )?;
+    } else {
+        update_provider_reputation(
+            reputation_delta_task_completed,
+            REASON_TASK_COMPLETED,
+            ctx.accounts.registry_program.to_account_info(),
+            ctx.accounts.provider_profile.to_account_info(),
+            ctx.accounts.provider_authority.to_account_info(),
+            ctx.accounts.provider_owner_nonce.to_account_info(),
+            ctx.accounts.settlement_authority.to_account_info(),
+            ctx.bumps.settlement_authority,
+        )?;
+    }
 
     emit!(DisputeResolved {
         escrow: escrow.key(),
         resolver: ctx.accounts.payer.key(),
-        client_refund: remaining,
-        provider_refund: 0,
+        client_refund,
+        provider_refund: provider_earned,
         task_id,
     });
 

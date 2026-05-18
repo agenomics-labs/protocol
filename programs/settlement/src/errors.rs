@@ -117,4 +117,14 @@ pub enum SettlementError {
     /// unrecoverable.
     #[msg("Deadline is too far in the future (max 365 days from now)")]
     DeadlineTooFar,
+
+    /// C4-OB-04 (cycle-4): Settlement-side defense-in-depth — refuse to
+    /// propose a *positive* (`task_completed`) reputation delta for a
+    /// provider whose Registry `AgentProfile.status` is `Suspended`.
+    /// Slash deltas are intentionally still allowed through. Closes the
+    /// cross-program trust gap where Settlement relied entirely on the
+    /// Registry callee to enforce ADR-095/097 suspension (it does not gate
+    /// `Suspended` on inbound deltas — only the terminal `Retired`).
+    #[msg("Provider is Registry-suspended; positive reputation deltas are not permitted (C4-OB-04)")]
+    ProviderSuspended,
 }
