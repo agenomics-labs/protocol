@@ -34,6 +34,25 @@ export function capabilityGated<I, O>(
       `action '${action.name}': default-deny requires non-empty capabilities[] when readOnly:false (ADR-058 §3)`,
     );
   }
+  // ADR-143 — capability enforcement is decoupled from `readOnly`. A
+  // read-only action that exposes sensitive data MUST declare its required
+  // `read:*` capabilities; the gate below enforces them regardless of
+  // `readOnly`. This registration-time assertion catches the inverse
+  // footgun: a read-only action whose name/description marks it sensitive
+  // but ships with no capability set. We treat any `readOnly` action that
+  // is NOT marked `publicRead: true` AND touches a sensitive surface
+  // (declared via `sensitiveRead: true`) as required to carry caps.
+  if (
+    action.readOnly === true &&
+    action.sensitiveRead === true &&
+    action.capabilities.length === 0
+  ) {
+    throw new Error(
+      `action '${action.name}': sensitiveRead:true read-only actions require ` +
+        `non-empty capabilities[] (ADR-143 — capability enforcement is ` +
+        `decoupled from readOnly; amends ADR-058 §4)`,
+    );
+  }
   if (action.idempotent === true && typeof action.idempotencyKey !== "function") {
     throw new Error(
       `action '${action.name}': idempotent:true requires idempotencyKey function (ADR-059 §5)`,
@@ -53,8 +72,12 @@ export function capabilityGated<I, O>(
         });
       }
 
-      // ADR-058 §4 — capability gate
-      if (!action.readOnly) {
+      // ADR-058 §4 as amended by ADR-143 — capability gate driven by the
+      // explicit per-action required-capability set, NOT `readOnly`. Any
+      // action that declares a non-empty `capabilities[]` is gated,
+      // regardless of `readOnly`. `readOnly` governs signer/idempotency
+      // semantics only (see signer-mode assertion above and ADR-058 §5).
+      if (action.capabilities.length > 0) {
         const missing = action.capabilities.filter(
           (c) => !ctx.wallet.capabilities.has(c),
         );

@@ -37,6 +37,7 @@ import {
   requirePositiveNumber,
 } from "./validation.js";
 import { invalidateVaultStateCache } from "../pipeline/vault-layout.js";
+import { boundedFetchJson } from "../util/bounded-fetch.js";
 import type { Address } from "@solana/kit";
 
 /**
@@ -341,13 +342,9 @@ export async function handleQueryExecutionHistory(args: Record<string, unknown>)
   const url = `${indexerBaseUrl()}/execution/${dim}/${encodeURIComponent(key)}${
     qs.toString().length > 0 ? "?" + qs.toString() : ""
   }`;
-  const resp = await fetch(url);
-  if (!resp.ok) {
-    throw new Error(
-      `query_execution_history: indexer responded ${resp.status} ${resp.statusText}`,
-    );
-  }
-  return await resp.json();
+  // ADR-144: bounded fetch (timeout + streamed byte cap). Indexer JSON is
+  // KB-scale; the helper's default 256 KiB cap is ample.
+  return await boundedFetchJson(url);
 }
 
 /**

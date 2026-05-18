@@ -128,6 +128,22 @@ function capabilityGated<I, O>(action: Action<I, O>): Action<I, O> {
 }
 ```
 
+> **AMENDED by ADR-143 (CC-3, cycle-4 security re-audit).** The
+> `if (!action.readOnly)` gate above conflated "mutating" with
+> "capability-relevant": a `readOnly: true` action that exposes sensitive
+> data shipped with no capability check, and authors worked around it by
+> declaring such actions `readOnly: false` purely to re-arm the gate
+> (`registry.ts` `find_similar_agents`). Per ADR-143 the gate is now
+> driven by the **explicit per-action required-capability set**, not
+> `readOnly`: an action with a non-empty `capabilities[]` is gated
+> regardless of `readOnly`. `readOnly` continues to govern
+> signer/idempotency semantics only (§5). A read-only action that exposes
+> sensitive data declares `sensitiveRead: true` + its `read:*`
+> capabilities; a registration-time assertion rejects a
+> `sensitiveRead: true` action with an empty `capabilities[]`. The
+> `registry.ts` `readOnly: false` workaround is reverted. See ADR-143 and
+> `docs/audits/ARCHITECTURE_REAUDIT_2026-05c-cycle4-security.md`.
+
 ### 5. Ship three `SolanaSigner` adapters
 
 - **`KeychainSignerAdapter`** (production): wraps any `@solana/keychain-core` backend (Vault/Privy/Turnkey/etc.) as a `SolanaSigner`. This is the default path for real signers.

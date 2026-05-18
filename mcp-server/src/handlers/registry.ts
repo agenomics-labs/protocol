@@ -37,6 +37,7 @@ import {
 } from "./formatters.js";
 import { serverLogger } from "../util/logger.js";
 import { getAgentMemory } from "../adapters/agent-memory.js";
+import { boundedFetchJson } from "../util/bounded-fetch.js";
 
 const log = serverLogger.child({ handler: "registry" });
 
@@ -313,13 +314,12 @@ async function discoverViaIndexer(
   // entries whose status is non-active or whose capabilities don't match.
   url.searchParams.set("limit", String(Math.min(Math.max(limit * 4, 50), 200)));
 
-  const resp = await fetch(url.toString());
-  if (!resp.ok) {
-    throw new Error(`indexer HTTP ${resp.status}`);
-  }
-  const payload = (await resp.json()) as {
+  // ADR-144: bounded fetch (timeout + streamed byte cap). Indexer agent
+  // list is bounded by the `limit` query param; 256 KiB default cap is
+  // ample for the over-fetch (≤200 entries).
+  const payload = await boundedFetchJson<{
     agents?: Array<{ authority: string; reputation_score?: number }>;
-  };
+  }>(url.toString());
   const candidates = payload.agents ?? [];
   if (candidates.length === 0) {
     return { agents: [], totalFound: 0, limit };

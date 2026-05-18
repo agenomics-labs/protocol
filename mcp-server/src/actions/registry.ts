@@ -177,13 +177,13 @@ export const stakeReputationAction: Action<
  * on the per-call work. `min_similarity` is the cosine floor in [0, 1];
  * the default 0.3 matches EVO's `DEFAULT_MIN_SIMILARITY` (ADR-062 in EVO).
  *
- * The on-chain handler is read-only; this action is intentionally NOT
- * marked `readOnly: true` because we want the capability gate to enforce
- * `read:agent-memory` (the gate skips claims when `readOnly: true`). A
- * read-only action with a non-empty `capabilities[]` would be
- * registration-time invalid per `capability-gated-tool.ts:33-36` — but
- * that check fires the OTHER way (non-readOnly + empty caps), so we just
- * declare `readOnly: false` to make the gate fire on missing claims.
+ * The on-chain handler is read-only, so this action is correctly declared
+ * `readOnly: true`. Per ADR-143 the capability gate is decoupled from
+ * `readOnly` — it fires on any non-empty `capabilities[]` — so the
+ * `read:agent-memory` claim is still enforced. `sensitiveRead: true`
+ * additionally triggers the registration-time assertion that this
+ * sensitive read action carries caps. The pre-ADR-143 `readOnly: false`
+ * workaround (declared purely to re-enable the gate) is reverted.
  */
 const findSimilarAgentsInput = {
   agent_id: z
@@ -222,10 +222,13 @@ export const findSimilarAgentsAction: Action<
     "k nearest agents",
   ],
   examples: [],
-  // NOT readOnly — the capability-gate skips claim enforcement on
-  // readOnly:true actions, and we want the `read:agent-memory` claim to
-  // gate access. The handler itself performs no on-chain writes.
-  readOnly: false,
+  // ADR-143: the handler performs no on-chain writes, so this is honestly
+  // `readOnly: true`. Capability enforcement is decoupled from `readOnly`
+  // — the `read:agent-memory` claim is still gated because
+  // `capabilities[]` is non-empty. `sensitiveRead: true` enforces, at
+  // registration time, that this sensitive read carries that cap.
+  readOnly: true,
+  sensitiveRead: true,
   capabilities: ["read:agent-memory"],
   // No preflight gate: cluster_health is for on-chain submission paths,
   // and the only on-chain calls here are read-side `fetchNullable` /

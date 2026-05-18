@@ -22,6 +22,8 @@ import {
 } from "../handlers/vault.js";
 import { handleVaultTransferV2 } from "../handlers-v2/vault.js";
 import { deriveVaultPDA, getWalletPublicKey, isValidPublicKey } from "../solana.js";
+// CC-5: shared base58-pubkey schema for address/mint/token-account fields.
+import { solanaAddress } from "../schema/solana-address.js";
 import { serverLogger } from "../util/logger.js";
 
 const log = serverLogger.child({ action: "vault_transfer" });
@@ -100,7 +102,7 @@ const agentIdentitySecretKeySchema = z
   .optional();
 
 const createVaultInput = {
-  agentIdentity: z.string(),
+  agentIdentity: solanaAddress,
   dailyLimitSol: z.number().nonnegative(),
   perTxLimitSol: z.number().nonnegative(),
   maxTxsPerHour: z.number().int().nonnegative(),
@@ -134,7 +136,7 @@ export const createVaultAction: Action<
 // ---------- get_vault_info ----------
 
 const getVaultInfoInput = {
-  vaultAddress: z.string().optional(),
+  vaultAddress: solanaAddress.optional(),
 } as const;
 
 export const getVaultInfoAction: Action<
@@ -157,7 +159,7 @@ export const getVaultInfoAction: Action<
 // ---------- vault_transfer ----------
 
 const vaultTransferInput = {
-  recipientAddress: z.string(),
+  recipientAddress: solanaAddress,
   amountSol: z.number().positive(),
 } as const;
 
@@ -244,8 +246,8 @@ export const vaultTransferV2Action: Action<
 // ---------- vault_token_transfer ----------
 
 const vaultTokenTransferInput = {
-  tokenMintAddress: z.string(),
-  recipientTokenAccount: z.string(),
+  tokenMintAddress: solanaAddress,
+  recipientTokenAccount: solanaAddress,
   amount: z.number().positive(),
 } as const;
 
@@ -445,7 +447,7 @@ export const resumeVaultAction: Action<Record<string, never>, unknown> = {
 
 const manageAllowlistInput = {
   action: z.enum(["add_token", "remove_token", "add_program", "remove_program"]),
-  address: z.string(),
+  address: solanaAddress,
   perTxLimit: z.number().optional(),
   dailyLimit: z.number().optional(),
 } as const;
@@ -471,8 +473,8 @@ export const manageAllowlistAction: Action<
 // ---------- query_execution_history (ADR-138) ----------
 
 const queryExecutionHistoryInput = {
-  agentIdentity: z.string().optional(),
-  vault: z.string().optional(),
+  agentIdentity: solanaAddress.optional(),
+  vault: solanaAddress.optional(),
   actionKind: z
     .enum([
       "Transfer",
