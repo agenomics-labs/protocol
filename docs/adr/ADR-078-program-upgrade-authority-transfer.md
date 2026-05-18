@@ -163,3 +163,102 @@ This ADR mandates — but does not itself ship — the following changes to `scr
 - `scripts/mainnet-deploy.sh` — target of §6's hardening follow-up
 - `docs/STATUS.md` §3, §4 — current single-key authority state + devnet multisig PDA
 - `docs/SQUADS_DEVNET.md` — devnet operator runbook (also targeted for §1's "common failure modes" section per Audit 3 gap #13)
+
+## Concrete Proposal (decision-ready — maintainer fills bracketed blanks)
+
+> **Status note:** Non-normative until accepted. Does **not** change Status
+> (stays **Proposed**) and does not alter any canonical section above. It
+> mirrors the `## Maintainer Decision Required` precedent from PR #186 and
+> is appended after `## References` so the ADR-lint section-order check
+> (Status → Date → Context → Decision → Consequences) never backtracks on
+> `## Decision`. Cross-reads with **ADR-063 §Concrete Proposal** (the 3-of-5
+> seats this ceremony consumes — they MUST exist first), **ADR-079**
+> (Accepted — every signer below is bound by its §1 bright-line
+> hardware/KMS trigger and §4 custody rules), and **SDK-F1 / AUD-207**
+> (cycle-4: mainnet program IDs stay placeholders until this transfer
+> completes — this ADR is the gate that unblocks publishing real IDs).
+
+### CP-1. Recommended option (maintainer confirms)
+
+**Squads V4 quorum holds the upgrade authority**, architected so a
+**timelock + guardian-pause can layer on before material TVL** without a
+re-ceremony. Mechanics confirmed by research:
+
+- `solana program set-upgrade-authority <program-id> --new-upgrade-authority <squads-vault-pda> --skip-new-upgrade-authority-signer-check` — the `--skip-*` flag is **required** because the Squads vault PDA cannot itself sign the set-authority transaction. The *current* single key signs the transfer; thereafter every upgrade is a Squads proposal→approve(threshold)→execute against `BPFLoaderUpgradeable`.
+- Squads V4 exposes a per-multisig **`time_lock`** config field (seconds): set it to **0 at bootstrap** (no TVL yet — operational agility during the §1 rehearsal and §3 staged transfers), then raise it to **48–72h** via a Squads config transaction *before material TVL* — no authority re-transfer needed. Industry norm for high-value upgradeable systems is a 48–72h delay (Compound-class precedent); guardian-pause sits *outside* the timelock so emergencies are not delayed.
+- **Guardian-pause** layers on as a low-threshold Squads spending-limit/role-scoped fast path (or the existing ADR-063 §6 / ADR-081 emergency-suspend rail) that can halt without waiting out the timelock — recommended target, not bootstrapped on day 1.
+
+### CP-2. Sealed two-custodian rollback (custodians DISTINCT from upgrade signers)
+
+Per §2: one offline-generated rollback keypair **per program**, printed,
+sealed in tamper-evident bags, split across **two physical custodians who
+are NOT any of the 3-of-5 upgrade signers and NOT the operator wallet
+holder**. The rollback pubkey is external to the multisig; its only role is
+re-taking authority if the multisig is inoperable (at-or-above-threshold
+loss — ADR-063 §6.2 analog). Its use is a declared emergency and triggers
+a re-seal ceremony. **Irreversibility warning:** `set-upgrade-authority`
+performs **zero validation** — a fat-fingered or malicious new authority is
+**unrecoverable** (authority set to a wrong/None pubkey permanently bricks
+upgradability). Every address in CP-4 is therefore verified by two humans
+reading it aloud against the sealed record before broadcast.
+
+### CP-3. Ceremony checklist (TEMPLATE — bracketed values are NOT runnable)
+
+Order: **Vault → Registry → Settlement** (§3). Dependency gate: ADR-063
+3-of-5 seats seated (CP-1/CP-5 there) **and** ADR-079 §1 trigger satisfied
+(all signers on hardware/KMS) **before step 1**.
+
+1. **Air-gapped keygen** (rollback, per program): `solana-keygen new --no-bip39-passphrase -o [program]-rollback.json` on a wiped offline machine; print; seal; split to `[rollback custodian A]` / `[rollback custodian B]`; wipe disk.
+2. **Witnesses present**: the 5 `AEP_PROTOCOL`/upgrade prospective signers + ≥1 named external researcher; record roster + timestamps.
+3. **Devnet dry-run** (throwaway program, §1) then **devnet real-program** transfer (§4.5) — second human on signer 2 (closes GOV-7); rollback-re-takes-authority devnet test passes (§2.5).
+4. **Mainnet transfer (per program, repeat ×3 in order)** — TEMPLATE:
+   ```
+   # Pre: verify [squads-vault-pda] aloud against sealed record (two humans)
+   solana program show [program-id]                       # confirm current authority = [operator-key]
+   solana program set-upgrade-authority [program-id] \
+     --new-upgrade-authority [squads-vault-pda] \
+     --skip-new-upgrade-authority-signer-check \
+     --keypair [operator-key]                              # current authority signs
+   solana program show [program-id]                       # confirm authority == [squads-vault-pda]
+   ```
+5. **Post-transfer verification** (§4): authority==vault PDA; no pending buffers; deployed `.so` hash == pre-transfer hash in `program-rollback.md`; mcp-server mainnet smoke green; devnet parity; transparency-log entry published.
+6. **48h observation window** before the next program. On failure: pause sequence, post governance proposal, rollback key **stays sealed** (a CPI bug is repaired by the multisig signing a fix-deploy, NOT by the rollback key).
+
+### CP-4. Rollback runbook (catastrophic multisig loss ONLY)
+
+1. Declare ADR-063 §6.2 emergency; confirm multisig is genuinely inoperable (≥threshold signer loss), not merely a bad upgrade.
+2. Both custodians convene; unseal `[program]-rollback.json`; verify pubkey == published `docs/governance/program-rollback.md` value.
+3. On air-gapped machine: `solana program set-upgrade-authority [program-id] --new-upgrade-authority [known-good-recovery-authority] --keypair [program]-rollback.json` then redeploy the pre-incident binary (SHA + hash from the deploy log).
+4. Verify deployed `.so` hash == sealed pre-transfer hash. Re-key: generate a fresh rollback keypair, re-seal, re-split to two custodians; document in `custody.md`.
+
+### CP-5. Alternatives table (with irreversibility warning)
+
+| Option | Verdict | Why |
+|---|---|---|
+| Single hardware-wallet key | **Reject** | One device = total-capture / total-loss risk; concentrates the irreversible `set-upgrade-authority` on one fallible device (alt E). |
+| Burn upgrade authority (set to None) | **Premature — reject now** | With cycle-4 CRITICALs (SDK-F1/AUD-207) still open, immutability locks in unaudited bugs **permanently** — `set-upgrade-authority None` is irreversible. Revisit only post-audit-clean + post-stability. |
+| Squads V4 quorum, timelock 0 now → 48–72h before TVL + guardian-pause | **Recommended target** | Distributes authority, agile during transfer, hardens before value is at risk, emergency path not delayed by timelock. |
+
+⚠️ **Irreversibility warning (applies to all rows):** `set-upgrade-authority`
+is unvalidated and one-way. A wrong new authority or a premature burn is
+**not recoverable**. This is why the rollback key (CP-2) is sealed, the
+addresses are double-verified (CP-3 step 4), and burn is deferred.
+
+### CP-6. The bracketed blanks the maintainer must fill
+
+- `[3-of-5 mainnet principals]` — the five upgrade-authority signer pubkeys + custody attestations (sourced from ADR-063 §Concrete Proposal CP-4; **distinct human set** from the SAS credential authority per Audit-3 gap #16)
+- `[2 rollback custodians]` — custodian A + custodian B identities (NOT any upgrade signer, NOT the operator wallet holder)
+- `[timelock duration confirm]` — confirm the pre-TVL target (recommended 48–72h) and the trigger event ("before material TVL"); confirm guardian-pause is exempt from it
+
+### CP-7. Decide-first ordering
+
+ADR-078 is the head of the chain but its inputs are *downstream* of
+ADR-063: **decide ADR-063's independent auditor seat → the rest of the
+3-of-5 → then ADR-078's 2 rollback custodians + timelock confirm → then
+ADR-077/ADR-113 follow.** ADR-078 cannot open its §5 checklist until the
+ADR-063 seats exist (§5: "ADR-063 Accepted with slots populated") and
+ADR-079 §1 trigger is satisfied.
+
+**Decision reduces to: 3 bracketed inputs — the 3-of-5 mainnet principals
+(inherited from ADR-063), the 2 rollback custodians, and the timelock
+duration confirm.**

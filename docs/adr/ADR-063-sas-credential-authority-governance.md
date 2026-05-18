@@ -294,3 +294,102 @@ Published to the protocol repo and linked from the documentation site.
 - `scripts/emergency-suspend-credential.ts` — the suspend script referenced by §6.1 step 2; idempotent / resumable; auditor cosign enforced
 - `programs/agent-registry/**` — current on-chain surfaces (unchanged by this ADR)
 - SAS documentation — credential PDA layout, multi-signer authority admin instructions, attestation closure semantics
+
+## Concrete Proposal (decision-ready — maintainer fills bracketed blanks)
+
+> **Status note:** This section is **non-normative until accepted**. It does
+> not change the ADR Status (stays **Proposed**) and does not alter any
+> canonical section above. It exists so the maintainer can *approve or
+> adjust* a concrete custody design rather than design one from scratch.
+> It mirrors the `## Maintainer Decision Required` precedent established in
+> PR #186 and is appended after `## References` so the ADR-lint
+> section-order check (Status → Date → Context → Decision → Consequences)
+> is never disturbed. Cross-reads with **ADR-078 §Concrete Proposal**
+> (the mainnet gate that consumes these seats), **ADR-079** (Accepted —
+> every seat below is bound by its §4 hardware/KMS custody rules), and the
+> cycle-4 **SDK-F1 / AUD-207** context (program IDs stay placeholders
+> until ADR-078 transfers authority onto the multisig these seats define).
+
+### CP-1. Recommended structures (maintainer confirms or adjusts the numbers)
+
+| Authority | Recommended composition | Routine threshold | Emergency threshold | Why this shape |
+|---|---|---|---|---|
+| `AEP_PROTOCOL` | **Squads V4 3-of-5** | 4-of-5 (§3) | 3-of-5 + auditor co-sign (§3) | Protocol-endorsed attestations must not be weaker than the trust set that can change the protocol itself (§1.1). 5 seats give one-seat-loss tolerance at the emergency threshold without dropping below simple majority. |
+| `AEP_VALIDATORS` | **Squads V4 5-of-9** | 7-of-9 (§3) | 5-of-9 + auditor co-sign (§3) | Community behavioral observations have a larger, more diverse signer pool; 5-of-9 stops a 5-person clique while tolerating loss of up to 4 seats before the multisig is inoperable (§1.2). |
+
+Squads V4 supplies every primitive natively — per-member **Proposer / Voter
+/ Executor** role separation, a configurable **threshold**, a per-multisig
+**time-lock** field, and **spending-limit** scoping — so no custom
+governance program is needed (confirms *Alternatives Considered* A). The
+seat *taxonomy* below maps onto Squads V4 roles: operator seats are
+Proposer+Voter+Executor; the independent auditor seat is Voter-only
+(co-sign without initiating); the cold-backup seat is Voter-only and
+normally offline.
+
+### CP-2. Seat taxonomy and security rationale (`AEP_PROTOCOL` 3-of-5)
+
+| Seat | Class | Squads V4 role | Custody (ADR-079 §4) | Security rationale |
+|---|---|---|---|---|
+| 1 | Operator — founder/protocol lead | Proposer+Voter+Executor | Hardware (Ledger/YubiKey) | Long-tenure broad context; initiates routine proposals. Operator class = day-to-day governance throughput. |
+| 2 | Operator — key engineering contributor | Proposer+Voter+Executor | Hardware | Active committer; second independent operator so no single human can reach routine threshold alone. |
+| 3 | **Independent auditor seat** | Voter-only | Hardware, distinct firm/custodian | External firm, NOT a protocol operator. Voter-only so it co-signs but cannot *initiate* a self-serving change — this is the seat that makes the emergency "+ auditor co-sign" threshold meaningful (§3). |
+| 4 | Operator — community-elected signer | Proposer+Voter+Executor | Hardware or ≤1 KMS slot | 12-month term, real-world identity disclosed (§7). Adds a non-core-team check on operator class. |
+| 5 | **Cold-backup seat** | Voter-only, normally offline | Hardware, air-gapped, separate custodian | Security researcher / independent. Held offline; brought online only to cross the 4-of-5 routine threshold or as the swing vote in emergency. Distinct hardware + distinct custodian from seats 1–4 so a single-site or single-custodian compromise cannot reach threshold. |
+
+KMS is capped at ≤2 of 5 slots per ADR-079 §4 and recommended for at most
+seat 4; seats 3 and 5 (auditor + cold-backup) MUST be hardware to preserve
+the Byzantine-fault intent.
+
+### CP-3. Correlated-failure analysis
+
+The 3-of-5 only delivers its guarantee if no single failure domain spans
+the threshold. Required separations (maintainer verifies when filling
+blanks):
+
+- **Distinct hardware vendors across seats 3 and 5** — do not put the
+  auditor seat and the cold-backup seat on the same wallet make/model; a
+  vendor-wide firmware CVE must not take both.
+- **Distinct custodians / physical sites** — seats 1 & 2 may share an org
+  but seats 3 (external auditor) and 5 (cold-backup) MUST be different
+  humans at different physical locations from each other and from the
+  operator class.
+- **No human holds two seats** (ADR-079 §4 device-level rule) and **no
+  human is also a program-upgrade signer** (Audit-3 gap #16 — the
+  `AEP_PROTOCOL` signer set ≠ ADR-078 program-upgrade signer set).
+- **Auditor seat is not a protocol operator** — if seat 3 were an operator,
+  emergency "+ auditor co-sign" collapses to "operators agree with
+  themselves."
+
+### CP-4. The exact bracketed blanks the maintainer must fill
+
+`AEP_PROTOCOL` (3-of-5):
+
+- `[signer-1 principal]` — operator/founder pubkey + custody attestation
+- `[signer-2 principal]` — operator/engineering pubkey + custody attestation
+- `[independent auditor identity]` — seat 3: named external firm + pubkey + real-world identity disclosure (§7)
+- `[signer-4 principal]` — community-elected pubkey + identity disclosure (§7); term start date
+- `[signer-5 principal]` — cold-backup pubkey + custodian name + air-gap site
+- `[threshold confirm/adjust]` — confirm 3-of-5 routine=4-of-5 / emergency=3-of-5+auditor, or adjust with rationale
+- `[emergency auditor co-signer]` — the pre-registered §6 emergency co-signer (may be the seat-3 firm or a separate named auditor; if separate, its pubkey)
+
+`AEP_VALIDATORS` (5-of-9):
+
+- `[validators initial slate ×9]` — 9 pubkeys per §1.2 sourcing (3 protocol-nominated, 3 self-nominated+community-approved, 3 collective-nominated); seats 4–9 may land within 60 days of bootstrap
+- `[threshold confirm/adjust]` — confirm 5-of-9 routine=7-of-9 / emergency=5-of-9+auditor
+
+### CP-5. Decide-first ordering
+
+**Decide the independent auditor seat (seat 3) first.** Rationale: it is
+the single seat that (a) gates the §6 emergency fast-path (no auditor =
+emergency threshold is unusable per "Pending items before Accept" #2), (b)
+must be an *external* identity with the longest recruitment lead time, and
+(c) is the explicit cross-dependency ADR-078 §5 checks
+("cross-multisig non-overlap"). Operator seats 1–2 are effectively known
+(current stakeholders, bootstrap §5 slots 1–2); seats 4–5 and the
+`AEP_VALIDATORS` slate have a documented 60-day post-bootstrap fill window.
+The auditor seat has neither a known incumbent nor a deferral window — it
+is the critical path.
+
+**Decision reduces to: 7 bracketed inputs for `AEP_PROTOCOL` (5 principals
++ threshold confirm + emergency auditor) and 2 for `AEP_VALIDATORS` (9-seat
+slate + threshold confirm) — decide the independent auditor seat first.**
