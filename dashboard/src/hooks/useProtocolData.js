@@ -3,6 +3,50 @@ import { PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { INDEXER_URL, MONITORED_VAULT, PROGRAM_IDS, connection } from "../config.js";
 
 /**
+ * W-04/W-03 — bounded fetch. The indexer/metrics services are
+ * separately-deployed origins (validated in config.js). A slow/hung
+ * endpoint or a MITM holding the socket open would otherwise stall the
+ * 30 s poll loop and stack overlapping in-flight requests. Abort after
+ * `FETCH_TIMEOUT_MS`.
+ */
+const FETCH_TIMEOUT_MS = 8000;
+
+async function fetchJsonBounded(url) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) {
+      throw new Error(`Non-OK status ${res.status} from ${url}`);
+    }
+    return await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * W-02 — shape validation. The indexer is an untrusted boundary; a
+ * compromised/spoofed indexer can return attacker-shaped JSON that is
+ * otherwise rendered verbatim. Reject anything that is not the expected
+ * shape and fall back to empty (the "Backend offline" UI path), the way
+ * the sas-resolver Zod-validates every boundary.
+ */
+function asArrayField(json, field) {
+  if (json && typeof json === "object" && Array.isArray(json[field])) {
+    return json[field];
+  }
+  return [];
+}
+
+function asStatsObject(json) {
+  if (json && typeof json === "object" && !Array.isArray(json)) {
+    return json;
+  }
+  return null;
+}
+
+/**
  * Indexer-first data fetching hook with RPC fallback.
  * Polls every 30 seconds.
  */
@@ -23,21 +67,15 @@ export function useProtocolData() {
 
   const fetchFromIndexer = useCallback(async () => {
     try {
-      const [agentsRes, eventsRes, statsRes] = await Promise.all([
-        fetch(`${INDEXER_URL}/agents?limit=50`),
-        fetch(`${INDEXER_URL}/events?limit=20`),
-        fetch(`${INDEXER_URL}/stats`),
+      const [agentsJson, eventsJson, statsJson] = await Promise.all([
+        fetchJsonBounded(`${INDEXER_URL}/agents?limit=50`),
+        fetchJsonBounded(`${INDEXER_URL}/events?limit=20`),
+        fetchJsonBounded(`${INDEXER_URL}/stats`),
       ]);
-      if (!agentsRes.ok || !eventsRes.ok || !statsRes.ok) {
-        throw new Error("Indexer returned non-OK status");
-      }
-      const agentsJson = await agentsRes.json();
-      const eventsJson = await eventsRes.json();
-      const statsJson = await statsRes.json();
       return {
-        agents: agentsJson.agents || [],
-        events: eventsJson.events || [],
-        stats: statsJson,
+        agents: asArrayField(agentsJson, "agents"),
+        events: asArrayField(eventsJson, "events"),
+        stats: asStatsObject(statsJson),
         indexerConnected: true,
       };
     } catch {
