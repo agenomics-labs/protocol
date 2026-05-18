@@ -10,6 +10,16 @@ Proposed
 
 **Related:** ADR-025 (expire escrow approved milestones), ADR-026 (resolve-dispute bookkeeping), ADR-030 (dispute timeout), ADR-094 (reputation trust inversion), ADR-106 (TraceRank), ADR-107 (reputation decay), ADR-108 (stake-backed discovery)
 
+## Maintainer Decision Required
+
+**Decision-ready — awaiting maintainer input on:** (1) a legal/regulatory sign-off — whether peer-consensus dispute resolution constitutes arbitration in target jurisdictions (open item 4; devnet/testnet can ship regardless, mainnet enablement is gated on this) and (2) the `ProtocolConfig` defaults (`peer_consensus_window_seconds` 72h, `peer_consensus_min_voters` 5, `max_proposals` 5, per-vote reputation delta +1) to be tuned after mainnet data.
+
+**Options & recommendation:** the recommended option is **an opt-in `PeerConsensus` dispute mode using Bradley-Terry MLE aggregation over pairwise peer rankings, computed off-chain in the indexer with O(V) on-chain verification, alongside (never replacing) the existing single-resolver path**. Rejected alternatives — pure majority vote (vulnerable to proposal-flooding split attacks), Schelling-point/Augur-style commit-reveal staking (over-heavy for this dispute volume), and single-resolver-only (the status quo gap this ADR closes) — are enumerated in *Alternatives considered*. Larin et al. "Fortytwo" (arXiv:2510.24801) plus Bradley & Terry (1952) are the cited basis; pairwise ranking is chosen over majority specifically for Sybil-resilience with capability-weighted voters. The instruction surface, off-chain-MLE/on-chain-proof split, and ADR-030 timeout fallback are all decided.
+
+The single irreducible human inputs are a **legal classification decision** (arbitration exposure — a judgment call I must not invent) and **protocol-economic parameter tuning** (deferred to mainnet data). Status stays **Proposed**.
+
+**Dependency:** consumes ADR-108 stake gate, ADR-106 TraceRank weights, ADR-107 decay; uses ADR-094 `propose_reputation_delta`. Decide after 106/107/108. Part of the ADR-106→113 track (issue #71); the legal gate is unique to this member.
+
 ## Context
 
 Dispute resolution today has two paths (ADR-026 + ADR-030):

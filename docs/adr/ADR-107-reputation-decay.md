@@ -10,6 +10,16 @@ Proposed
 
 **Related:** ADR-094 (reputation trust inversion), ADR-106 (TraceRank), ADR-020 (reputation staking)
 
+## Maintainer Decision Required
+
+**Decision-ready — awaiting maintainer input on:** the default values for the three new `ProtocolConfig` decay knobs (`tracerank_transitivity_beta`, `tracerank_connectivity_threshold`, `tracerank_connectivity_window_seconds`) and whether staked agents get a stake-weighted `β_c` softening (open item 3) — both require the same post-mainnet backtest as ADR-106.
+
+**Options & recommendation:** the recommended option is **all three MeritRank decays (absolute-time β_a + transitivity β_t + connectivity β_c) applied to the off-chain TraceRank edge weight only**, leaving on-chain `reputation_score` as an untouched append-only audit signal. The thinner alternatives — absolute-time-decay-only (misses connectivity/transitivity, easy to game), on-chain decay cron (linear CU cost, loses transitivity entirely), and ship-TraceRank-without-decay (leaves the dormant-high-rep gap open) — are enumerated and rejected in *Alternatives*. MeritRank (Nasrulin et al., arXiv:2207.09950) is the cited basis; combined with ADR-106 it yields the formal Sybil-tolerance guarantee (MeritRank Thm 4.2), which is the rationale for adopting the full three-term form rather than a subset.
+
+The single irreducible human input is **protocol-economic parameter calibration** (the decay constants) — deliberately deferred to the post-mainnet backtest, shipped as `DEFAULT — subject to review` placeholders. Status stays **Proposed**.
+
+**Dependency:** tightly coupled to ADR-106 (extends its edge-weight formula and shares `half_life`); decide the two together. Allowed parameter ranges should be co-documented with ADR-075 (ProtocolConfig validation bounds). Part of the ADR-106→113 reputation track (issue #71).
+
 ## Context
 
 The current `AgentProfile.reputation_score` is a monotonically-non-

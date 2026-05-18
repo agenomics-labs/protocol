@@ -10,6 +10,16 @@ Proposed
 
 **Related:** ADR-018 (framework integrations), ADR-022 (memcmp discovery), ADR-060 (capability manifest), ADR-082 (indexer event coverage), ADR-106 (TraceRank), ADR-108 (stake-backed discovery), ADR-109 (aep: URI scheme)
 
+## Maintainer Decision Required
+
+**Decision-ready — awaiting maintainer input on:** one technical-standard decision — ratification of `all-MiniLM-L6-v2` (384-dim, Apache-2.0) as the canonical v1 embedding model, and the backfill policy for pre-v1.1 manifests (open item 2: recommended **(a) vector optional, fall back to exact match** — ships faster than forced re-publish).
+
+**Options & recommendation:** the recommended option is **agent-published Versioned Capability Vectors in the off-chain ADR-060 manifest** (`capability_vector` + monotonic `version`), indexed via HNSW kNN, additive to the existing memcmp/exact-match surface. Rejected alternatives — on-chain vectors (~2× AgentProfile storage + CU on every read), fine-grained categories (no semantic match), server-side-only vectors (makes the indexer authoritative for what an agent "means"), and LLM query-rewriting (complement, not substitute) — are enumerated in *Alternatives considered*. Giusti et al. (arXiv:2509.20175) is the cited basis. The schema, the unit-norm validator anti-poisoning check, and the TraceRank+stake re-rank of kNN results are all decided.
+
+The single irreducible human input is the **canonical-model ratification + backfill-policy product decision** — a technical-standard call (which embedding model is blessed), not a protocol-economic parameter and not a trust principal. A model change is a future schema bump (`1.1`→`1.2`) + its own ADR. Status stays **Proposed**.
+
+**Dependency:** consumes ADR-109 `aep:` URIs (the `similar_to` arg) and re-ranks via ADR-106/107/108. Decide after 109 and after 106/107's algorithm-acceptance. Part of the ADR-106→113 track (issue #71).
+
 ## Context
 
 Agent discovery today (ADR-022) is keyword/enum based:

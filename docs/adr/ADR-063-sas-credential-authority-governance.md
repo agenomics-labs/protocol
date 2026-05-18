@@ -23,6 +23,16 @@ Items 1-3 are governance-process items (require human-recruitment + real-world c
 
 Related: ADR-077 (defers `AEP_VALIDATORS` bootstrap to T+90 post-mainnet) is explicitly dependent on items 1 and 4 being resolved before its own pre-conditions open. ADR-078 (program upgrade-authority transfer) and ADR-079 (operator key hygiene) cross-reference this ADR as a mainnet prerequisite.
 
+## Maintainer Decision Required
+
+**Decision-ready — awaiting maintainer input on:** the real-world principals for `AEP_PROTOCOL` slots 4–5 (community-elected signer, security researcher), the named external auditor co-signer for the §6 emergency path, and the `AEP_VALIDATORS` 5-of-9 initial slate.
+
+The *mechanism* is fully specified and recommended: `AEP_PROTOCOL` = reuse the existing Registry program-upgrade multisig as a Squads V4 3-of-5 (supermajority 4-of-5 routine, simple-majority + auditor co-sign emergency); `AEP_VALIDATORS` = a separate Squads V4 5-of-9; off-chain proposal venue (`AEP-GOV-NNN` on pinned GitHub Discussions) with on-chain multisig execution. Squads V4 supplies the required primitives natively (per-member roles, time locks, separate vaults — no custom governance program needed). Every option (single-signer, permissionless, on-chain governance program, shared authority, token-weighted) is enumerated and rejected with rationale in *Alternatives Considered*.
+
+The single irreducible human input is **trust-principal selection** (which humans/keys fill the role slots and the auditor co-signer) — explicitly out of this ADR's mandate per the "Pending items before Accept" §1–3; these run through the §2 proposal process once it is live. No protocol-economic parameter is open: thresholds and notice windows are decided in §3. Status stays **Proposed** until "Pending items before Accept" 1–6 are resolved (governance-recruitment + rehearsal items, not code).
+
+**Dependency:** ADR-077 depends on items 1 and 4 here; ADR-078 and ADR-079 cross-reference this ADR as a mainnet prerequisite; ADR-113 stage-1 depends on this multisig being seated.
+
 ## Context
 
 ADR-061 (Accepted) resolved *how* AEP integrates with `solana-attestation-service` (SAS) — option B, manifest-referenced attestations, with the Registry retaining authoritative reputation state. ADR-061 §3 named two SAS credentials at v1:

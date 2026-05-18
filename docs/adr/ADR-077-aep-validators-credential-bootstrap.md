@@ -6,6 +6,16 @@ Proposed
 ## Date
 2026-04-22
 
+## Maintainer Decision Required
+
+**Decision-ready — awaiting maintainer input on:** confirmation of the T+90-days-post-mainnet target as the committed milestone (vs. an alternative dated milestone), and — at ceremony time, not now — the nine real `AEP_VALIDATORS` signer principals.
+
+The recommended option is **(a) defer with a public, dated, post-mainnet plan** (launch mono-credential on `AEP_PROTOCOL`, ship `AEP_VALIDATORS` at T+90). Option (b) bootstrap-now-with-interim-slate and options C–E are enumerated and rejected in *Alternatives Considered*; the deferral is the lower-risk path because it lets `AEP_PROTOCOL` accrue ≥30 days of real rotation experience first. The composition (Squads V4 5-of-9, three tiers, thresholds) is *not* open here — it is decided in ADR-063 §1.2; this ADR only fixes the *date* and the *disclosure shape*.
+
+The single irreducible human inputs are (1) a calendar/governance decision (accept T+90 as the committed deadline) and (2) trust-principal selection of the nine validator signers — deferred to the ADR-063 §2 proposal process at ceremony time and explicitly out of scope here. No protocol-economic parameter is open.
+
+**Dependency:** strictly downstream of ADR-063 items 1 (slots 4–5 seated) and 4 (transparency-log publisher live); after ADR-078's mainnet ceremony defines T. Status stays **Proposed**.
+
 ## Context
 
 ADR-061 §3 named two SAS credentials at v1:
