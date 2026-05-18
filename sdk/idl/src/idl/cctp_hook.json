@@ -418,6 +418,56 @@
       "code": 6016,
       "name": "CctpAttestationNotVerified",
       "msg": "C4-OB-01 / ADR-145: auto_approve_milestone is hard-disabled until \\\n         on-chain CCTP attestation verification (ADR-145) lands. Build with \\\n         the `cctp_attestation_verified` feature ONLY on a non-fund-bearing \\\n         cluster for integration testing."
+    },
+    {
+      "code": 6017,
+      "name": "InvalidCctpMessageTransmitter",
+      "msg": "ADR-145: the cctp_message_transmitter account is not the canonical \\\n         Circle CCTP V2 MessageTransmitterV2 program ID."
+    },
+    {
+      "code": 6018,
+      "name": "UsedNonceOwnerMismatch",
+      "msg": "ADR-145: the used_nonce account is not owned by the Circle CCTP V2 \\\n         MessageTransmitterV2 program — it cannot be a genuine consumed-nonce \\\n         PDA."
+    },
+    {
+      "code": 6019,
+      "name": "UsedNonceAddressMismatch",
+      "msg": "ADR-145: the supplied used_nonce account address does not equal the \\\n         canonical [b\\used_nonce\\, message[12..44]] PDA derived from the \\\n         CCTP message under MessageTransmitterV2 — the message does not \\\n         correspond to this nonce account."
+    },
+    {
+      "code": 6020,
+      "name": "CctpNonceNotConsumed",
+      "msg": "ADR-145: the used_nonce PDA exists but UsedNonce.is_used is false — \\\n         the Circle CCTP V2 message was not actually consumed (no attested \\\n         mint occurred for this nonce)."
+    },
+    {
+      "code": 6021,
+      "name": "CctpMessageMalformed",
+      "msg": "ADR-145: the CCTP V2 message header is malformed or shorter than \\\n         MESSAGE_BODY_INDEX (148) — cannot parse nonce/source/body."
+    },
+    {
+      "code": 6022,
+      "name": "CctpWrongDestinationDomain",
+      "msg": "ADR-145: the CCTP V2 message destination_domain does not equal the \\\n         Solana CCTP domain (5)."
+    },
+    {
+      "code": 6023,
+      "name": "CctpWrongSourceDomain",
+      "msg": "ADR-145: the CCTP V2 message source_domain does not equal the \\\n         expected Base CCTP domain (6)."
+    },
+    {
+      "code": 6024,
+      "name": "CctpBurnBodyMalformed",
+      "msg": "ADR-145: the CCTP V2 BurnMessage body is malformed or shorter than \\\n         the minimum burn-payload length (228 bytes)."
+    },
+    {
+      "code": 6025,
+      "name": "CctpAmountBindingMismatch",
+      "msg": "ADR-145: the verified CCTP V2 BurnMessage `amount` does not equal \\\n         payload.amount_returned_micros — the attested mint is for a \\\n         different number than the payload claims."
+    },
+    {
+      "code": 6026,
+      "name": "CctpBaseTxBindingMismatch",
+      "msg": "ADR-145: payload.base_tx_hash does not equal keccak-bound digest of \\\n         the verified CCTP V2 message (source_domain || nonce) — base_tx_hash \\\n         is not bound to the attested message."
     }
   ],
   "types": [
@@ -565,6 +615,28 @@
                 20
               ]
             }
+          },
+          {
+            "name": "cctp_message",
+            "docs": [
+              "ADR-145: the full Circle CCTP V2 message bytes (the `message`",
+              "argument that was passed to `MessageTransmitterV2::receive_message`",
+              "for the Base→Solana USDC return leg). This is NOT trusted on its",
+              "own — the Hook recomputes the canonical `used_nonce` PDA from",
+              "`message[NONCE_INDEX..SENDER_INDEX]` and asserts that PDA exists,",
+              "is owned by MessageTransmitterV2, and has `UsedNonce.is_used ==",
+              "true`. Because `receive_message` only initializes that PDA after",
+              "`verify_attestation_signatures` passes, a `used_nonce` whose",
+              "address derives from THESE exact bytes is unforgeable proof that",
+              "Circle's attester signed over THIS message. The Hook then parses",
+              "the BurnMessage body to bind `amount_returned_micros`.",
+              "",
+              "Empty (`vec![]`) is permitted only on the default / fund-bearing",
+              "build where the HARD DEPLOY GUARD makes the instruction",
+              "unreachable; on a `cctp_attestation_verified` build the handler",
+              "hard-requires non-empty, well-formed CCTP V2 message bytes."
+            ],
+            "type": "bytes"
           }
         ]
       }

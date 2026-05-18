@@ -63,11 +63,36 @@ pub struct ReflexHookPayload {
     /// and requires it equals this value before approving the milestone.
     /// 20 bytes is the canonical EVM address width.
     pub cdp_recipient: [u8; 20],
+
+    /// ADR-145: the full Circle CCTP V2 message bytes (the `message`
+    /// argument that was passed to `MessageTransmitterV2::receive_message`
+    /// for the Base→Solana USDC return leg). This is NOT trusted on its
+    /// own — the Hook recomputes the canonical `used_nonce` PDA from
+    /// `message[NONCE_INDEX..SENDER_INDEX]` and asserts that PDA exists,
+    /// is owned by MessageTransmitterV2, and has `UsedNonce.is_used ==
+    /// true`. Because `receive_message` only initializes that PDA after
+    /// `verify_attestation_signatures` passes, a `used_nonce` whose
+    /// address derives from THESE exact bytes is unforgeable proof that
+    /// Circle's attester signed over THIS message. The Hook then parses
+    /// the BurnMessage body to bind `amount_returned_micros`.
+    ///
+    /// Empty (`vec![]`) is permitted only on the default / fund-bearing
+    /// build where the HARD DEPLOY GUARD makes the instruction
+    /// unreachable; on a `cctp_attestation_verified` build the handler
+    /// hard-requires non-empty, well-formed CCTP V2 message bytes.
+    pub cctp_message: Vec<u8>,
 }
 
 impl ReflexHookPayload {
-    /// Borsh-serialized byte length.
-    pub const SERIALIZED_LEN: usize = 32 + 1 + 32 + 8 + 20;
+    /// Borsh-serialized byte length of the FIXED prefix (everything
+    /// except the trailing `cctp_message: Vec<u8>`, whose Borsh encoding
+    /// is a 4-byte LE length + the bytes). Pre-ADR-145 callers that send
+    /// only the IC-4 fields must additionally append a 4-byte zero length
+    /// for `cctp_message` (Borsh empty-vec encoding) — see ADR-145.
+    pub const FIXED_PREFIX_LEN: usize = 32 + 1 + 32 + 8 + 20;
+
+    /// Borsh-serialized byte length when `cctp_message` is empty.
+    pub const SERIALIZED_LEN: usize = Self::FIXED_PREFIX_LEN + 4;
 }
 
 #[cfg(test)]
@@ -83,11 +108,13 @@ mod tests {
             base_tx_hash: [0xAB; 32],
             amount_returned_micros: 80_000,
             cdp_recipient: [0x11; 20],
+            cctp_message: vec![],
         };
         let bytes = payload.try_to_vec().expect("serialize");
+        // Empty cctp_message => fixed prefix (93) + 4-byte Borsh vec len.
         assert_eq!(bytes.len(), ReflexHookPayload::SERIALIZED_LEN);
-        // Q-S3-A: extended payload is 93 bytes (32+1+32+8+20).
-        assert_eq!(ReflexHookPayload::SERIALIZED_LEN, 93);
+        assert_eq!(ReflexHookPayload::FIXED_PREFIX_LEN, 93);
+        assert_eq!(ReflexHookPayload::SERIALIZED_LEN, 97);
     }
 
     #[test]
@@ -98,6 +125,7 @@ mod tests {
             base_tx_hash: [0xCD; 32],
             amount_returned_micros: 42_000_000,
             cdp_recipient: [0xEE; 20],
+            cctp_message: vec![0x07; 248],
         };
         let bytes = original.try_to_vec().unwrap();
         let decoded = ReflexHookPayload::try_from_slice(&bytes).unwrap();

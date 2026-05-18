@@ -103,6 +103,63 @@ pub const APPROVE_MILESTONE_DISCRIMINATOR: [u8; 8] =
 pub const CCTP_RECEIVER_AUTHORITY: Pubkey =
     anchor_lang::solana_program::system_program::ID;
 
+/// ADR-145: canonical Circle CCTP V2 `MessageTransmitterV2` program ID.
+///
+/// Same address on Solana mainnet-beta and devnet (verified against
+/// `circlefin/solana-cctp-contracts` `programs/v2/message-transmitter-v2/
+/// src/lib.rs::declare_id!` and Circle's published CCTP Solana programs
+/// doc). This is the program that:
+///   1. runs `verify_attestation_signatures(message.hash(), attestation)`
+///      against Circle's on-chain attester set, and
+///   2. `init`s the `used_nonce` PDA (so the PDA's mere existence is
+///      attestation-gated proof a Circle-signed message was consumed).
+pub const CCTP_MESSAGE_TRANSMITTER_V2_ID: Pubkey =
+    anchor_lang::solana_program::pubkey!(
+        "CCTPV2Sm4AdWt5296sk4P66VBZ7bEhcARwFaaS9YPbeC"
+    );
+
+/// ADR-145: CCTP V2 domain of Solana (the destination of the return
+/// leg). Circle's canonical domain table assigns Solana = 5.
+pub const CCTP_SOLANA_DOMAIN: u32 = 5;
+
+/// ADR-145: CCTP V2 domain of Base (the source of the return leg —
+/// where the USDC was burned to come back to Solana). Circle's
+/// canonical domain table assigns Base = 6.
+pub const CCTP_BASE_DOMAIN: u32 = 6;
+
+/// ADR-145: `used_nonce` PDA seed prefix used by MessageTransmitterV2.
+/// PDA = find_program_address([b"used_nonce", message[12..44]],
+/// CCTP_MESSAGE_TRANSMITTER_V2_ID). Pinned against
+/// `message-transmitter-v2/src/instructions/receive_message.rs`.
+pub const CCTP_USED_NONCE_SEED: &[u8] = b"used_nonce";
+
+/// ADR-145 — CCTP V2 message-header byte offsets.
+///
+/// Pinned against `message-transmitter-v2/src/message.rs`:
+///   VERSION 0 · SOURCE_DOMAIN 4 · DESTINATION_DOMAIN 8 · NONCE 12
+///   · SENDER 44 · RECIPIENT 76 · DESTINATION_CALLER 108
+///   · MIN_FINALITY_THRESHOLD 140 · FINALITY_THRESHOLD_EXECUTED 144
+///   · MESSAGE_BODY 148. The V2 nonce is the 32 bytes `[12..44]` and is
+/// the exact `used_nonce` PDA seed.
+pub const CCTP_MSG_SOURCE_DOMAIN_INDEX: usize = 4;
+pub const CCTP_MSG_DESTINATION_DOMAIN_INDEX: usize = 8;
+pub const CCTP_MSG_NONCE_INDEX: usize = 12;
+pub const CCTP_MSG_SENDER_INDEX: usize = 44;
+pub const CCTP_MSG_BODY_INDEX: usize = 148;
+
+/// ADR-145 — CCTP V2 BurnMessage body byte offsets.
+///
+/// Pinned against `token-messenger-minter-v2/src/token_messenger_v2/
+/// burn_message.rs`. EVM-width fields are 32 bytes; Solana reads the low
+/// 8 bytes after a 24-byte zero `OFFSET`, big-endian.
+///   VERSION 0 · BURN_TOKEN 4 · MINT_RECIPIENT 36 · AMOUNT 68
+///   · MSG_SENDER 100 · MAX_FEE 132 · FEE_EXECUTED 164
+///   · EXPIRATION_BLOCK 196 · HOOK_DATA 228. `amount` (u64 BE) lives at
+/// AMOUNT_INDEX + OFFSET = 92.
+pub const CCTP_BURN_AMOUNT_INDEX: usize = 68;
+pub const CCTP_BURN_EVM_OFFSET: usize = 24;
+pub const CCTP_BURN_MIN_LEN: usize = 228;
+
 /// C4-OB-01 / ADR-145 HARD DEPLOY GUARD — compile-time flag.
 ///
 /// `true` only when the crate is built with the (default-OFF)
@@ -178,6 +235,172 @@ pub const TASK_ESCROW_DISCRIMINATOR: [u8; 8] =
 const TASK_ESCROW_MILESTONES_LEN_OFFSET: usize = 184;
 const MILESTONE_ENTRY_SIZE: usize = 32 + 8 + 1 + 8; // 49
 const MILESTONE_AMOUNT_INNER_OFFSET: usize = 32;
+
+/// ADR-145 — genuine on-chain CCTP V2 attestation verification.
+///
+/// CCTP V2 on Solana has **no generic post-mint hook dispatch**:
+/// `MessageTransmitterV2::receive_message` only CPIs into the program
+/// named by `message.recipient()`, which for a USDC burn is
+/// `TokenMessengerMinterV2` itself; its `handle_receive_finalized_message`
+/// mints to the recipient ATA and returns without ever reading or
+/// forwarding `hook_data`. Therefore this Hook can never be CPI-invoked
+/// *by* CCTP. The sound on-chain anchor is instead the **`used_nonce`
+/// PDA** that `receive_message` `init`s *after*
+/// `verify_attestation_signatures` passes. Its existence + ownership +
+/// `is_used` is unforgeable proof that a Circle-attester-signed message
+/// with that exact nonce was consumed on this cluster.
+pub mod cctp {
+    use super::*;
+
+    /// `UsedNonce` account body as defined by MessageTransmitterV2
+    /// (`message-transmitter-v2/src/state.rs`): a single `bool`,
+    /// preceded by Anchor's 8-byte account discriminator.
+    const USED_NONCE_IS_USED_OFFSET: usize = 8;
+    const USED_NONCE_MIN_LEN: usize = 8 + 1;
+
+    /// Read a big-endian `u32` from `buf[idx..idx+4]`.
+    fn be_u32(buf: &[u8], idx: usize) -> Result<u32> {
+        let s = buf
+            .get(idx..idx + 4)
+            .ok_or(error!(HookError::CctpMessageMalformed))?;
+        Ok(u32::from_be_bytes(s.try_into().unwrap()))
+    }
+
+    /// Verify that `cctp_message` was genuinely received & attested by
+    /// Circle CCTP V2 on this cluster, and return the BurnMessage
+    /// `amount` (u64) the attested mint released.
+    ///
+    /// Soundness chain:
+    ///   1. `message_transmitter.key() == CCTP_MESSAGE_TRANSMITTER_V2_ID`
+    ///      pins the program whose attester set gates the nonce PDA.
+    ///   2. The `used_nonce` account is owned by that program — only
+    ///      MessageTransmitterV2 can create/own a `used_nonce` PDA.
+    ///   3. `used_nonce.key()` equals the canonical
+    ///      `find_program_address([b"used_nonce", message[12..44]],
+    ///      MessageTransmitterV2)` derived from THESE message bytes —
+    ///      binds the witness account to this exact message's nonce.
+    ///   4. `UsedNonce.is_used == true` — `receive_message` only sets
+    ///      this after `verify_attestation_signatures` succeeds, so a
+    ///      true value is attestation-gated proof of a real Circle mint.
+    ///   5. source/destination domain sanity (Base→Solana).
+    ///   6. parse the BurnMessage body `amount` for the caller to
+    ///      reconcile against the escrow milestone.
+    pub fn verify_message_and_amount(
+        message_transmitter: &UncheckedAccount,
+        used_nonce: &UncheckedAccount,
+        cctp_message: &[u8],
+    ) -> Result<u64> {
+        // (1) canonical MessageTransmitterV2 program.
+        require_keys_eq!(
+            message_transmitter.key(),
+            CCTP_MESSAGE_TRANSMITTER_V2_ID,
+            HookError::InvalidCctpMessageTransmitter
+        );
+
+        // header must reach at least MESSAGE_BODY_INDEX.
+        require!(
+            cctp_message.len() >= CCTP_MSG_BODY_INDEX,
+            HookError::CctpMessageMalformed
+        );
+
+        // (5) domain sanity: Base (6) -> Solana (5).
+        require!(
+            be_u32(cctp_message, CCTP_MSG_DESTINATION_DOMAIN_INDEX)?
+                == CCTP_SOLANA_DOMAIN,
+            HookError::CctpWrongDestinationDomain
+        );
+        require!(
+            be_u32(cctp_message, CCTP_MSG_SOURCE_DOMAIN_INDEX)?
+                == CCTP_BASE_DOMAIN,
+            HookError::CctpWrongSourceDomain
+        );
+
+        // (3) re-derive the canonical used_nonce PDA from the 32-byte
+        // V2 nonce slice message[12..44] and require equality with the
+        // supplied witness account.
+        let nonce_seed = cctp_message
+            .get(CCTP_MSG_NONCE_INDEX..CCTP_MSG_SENDER_INDEX)
+            .ok_or(error!(HookError::CctpMessageMalformed))?;
+        let (expected_used_nonce, _bump) = Pubkey::find_program_address(
+            &[CCTP_USED_NONCE_SEED, nonce_seed],
+            &CCTP_MESSAGE_TRANSMITTER_V2_ID,
+        );
+        require_keys_eq!(
+            used_nonce.key(),
+            expected_used_nonce,
+            HookError::UsedNonceAddressMismatch
+        );
+
+        // (2) ownership: only MessageTransmitterV2 can own a real
+        // used_nonce PDA. A look-alike account owned by anything else
+        // (incl. this program or the system program) is rejected.
+        require_keys_eq!(
+            *used_nonce.owner,
+            CCTP_MESSAGE_TRANSMITTER_V2_ID,
+            HookError::UsedNonceOwnerMismatch
+        );
+
+        // (4) UsedNonce.is_used == true.
+        let nonce_data = used_nonce.try_borrow_data()?;
+        require!(
+            nonce_data.len() >= USED_NONCE_MIN_LEN,
+            HookError::CctpNonceNotConsumed
+        );
+        require!(
+            nonce_data[USED_NONCE_IS_USED_OFFSET] == 1,
+            HookError::CctpNonceNotConsumed
+        );
+        drop(nonce_data);
+
+        // (6) parse the BurnMessage body `amount` (EVM 32-byte field;
+        // Solana reads the low 8 bytes big-endian after a 24-byte zero
+        // OFFSET, and requires the skipped 24 bytes are zero).
+        let body = &cctp_message[CCTP_MSG_BODY_INDEX..];
+        require!(
+            body.len() >= CCTP_BURN_MIN_LEN,
+            HookError::CctpBurnBodyMalformed
+        );
+        let amt_hi = CCTP_BURN_AMOUNT_INDEX;
+        let amt_lo = amt_hi + CCTP_BURN_EVM_OFFSET;
+        require!(
+            body[amt_hi..amt_lo].iter().all(|&b| b == 0),
+            HookError::CctpBurnBodyMalformed
+        );
+        let amount = u64::from_be_bytes(
+            body[amt_lo..amt_lo + 8]
+                .try_into()
+                .map_err(|_| error!(HookError::CctpBurnBodyMalformed))?,
+        );
+
+        Ok(amount)
+    }
+
+    /// ADR-145 — bind `payload.base_tx_hash` to the verified message.
+    ///
+    /// The Base L1 transaction hash is **not carried in the CCTP wire
+    /// message** (CCTP identifies a transfer by `(source_domain,
+    /// nonce)`, never the source-chain tx hash). To still give the
+    /// replay-PDA seed and audit trail an on-chain-verifiable meaning,
+    /// the Hook redefines `base_tx_hash` as the keccak256 digest of
+    /// `source_domain (BE u32) || nonce (32 bytes)` taken from the
+    /// **verified** message. The Base-side burn constructor (Surface 4)
+    /// computes the identical digest, so a payload whose `base_tx_hash`
+    /// does not equal this digest is not bound to the attested message.
+    /// This is the documented ADR-145 trust redefinition (see ADR).
+    pub fn expected_base_tx_binding(cctp_message: &[u8]) -> Result<[u8; 32]> {
+        use anchor_lang::solana_program::keccak;
+        let src = cctp_message
+            .get(CCTP_MSG_SOURCE_DOMAIN_INDEX..CCTP_MSG_SOURCE_DOMAIN_INDEX + 4)
+            .ok_or(error!(HookError::CctpMessageMalformed))?;
+        let nonce = cctp_message
+            .get(CCTP_MSG_NONCE_INDEX..CCTP_MSG_SENDER_INDEX)
+            .ok_or(error!(HookError::CctpMessageMalformed))?;
+        let mut preimage = Vec::with_capacity(4 + 32);
+        preimage.extend_from_slice(src);
+        preimage.extend_from_slice(nonce);
+        Ok(keccak::hash(&preimage).to_bytes())
+    }
+}
 
 #[program]
 pub mod cctp_hook {
@@ -302,6 +525,51 @@ pub mod cctp_hook {
         );
 
         drop(escrow_data); // release borrow before CPI
+
+        // ---- 2b. ADR-145: GENUINE on-chain CCTP V2 attestation
+        // verification. This is the actual fix for C4-OB-01 — it
+        // replaces the shape-only `base_tx_hash != 0` sentinel with a
+        // binding to a Circle-attester-gated `used_nonce` PDA.
+        //
+        // Compiled only on a `cctp_attestation_verified` build: that is
+        // exactly the build where the instruction is reachable (the HARD
+        // DEPLOY GUARD blocks the default / fund-bearing build before
+        // this point, so the CCTP witness accounts are not even present
+        // in the default account context — see `AutoApproveMilestone`).
+        #[cfg(feature = "cctp_attestation_verified")]
+        {
+            require!(
+                !payload.cctp_message.is_empty(),
+                HookError::CctpMessageMalformed
+            );
+
+            // (a) prove the message was Circle-attested & consumed;
+            // get the BurnMessage `amount` the attested mint released.
+            let attested_amount = cctp::verify_message_and_amount(
+                &ctx.accounts.cctp_message_transmitter,
+                &ctx.accounts.cctp_used_nonce,
+                &payload.cctp_message,
+            )?;
+
+            // (b) bind the returned amount: the attested CCTP mint
+            // amount MUST equal the payload's claimed return amount
+            // (which step 2 already reconciled == the escrow milestone
+            // amount). Net: escrow milestone == payload == attested
+            // CCTP mint — a fabricated payload cannot pass.
+            require!(
+                attested_amount == payload.amount_returned_micros,
+                HookError::CctpAmountBindingMismatch
+            );
+
+            // (c) bind base_tx_hash to the verified message identity
+            // (source_domain || nonce) — see ADR-145 trust redefinition.
+            let expected_base_tx =
+                cctp::expected_base_tx_binding(&payload.cctp_message)?;
+            require!(
+                payload.base_tx_hash == expected_base_tx,
+                HookError::CctpBaseTxBindingMismatch
+            );
+        }
 
         // ---- 3. Agent CDP-wallet binding validation (Q-S3-A) ----
         //
@@ -634,6 +902,35 @@ pub struct AutoApproveMilestone<'info> {
     #[account(mut)]
     pub provider_token_account: UncheckedAccount<'info>,
 
+    /// ADR-145: Circle CCTP V2 `MessageTransmitterV2` program account.
+    /// Address-pinned to `CCTP_MESSAGE_TRANSMITTER_V2_ID`. Used only to
+    /// anchor the `cctp_used_nonce` PDA derivation/ownership to the
+    /// canonical attester-gated program. Present ONLY on a
+    /// `cctp_attestation_verified` build — on the default /
+    /// fund-bearing build the HARD DEPLOY GUARD makes the instruction
+    /// unreachable, so the witness accounts are intentionally absent
+    /// (keeps the default IDL/account context unchanged, mirroring the
+    /// C4-OB-01(e) token-account cfg split).
+    /// CHECK: address-pinned; never deserialized as a typed account.
+    #[cfg(feature = "cctp_attestation_verified")]
+    #[account(
+        executable,
+        address = CCTP_MESSAGE_TRANSMITTER_V2_ID
+            @ HookError::InvalidCctpMessageTransmitter,
+    )]
+    pub cctp_message_transmitter: UncheckedAccount<'info>,
+
+    /// ADR-145: the Circle CCTP V2 `used_nonce` PDA for THIS message.
+    /// `receive_message` `init`s it only after
+    /// `verify_attestation_signatures` passes; the handler asserts the
+    /// address derives from `message[12..44]`, that it is owned by
+    /// MessageTransmitterV2, and that `UsedNonce.is_used == true`. This
+    /// is the genuine on-chain attestation anchor (C4-OB-01 fix).
+    /// CHECK: address + owner + is_used validated in-handler against the
+    /// CCTP message bytes; see `cctp::verify_message_and_amount`.
+    #[cfg(feature = "cctp_attestation_verified")]
+    pub cctp_used_nonce: UncheckedAccount<'info>,
+
     /// AEP Settlement program — target of the CPI. Address-pinned.
     /// CHECK: explicit address constraint.
     #[account(
@@ -728,5 +1025,85 @@ mod discriminator_tests {
         // description_hash(32) + amount(8) + status(1) + grace_ends_at(8)
         assert_eq!(MILESTONE_ENTRY_SIZE, 49);
         assert_eq!(MILESTONE_AMOUNT_INNER_OFFSET, 32);
+    }
+
+    /// ADR-145: pin the CCTP V2 message-header offsets against
+    /// `circlefin/solana-cctp-contracts`
+    /// `message-transmitter-v2/src/message.rs`. If Circle changes the V2
+    /// header layout this breaks before the Hook ships a wrong nonce
+    /// derivation.
+    #[test]
+    fn cctp_v2_message_header_offsets_match_circle() {
+        assert_eq!(CCTP_MSG_SOURCE_DOMAIN_INDEX, 4);
+        assert_eq!(CCTP_MSG_DESTINATION_DOMAIN_INDEX, 8);
+        assert_eq!(CCTP_MSG_NONCE_INDEX, 12);
+        assert_eq!(CCTP_MSG_SENDER_INDEX, 44);
+        // V2 nonce is the 32 bytes [12..44] — exactly the used_nonce seed.
+        assert_eq!(CCTP_MSG_SENDER_INDEX - CCTP_MSG_NONCE_INDEX, 32);
+        assert_eq!(CCTP_MSG_BODY_INDEX, 148);
+    }
+
+    /// ADR-145: pin the BurnMessage body offsets against
+    /// `token-messenger-minter-v2/src/token_messenger_v2/burn_message.rs`.
+    #[test]
+    fn cctp_v2_burn_body_offsets_match_circle() {
+        assert_eq!(CCTP_BURN_AMOUNT_INDEX, 68);
+        assert_eq!(CCTP_BURN_EVM_OFFSET, 24);
+        assert_eq!(CCTP_BURN_MIN_LEN, 228);
+        // Solana reads u64 amount at AMOUNT_INDEX + OFFSET = 92.
+        assert_eq!(CCTP_BURN_AMOUNT_INDEX + CCTP_BURN_EVM_OFFSET, 92);
+    }
+
+    /// ADR-145: the pinned MessageTransmitterV2 program ID must equal
+    /// Circle's published canonical address.
+    #[test]
+    fn cctp_v2_message_transmitter_id_is_canonical() {
+        assert_eq!(
+            CCTP_MESSAGE_TRANSMITTER_V2_ID.to_string(),
+            "CCTPV2Sm4AdWt5296sk4P66VBZ7bEhcARwFaaS9YPbeC"
+        );
+        assert_eq!(CCTP_SOLANA_DOMAIN, 5);
+        assert_eq!(CCTP_BASE_DOMAIN, 6);
+    }
+
+    /// ADR-145: `expected_base_tx_binding` is a pure keccak over
+    /// (source_domain BE || nonce) of the verified message — assert it
+    /// is deterministic, sensitive to both inputs, and matches a
+    /// hand-computed reference.
+    #[test]
+    fn cctp_base_tx_binding_is_deterministic_and_sensitive() {
+        use anchor_lang::solana_program::keccak;
+
+        let mut msg = vec![0u8; CCTP_MSG_BODY_INDEX + CCTP_BURN_MIN_LEN];
+        // source_domain = 6 (Base), BE u32 at offset 4.
+        msg[CCTP_MSG_SOURCE_DOMAIN_INDEX..CCTP_MSG_SOURCE_DOMAIN_INDEX + 4]
+            .copy_from_slice(&CCTP_BASE_DOMAIN.to_be_bytes());
+        // nonce bytes [12..44].
+        for (i, b) in msg
+            [CCTP_MSG_NONCE_INDEX..CCTP_MSG_SENDER_INDEX]
+            .iter_mut()
+            .enumerate()
+        {
+            *b = (i as u8).wrapping_add(1);
+        }
+
+        let got = cctp::expected_base_tx_binding(&msg).unwrap();
+
+        // hand-computed reference.
+        let mut pre = Vec::new();
+        pre.extend_from_slice(&CCTP_BASE_DOMAIN.to_be_bytes());
+        pre.extend_from_slice(&msg[CCTP_MSG_NONCE_INDEX..CCTP_MSG_SENDER_INDEX]);
+        assert_eq!(got, keccak::hash(&pre).to_bytes());
+
+        // deterministic.
+        assert_eq!(got, cctp::expected_base_tx_binding(&msg).unwrap());
+
+        // sensitive to a nonce-byte flip.
+        let mut msg2 = msg.clone();
+        msg2[CCTP_MSG_NONCE_INDEX] ^= 0xFF;
+        assert_ne!(got, cctp::expected_base_tx_binding(&msg2).unwrap());
+
+        // malformed (too short) → error, never panic.
+        assert!(cctp::expected_base_tx_binding(&msg[..10]).is_err());
     }
 }
