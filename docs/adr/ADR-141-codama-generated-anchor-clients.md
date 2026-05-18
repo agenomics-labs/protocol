@@ -2,11 +2,11 @@
 
 ## Status
 
-Proposed
+Accepted
 
 ## Date
 
-2026-04-30
+2026-05-18
 
 ## Context
 
@@ -194,6 +194,91 @@ is committed generated trees with a CI diff-gate.
 **Solita / `@metaplex-foundation/solita`.** The previous Metaplex
 codegen, now superseded by Codama upstream. Picking the abandoned
 fork would create a divergence we'd have to undo within a year.
+
+## Implementation (2026-05-18)
+
+Shipped on `feat/adr-141-codama`. What was actually built, including two
+deviations from the Decision text that were design calls, not bulldozes:
+
+### What shipped
+
+- `sdk/client/codama.config.mjs` — programmatic codegen: `rootNodeFromAnchor`
+  (`@codama/nodes-from-anchor`) → `createFromRoot` (`codama`) →
+  `getRenderMapVisitor` (`@codama/renderers-js`) → `writeRenderMap`
+  (`@codama/renderers-core`), one deterministic pass over the three
+  committed IDLs in `sdk/idl/src/idl/{agent_registry,agent_vault,
+  settlement}.json`, emitting to `sdk/client/src/generated/{registry,
+  vault,settlement}/`. 100 generated `.ts` files, committed.
+- `npm run codegen` + `npm run codegen:check` (regenerate then
+  `git diff --exit-code -- src/generated`). The CI job
+  `typescript-check-sdk-client` runs `codegen:check` before tsc — the
+  ADR-082-style drift gate.
+- Codama pinned in `sdk/client/package.json` devDependencies
+  (`codama@^1.6.0`, `@codama/nodes-from-anchor@^1.4.1`,
+  `@codama/renderers-js@^2.2.0`, `@codama/renderers-core@^1.0.34`);
+  `@solana/program-client-core@^6.9.0` added as the one new runtime dep
+  the generated instruction builders need.
+- The `AgentRegistryClient` / `AgentVaultClient` / `SettlementClient`
+  façades keep byte-identical public signatures; PDA derivation now
+  delegates to generated `findOwnerNoncePda` / `findVaultPda` /
+  `findEscrowPda` / `findProtocolConfigPda`. The hand-written seed
+  *string literals* (the SDK-F2 trust-root weakness) are deleted.
+- Generated trees re-exported additively under per-program namespaces
+  (`export * as registry|vault|settlement`) — the instruction builders
+  ADR-098 deferred now ship; `0.1.0` consumers upgrade with no source
+  changes (the index/pda-equivalence/seed-parity suites — 69 tests —
+  all pass unchanged in public behaviour).
+- `seed-parity.test.ts` extended with an ADR-141 block asserting the
+  generated `find*Pda` helpers agree byte-for-byte with both the façade
+  and an independent on-chain-Rust-sourced derivation.
+
+### Deviation 1 — kit (v2) renderer, not web3.js (v1)
+
+The Decision's "Generation target" says "v1 (`@solana/web3.js`) target
+first". **Codama publishes no web3.js-v1 JS renderer** (verified
+2026-05-18: there is no `@codama/renderers-js-legacy`;
+`@codama/renderers-js@2` is `@solana/kit`-only; the only other renderer
+is the Umi one). The SDK's public PDA/encoding surface has been
+kit-native since ADR-087, so the kit renderer is the *faithful,
+non-regressing* target and the v1-first text is moot. The `generated-kit`
+sibling tree and `codama.config.kit.mjs` in the Decision are therefore
+unnecessary — there is one tree, kit-native. No v1↔v2 sync burden.
+
+### Deviation 2 — two PDAs have no static codegen (by IDL design)
+
+`agent-profile` (registry) and `delegation` (vault) have a seed that is
+a *runtime/cross-account* value: `agent_profile`'s third seed is
+`{ kind: "account", path: "owner_nonce.nonce" }` and `delegation`'s
+fourth seed is a runtime u8 `nonce` instruction arg. Codama correctly
+emits **no** `findAgentProfilePda` / `findDelegationGrantPda` for a seed
+it cannot resolve statically (ADR-097 deliberately exposes `nonce` as an
+explicit caller arg). This is a real IDL-shape boundary, not a codama
+gap to bulldoze. Resolution: `profilePda(authority, nonce)` and
+`delegationGrantPda(vault, grantee, nonce)` remain thin hand-derivations
+**composed from the identical `@solana/kit` seed encoders the generated
+code uses** (`getAddressEncoder`, `getBytesEncoder`, `getU64Encoder`);
+their trust root stays `seed-parity.test.ts`, which reads the on-chain
+Rust source and fails on a rename. The other four PDAs are fully
+codegen-sourced. SDK-F2 is closed for the four generated PDAs by the
+codegen-diff gate, and for all six by the (kept + extended) seed-parity
+test. This boundary is acceptable and needs no human escalation.
+
+### Rendering surprise managed in-repo
+
+`@codama/renderers-js@2` emits extensionless relative imports (bundler
+resolution); `@agenomics/client` compiles `NodeNext`. The codegen script
+runs a pure-syntactic, idempotent post-pass adding `.js` /
+`/index.js` so the committed tree is NodeNext-correct and the
+diff-gate is stable. No upstream patch, no separate
+`tsconfig.generated.json` (generated code passes the package's existing
+strict `tsc` clean — the ADR's "linter does not police vendor code"
+mitigation proved unnecessary).
+
+### ADR-098 transition
+
+ADR-098 should now transition to `Superseded by ADR-141` per its
+Follow-ups; tracked, not done in this PR (separate ADR edit, keeps this
+PR scoped to the SDK + gate).
 
 ## References
 

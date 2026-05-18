@@ -20,8 +20,20 @@ import { Program, AnchorProvider, web3 } from "@coral-xyz/anchor";
 import {
   getProgramDerivedAddress,
   getAddressEncoder,
+  getBytesEncoder,
+  getU64Encoder,
   type Address,
 } from "@solana/kit";
+
+// ADR-141: PDA derivation is now sourced from the Codama-generated client
+// (rendered from the committed Anchor IDL by `npm run codegen`). The
+// hand-written seed *string literals* — the SDK-F2 trust-root weakness
+// from cycle-4 `06-sdk.md` (a coordinated on-chain+SDK seed rename was
+// invisible to the IDL parity gate) — are deleted here. `findOwnerNoncePda`
+// carries the seed bytes straight from the IDL; a seed rename now lands in
+// `idl/agent_registry.json`, regenerates `pdas/ownerNonce.ts`, and the CI
+// codegen-diff gate fails on the same commit.
+import { findOwnerNoncePda } from "./generated/registry/pdas/ownerNonce.js";
 
 /**
  * ADR-087: PublicKey is re-exported from Anchor's `web3` namespace so the
@@ -35,11 +47,22 @@ const PublicKey = web3.PublicKey;
 
 import type { AgentRegistry } from "./idl-types.js";
 
-/** On-chain seed for the agent-profile PDA. */
-const AGENT_PROFILE_SEED = "agent-profile";
-
-/** On-chain seed for the owner-nonce PDA. */
-const OWNER_NONCE_SEED = "owner-nonce";
+/**
+ * ADR-141: the `agent-profile` PDA's third seed is `owner_nonce.nonce` —
+ * a *cross-account field reference* in the Anchor IDL (`{ kind: "account",
+ * path: "owner_nonce.nonce" }`). Codama cannot emit a static
+ * `findAgentProfilePda(authority, nonce)` for a seed it must read from
+ * another account at runtime, so the agent-profile PDA has no generated
+ * helper. ADR-097 deliberately exposes `nonce` as an explicit caller
+ * argument instead (the caller passes the value it read from
+ * `fetchOwnerNonce`). This seed therefore stays a hand-derivation; its
+ * trust root is `sdk/client/test/seed-parity.test.ts`, which reads the
+ * on-chain Rust source and fails on a rename. The other two registry seeds
+ * (`owner-nonce`) ARE generated and IDL-sourced. Pinned as a Uint8Array
+ * (UTF-8 of "agent-profile") so the bytes match the on-chain
+ * `b"agent-profile"` const exactly.
+ */
+const AGENT_PROFILE_SEED_BYTES = new TextEncoder().encode("agent-profile");
 
 /**
  * Maximum valid reputation score, mirrored from the on-chain constant
@@ -147,12 +170,22 @@ export class AgentRegistryClient {
    * regression if the encoder is ever asked to round-trip via `Number`.
    */
   async profilePda(authority: Address, nonce: bigint): Promise<Address> {
-    const addressEncoder = getAddressEncoder();
-    const nonceBuf = new Uint8Array(8);
-    new DataView(nonceBuf.buffer).setBigUint64(0, nonce, true);
+    // ADR-141: composed from the same `@solana/kit` seed encoders the
+    // Codama renderer uses (`getAddressEncoder`, `getBytesEncoder`,
+    // `getU64Encoder`) so the byte layout is identical to a generated
+    // helper — only the *resolver* is hand-written because the IDL's
+    // cross-account nonce seed has no static codegen (see
+    // AGENT_PROFILE_SEED_BYTES). `getU64Encoder().encode(nonce)` is the
+    // little-endian u64 the on-chain `nonce.to_le_bytes()` produces,
+    // replacing the prior manual DataView (AUD-003 fix is preserved:
+    // unsigned, little-endian).
     const [pda] = await getProgramDerivedAddress({
       programAddress: this.programIdAsAddress(),
-      seeds: [addressEncoder.encode(authority), AGENT_PROFILE_SEED, nonceBuf],
+      seeds: [
+        getAddressEncoder().encode(authority),
+        getBytesEncoder().encode(AGENT_PROFILE_SEED_BYTES),
+        getU64Encoder().encode(nonce),
+      ],
     });
     return pda;
   }
@@ -166,11 +199,17 @@ export class AgentRegistryClient {
    * registered, providing a unique nonce seed for each registration.
    */
   async ownerNoncePda(authority: Address): Promise<Address> {
-    const addressEncoder = getAddressEncoder();
-    const [pda] = await getProgramDerivedAddress({
-      programAddress: this.programIdAsAddress(),
-      seeds: [addressEncoder.encode(authority), OWNER_NONCE_SEED],
-    });
+    // ADR-141: delegated to the Codama-generated `findOwnerNoncePda`,
+    // whose `owner-nonce` seed bytes come straight from the committed
+    // Anchor IDL. The hand-written `OWNER_NONCE_SEED` string literal —
+    // the SDK-F2 trust-root weakness — is gone; a rename now fails the
+    // CI codegen-diff gate. `programAddress` is threaded from this
+    // client's configured program id (preserves the constructor's
+    // IDL-vs-programId equality check).
+    const [pda] = await findOwnerNoncePda(
+      { authority },
+      { programAddress: this.programIdAsAddress() },
+    );
     return pda;
   }
 
