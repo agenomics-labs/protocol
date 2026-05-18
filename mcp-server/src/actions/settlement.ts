@@ -3,6 +3,9 @@
 import { z } from "zod";
 import type { Action } from "../types/action.js";
 import { ok, err } from "../types/action.js";
+// CC-5: shared base58-pubkey schema — replaces bare z.string() on every
+// address/mint/token-account field (boundary-validation parity).
+import { solanaAddress } from "../schema/solana-address.js";
 import {
   handleCreateEscrow,
   handleAcceptTask,
@@ -32,8 +35,8 @@ function wrap<I>(fn: (args: Record<string, unknown>) => Promise<any>) {
 // ---------- create_escrow ----------
 
 const createEscrowInput = {
-  providerAddress: z.string(),
-  tokenMintAddress: z.string(),
+  providerAddress: solanaAddress,
+  tokenMintAddress: solanaAddress,
   taskId: z.number(),
   totalAmountTokens: z.number().positive(),
   taskDescription: z.string(),
@@ -41,7 +44,7 @@ const createEscrowInput = {
   milestones: z.array(
     z.object({ description: z.string(), amount: z.number() }),
   ).min(1).max(5),
-  disputeResolverAddress: z.string().optional(),
+  disputeResolverAddress: solanaAddress.optional(),
 } as const;
 
 export const createEscrowAction: Action<
@@ -65,7 +68,7 @@ export const createEscrowAction: Action<
 
 // ---------- accept_task ----------
 
-const acceptTaskInput = { escrowAddress: z.string() } as const;
+const acceptTaskInput = { escrowAddress: solanaAddress } as const;
 
 export const acceptTaskAction: Action<
   z.infer<z.ZodObject<typeof acceptTaskInput>>,
@@ -88,7 +91,7 @@ export const acceptTaskAction: Action<
 // ---------- submit_milestone ----------
 
 const submitMilestoneInput = {
-  escrowAddress: z.string(),
+  escrowAddress: solanaAddress,
   milestoneIndex: z.number().int().nonnegative(),
 } as const;
 
@@ -115,9 +118,9 @@ export const submitMilestoneAction: Action<
 // ---------- approve_milestone ----------
 
 const approveMilestoneInput = {
-  escrowAddress: z.string(),
+  escrowAddress: solanaAddress,
   milestoneIndex: z.number().int().nonnegative(),
-  providerTokenAccount: z.string(),
+  providerTokenAccount: solanaAddress,
   rating: z.number().min(0).max(5).optional(),
 } as const;
 
@@ -145,7 +148,7 @@ export const approveMilestoneAction: Action<
 // ---------- reject_milestone ----------
 
 const rejectMilestoneInput = {
-  escrowAddress: z.string(),
+  escrowAddress: solanaAddress,
   milestoneIndex: z.number().int().nonnegative(),
 } as const;
 
@@ -169,7 +172,7 @@ export const rejectMilestoneAction: Action<
 
 // ---------- get_escrow_status ----------
 
-const getEscrowStatusInput = { escrowAddress: z.string() } as const;
+const getEscrowStatusInput = { escrowAddress: solanaAddress } as const;
 
 export const getEscrowStatusAction: Action<
   z.infer<z.ZodObject<typeof getEscrowStatusInput>>,
@@ -190,7 +193,7 @@ export const getEscrowStatusAction: Action<
 
 // ---------- cancel_escrow ----------
 
-const cancelEscrowInput = { escrowAddress: z.string() } as const;
+const cancelEscrowInput = { escrowAddress: solanaAddress } as const;
 
 export const cancelEscrowAction: Action<
   z.infer<z.ZodObject<typeof cancelEscrowInput>>,
@@ -212,7 +215,7 @@ export const cancelEscrowAction: Action<
 
 // ---------- raise_dispute ----------
 
-const raiseDisputeInput = { escrowAddress: z.string() } as const;
+const raiseDisputeInput = { escrowAddress: solanaAddress } as const;
 
 export const raiseDisputeAction: Action<
   z.infer<z.ZodObject<typeof raiseDisputeInput>>,
@@ -236,11 +239,11 @@ export const raiseDisputeAction: Action<
 // ---------- resolve_dispute ----------
 
 const resolveDisputeInput = {
-  escrowAddress: z.string(),
+  escrowAddress: solanaAddress,
   clientRefundTokens: z.number().nonnegative(),
   providerPaymentTokens: z.number().nonnegative(),
-  clientTokenAccount: z.string(),
-  providerTokenAccount: z.string(),
+  clientTokenAccount: solanaAddress,
+  providerTokenAccount: solanaAddress,
 } as const;
 
 export const resolveDisputeAction: Action<
@@ -272,7 +275,7 @@ export const resolveDisputeAction: Action<
 
 // ---------- resolve_dispute_timeout ----------
 
-const resolveDisputeTimeoutInput = { escrowAddress: z.string() } as const;
+const resolveDisputeTimeoutInput = { escrowAddress: solanaAddress } as const;
 
 export const resolveDisputeTimeoutAction: Action<
   z.infer<z.ZodObject<typeof resolveDisputeTimeoutInput>>,

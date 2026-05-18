@@ -386,16 +386,40 @@ export function deriveProtocolConfigPDA(): [PublicKey, number] {
 
 // ==================== UTILITY FUNCTIONS ====================
 
+// CC-5 / C4-MCPEVO-002: base58 alphabet + Solana pubkey length bound.
+// `new PublicKey()` alone accepts any input it can coerce to 32 bytes
+// (incl. 32-byte hex/array forms) — not a real base58-pubkey check. We
+// pre-gate on the canonical base58 string shape (32–44 chars, base58
+// alphabet) before constructing, so garbage strings are rejected up
+// front rather than silently coerced.
+const BASE58_PUBKEY_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
 /**
- * Validate a base58-encoded Solana public key string.
+ * Validate a base58-encoded Solana public key string. Real validation:
+ * canonical base58 shape AND a 32-byte decode (`new PublicKey`). Pass
+ * `requireOnCurve` to additionally reject off-curve points (e.g. when the
+ * caller-supplied value must be a wallet/authority, not a PDA).
  */
-export function isValidPublicKey(key: string): boolean {
+export function isValidPublicKey(
+  key: string,
+  opts: { requireOnCurve?: boolean } = {},
+): boolean {
+  if (typeof key !== "string" || !BASE58_PUBKEY_RE.test(key)) {
+    return false;
+  }
+  let pk: PublicKey;
   try {
-    new PublicKey(key);
-    return true;
+    pk = new PublicKey(key);
   } catch {
     return false;
   }
+  if (pk.toBase58() !== key) {
+    return false;
+  }
+  if (opts.requireOnCurve && !PublicKey.isOnCurve(pk.toBuffer())) {
+    return false;
+  }
+  return true;
 }
 
 /**

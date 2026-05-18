@@ -138,10 +138,15 @@ describe("ADR-129 Phase 1 — find_similar_agents (action shape)", () => {
     assert.deepEqual(findSimilarAgentsAction.capabilities, ["read:agent-memory"]);
   });
 
-  it("is non-readOnly (so the gate enforces the claim) and signer-free", () => {
-    // Per ADR-058 §4 the capability gate is skipped when readOnly:true,
-    // so the action must declare readOnly:false for the gate to bite.
-    assert.equal(findSimilarAgentsAction.readOnly, false);
+  it("is honestly readOnly + sensitiveRead (ADR-143) and signer-free", () => {
+    // ADR-143: capability enforcement is decoupled from `readOnly`. The
+    // handler performs no on-chain writes, so this is honestly
+    // readOnly:true; the `read:agent-memory` claim is still gated because
+    // `capabilities[]` is non-empty. `sensitiveRead:true` triggers the
+    // registration-time assertion that this sensitive read carries caps.
+    // (Reverts the pre-ADR-143 `readOnly:false` workaround.)
+    assert.equal(findSimilarAgentsAction.readOnly, true);
+    assert.equal(findSimilarAgentsAction.sensitiveRead, true);
     // No on-chain signing; this is a read against EVO + on-chain
     // hydration so we explicitly do NOT require a signer (avoids
     // SIGNER_UNAVAILABLE on passthrough sessions that happen to hold

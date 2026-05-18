@@ -123,6 +123,15 @@ export interface Action<I = unknown, O = unknown> {
   examples: Example[];
 
   readOnly: boolean;
+  /**
+   * ADR-143 — set on a `readOnly: true` action that exposes
+   * sensitive/non-public data. Triggers a registration-time assertion
+   * (`capability-gated-tool.ts`) requiring a non-empty `capabilities[]`,
+   * so a sensitive read action can no longer ship unguarded. Has no
+   * runtime effect beyond that assertion; the capability gate itself is
+   * driven solely by `capabilities[]` (decoupled from `readOnly`).
+   */
+  sensitiveRead?: boolean;
   capabilities: Capability[];
   preflight?: PreflightGate[];
   /**

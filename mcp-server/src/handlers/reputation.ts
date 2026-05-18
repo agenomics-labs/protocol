@@ -41,6 +41,20 @@ import {
 import type { IdlAccounts } from "@coral-xyz/anchor";
 import type { AgentRegistry } from "../idl/types.js";
 import { serverLogger } from "../util/logger.js";
+import {
+  boundedFetchBytes,
+  BoundedFetchError,
+} from "../util/bounded-fetch.js";
+
+// ADR-144 — manifests are KB-scale; cap the IPFS fetch well below the
+// helper default and abort on slow/oversize gateways before validation.
+const MANIFEST_MAX_BYTES = 256 * 1024;
+const MANIFEST_FETCH_TIMEOUT_MS = 10_000;
+
+// CIDv0 (base58btc `Qm…`, 46 chars) or CIDv1 (base32 lowercase `b…`).
+// Cheap well-formedness gate applied BEFORE the network call so a
+// garbage / oversize-by-construction CID is rejected without a fetch.
+const CID_RE = /^(Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{20,120})$/;
 
 // ADR-088: typed AgentProfile shape — `manifest_cid: [u8; 64]` etc. land as
 // `number[]` of fixed length, `reputation_score: u64` as `BN`, etc. The
@@ -185,17 +199,47 @@ const DEFAULT_IPFS_GATEWAY_BASE = "https://ipfs.io";
 async function fetchManifestFromIpfs(
   cid: string,
 ): Promise<{ bytes: Uint8Array; json: unknown }> {
-  const base = (
-    process.env.AEP_IPFS_GATEWAY || DEFAULT_IPFS_GATEWAY_BASE
-  ).replace(/\/+$/, "");
-  const url = `${base}/ipfs/${encodeURIComponent(cid)}`;
-  const resp = await fetch(url);
-  if (!resp.ok) {
+  // ADR-144: CID well-formedness pre-check. Reject early and cheaply
+  // before any network I/O; also tightens the URL surface further.
+  if (!CID_RE.test(cid)) {
     throw new Error(
-      `IPFS gateway returned HTTP ${resp.status} for CID ${cid} (${url})`,
+      `manifest CID '${cid}' is not a well-formed CIDv0/CIDv1 ` +
+        `(rejected before fetch — ADR-144)`,
     );
   }
-  const buf = new Uint8Array(await resp.arrayBuffer());
+
+  const rawBase = (
+    process.env.AEP_IPFS_GATEWAY || DEFAULT_IPFS_GATEWAY_BASE
+  ).replace(/\/+$/, "");
+  // ADR-144: explicit scheme allowlist on the operator-configured gateway.
+  if (!/^https?:\/\//i.test(rawBase)) {
+    throw new Error(
+      `AEP_IPFS_GATEWAY must be http(s); got '${rawBase}' (ADR-144)`,
+    );
+  }
+  const base = rawBase;
+  const url = `${base}/ipfs/${encodeURIComponent(cid)}`;
+
+  let buf: Uint8Array;
+  try {
+    // ADR-144 bounded fetch: timeout + streamed byte cap + redirect:error
+    // (the CID is on-chain-attacker-influenceable, so do not chase
+    // redirects to attacker-chosen origins). The OOM/hang DoS that was
+    // reachable here pre-validation is now closed.
+    ({ bytes: buf } = await boundedFetchBytes(url, {
+      timeoutMs: MANIFEST_FETCH_TIMEOUT_MS,
+      maxBytes: MANIFEST_MAX_BYTES,
+      redirect: "error",
+    }));
+  } catch (e) {
+    if (e instanceof BoundedFetchError) {
+      throw new Error(
+        `IPFS manifest fetch failed for CID ${cid} (${url}): ` +
+          `${e.kind} — ${e.message}`,
+      );
+    }
+    throw e;
+  }
   const text = new TextDecoder("utf-8").decode(buf);
   let json: unknown;
   try {
