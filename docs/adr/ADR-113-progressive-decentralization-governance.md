@@ -10,6 +10,16 @@ Proposed
 
 **Related:** ADR-019 (security audit prep), ADR-063 (Squads multisig), ADR-075 (ProtocolConfig validation bounds), ADR-077 (governance ADR backfill), ADR-078 (governance roles), ADR-079 (governance policy), ADR-081 (emergency suspend), ADR-094 (reputation trust inversion)
 
+## Maintainer Decision Required
+
+**Decision-ready — awaiting maintainer input on:** the **stage-transition trigger policy** — specifically the validator-DAO bootstrap criteria (open item 1: who is in the first DAO; proposed seed = agents with >90d mainnet history, stake above a threshold, no active slashes), the stage-2 core-team veto budget, and whether stages auto-advance on a timer (open item 3). These are governance-sovereignty decisions, not code.
+
+**Options & recommendation:** the recommended option is **adopt the paper's four-stage one-way ratchet (0→1→2→3) as an on-chain `GovernanceStage` account, with stake×tracerank×decay-weighted validator-DAO voting and a time-limited stage-2 core-team veto**. Rejected alternatives — skip straight to stage 3 (reckless for a young protocol; the paper explicitly warns against it), frozen stage 0 (technical+political debt), and a token-vote DAO (Sybil-amplifies capital not competence) — are enumerated in *Alternatives considered*. The cited basis is arXiv:2501.16606; stake+reputation weighting (not token weighting) and the irreversible ratchet are the load-bearing recommended choices. The `log10(stake)` de-whaling, the per-instruction stage-gate pattern, and the devnet 7-day simulation + ADR-036 audit gate per transition are all decided.
+
+The single irreducible human input is the **decentralization-sovereignty policy** (DAO membership criteria, veto budget, auto-advance timers) — a trust/governance judgment I must not invent. No raw protocol-economic constant is the blocker here; the open variable is *who governs and on what schedule*. Status stays **Proposed**.
+
+**Dependency:** the **terminal** member of the track. Its stage-1 step *is* the ADR-078 program-upgrade-authority transfer (ADR-113 "finally forces" ADR-063 §4); it consumes ADR-108 stake gate + ADR-106/107 weighting and ADR-020 slashing. Decide last — only after ADR-063/078 (multisig seated + authority transferred) and 106/107/108 (reputation weighting accepted). Part of issue #71's coherent decentralized-reputation track.
+
 ## Context
 
 Governance today is centralized by design:

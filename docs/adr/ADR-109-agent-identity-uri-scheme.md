@@ -10,6 +10,16 @@ Proposed
 
 **Related:** ADR-060 (capability manifest), ADR-061 (SAS attestation resolver), ADR-069 (agent identity rotation), ADR-088 (typed Anchor IDL), ADR-092 (manifest hash domain separation), ADR-098 (client SDK), ADR-104 (observability)
 
+## Maintainer Decision Required
+
+**Decision-ready — awaiting maintainer input on:** one product/standards decision — whether the scheme stays an internal-only `aep:` URI (recommended for v1) or commits now to a standards track (IANA registration of `aep:`, or switching to `did:aep:` / `ens:agenomics:`) for cross-chain federation. This is a roadmap/branding call, not a technical blocker.
+
+**Options & recommendation:** the recommended option is **a local, derived, self-certifying `aep:<authority>[@<manifest-hash-12>][?endpoint=]` URI at the client+SDK layer only**, with no new on-chain field, no central resolver, and no DID stack. The alternatives — W3C DIDs (heavier resolver/verification stack for a need a local format already meets), bare base58 (loses capability-fp + endpoint in one string), ActivityPub-style hostname URLs (custodial single point of failure; opposes ADR-094 trust inversion), and Ethereum-style `0x`/ENS (wrong ecosystem convention) — are enumerated and rejected in *Alternatives considered*. The format, the SDK parse/format/resolve surface, and the "URI is NOT proof — only the on-chain read is" security doctrine are all decided.
+
+The single irreducible human input is the **standards-track product decision** above; it does not block implementing the recommended internal scheme and can be revisited if the protocol goes cross-chain. No protocol-economic parameter and no trust principal is involved. Status stays **Proposed**.
+
+**Dependency:** lowest-coupling member of the ADR-106→113 track (issue #71) — derives purely from existing ADR-060/092/098 state; independently decidable. ADR-110's `similar_to` accepts `aep:` URIs, so decide 109 before or with 110.
+
 ## Context
 
 An agent's on-chain identity today is a **base58 Solana pubkey**

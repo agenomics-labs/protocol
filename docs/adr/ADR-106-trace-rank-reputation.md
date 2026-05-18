@@ -10,6 +10,16 @@ Proposed
 
 **Related:** ADR-020 (reputation staking), ADR-028 (anti-Sybil), ADR-094 (reputation trust inversion), ADR-017 (x402 HTTP payment relay)
 
+## Maintainer Decision Required
+
+**Decision-ready — awaiting maintainer input on:** the default values for the three `ProtocolConfig` knobs (`tracerank_half_life_seconds`, `tracerank_damping_alpha`, `tracerank_seed_weight`) and the volume threshold at which TraceRank flips on — both must be calibrated against ≥1000 real mainnet payments (open item 1), not invented.
+
+**Options & recommendation:** the algorithm choice is decided — **TraceRank** (Shi et al., arXiv:2510.27554), an off-chain payment-value-weighted eigenvector score computed by the indexer over the existing event log. Plain PageRank (discards the amount+time signal we already emit), EigenTrust (older, weaker under collusion, no amount weighting), and an on-chain sparse-matrix solver (blows the Anchor CU budget) are enumerated and rejected in *Alternatives*. MeritRank is **complementary, not alternative** — its decay terms feed TraceRank's edge weight and are specified in the sibling ADR-107. The "second signal, off-chain, on-chain unchanged" architecture is the recommended and decided shape; only the numeric defaults remain.
+
+The single irreducible human input is **protocol-economic parameter calibration** (the four numbers above) — deliberately left open per open item 1, to be locked after a backtest against the first ~90 days of real settlement data. Ship behind a feature flag, disabled, until then. Status stays **Proposed**.
+
+**Dependency:** part of the coherent decentralized-reputation track (ADR-106→113, issue #71). ADR-107 extends this ADR's edge-weight; ADR-108/110/112/113 consume `tracerank_score`. Decide 106's algorithm-acceptance with 107 together (they share the `half_life` knob and the same backtest).
+
 ## Context
 
 The protocol's reputation model (after ADR-094) is trust-inverted: the

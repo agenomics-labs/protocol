@@ -10,6 +10,16 @@ Proposed
 
 **Related:** ADR-020 (reputation staking), ADR-022 (load-test discovery), ADR-028 (anti-Sybil), ADR-094 (reputation trust inversion), ADR-106 (TraceRank), ADR-107 (reputation decay)
 
+## Maintainer Decision Required
+
+**Decision-ready — awaiting maintainer input on:** the non-zero `min_discovery_stake_lamports` value (ships at `0` = gate disabled; the real threshold needs 30-day mainnet volume calibration, open item 1) and whether an `unstaking_cooldown_slots` is added to ADR-020 (open item 3 — AetherWeave's formal analysis assumes one).
+
+**Options & recommendation:** the recommended option is **indexer + MCP presentation-layer stake gate, reusing ADR-020's existing `staked_amount`, with no `register_agent` change** (on-chain semantics minimal and reversible without a program upgrade). The rejected alternatives — one-time registration fee (loses stake-recoverability, hostile to short-lived agents), PoW captcha (weaker than stake on adversarial compute), and charging stake at `update_manifest` (over-scopes; separate threat model) — are enumerated in *Alternatives considered*. AetherWeave (Alpturer, arXiv:2603.23793) is the cited basis: reuse already-locked PoS collateral so honest agents pay zero additional cost. The `log10`-scaled stake-weighted ranking is the recommended de-whaling shape and is decided.
+
+The single irreducible human input is **protocol-economic parameter calibration** (the stake threshold and the cooldown decision) — deliberately shipped at `0`/absent so there is zero disruption until governance votes a real value backed by mainnet data. Status stays **Proposed**.
+
+**Dependency:** consumes ADR-106 `tracerank` + ADR-107 decay for the sort tier; the `unstaking_cooldown_slots` follow-up touches ADR-020. Part of the ADR-106→113 reputation track (issue #71). Decide after 106/107's algorithm-acceptance (this ADR's ranking formula references them).
+
 ## Context
 
 Current agent discovery is:

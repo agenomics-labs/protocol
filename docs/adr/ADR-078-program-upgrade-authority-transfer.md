@@ -6,6 +6,18 @@ Proposed
 ## Date
 2026-04-22
 
+## Maintainer Decision Required
+
+**Decision-ready — awaiting maintainer input on:** the real mainnet Squads V4 3-of-5 signer principals (per ADR-063 §1.1, distinct human set from the SAS credential authority per Audit-3 gap #16) and the two physical custodians of the §2 sealed rollback keypair.
+
+**⚠️ This ADR is the mainnet gate.** It blocks SDK-F1 / AUD-207 mainnet program IDs: no mainnet IDs can be published until the three upgrade authorities have transferred off the single operator CLI key onto the multisig. It is the first ADR in this set that must be decided.
+
+The recommended *mechanism* is fully specified: **Squads V4 multisig as upgrade authority** (not a hardware-wallet single key — alternative E rejected; Squads V4 natively provides member roles, time locks, and the executor/voter/initiator separation this needs), with a devnet throwaway-program rehearsal first (§1), a sealed two-custodian offline rollback key (§2), and a per-program Vault→Registry→Settlement staged transfer with 48h windows (§3). Single-ceremony transfer, reverse order, skip-rehearsal, no-rollback-key, and hardware-wallet variants are all enumerated and rejected in *Alternatives Considered*. The transfer order and window lengths are decided here (not open).
+
+The single irreducible human inputs are **trust-custody decisions only**: which humans hold the 3-of-5 mainnet signing keys and which two custodians hold the sealed rollback key. No protocol-economic parameter is open. The §5 mainnet-prerequisites checklist (audit engaged, `mainnet-deploy.sh` hardened, ADR-063 seated, rehearsal complete, rollback sealed-and-tested) gates promotion; Status stays **Proposed** until those land and the principals are chosen.
+
+**Dependency ordering:** ADR-078 is the head of the governance chain — it requires ADR-063's multisig to be seated (slots populated) and gates ADR-077's T (mainnet launch day) and ADR-113's stage-1 program-upgrade transfer. Decide ADR-063's principals → ADR-078's custody → then 077/113 follow.
+
 ## Context
 
 The three on-chain programs — `agent-registry`, `agent-vault`, `settlement` — currently have a **single-key upgrade authority** on both devnet and mainnet (`BUdXA1Fi…jTXL`, the operator's personal CLI wallet per `docs/STATUS.md §3, §8`). The Squads v4 2-of-3 devnet multisig (`6QUUP78…` per STATUS §4) exists but holds no real authority — it has executed two SAS-credential ceremonies (credential create, schema create) and never a `set-upgrade-authority`-class instruction.
