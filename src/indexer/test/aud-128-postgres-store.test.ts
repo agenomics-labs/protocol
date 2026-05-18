@@ -35,6 +35,7 @@ import Database from "better-sqlite3";
 import {
   createPostgresStore,
   createPostgresStoreFromPool,
+  resolvePoolSsl,
   DisabledPostgresStore,
   type PostgresStore,
 } from "../postgres-store";
@@ -464,6 +465,85 @@ describe("ADR-128 Phase 1 — INDEXER_PG_URL fail-closed validation", () => {
   it("accepts postgresql:// scheme", () => {
     const store = createPostgresStore({
       INDEXER_PG_URL: "postgresql://user:pass@127.0.0.1:5432/aep_events",
+    });
+    assert.equal(store instanceof DisabledPostgresStore, false);
+    void store.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test 5b: C4-OFF-04 — fail-closed Postgres TLS enforcement.
+// ---------------------------------------------------------------------------
+
+describe("C4-OFF-04 — PG transport security (resolvePoolSsl)", () => {
+  // Secret-scan hygiene: TruffleHog's Postgres detector flags any
+  // connection-string-shaped literal with a resolvable-looking host.
+  // `resolvePoolSsl` only ever inspects `URL.hostname` (loopback vs
+  // not) and the `sslmode` query param — userinfo is irrelevant to the
+  // logic — so the fixtures carry NO credentials and use the RFC 6761
+  // reserved, guaranteed-non-resolvable `.invalid` TLD. The DSN is
+  // built from clearly-fake parts via `dsn()` rather than embedded as
+  // a single secret-shaped literal, keeping coverage identical while
+  // leaving nothing for a secret scanner to flag.
+  const REMOTE_HOST = "db.invalid";
+  const dsn = (host: string, sslmode?: string): string => {
+    const q = sslmode === undefined ? "" : `?sslmode=${sslmode}`;
+    return `postgres://${host}:5432/aep${q}`;
+  };
+
+  it("requires TLS with cert verification for a remote host (no sslmode)", () => {
+    const ssl = resolvePoolSsl(new URL(dsn(REMOTE_HOST)), {});
+    assert.deepEqual(ssl, { rejectUnauthorized: true });
+  });
+
+  it("requires TLS for a remote host even when sslmode=require", () => {
+    const ssl = resolvePoolSsl(new URL(dsn(REMOTE_HOST, "require")), {});
+    assert.deepEqual(ssl, { rejectUnauthorized: true });
+  });
+
+  it("exempts loopback hosts (no TLS forced for local sockets)", () => {
+    for (const h of ["localhost", "127.0.0.1", "[::1]"]) {
+      const ssl = resolvePoolSsl(new URL(dsn(h)), {});
+      assert.equal(ssl, undefined, `${h} must be exempt`);
+    }
+  });
+
+  it("throws fail-closed when a remote URL requests sslmode=disable", () => {
+    assert.throws(
+      () => resolvePoolSsl(new URL(dsn(REMOTE_HOST, "disable")), {}),
+      /plaintext Postgres is refused fail-closed/,
+    );
+  });
+
+  it("throws for sslmode=allow / sslmode=prefer on a remote host", () => {
+    for (const m of ["allow", "prefer"]) {
+      assert.throws(
+        () => resolvePoolSsl(new URL(dsn(REMOTE_HOST, m)), {}),
+        /refused fail-closed/,
+      );
+    }
+  });
+
+  it("honours the explicit INDEXER_PG_INSECURE=1 opt-out", () => {
+    const ssl = resolvePoolSsl(new URL(dsn(REMOTE_HOST, "disable")), {
+      INDEXER_PG_INSECURE: "1",
+    });
+    assert.equal(ssl, undefined);
+  });
+
+  it("createPostgresStore throws fail-closed for a remote plaintext URL", () => {
+    assert.throws(
+      () =>
+        createPostgresStore({
+          INDEXER_PG_URL: dsn(REMOTE_HOST, "disable"),
+        }),
+      /refused fail-closed/,
+    );
+  });
+
+  it("createPostgresStore still accepts a loopback URL (dev path)", () => {
+    const store = createPostgresStore({
+      INDEXER_PG_URL: dsn("127.0.0.1"),
     });
     assert.equal(store instanceof DisabledPostgresStore, false);
     void store.close();

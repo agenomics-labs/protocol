@@ -7,9 +7,24 @@ notes: |
   Composite action only — action.yml is the entire surface.
   Runtime image (ghcr.io/trufflesecurity/trufflehog:${VERSION}) is
   pulled from the Docker registry, not api.github.com.
+  LOCAL PATCH (do NOT lose on re-vendor) — ADR-146:
+    action.yml carries a project-local block just before the
+    `docker run` that injects `--exclude-paths
+    /tmp/.github/trufflehog-exclude.txt` when that file is present.
+    This is the sanctioned, minimally-scoped mechanism for the
+    irreducible false positive on connection-string-handling code
+    (the Postgres detector flags `postgres://`/`sslmode=` tokens in
+    error messages / credential-free test fixtures under
+    `--results=verified,unknown`). It does NOT weaken detectors and
+    does NOT drop `unknown` globally — scope lives entirely in the
+    path-anchored regexes in `.github/trufflehog-exclude.txt`.
+    See docs/adr/ADR-146-trufflehog-connection-string-fixture-allowlist.md
+    and the C4-OFF-04 finding (ADR-128 transport-security addendum).
   Re-vendor procedure:
     1. SHA=$(gh api repos/trufflesecurity/trufflehog/commits/main --jq .sha)
     2. gh api repos/trufflesecurity/trufflehog/contents/action.yml \
          --jq '.content' --header "Accept: application/vnd.github.v3.raw" \
          > .github/actions/trufflehog/action.yml
-    3. Update sha + vendored_on in this file.
+    3. RE-APPLY the ADR-146 LOCAL PATCH above (the EXCLUDE_ARG block +
+       the `${EXCLUDE_ARG}` line in the docker run invocation).
+    4. Update sha + vendored_on in this file.
