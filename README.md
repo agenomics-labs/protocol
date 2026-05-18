@@ -153,6 +153,15 @@ cd dashboard && npm run dev
 - [Security Audit Prep](docs/SECURITY_AUDIT.md)
 - [ADRs](docs/adr/)
 
+**Building with AI tools.** AEP ships a consumer-facing
+[`/llms.txt`](https://agenomics.xyz/llms.txt) entry point following the
+[llmstxt.org](https://llmstxt.org) convention so AI development tools
+(Cursor, Claude Code, Windsurf, ChatGPT) can read the protocol's public
+contract directly. Add `https://agenomics.xyz/llms.txt` to your tool's
+context, or install the MCP server per
+[getting-started](docs/getting-started.md) for the typed tool surface.
+Per [ADR-137](docs/adr/ADR-137-ai-tool-ingestible-documentation.md).
+
 ## Strategy
 
 - [CLARITY-Era Evolution: From Agent Infrastructure to Machine Institutional Substrate](docs/strategy/clarity-era-evolution.md) — 18-month wedge roadmap, moat analysis, and what we are not building.

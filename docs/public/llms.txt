@@ -18,9 +18,10 @@ Windsurf, ChatGPT) that needs to understand and emit correct AEP code.
   per-tx limits, daily caps, rate limiting, allowlists), Agent Registry
   (on-chain discovery + reputation), Settlement (milestone-based SPL
   escrow with dispute resolution).
-- **MCP server with 28 tools.** Every on-chain instruction is exposed
+- **MCP server with 29 tools.** Every on-chain instruction is exposed
   as an MCP tool. Works with any MCP client (Claude Desktop, Cursor,
-  custom runtimes).
+  custom runtimes). The canonical tool inventory is the README's
+  "MCP Tools" section, kept in sync with `mcp-server/src/tools/`.
 - **Devnet program IDs are in the repo README.** Mainnet IDs land after
   the external audit closes.
 
@@ -103,7 +104,7 @@ The complete ADR corpus is at
   (`https://agenomics.xyz/llms.txt`) to your context. If your tool also
   supports a flat-text bundle, point it at the project README and the
   three canonical docs pages above; a build-time `llms-full.txt`
-  concatenation is a v0.2 deliverable.
+  concatenation is a v2 deliverable.
 - **Claude Code / Claude Desktop:** install the MCP server per
   `getting-started`; the tool descriptions and input schemas are
   authoritative once connected.
@@ -113,5 +114,8 @@ The complete ADR corpus is at
 ---
 
 *Per [ADR-137](https://github.com/agenomics-labs/protocol/blob/main/docs/adr/ADR-137-ai-tool-ingestible-documentation.md).
-v0.1 — static curated index. v0.2 adds build-time `llms-full.txt`
-generation and per-package `CLAUDE.md` / `AGENTS.md` files.*
+v1 — curated index complete and accurate for the documented public
+surface, with inbound links on every consumer entry point (docs
+homepage, `examples/README.md`, repo `README.md`). v2 adds build-time
+`llms-full.txt` generation and per-package `CLAUDE.md` / `AGENTS.md`
+files (gated on ADR-141 typed shapes).*

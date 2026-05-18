@@ -2,11 +2,11 @@
 
 ## Status
 
-Proposed
+Accepted
 
 ## Date
 
-2026-04-30
+2026-05-18
 
 ## Context
 
@@ -123,6 +123,53 @@ external builders both pick up.**
     paste the path or run `cat node_modules/@agenomics/client/CLAUDE.md`."
   - **ChatGPT / Claude.ai**: "Drop `llms-full.txt` into the
     conversation."
+
+### v1 — explicit definition of done
+
+The original "What ships" list bundled two cost classes: (a) the
+curated prose index + inbound link surface, which has no external
+dependency, and (b) per-package `CLAUDE.md` + the `llms-full.txt`
+build plugin, which are only truthful once ADR-141's Codama-generated
+typed shapes land (writing them earlier guarantees stale prose the day
+it ships — the ADR's own "Generate per-package CLAUDE.md from JSDoc"
+rejection makes the same point). v1 is therefore scoped to (a); (b) is
+v2, explicitly gated on ADR-141.
+
+**v1 is done when ALL of the following hold:**
+
+1. **`llms.txt` exists and is accurate for the documented public
+   surface.** Served at `agenomics.xyz/llms.txt` from
+   `docs/public/llms.txt` (VitePress serves `public/` at site root —
+   the path differs from the ADR's original `docs/llms.txt` guess; this
+   is the real, verified location). It follows the llmstxt.org spec
+   (title, blockquote summary, curated link sections) and contains **no
+   stale facts about the public surface**. Concretely: the MCP tool
+   count matches the README's canonical "MCP Tools (N)" section, which
+   is itself kept in sync with `mcp-server/src/tools/` (parity enforced
+   by the source-of-truth alignment landed in commit `590268f`). The
+   v0.1-partial shipped `28`; the canonical count is `29`
+   (`mcp-server/src/tools/index.ts:114`) — v1 corrects this.
+2. **Inbound links on every consumer entry point.** All three surfaces
+   a consumer can land on point at `llms.txt`: the docs homepage
+   (`docs/index.md` "Building with AI tools"), `examples/README.md`
+   ("Building these examples with AI tools"), and the repo
+   `README.md` Documentation section. v0.1-partial covered the first
+   two; v1 adds the README (the most common GitHub landing page).
+3. **Example ingestibility verified.** Every link in `llms.txt` is
+   either an external `https://agenomics.xyz/...` / GitHub URL or
+   resolves to a real path; the relative links added to `README.md`
+   pass `scripts/check-md-links.sh`. The `llms.txt` self-description
+   names what is shipped (curated index, inbound links) vs. deferred
+   (`llms-full.txt`, per-package `CLAUDE.md`) using consistent v1/v2
+   labels so an ingesting model is not told a v2 artifact exists.
+
+**Explicitly NOT required for v1** (these are v2, gated on ADR-141):
+the `docs/.vitepress/plugins/llms-txt.ts` build plugin and
+`llms-full.txt`; `sdk/client/CLAUDE.md` and
+`packages/sas-resolver/CLAUDE.md`; the repo-root `.cursorrules`
+(already deferred by the original Decision §3). v1 deliberately ships
+the *prerequisite inbound surface, complete and truthful*, rather than
+a larger surface that is partly stale.
 
 ### Out of scope
 
@@ -265,3 +312,32 @@ Status stays **Proposed** until the per-package `CLAUDE.md` files and
 the `llms-full.txt` plugin land — those are the load-bearing parts of
 the AI-conversion-gap claim. The static `llms.txt` is the prerequisite
 inbound surface.
+
+### 2026-05-18 — Accepted at v1
+
+Status flipped Proposed → Accepted with v1 scope recorded in the
+Decision's new "v1 — explicit definition of done" subsection. v1 is
+the *curated-index-and-inbound-link* slice, deliberately decoupled
+from the ADR-141-gated per-package `CLAUDE.md` / `llms-full.txt` work
+(now v2). Rationale: the 2026-05-15 revision left Status Proposed
+because the load-bearing parts were the per-package files — but those
+cannot be truthful before ADR-141, and an inbound surface that is
+*complete and accurate* is itself a shippable, ratifiable decision.
+Holding the whole ADR Proposed indefinitely on a transitive dependency
+is worse than accepting the slice that stands on its own.
+
+Shipped for v1 (this PR):
+- ✅ `docs/public/llms.txt` corrected: MCP tool count `28` → `29` to
+  match the canonical README / `mcp-server/src/tools/index.ts:114`
+  source of truth; footer + "How to ingest" relabelled v0.1/v0.2 →
+  v1/v2 for consistent model-facing semantics.
+- ✅ Third inbound link added — repo `README.md` Documentation section
+  "Building with AI tools" (homepage + `examples/README.md` already
+  shipped in v0.1-partial), completing §4's inbound surface for the
+  three consumer entry points.
+- ✅ "v1 done" defined as three checkable conditions in the Decision.
+
+Deferred to v2 (unchanged, gated on ADR-141 typed shapes):
+- ⏸ `docs/.vitepress/plugins/llms-txt.ts` + `llms-full.txt`
+- ⏸ `sdk/client/CLAUDE.md`, `packages/sas-resolver/CLAUDE.md`
+- ⏸ repo-root `.cursorrules`
