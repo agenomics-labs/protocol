@@ -3,9 +3,12 @@
 // to keep PR1 scope tight. See ADR-058 §8.
 
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { Action, ActionContext, Result } from "../types/action.js";
+// ADR-135: single-source Zod → MCP inputSchema renderer. The router's
+// `listToolsDescriptors()` and `tools/*.ts` now share THIS function, so
+// the advertised schema cannot diverge from the enforced one.
+import { renderInputSchema } from "../tools/render-schema.js";
 import {
   capabilityGated,
   type CapabilityGatedOptions,
@@ -35,7 +38,9 @@ export function createActionRouter(
       return [...actions.values()].map((a) => ({
         name: a.name,
         description: a.description,
-        inputSchema: toJsonSchema(a.inputSchema),
+        // ADR-135: derive from the action's Zod schema via the shared
+        // renderer — same projection `tools/*.ts` uses.
+        inputSchema: renderInputSchema(a.inputSchema),
       }));
     },
     handles(toolName: string): boolean {
@@ -71,19 +76,8 @@ export function createActionRouter(
   };
 }
 
-function toJsonSchema(shape: z.ZodRawShape): Tool["inputSchema"] {
-  // Cast the input object to any to avoid `Type instantiation is excessively deep`
-  // which ZodObject<ZodRawShape> can trigger under strict TS.
-  const obj = z.object(shape) as unknown as z.ZodType<unknown>;
-  // TODO(typed): zodToJsonSchema's first argument is constrained to
-  // `ZodSchema | ZodTypeAny` whose generic depth blows TS2589 ("type
-  // instantiation is excessively deep") when the wrapper synthesises a
-  // `ZodObject<ZodRawShape>` here. Unblocked by either a narrower upstream
-  // signature in zod-to-json-schema, or by precomputing JSON schemas at
-  // build time and dropping the runtime conversion. See ADR-088.
-  const schema = zodToJsonSchema(obj as any, {
-    target: "jsonSchema7",
-    $refStrategy: "none",
-  });
-  return schema as unknown as Tool["inputSchema"];
-}
+// ADR-135: the local `toJsonSchema` renderer was replaced by the shared
+// `renderInputSchema` (src/tools/render-schema.ts) so the router-
+// advertised schema and the `tools/*.ts` descriptors are guaranteed to
+// be the SAME projection of the one Zod source. The TS2589 workaround
+// and target/$ref options now live in that single shared module.

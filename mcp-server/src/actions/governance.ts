@@ -61,14 +61,21 @@ export const MAX_INVARIANT_BATCH = 16 as const;
  * spending a transaction on zero work is always an operator error.
  */
 const verifyProtocolInvariantsInput = {
+  // ADR-135: `.describe()` carries the MCP-client-visible field docs
+  // that pre-ADR-135 lived only in the hand-written tools/governance.ts
+  // JSON Schema. The min/max bounds were already router-enforced here.
   accounts: z
-    .array(zPubkey)
+    .array(zPubkey.describe("Base58-encoded `AgentProfile` PDA pubkey"))
     .min(1, {
       message: "verify_protocol_invariants requires at least 1 profile account",
     })
     .max(MAX_INVARIANT_BATCH, {
       message: `verify_protocol_invariants batch must not exceed MAX_INVARIANT_BATCH (${MAX_INVARIANT_BATCH}); slice into smaller calls (AUD-106)`,
-    }),
+    })
+    .describe(
+      `Batch of agent-profile PDAs to sweep (1-${MAX_INVARIANT_BATCH}). ` +
+        "AUD-106: the on-chain handler enforces the same upper bound.",
+    ),
 } as const;
 
 type VerifyProtocolInvariantsInput = z.infer<

@@ -2,11 +2,41 @@
 
 ## Status
 
-Proposed
+Accepted
 
 ## Date
 
-2026-04-30
+2026-05-18
+
+## Implementation Note (2026-05-18)
+
+Landed as a bounded internal refactor. The pre-existing
+`actions/*.ts` Zod schemas (already the runtime-enforced contract via
+`adapters/mcp.ts#createActionRouter`) were made the **single source of
+truth**; the hand-written JSON Schema literals in `tools/*.ts` were
+deleted and each `Tool.inputSchema` is now derived from the Zod schema
+via one shared renderer, `src/tools/render-schema.ts#renderInputSchema`
+(`zodToJsonSchema(..., { target: "jsonSchema7", $refStrategy: "none" })`,
+normalized to strip the `$schema` envelope and synthetic top-level
+`additionalProperties` so the wire shape stays byte-stable). The router
+adapter (`adapters/mcp.ts`) now calls the SAME renderer, so the
+advertised and enforced contracts are provably one projection.
+
+Per-field MCP-client descriptions were ported into the Zod schemas via
+`.describe()`; a frozen snapshot gate
+(`test/tools/schema-snapshot.test.ts` +
+`test/tools/__schema_snapshot__.json`) asserts the rendered schema +
+description for all 29 tools is byte-stable. Every pre-ADR-135 field
+description is preserved. Two intentional, ADR-sanctioned drift
+corrections (the "advertise loose / enforce different" antipattern this
+ADR targets — §Consequences) shipped: `create_escrow` drops the stale
+required `providerVaultAddress` (handlers/settlement.ts "Finding #21"
+already ignored it at runtime), and `pay_x402_service` now advertises
+the OPTIONAL `nonce` idempotency field the router already enforced. The
+handler/`requireString` deletion and the CI drift-gate script noted in
+§"What ships" remain follow-ups (the snapshot gate covers the
+behavior-equivalence guarantee in the interim). Scope: 25 tools in the
+original ADR; the live surface is 29 post-cycle-4.
 
 ## Context
 

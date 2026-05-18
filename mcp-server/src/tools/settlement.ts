@@ -1,269 +1,106 @@
-import { Tool } from "@modelcontextprotocol/sdk/types";
+// ADR-135 — Settlement MCP tool descriptors, DERIVED from the
+// single-source Zod schemas in `actions/settlement.ts`.
+//
+// See `tools/render-schema.ts` for the rationale. Each `inputSchema` is
+// `renderInputSchema(<action Zod shape>)`, so the advertised
+// `tools/list` contract and the runtime-enforced router contract are
+// projections of ONE schema and cannot drift. `description` strings are
+// preserved verbatim from the pre-ADR-135 hand-written descriptors for
+// wire stability.
+//
+// Drift fixed by this derivation: the pre-ADR-135 `create_escrow`
+// descriptor advertised a REQUIRED `providerVaultAddress` that the
+// handler stopped accepting (handlers/settlement.ts "Finding #21" — the
+// provider vault PDA is derived from `providerAddress`). The router
+// already ignored it; the derived schema now correctly omits it so the
+// advertised contract matches the enforced one.
+
+import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import { renderInputSchema } from "./render-schema.js";
+import {
+  createEscrowAction,
+  acceptTaskAction,
+  submitMilestoneAction,
+  approveMilestoneAction,
+  rejectMilestoneAction,
+  getEscrowStatusAction,
+  cancelEscrowAction,
+  raiseDisputeAction,
+  resolveDisputeAction,
+  resolveDisputeTimeoutAction,
+} from "../actions/settlement.js";
 
 /**
- * Settlement Tools (9) - Escrow lifecycle and milestone-based payments
+ * Settlement Tools (10) — escrow lifecycle and milestone-based payments.
+ * `inputSchema` derived from `actions/settlement.ts` (ADR-135 SSOT).
  */
 
 export const createEscrowTool: Tool = {
   name: "create_escrow",
   description:
     "Create a task escrow: lock payment in escrow for a provider agent. Defines milestones with amounts that must sum to total. Payment is released per milestone on approval.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      providerAddress: {
-        type: "string",
-        description: "Public key of the provider agent",
-      },
-      providerVaultAddress: {
-        type: "string",
-        description: "Public key of the provider's vault",
-      },
-      tokenMintAddress: {
-        type: "string",
-        description: "SPL token mint for payment",
-      },
-      taskId: {
-        type: "number",
-        description: "Unique numeric task ID",
-      },
-      totalAmountTokens: {
-        type: "number",
-        description:
-          "Total payment in token base units (e.g., 1000000 for 1 USDC)",
-      },
-      taskDescription: {
-        type: "string",
-        description: "Human-readable task description (hashed on-chain)",
-      },
-      deadlineUnix: {
-        type: "number",
-        description: "Unix timestamp deadline for task completion",
-      },
-      milestones: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            description: {
-              type: "string",
-              description: "Milestone description",
-            },
-            amount: {
-              type: "number",
-              description: "Payment amount for this milestone in token base units",
-            },
-          },
-          required: ["description", "amount"],
-        },
-        description:
-          "1-5 milestones. Amounts must sum to totalAmountTokens.",
-      },
-      disputeResolverAddress: {
-        type: "string",
-        description:
-          "Optional: public key of a third-party dispute resolver",
-      },
-    },
-    required: [
-      "providerAddress",
-      "providerVaultAddress",
-      "tokenMintAddress",
-      "taskId",
-      "totalAmountTokens",
-      "taskDescription",
-      "deadlineUnix",
-      "milestones",
-    ],
-  },
+  inputSchema: renderInputSchema(createEscrowAction.inputSchema),
 };
 
 export const acceptTaskTool: Tool = {
   name: "accept_task",
   description:
     "Accept a task as the provider agent. Changes escrow status from Created to Active.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      escrowAddress: {
-        type: "string",
-        description: "Public key of the escrow account",
-      },
-    },
-    required: ["escrowAddress"],
-  },
+  inputSchema: renderInputSchema(acceptTaskAction.inputSchema),
 };
 
 export const submitMilestoneTool: Tool = {
   name: "submit_milestone",
   description:
     "Submit a milestone as the provider. Marks the milestone as ready for client review.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      escrowAddress: {
-        type: "string",
-        description: "Public key of the escrow account",
-      },
-      milestoneIndex: {
-        type: "number",
-        description: "Zero-based index of the milestone to submit",
-      },
-    },
-    required: ["escrowAddress", "milestoneIndex"],
-  },
+  inputSchema: renderInputSchema(submitMilestoneAction.inputSchema),
 };
 
 export const approveMilestoneTool: Tool = {
   name: "approve_milestone",
   description:
     "Approve a submitted milestone as the client. Releases the milestone payment to the provider's token account. An optional `rating` (0..=5) is accepted for forward compatibility with a future on-chain rating instruction; AUD-007 (PR-Q) removed `avg_rating` from `AgentProfile`, so the value is currently validated and emitted in events but does not mutate any on-chain aggregate.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      escrowAddress: {
-        type: "string",
-        description: "Public key of the escrow account",
-      },
-      milestoneIndex: {
-        type: "number",
-        description: "Zero-based index of the milestone to approve",
-      },
-      providerTokenAccount: {
-        type: "string",
-        description:
-          "Provider's token account to receive the milestone payment",
-      },
-      rating: {
-        type: "number",
-        description:
-          "Optional 0..=5 star rating. 0 means no rating (default). AUD-007 (PR-Q): `avg_rating` was removed from on-chain `AgentProfile`; the value is accepted for forward-compat (future rating ix) and currently has no on-chain effect.",
-        minimum: 0,
-        maximum: 5,
-      },
-    },
-    required: ["escrowAddress", "milestoneIndex", "providerTokenAccount"],
-  },
+  inputSchema: renderInputSchema(approveMilestoneAction.inputSchema),
 };
 
 export const rejectMilestoneTool: Tool = {
   name: "reject_milestone",
   description:
     "Reject a submitted milestone as the client. Sends it back to pending state for re-submission.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      escrowAddress: {
-        type: "string",
-        description: "Public key of the escrow account",
-      },
-      milestoneIndex: {
-        type: "number",
-        description: "Zero-based index of the milestone to reject",
-      },
-    },
-    required: ["escrowAddress", "milestoneIndex"],
-  },
+  inputSchema: renderInputSchema(rejectMilestoneAction.inputSchema),
 };
 
 export const getEscrowStatusTool: Tool = {
   name: "get_escrow_status",
   description:
     "Get the current status of an escrow: milestones, amounts, timeline, and dispute state.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      escrowAddress: {
-        type: "string",
-        description: "Public key of the escrow account",
-      },
-    },
-    required: ["escrowAddress"],
-  },
+  inputSchema: renderInputSchema(getEscrowStatusAction.inputSchema),
 };
 
 export const cancelEscrowTool: Tool = {
   name: "cancel_escrow",
   description:
     "Cancel an escrow (client only). Returns escrowed funds to the client. Only works if escrow is in Created status.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      escrowAddress: {
-        type: "string",
-        description: "Public key of the escrow account",
-      },
-    },
-    required: ["escrowAddress"],
-  },
+  inputSchema: renderInputSchema(cancelEscrowAction.inputSchema),
 };
 
 export const raiseDisputeTool: Tool = {
   name: "raise_dispute",
   description:
     "Raise a dispute on an active escrow. Either client or provider can raise a dispute.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      escrowAddress: {
-        type: "string",
-        description: "Public key of the escrow account",
-      },
-    },
-    required: ["escrowAddress"],
-  },
+  inputSchema: renderInputSchema(raiseDisputeAction.inputSchema),
 };
 
 export const resolveDisputeTool: Tool = {
   name: "resolve_dispute",
   description:
     "Resolve a disputed escrow by splitting funds between client and provider. Only the designated dispute resolver (or client if none set) can resolve.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      escrowAddress: {
-        type: "string",
-        description: "Public key of the escrow account",
-      },
-      clientRefundTokens: {
-        type: "number",
-        description: "Amount to refund to client in token base units",
-      },
-      providerPaymentTokens: {
-        type: "number",
-        description: "Amount to pay provider in token base units",
-      },
-      clientTokenAccount: {
-        type: "string",
-        description: "Client's token account for the refund",
-      },
-      providerTokenAccount: {
-        type: "string",
-        description: "Provider's token account for the payment",
-      },
-    },
-    required: [
-      "escrowAddress",
-      "clientRefundTokens",
-      "providerPaymentTokens",
-      "clientTokenAccount",
-      "providerTokenAccount",
-    ],
-  },
+  inputSchema: renderInputSchema(resolveDisputeAction.inputSchema),
 };
 
 export const resolveDisputeTimeoutTool: Tool = {
   name: "resolve_dispute_timeout",
   description:
     "Auto-resolve an expired dispute. If the escrow deadline has passed and the dispute has not been resolved, anyone can call this to release funds according to the default timeout resolution policy.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      escrowAddress: {
-        type: "string",
-        description: "Public key of the escrow account with an expired dispute",
-      },
-    },
-    required: ["escrowAddress"],
-  },
+  inputSchema: renderInputSchema(resolveDisputeTimeoutAction.inputSchema),
 };

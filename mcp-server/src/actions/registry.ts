@@ -33,14 +33,37 @@ function wrap<I>(fn: (args: Record<string, unknown>) => Promise<any>) {
 
 // ---------- register_agent ----------
 
+// ADR-135: `.describe()` carries the MCP-client-visible field docs that
+// pre-ADR-135 lived only in the hand-written tools/registry.ts JSON
+// Schema. Constraints (max/min/enum) were already router-enforced.
 const registerAgentInput = {
-  name: z.string().max(64),
-  description: z.string().max(256),
-  category: z.string(),
-  capabilities: z.array(z.string()).min(1).max(10),
-  pricingModel: z.enum(["perTask", "perHour", "perToken"]),
-  pricingAmountSol: z.number().nonnegative(),
-  acceptedTokens: z.array(z.string()).min(1).max(5),
+  name: z.string().max(64).describe("Agent display name (max 64 characters)"),
+  description: z
+    .string()
+    .max(256)
+    .describe("Description of the agent's capabilities (max 256 chars)"),
+  category: z
+    .string()
+    .describe(
+      "Primary category (e.g., 'data-analysis', 'trading', 'content-generation')",
+    ),
+  capabilities: z
+    .array(z.string())
+    .min(1)
+    .max(10)
+    .describe("List of capability tags (1-10 tags)"),
+  pricingModel: z
+    .enum(["perTask", "perHour", "perToken"])
+    .describe("How the agent charges for work"),
+  pricingAmountSol: z
+    .number()
+    .nonnegative()
+    .describe("Price amount in SOL according to the pricing model"),
+  acceptedTokens: z
+    .array(z.string())
+    .min(1)
+    .max(5)
+    .describe("Mint addresses of accepted payment tokens (1-5 tokens)"),
 } as const;
 
 export const registerAgentAction: Action<
@@ -65,7 +88,12 @@ export const registerAgentAction: Action<
 // ---------- get_agent_profile ----------
 
 const getAgentProfileInput = {
-  agentAddress: z.string().optional(),
+  agentAddress: z
+    .string()
+    .optional()
+    .describe(
+      "Public key (authority) of the agent to look up. If omitted, returns this agent's profile.",
+    ),
 } as const;
 
 export const getAgentProfileAction: Action<
@@ -88,13 +116,22 @@ export const getAgentProfileAction: Action<
 // ---------- update_agent_profile ----------
 
 const updateAgentProfileInput = {
-  name: z.string().optional(),
-  description: z.string().optional(),
-  category: z.string().optional(),
-  capabilities: z.array(z.string()).optional(),
-  pricingModel: z.enum(["perTask", "perHour", "perToken"]).optional(),
-  pricingAmountSol: z.number().optional(),
-  acceptedTokens: z.array(z.string()).optional(),
+  name: z.string().optional().describe("New agent name"),
+  description: z.string().optional().describe("New description"),
+  category: z.string().optional().describe("New primary category"),
+  capabilities: z
+    .array(z.string())
+    .optional()
+    .describe("New capability tags"),
+  pricingModel: z
+    .enum(["perTask", "perHour", "perToken"])
+    .optional()
+    .describe("New pricing model"),
+  pricingAmountSol: z.number().optional().describe("New pricing amount in SOL"),
+  acceptedTokens: z
+    .array(z.string())
+    .optional()
+    .describe("New accepted token mint addresses"),
 } as const;
 
 export const updateAgentProfileAction: Action<
@@ -119,10 +156,21 @@ export const updateAgentProfileAction: Action<
 // ---------- discover_agents ----------
 
 const discoverAgentsInput = {
-  capability: z.string().optional(),
-  category: z.string().optional(),
-  minReputation: z.number().optional(),
-  limit: z.number().int().positive().optional(),
+  capability: z
+    .string()
+    .optional()
+    .describe("Filter by capability tag (partial match)"),
+  category: z
+    .string()
+    .optional()
+    .describe("Filter by category (exact match)"),
+  minReputation: z.number().optional().describe("Minimum reputation score"),
+  limit: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe("Max results to return (default: 20)"),
 } as const;
 
 export const discoverAgentsAction: Action<
@@ -145,7 +193,10 @@ export const discoverAgentsAction: Action<
 // ---------- stake_reputation ----------
 
 const stakeReputationInput = {
-  amount: z.number().positive(),
+  amount: z
+    .number()
+    .positive()
+    .describe("Amount of SOL to stake for reputation"),
 } as const;
 
 export const stakeReputationAction: Action<
@@ -191,9 +242,33 @@ const findSimilarAgentsInput = {
     .min(32, { message: "agent_id must be a base58-encoded Solana public key" })
     .refine(isValidPublicKey, {
       message: "agent_id must be a base58-encoded Solana public key",
-    }),
-  top_k: z.number().int().min(1).max(50),
-  min_similarity: z.number().min(0).max(1).optional(),
+    })
+    .describe(
+      "Base58-encoded authority pubkey of the seed agent. The seed's " +
+        "manifest (category, name, capabilities, description) is " +
+        "fetched from chain and embedded; results are the K agents " +
+        "whose observation embedding is closest by cosine distance.",
+    ),
+  top_k: z
+    .number()
+    .int()
+    .min(1)
+    .max(50)
+    .describe(
+      "Maximum number of similar agents to return (1-50). The seed " +
+        "agent is excluded from results, so a top_k of 10 returns up " +
+        "to 10 *peers* (not 10 including the seed).",
+    ),
+  min_similarity: z
+    .number()
+    .min(0)
+    .max(1)
+    .optional()
+    .describe(
+      "Cosine-similarity floor in [0, 1]. Default 0.3 (matches EVO's " +
+        "ADR-062 default). Hits below this threshold are dropped before " +
+        "hydration.",
+    ),
 } as const;
 
 export const findSimilarAgentsAction: Action<
