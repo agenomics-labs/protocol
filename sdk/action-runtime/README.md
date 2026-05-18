@@ -47,10 +47,31 @@ const failure: Result<never, Error> = err(new Error("nope"));
 
 - `Result<T, E = Error>` — discriminated union: `{ ok: true; value: T } | { ok: false; error: E }`. Narrows cleanly via `result.ok`.
 - `ok(value)` / `err(error)` — single-line constructors for the two variants.
-- `wrap(fn)` — runs a `() => Promise<T>`, captures any throw, and returns `Promise<Result<T, Error>>`. Non-`Error` throws (strings, numbers, etc.) are coerced to `Error` so consumers always get a stable `error.message`.
-- `ActionSpec<TInput, TOutput>` — the input shape: `{ name, description, handler: (input) => Promise<TOutput> }`.
-- `Action<TInput, TOutput>` — the produced shape: `{ name, description, run: (input) => Promise<Result<TOutput, Error>> }`.
+- `wrap(fn)` — runs a `() => Promise<T>`, captures any throw, and returns `Promise<Result<T, ActionError>>`. The thrown value is **never** returned verbatim: it is converted to a redacted `ActionError` (see Security boundary).
+- `ActionSpec<TInput, TOutput>` — `{ name, description, validate?, handler }`.
+- `Action<TInput, TOutput>` — `{ name, description, run: (input: unknown) => Promise<Result<TOutput, Error>> }`.
 - `defineAction(spec)` — builds an `Action` from a spec. The handler is wrapped with `wrap`, so `run` never throws.
+- `ActionError` — `extends Error`, adds a stable machine `code`. The only error type that ever crosses the action boundary back to a caller.
+- `ValidationError` — throw from `validate` for invalid input; surfaces as `ActionError` with `code: "VALIDATION_ERROR"`.
+- `setInternalErrorSink(fn)` — register a trusted server-side logger that receives the **raw, unredacted** error. Never wire this anywhere reachable by an untrusted caller.
+
+## Security boundary (SDK-F3 — cycle-4 audit)
+
+`defineAction` is a capability runtime, not a validator. Two contracts are
+now explicit:
+
+1. **No implicit input validation.** Without a `validate` hook the handler
+   receives whatever the (possibly untrusted) caller passed — `TInput` is
+   erased at runtime. For any handler that moves funds or touches signing
+   material, supply `validate`; it runs *before* `handler` and must `throw`
+   (e.g. `ValidationError`) on bad input.
+
+2. **Error redaction.** RPC URLs, filesystem (keypair) paths, and
+   key/secret-shaped blobs are stripped from the `error.message` returned
+   to callers; the message is length-bounded; the raw `Error`/`.stack` is
+   never returned; non-`Error` throws are reduced to a type tag (no value
+   leak). The unredacted error is delivered only to `setInternalErrorSink`
+   if one is registered.
 
 ## Related packages
 

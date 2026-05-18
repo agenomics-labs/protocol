@@ -463,3 +463,77 @@ Ordered by priority (critical first):
 6. ADR documents (ADR-001 through ADR-019)
 7. Deployed program addresses on devnet
 8. List of known issues and accepted risks
+
+---
+
+## 9. Dependency / Supply-Chain Triage (cycle-4 audit `07-web-supplychain.md`)
+
+Status as of cycle-4 (audit baseline origin/main `b8fe80b`). Total
+Dependabot alerts: **31**. **28 are state `fixed`** (axios ×17, hono ×5,
+fast-uri ×2, serialize-javascript ×2, uuid, ip-address, diff). **3 remain
+actionable** and are documented here with explicit rationale and
+re-evaluation triggers. This is a *triage record*, not a remediation — no
+mass dependency bump is performed (S-04 finding: the audit-corpus "5
+deferred" note is stale; the correct count is **3**).
+
+| # | Pkg | Sev | State | Advisory | Manifest | Patched |
+|---|-----|-----|-------|----------|----------|---------|
+| 1 | `bigint-buffer` | HIGH | dismissed (`tolerable_risk`) | GHSA-3gc7-fjrx-p6mg | `package-lock.json` | none |
+| 6 | `rand` | LOW | open | GHSA-cq8v-f236-94qc | `Cargo.lock` | 0.8.6 |
+| 7 | `rand` | LOW | open | GHSA-cq8v-f236-94qc | `fuzz/Cargo.lock` | 0.8.6 |
+
+### 9.1 `bigint-buffer` GHSA-3gc7-fjrx-p6mg (HIGH, dismissed — dev-only, tolerable)
+
+- **Chain**: `@solana/spl-token@0.4.14 → @solana/buffer-layout-utils@0.2.0
+  → bigint-buffer@1.1.5` (also under `@sqds/multisig`). Buffer overflow
+  via `toBigIntLE()` on attacker-controlled byte lengths.
+- **Why dismissed `tolerable_risk` is justified**: `@solana/spl-token`
+  is a **workspace-root dev dependency only**. It is *not* shipped to any
+  published artifact — the dashboard bundles `@solana/web3.js` only
+  (`dashboard/package.json`), and the SDK packages do not depend on it.
+  Blast radius is local dev / CI tooling that decodes untrusted SPL
+  account data, not production users or fund flows. No upstream patch
+  exists (`first_patched_version: none`), so a bump cannot resolve it.
+- **Accepted remediation path**: ADR-115 §Stage 3b removes the
+  workspace-root `@solana/spl-token` dev dep entirely (gated on ADR-087
+  Phase D), which eliminates the `bigint-buffer` chain and unblocks
+  flipping `npm audit --audit-level=high` to a blocking CI gate. Tracked
+  there; not re-solved here.
+- **Re-evaluation triggers (any one ⇒ re-verify the dev-only scope before
+  keeping the dismissal)**:
+  1. `@solana/spl-token` or `@sqds/multisig` is bumped (re-check the
+     resolved `bigint-buffer` chain with `npm ls bigint-buffer`).
+  2. `@solana/spl-token` migrates out of dev-only into any package's
+     runtime `dependencies` (it must not).
+  3. An upstream `bigint-buffer` (or `@solana/buffer-layout-utils`) patch
+     ships — adopt it and clear the dismissal.
+  4. ADR-087 Phase D / ADR-115 Stage 3b lands — the chain is gone; remove
+     this entry and make `npm audit` blocking.
+
+### 9.2 `rand` GHSA-cq8v-f236-94qc ×2 (LOW, open — theoretical, test-adjacent)
+
+- **Where**: alert #6 (`Cargo.lock`) and #7 (`fuzz/Cargo.lock`).
+  Vulnerable range `>=0.7.0,<0.8.6`; first patched `0.8.6`.
+- **Rationale for deferral**: "Rand is unsound with a custom logger using
+  `rand::rng()`" — a soundness (UB) issue, not a direct exploit
+  primitive. The protocol does **not** install a custom global logger
+  that would trigger the unsound path, so exposure is theoretical.
+  `fuzz/` is test-only.
+- **Fix when batched**: `cargo update -p rand` to `>=0.8.6` in both
+  lockfiles. Low urgency; deliberately *not* bundled with this SDK PR to
+  keep the Rust dependency surface out of an SDK-scoped change (avoids a
+  cross-cutting lockfile churn unrelated to the SDK fix).
+- **Re-evaluation triggers**:
+  1. Any code introduces a custom global `log`/`tracing` logger that
+     calls `rand::rng()` ⇒ promote to actionable, bump immediately.
+  2. The next Rust dependency-hygiene pass ⇒ bump both lockfiles then.
+  3. Advisory severity is re-rated upward by RustSec ⇒ re-prioritise.
+
+### 9.3 Note
+
+No deferred MEDIUM/HIGH npm alert remains beyond #1. The
+`@coral-xyz/anchor ^0.31.0` caret range and `"*"` workspace ranges in the
+SDK (cycle-4 `06-sdk.md` F5, LOW) are pinning-hygiene items governed by
+ADR-089 (unified lockfile) and are *not* counted among the 3 actionable
+alerts above — they are tracked separately and intentionally not bumped
+in this PR.
