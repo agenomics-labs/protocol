@@ -10,7 +10,7 @@ license = "Apache-2.0"
 # the program's bytecode hash, invalidating the audit. Per
 # docs/MAINNET_CHECKLIST.md §1.1 #3.
 anchor-lang = { version = "=0.31.1", features = ["init-if-needed"] }
-anchor-spl = "=0.31.1"
+anchor-spl = "=0.32.1"
 # Finding #17 / AUD-001 / AUD-002: Depend on the registry crate for typed CPI.
 # `features = ["cpi"]` enables the Anchor-generated `cpi::propose_reputation_delta`
 # helper; the transitive `no-entrypoint` feature prevents the registry's cdylib
