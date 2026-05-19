@@ -9,7 +9,7 @@ license = "Apache-2.0"
 # version means a future `cargo build` could pull a transitive that changes
 # the program's bytecode hash, invalidating the audit. Per
 # docs/MAINNET_CHECKLIST.md §1.1 #3.
-anchor-lang = "=0.31.1"
+anchor-lang = "=0.32.1"
 anchor-spl = "=0.31.1"
 # ADR-095: Depend on the registry crate for typed CPI. `features = ["cpi"]`
 # enables Anchor-generated CPI helpers; the transitive `no-entrypoint` feature

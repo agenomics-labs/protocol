@@ -10,7 +10,7 @@ description = "Agent Registry - Discovery and identity component for the Agent E
 # version means a future `cargo build` could pull a transitive that changes
 # the program's bytecode hash, invalidating the audit. Per
 # docs/MAINNET_CHECKLIST.md §1.1 #3.
-anchor-lang = { version = "=0.31.1", features = ["init-if-needed"] }
+anchor-lang = { version = "=0.32.1", features = ["init-if-needed"] }
 anchor-spl = { version = "=0.31.1" }
 
 [lib]
