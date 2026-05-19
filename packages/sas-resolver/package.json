@@ -55,7 +55,7 @@
   },
   "peerDependencies": {
     "@agenomics/reputation-attestor": "*",
-    "@solana/kit": "^6.8.0",
+    "@solana/kit": "^6.9.0",
     "ioredis": "^5.10.1"
   },
   "peerDependenciesMeta": {
@@ -67,7 +67,7 @@
     }
   },
   "devDependencies": {
-    "@solana/kit": "^6.8.0",
+    "@solana/kit": "^6.9.0",
     "@types/node": "^20.9.0",
     "ioredis-mock": "^8.9.0",
     "tsx": "^4.21.0",

@@ -13,7 +13,7 @@
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
-    "@solana/kit": "6.8.0",
+    "@solana/kit": "6.9.0",
     "express": "^4.21.0",
     "ioredis": "^5.10.1",
     "jsonwebtoken": "^9.0.2",
