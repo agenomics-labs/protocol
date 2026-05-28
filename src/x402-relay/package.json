@@ -9,7 +9,7 @@
     "dev": "ts-node-dev --respawn index.ts",
     "build": "tsc",
     "clean": "rm -rf dist",
-    "lint": "eslint --no-eslintrc -c .eslintrc.json --ignore-pattern node_modules --ignore-pattern dist *.ts test/**/*.ts",
+    "lint": "eslint .",
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
