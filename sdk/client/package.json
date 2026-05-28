@@ -50,14 +50,14 @@
     "@agenomics/idl": "*",
     "@agenomics/reputation-attestor": "*",
     "@coral-xyz/anchor": "^0.31.0",
-    "@solana/kit": "6.8.0",
+    "@solana/kit": "^6.8.0",
     "@solana/program-client-core": "^6.9.0"
   },
   "devDependencies": {
     "@codama/nodes-from-anchor": "^1.4.1",
     "@codama/renderers-core": "^1.0.34",
     "@codama/renderers-js": "^2.2.0",
-    "@types/node": "^20.9.0",
+    "@types/node": "^24.12.4",
     "codama": "^1.6.0",
     "tsx": "^4.0.0",
     "typescript": "^5.0.0"
