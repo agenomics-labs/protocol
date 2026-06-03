@@ -41,7 +41,7 @@
     "@agenomics/capability-manifest-validator": "*",
     "@agenomics/reputation-attestor": "*",
     "@agenomics/sas-resolver": "*",
-    "@coinbase/cdp-sdk": "^1.49.0",
+    "@coinbase/cdp-sdk": "^1.51.0",
     "@coinbase/x402": "^2.1.0",
     "@coral-xyz/anchor": "^0.31.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
