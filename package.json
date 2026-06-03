@@ -40,7 +40,7 @@
     "mocha": "^11.7.5",
     "pg-mem": "3.0.14",
     "ts-mocha": "^10.1.0",
-    "tsx": "^4.22.3",
+    "tsx": "^4.22.4",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.60.0"
   },
