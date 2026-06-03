@@ -77,22 +77,25 @@ Direct `gh api` query was unavailable in this execution environment. Alert state
 | 2026-05-06 | **NEW alert** — `ip-address` MODERATE (GHSA-v2v4-37r5-5v8g) via `@modelcontextprotocol/sdk → express-rate-limit → ip-address@10.1.0` — **closed same day** via nested override | `DEPENDABOT-3-UUID-IPADDR-CLOSURE.md` |
 | 2026-05-18 | Alert #1 (`bigint-buffer`) **dismissed** — rationale: dev-only path (`@sqds/multisig → @solana/spl-token`); production `npm audit --omit=dev` clean; tied to ADR-115 Stage 3b / ADR-087 Phase D | PR #180 body; `SECURITY_AUDIT.md §9` |
 
-### Current state (inferred, June 3, 2026)
+### Current state (June 3, 2026)
+
+**Live signal from push banner** (2026-06-03 branch push): GitHub reported **"5 vulnerabilities on agenomics-labs/protocol's default branch (3 moderate, 2 low)"**. This supersedes the inferred state from PR docs and is the authoritative current count.
 
 | Alert | Severity | Status | Notes |
 |---|---|---|---|
-| #1 `bigint-buffer` | HIGH | **Dismissed** (manual, May 18) | Dev-only transitive; bigint-buffer still has no non-vulnerable release; elimination gated on Phase D |
+| #1 `bigint-buffer` | HIGH | **Dismissed** (manual, May 18) | Not counted in the 5 — dismissed alerts are excluded from the banner count |
 | #2 `diff` | LOW | **Closed** (fixed, Apr 30) | Override in place |
-| #5 `uuid` | MEDIUM | **Closed** (fixed, May 6) | Version-targeted override; `uuid@8.3.2` under `jayson` untouched |
-| `ip-address` | MEDIUM | **Closed** (fixed, May 6) | Nested `express-rate-limit → ip-address` override; **NEW vs baseline** |
-| #6 `rand` | LOW | **Open** (waiver) | Locked by `anchor-lang@0.31.1` / `solana-program@2.3.0`; cargo |
-| #7 `rand` (fuzz) | LOW | **Open** (waiver) | Mirror of #6 |
+| #5 `uuid` | MEDIUM | Likely **re-opened or not fully closed** | Banner shows 3 moderate; docs said closed May 6, but may not have satisfied Dependabot's full-tree check |
+| `ip-address` | MEDIUM | **Unclear** | Closed May 6 via override; may be one of the 3 moderate in the live banner |
+| #6 `rand` | LOW | **Open** (waiver) — confirmed by banner's 2 low | Locked by `anchor-lang@0.31.1` / `solana-program@2.3.0`; cargo |
+| #7 `rand` (fuzz) | LOW | **Open** (waiver) — confirmed by banner's 2 low | Mirror of #6 |
+| Unknown ×1–3 | MEDIUM | **Unidentified** | Banner shows 3 moderate total; at least 1–2 may be new alerts not previously documented |
 
 **Net change vs baseline:**
-- Cleared with our action: diff (override), uuid (override), bigint-buffer (manual dismiss)
-- Cleared without our action: none detected
-- New alerts appeared: **ip-address MEDIUM** (surfaced May 6, closed May 6)
-- Unchanged: rand ×2 LOW (cargo, accepted waivers)
+- Closed with our action: diff (override), bigint-buffer (manual dismiss)
+- Still open: rand ×2 LOW (unchanged waivers)
+- New/changed: **3 moderate alerts currently open** — breakdown unknown without direct API access; at minimum ip-address GHSA-v2v4-37r5-5v8g appeared after baseline (May 6); full identification requires `gh api repos/agenomics-labs/protocol/dependabot/alerts`
+- Cleared without our action: none confirmed
 
 ### Trigger evaluation
 
@@ -100,8 +103,8 @@ Direct `gh api` query was unavailable in this execution environment. Alert state
 |---|---|---|
 | **(a)** Anchor drops web3.js v1 OR adds @solana/kit | **No** | `@anchor-lang/core` v1.0.2 still on `@solana/web3.js: "^1.69.0"` |
 | **(b)** `@solana-program/token` ≥ 1.0.0 | **No** | v0.13.0, pre-1.0 |
-| **(c)** New Dependabot alert not in 2026-04-28 baseline | **YES** | `ip-address` GHSA-v2v4-37r5-5v8g surfaced 2026-05-06 (already closed) |
-| **(d)** Baseline alert cleared without action on our side | **No** | All closures involved explicit overrides or manual dismissal by maintainers |
+| **(c)** New Dependabot alert not in 2026-04-28 baseline | **YES** | Live banner shows 3 moderate (baseline had 1 moderate = uuid); at least 2 moderate alerts are new. ip-address GHSA-v2v4-37r5-5v8g confirmed new (appeared May 6). |
+| **(d)** Baseline alert cleared without action on our side | **No** | All confirmed closures involved explicit overrides or manual dismissal |
 
 ---
 
