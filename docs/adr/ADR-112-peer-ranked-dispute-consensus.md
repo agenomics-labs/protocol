@@ -166,3 +166,74 @@ low-participation disputes can't be railroaded by one voter.
   paired-comparison ranking.
 - Internal: ADR-025, ADR-026, ADR-030, ADR-094, ADR-106, ADR-107,
   ADR-108.
+
+## Legal Landscape (research — NOT legal advice)
+
+> Research synthesis (2026-05-19) to scope the *legal classification*
+> open item in *Maintainer Decision Required*. **This is not legal
+> advice and does not decide anything** — mainnet enablement still
+> requires counsel sign-off. Status remains **Proposed**.
+
+**Pivotal characterization — B2B vs. B2C.** Most "arbitration is
+unenforceable" doctrine is *consumer*-specific. These disputes are
+agent-to-agent escrow disputes between staked participants (B2B). B2B
+arbitration is broadly enforceable worldwide; B2C is hostile-to-void in
+EU/Canada and scrutinized in the US. The decisive counsel question is
+therefore **"can any party be a consumer principal?"** — not "is this
+arbitration?".
+
+**Key design lever — arbitration vs. expert determination** (maps to
+options C vs. D in *Alternatives considered*):
+- *Expert determination* (advisory/contractual): enforced as breach of
+  contract, **not** NY-Convention portable, minimal challenge surface,
+  largely sidesteps arbitration-specific consumer prohibitions. Lower
+  legal risk, lower decentralization value.
+- *Arbitration* (binding): NY-Convention portable (~170 states) but
+  carries the full arbitration regulatory surface incl. consumer
+  carve-outs.
+
+**Jurisdiction notes:**
+- **USA** — FAA Ch. 2 / NY Convention; pro-arbitration. A *purely
+  on-chain* award by pseudonymous deciders risks falling outside the
+  Convention (no seat / no State nexus). B2B strong; consumer scrutinized.
+- **Canada** — *Uber Techs. v. Heller* (SCC 2020): arbitration clauses
+  void for unconscionability where bargaining-power inequality + access
+  "realistically unattainable" (cost/foreign seat). Token-stake cost +
+  pseudonymous deciders is the Uber fact pattern. Provincial consumer
+  acts void mandatory pre-dispute consumer arbitration. B2B fine.
+- **EU** — UCTD 93/13: pre-dispute *consumer* arbitration presumptively
+  unfair/void, challengeable anytime; heavy member-state variance
+  (FR/SE bans, DE separate-signature). Does not cover B2B. Parallel:
+  ODR/ADR + DSA out-of-court bodies.
+- **UK** — most favorable concrete wrapper: **UKJT Digital Dispute
+  Resolution Rules (2021)** — purpose-built for on-chain/smart-contract
+  disputes, incorporable by reference, on-chain implementation via
+  private key, NY-Convention-enforceable, seat = England & Wales.
+- **Singapore / Switzerland / UAE** — arbitration-friendly hubs
+  (SG #2 global seat, SIAC 2025 crypto-aware; UAE DIFC/ADGM; CH crypto-
+  and arbitration-friendly). Seat + governing-law selection is the
+  standard de-risking move.
+
+**Proven enforceability pattern (precedent):** Kleros recognized by a
+Mexican court (2021) via a *hybrid model* — on-chain mechanism decides
+the merits, a human arbitrator "translates" it into a conventional
+NY-Convention award. Pure on-chain awards are legally fragile.
+
+**De-risking recipe if option D (binding) is chosen:** B2B-only
+characterization (the linchpin) + recognized seat/rules (UK UKJT or
+Singapore) + hybrid human-arbitrator translation + genuine opt-in
+consent + avoid the *Uber-v-Heller* access-cost trap.
+
+**Counsel question set:** (1) can parties be contractually constrained
+to B2B with credible consumer-use disclaimer? (2) UKJT Rules vs. SIAC
+wrapper? (3) expert-determination (C) vs. hybrid-arbitration (D) given
+enforcement needs? (4) which target jurisdictions actually matter for
+our user base (drives member-state analysis)?
+
+**Sources:** Stanford Law (Kleros study); Kleros-Mexico enforcement
+case; UKJT Digital Dispute Resolution Rules (DLA Piper / UKJT PDF);
+*Uber v. Heller* (Osler / Harvard L. Rev.); EU UCTD 93/13 (EUR-Lex;
+Oxford JIDS); blockchain awards & NY Convention (T&F 2025; Kluwer);
+arbitration vs. expert determination (Gatehouse Chambers); Singapore
+SIAC 2025 / crypto arbitration (ALB; Pinsent Masons). Full URLs in the
+PR description.
