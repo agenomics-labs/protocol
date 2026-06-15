@@ -40,7 +40,6 @@ import RedisMock from "ioredis-mock";
 
 import {
   LiveRedisDedup,
-  REDEEMED_KEY_PREFIX,
   REDEEMED_COUNTER_KEY,
   redeemedKey,
   REDIS_COMMAND_TIMEOUT_DEFAULT_MS,
@@ -412,7 +411,6 @@ describe("OFF-203 — race-loss does NOT release the redis lock (no duplicate JW
     // Acquire the redis lock for `sig` directly (simulates "instance
     // A previously redeemed and the redis lock is held").
     const sig = "off203-race-loss-sig";
-    const sigInMemory = "off203-race-loss-sig"; // same — we'll seed both
     const claim = await relay.redisDedup.tryRedeem(
       sig,
       60_000,
@@ -540,7 +538,6 @@ describe("OFF-206 — Redis client commandTimeout is configured at construction"
     // is not on the test path); we simulate the post-timeout error
     // shape — which is what the relay sees and must not swallow.
     const slowClient: RedisClient = {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       async set(..._args: unknown[]) {
         throw new Error("ETIMEDOUT: Command timed out");
       },

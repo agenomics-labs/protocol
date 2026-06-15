@@ -16,7 +16,6 @@ import {
   createSolanaRpcSubscriptions,
   getAddressDecoder,
   type Address,
-  type Commitment,
   type Signature,
   type Slot,
 } from "@solana/kit";
@@ -79,7 +78,6 @@ import { logger, programLogger } from "./logger.js";
 import {
   acquireIndexerWriterLock,
   createPostgresStore,
-  DisabledPostgresStore,
   type IndexerWriterLockHandle,
   type PostgresStore,
 } from "./postgres-store.js";
@@ -218,7 +216,6 @@ const PROGRAM_IDS: Record<"vault" | "registry" | "settlement", Address> = {
 // future ` const COMMITMENT: Commitment = ... ` typo silently widening
 // the indexer to "confirmed".
 const COMMITMENT = "finalized" as const;
-type IndexerCommitment = typeof COMMITMENT;
 // Local breadcrumb: the heartbeat uses "confirmed" (cheaper, doesn't
 // require finality wait — it's just a liveness probe), not COMMITMENT.
 

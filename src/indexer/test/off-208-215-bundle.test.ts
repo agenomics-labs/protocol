@@ -63,12 +63,7 @@ import {
 
 import { MIGRATIONS } from "../migrations.embedded";
 
-import {
-  eventsProcessed,
-  indexerErrors,
-  indexerRegistry,
-  lastSlotProcessed,
-} from "../metrics-server";
+import { indexerRegistry } from "../metrics-server";
 
 import {
   initDb,

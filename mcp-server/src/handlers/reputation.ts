@@ -36,7 +36,6 @@ import {
 import { createRpc } from "../solana-v2.js";
 import {
   formatAgentStatus,
-  formatPricingModel,
 } from "./formatters.js";
 import type { IdlAccounts } from "@anchor-lang/core";
 import type { AgentRegistry } from "../idl/types.js";
