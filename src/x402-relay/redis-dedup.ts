@@ -332,7 +332,6 @@ export class DisabledRedisDedup implements RedisDedup {
   // structurally identical to the live implementation; the parameters
   // are intentionally unused (the disabled path defers to the
   // in-memory authority in index.ts).
-  /* eslint-disable @typescript-eslint/no-unused-vars */
   async tryRedeem(
     _signature?: string,
     _ttlMs?: number,
@@ -353,7 +352,6 @@ export class DisabledRedisDedup implements RedisDedup {
   ): Promise<void> {
     // intentional no-op
   }
-  /* eslint-enable @typescript-eslint/no-unused-vars */
 
   async approximateSize(): Promise<number> {
     return 0;

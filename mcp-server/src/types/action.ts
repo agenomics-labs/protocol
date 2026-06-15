@@ -10,7 +10,7 @@
 // is fully generic, so passing an `AepError` literal binds `E = AepError`
 // without further plumbing.
 
-import type { z, ZodRawShape, ZodType } from "zod";
+import type { ZodRawShape, ZodType } from "zod";
 import type { PublicKey } from "@solana/web3.js";
 import type { TransactionSigner } from "@solana/kit";
 import type { Capability, PreflightGate } from "./capability.js";

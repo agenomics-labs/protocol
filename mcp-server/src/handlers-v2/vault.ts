@@ -33,7 +33,6 @@ import {
   signTransactionMessageWithSigners,
   compileTransaction,
   getBase64EncodedWireTransaction,
-  getSignatureFromTransaction,
   sendAndConfirmTransactionFactory,
   pipe,
   AccountRole,

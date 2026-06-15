@@ -397,7 +397,6 @@ function write401(res: http.ServerResponse, code: string): void {
  * v0.1.0 does not inspect it.
  */
 export function verifyPeerUid(
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   socket: net.Socket,
   expectedUid: number,
 ): boolean {

@@ -29,7 +29,6 @@ import { ed25519 } from "@noble/curves/ed25519.js";
 import type { Keypair } from "@solana/web3.js";
 import { publicKeyToAddress } from "../solana.js";
 import type {
-  Address,
   TransactionPartialSigner,
 } from "@solana/kit";
 
