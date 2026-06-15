@@ -15,7 +15,7 @@ import {
   SystemProgram,
   LAMPORTS_PER_SOL,
 } from "@solana/web3.js";
-import { AnchorProvider, Program, BN } from "@coral-xyz/anchor";
+import { AnchorProvider, Program, BN } from "@anchor-lang/core";
 import {
   createMint,
   getOrCreateAssociatedTokenAccount,

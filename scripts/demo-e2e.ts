@@ -12,8 +12,8 @@
  */
 
 import BN from "bn.js";
-import * as anchor from "@coral-xyz/anchor";
-import { Program, AnchorError } from "@coral-xyz/anchor";
+import * as anchor from "@anchor-lang/core";
+import { Program, AnchorError } from "@anchor-lang/core";
 import {
   Keypair,
   PublicKey,

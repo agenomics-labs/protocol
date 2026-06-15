@@ -25,8 +25,8 @@
 // existing `tests/settlement.ts` / `tests/agent-registry.ts` / `tests/agent-vault.ts`
 // suites.
 
-import * as anchor from "@coral-xyz/anchor";
-import { Program } from "@coral-xyz/anchor";
+import * as anchor from "@anchor-lang/core";
+import { Program } from "@anchor-lang/core";
 import {
   PublicKey,
   Keypair,

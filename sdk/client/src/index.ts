@@ -12,7 +12,7 @@
  * Quick start — program clients:
  *
  *   import { AgentRegistryClient, AgentStatus } from "@agenomics/client";
- *   import { AnchorProvider, Idl } from "@coral-xyz/anchor";
+ *   import { AnchorProvider, Idl } from "@anchor-lang/core";
  *   import type { Address } from "@solana/kit";
  *
  *   // Load your IDL JSON (from target/idl/ or @agenomics/idl once ADR-099 matures)

@@ -38,7 +38,7 @@ import {
   formatAgentStatus,
   formatPricingModel,
 } from "./formatters.js";
-import type { IdlAccounts } from "@coral-xyz/anchor";
+import type { IdlAccounts } from "@anchor-lang/core";
 import type { AgentRegistry } from "../idl/types.js";
 import { serverLogger } from "../util/logger.js";
 import {

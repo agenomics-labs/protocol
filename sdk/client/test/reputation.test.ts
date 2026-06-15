@@ -9,7 +9,7 @@ import * as assert from "node:assert/strict";
 import { PublicKey } from "@solana/web3.js";
 import { Reputation, type AnchorAgentProfileLike } from "../src/index.js";
 
-// We intentionally avoid `import { BN } from "@coral-xyz/anchor"` here:
+// We intentionally avoid `import { BN } from "@anchor-lang/core"` here:
 // under ESM the re-export shape is unstable across Anchor minor versions.
 // `fromAgentProfile` only requires `toString()` on the BN-like fields,
 // so a hand-rolled stand-in keeps the test hermetic.

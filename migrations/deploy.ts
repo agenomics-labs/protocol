@@ -1,4 +1,4 @@
-import * as anchor from "@coral-xyz/anchor";
+import * as anchor from "@anchor-lang/core";
 
 export const deploy = async () => {
   // This is the default deploy script for Anchor programs

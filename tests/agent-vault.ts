@@ -1,7 +1,7 @@
 import BN from "bn.js";
 import * as crypto from "node:crypto";
-import * as anchor from "@coral-xyz/anchor";
-import { Program, AnchorError } from "@coral-xyz/anchor";
+import * as anchor from "@anchor-lang/core";
+import { Program, AnchorError } from "@anchor-lang/core";
 import {
   PublicKey,
   Keypair,

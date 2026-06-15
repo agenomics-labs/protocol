@@ -18,7 +18,7 @@ import {
   REGISTRY_PROGRAM_ID,
 } from "../solana.js";
 import { SystemProgram } from "@solana/web3.js";
-import type { IdlAccounts } from "@coral-xyz/anchor";
+import type { IdlAccounts } from "@anchor-lang/core";
 import type { AgentRegistry } from "../idl/types.js";
 
 // ADR-088: Anchor decodes `AgentProfile` into this exact shape (BN for u64,

@@ -5,20 +5,20 @@ import {
   LAMPORTS_PER_SOL,
   Transaction,
 } from "@solana/web3.js";
-// ADR-091: @coral-xyz/anchor is published as CommonJS. Under Node's strict
-// ESM loader (Node 20 in CI), `import { BN } from "@coral-xyz/anchor"`
+// ADR-091: @anchor-lang/core is published as CommonJS. Under Node's strict
+// ESM loader (Node 20 in CI), `import { BN } from "@anchor-lang/core"`
 // fails with "does not provide an export named 'BN'" because Node's
 // named-import detector only sees what the CJS analyzer can statically
 // prove. Symbols below that threshold (BN here) need to come off the
 // default export at runtime.
 //
-// Pattern: `import anchor from "@coral-xyz/anchor"` lifts the runtime
+// Pattern: `import anchor from "@anchor-lang/core"` lifts the runtime
 // values off the default export; a separate `import type { ... }`
 // re-establishes the typed surface (type-only imports emit no JS so they
 // bypass the CJS-named-export check).
-import anchor from "@coral-xyz/anchor";
+import anchor from "@anchor-lang/core";
 const { AnchorProvider, Program, BN } = anchor;
-import type { AnchorProvider as _AnchorProvider, Program as _Program, Idl } from "@coral-xyz/anchor";
+import type { AnchorProvider as _AnchorProvider, Program as _Program, Idl } from "@anchor-lang/core";
 type AnchorProvider = _AnchorProvider;
 type Program<T extends Idl = Idl> = _Program<T>;
 import * as fs from "fs";
@@ -211,7 +211,7 @@ export function getProvider(): AnchorProvider {
   const kp = loadWallet();
   const wallet = new KeypairWallet(kp);
   // TODO(typed): Anchor's `Wallet` interface is declared in
-  // @coral-xyz/anchor/dist/.../provider but the published `.d.ts` keeps the
+  // @anchor-lang/core/dist/.../provider but the published `.d.ts` keeps the
   // interface internal, so a structurally-identical KeypairWallet doesn't
   // satisfy the public type. Unblocked by either (a) Anchor exporting
   // `Wallet`, or (b) ADR-099's `@agenomics/idl` package shipping its own
@@ -235,7 +235,7 @@ export function getProvider(): AnchorProvider {
  *
  * Returns `unknown` because Anchor's `Program` constructor declares its
  * first argument as `idl: any` (see
- * `node_modules/@coral-xyz/anchor/dist/cjs/program/index.d.ts:238`). The
+ * `node_modules/@anchor-lang/core/dist/cjs/program/index.d.ts:238`). The
  * static type parameter on the constructed `Program<IDL>` instance is what
  * threads typing through every account / methods access — see ADR-088.
  */

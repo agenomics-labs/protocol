@@ -34,9 +34,9 @@
 import { describe, it } from "node:test";
 import * as assert from "node:assert/strict";
 import { Keypair, PublicKey } from "@solana/web3.js";
-import anchorPkg from "@coral-xyz/anchor";
+import anchorPkg from "@anchor-lang/core";
 const { BN } = anchorPkg;
-import type { BN as BNType, IdlAccounts } from "@coral-xyz/anchor";
+import type { BN as BNType, IdlAccounts } from "@anchor-lang/core";
 
 import {
   adaptRegistryProfile,

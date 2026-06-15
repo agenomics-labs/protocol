@@ -9,7 +9,7 @@
  *   Default N = 100
  */
 
-import * as anchor from "@coral-xyz/anchor";
+import * as anchor from "@anchor-lang/core";
 import {
   Connection,
   Keypair,

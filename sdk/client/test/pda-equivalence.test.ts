@@ -42,8 +42,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { web3 } from "@coral-xyz/anchor";
-import type { AnchorProvider, Idl } from "@coral-xyz/anchor";
+import { web3 } from "@anchor-lang/core";
+import type { AnchorProvider, Idl } from "@anchor-lang/core";
 import type { Address } from "@solana/kit";
 import { AgentRegistryClient, AgentVaultClient, SettlementClient } from "../src/index.js";
 import { AepClient } from "../src/index.js";

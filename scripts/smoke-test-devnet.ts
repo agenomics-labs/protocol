@@ -32,7 +32,7 @@ import {
   Transaction,
   Ed25519Program,
 } from "@solana/web3.js";
-import { AnchorProvider, Program, BN } from "@coral-xyz/anchor";
+import { AnchorProvider, Program, BN } from "@anchor-lang/core";
 import { spawn, ChildProcessWithoutNullStreams } from "child_process";
 import * as crypto from "crypto";
 import * as fs from "fs";

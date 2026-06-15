@@ -53,7 +53,7 @@ const result = await build({
   external: EXTERNAL,
   // Prefer CJS entries — anchor's ESM build is missing a default export
   // but its CJS build has it, which is what dist/solana.js (compiled from
-  // ESM `import anchor from "@coral-xyz/anchor"`) actually expects under
+  // ESM `import anchor from "@anchor-lang/core"`) actually expects under
   // Node's runtime interop.
   mainFields: ["main", "module"],
   conditions: ["node", "require", "import", "default"],

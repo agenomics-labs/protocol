@@ -49,7 +49,7 @@
   "dependencies": {
     "@agenomics/idl": "*",
     "@agenomics/reputation-attestor": "*",
-    "@coral-xyz/anchor": "^0.31.0",
+    "@anchor-lang/core": "^1.0.2",
     "@solana/kit": "^6.8.0",
     "@solana/program-client-core": "^6.9.0"
   },

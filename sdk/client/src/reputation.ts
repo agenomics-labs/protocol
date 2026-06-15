@@ -21,7 +21,7 @@
  * their `agenomics.reputation.v1` discriminator without a second import.
  */
 
-import type { web3 } from "@coral-xyz/anchor";
+import type { web3 } from "@anchor-lang/core";
 import {
   issueAttestation,
   verifyAttestation,
