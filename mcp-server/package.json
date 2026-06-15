@@ -55,7 +55,6 @@
     "@solana/kit": "6.9.0",
     "@solana/web3.js": "^1.87.0",
     "bs58": "^5.0.0",
-    "dotenv": "^17.4.2",
     "ioredis": "^5.10.1",
     "pino": "^10.3.1",
     "pino-pretty": "^13.1.3",
