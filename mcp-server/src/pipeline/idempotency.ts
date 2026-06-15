@@ -195,7 +195,7 @@ export function createIdempotencyStore(): IdempotencyStore {
     // without making `createIdempotencyStore` async — preserves the
     // singleton accessor's `function(): IdempotencyStore` shape. The
     // CommonJS-load trick is local and contained; no ripple to callers.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const requireCJS = createRequire(import.meta.url);
     const mod = requireCJS("./idempotency-redis.js") as {
       RedisIdempotencyStore: new (opts: { url: string }) => IdempotencyStore;

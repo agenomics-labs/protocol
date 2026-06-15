@@ -103,15 +103,15 @@ export function initTracing(): void {
 
   // Dynamic require so the heavy SDK bundles are only loaded when OTel is
   // actually configured. This keeps the startup cost near-zero in stdio mode.
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { NodeTracerProvider } = require("@opentelemetry/sdk-trace-node");
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { OTLPTraceExporter } = require("@opentelemetry/exporter-trace-otlp-http");
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { SimpleSpanProcessor } = require("@opentelemetry/sdk-trace-node");
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { Resource } = require("@opentelemetry/resources");
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { SEMRESATTRS_SERVICE_NAME } = require("@opentelemetry/semantic-conventions");
 
   const provider = new NodeTracerProvider({

@@ -156,7 +156,7 @@ describe("ADR-118 — SIGTERM graceful shutdown", () => {
       // The in-flight batch must have committed. The harness inserts
       // exactly one events row labelled "vault" under the mutex; assert
       // the row is visible.
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const Database = require("better-sqlite3");
       const db = new Database(tmpDb, { readonly: true });
       try {

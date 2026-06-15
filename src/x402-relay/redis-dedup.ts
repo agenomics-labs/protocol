@@ -447,7 +447,7 @@ export class LiveRedisDedup implements RedisDedup {
       // path longer than a single command would, and cap
       // `maxRetriesPerRequest` to 1 so a transient blip surfaces in
       // bounded time rather than ioredis's default 20-retry backoff.
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const RedisCtor = require("ioredis") as
         | (new (
             url: string,

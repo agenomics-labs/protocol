@@ -365,7 +365,7 @@ export function createCache(
     // graph. `require` (vs. dynamic `import()`) keeps the factory
     // synchronous so callers can wire it into a constructor without
     // awaiting.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const mod = require("./cache-redis.js") as {
       RedisCache: new (opts: { url: string }) => CacheBackend;
     };

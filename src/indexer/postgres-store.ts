@@ -32,7 +32,7 @@
  */
 
 import type { Pool, PoolClient, PoolConfig, QueryResultRow } from "pg";
-// eslint-disable-next-line @typescript-eslint/no-var-requires
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const pgModule: typeof import("pg") = require("pg");
 import { logger } from "./logger.js";
 import { MIGRATIONS } from "./migrations.embedded.js";

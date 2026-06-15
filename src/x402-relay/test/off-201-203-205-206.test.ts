@@ -391,13 +391,13 @@ describe("OFF-203 — race-loss does NOT release the redis lock (no duplicate JW
     // Hijack require("ioredis") -> ioredis-mock. Same pattern as
     // aud-126-redis-dedup.test.ts. We must do this BEFORE the
     // dynamic import below.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const Module = require("node:module");
     const requireForRelay = Module.createRequire(
       require.resolve("../redis-dedup.ts"),
     );
     const ioredisResolvedPath = requireForRelay.resolve("ioredis");
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const RedisMockCtor = require("ioredis-mock");
     require.cache[ioredisResolvedPath] = {
       id: ioredisResolvedPath,
