@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@solana/web3.js": "^1.98.4",
-    "lucide-react": "^0.441.0",
+    "lucide-react": "^0.577.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },
