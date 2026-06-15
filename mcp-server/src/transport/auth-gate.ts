@@ -100,7 +100,7 @@ export function isContainerizedRuntime(opts: ContainerEnv = {}): boolean {
       try {
         // Lazy fs require to keep the module load-time graph identical to
         // pre-Batch-F when not running in a container test scenario.
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
         const fs = require("node:fs") as typeof import("node:fs");
         return fs.existsSync("/.dockerenv");
       } catch {

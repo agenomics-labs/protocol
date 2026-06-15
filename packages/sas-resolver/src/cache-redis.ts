@@ -95,7 +95,7 @@ export class RedisCache implements CacheBackend {
       // Lazy require — keeps `ioredis` out of the import graph when
       // only the in-memory backend is in use. Same dance as
       // `RedisIdempotencyStore` (ADR-059 §5).
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const RedisCtor = require("ioredis") as { default?: unknown } & Record<
         string,
         unknown
