@@ -135,7 +135,6 @@ describe("OFF-217 — real PG: happy-path tx commits both event and cursor", { s
     // a stripped CI image) doesn't blow up at module-load just to skip.
     // The workspace already declares `pg` in dependencies, so this is
     // strictly defence-in-depth.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { Pool: PgPool } = require("pg");
     pool = new PgPool({ connectionString: PG_TEST_URL, max: 4 }) as Pool;
     store = createPostgresStoreFromPool(pool);
@@ -193,7 +192,6 @@ describe("OFF-217 — real PG: happy-path tx commits both event and cursor", { s
 
 describe("OFF-217 — real PG: mid-tx error rolls back the prior INSERT", { skip: !SUITE_ENABLED }, () => {
   before(async () => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { Pool: PgPool } = require("pg");
     pool = new PgPool({ connectionString: PG_TEST_URL, max: 4 }) as Pool;
     store = createPostgresStoreFromPool(pool);
@@ -302,7 +300,6 @@ describe("OFF-217 — real PG: mid-tx error rolls back the prior INSERT", { skip
 
 describe("OFF-217 — real PG: body that throws before any write rolls back cleanly", { skip: !SUITE_ENABLED }, () => {
   before(async () => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { Pool: PgPool } = require("pg");
     pool = new PgPool({ connectionString: PG_TEST_URL, max: 4 }) as Pool;
     store = createPostgresStoreFromPool(pool);
@@ -378,7 +375,6 @@ describe("OFF-217 — real PG: body that throws before any write rolls back clea
 
 describe("OFF-217 — real PG: idempotent re-run of the same tx is safe", { skip: !SUITE_ENABLED }, () => {
   before(async () => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { Pool: PgPool } = require("pg");
     pool = new PgPool({ connectionString: PG_TEST_URL, max: 4 }) as Pool;
     store = createPostgresStoreFromPool(pool);

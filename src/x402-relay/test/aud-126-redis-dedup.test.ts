@@ -438,13 +438,11 @@ describe("AUD-126 / ADR-126 Phase 1: dual-write integration through processPayme
     // runs this test file with both ESM and CJS interop available, and
     // the `require.cache` poke is the only mechanism that reliably
     // intercepts a downstream synchronous `require("ioredis")`.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const Module = require("node:module");
     const requireForRelay = Module.createRequire(
       require.resolve("../redis-dedup.ts"),
     );
     const ioredisResolvedPath = requireForRelay.resolve("ioredis");
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const RedisMockCtor = require("ioredis-mock");
     require.cache[ioredisResolvedPath] = {
       id: ioredisResolvedPath,

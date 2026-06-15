@@ -54,7 +54,6 @@ import type * as IndexerModule from "./index";
 // `require` (synchronous, declaration-order) so the env overrides above
 // have taken effect by the time index.ts evaluates its module-load
 // constants.
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const indexer: typeof IndexerModule = require("./index");
 const { startConnectionHeartbeat, subscribeToPrograms, initDb, PROGRAM_IDS } =
   indexer;

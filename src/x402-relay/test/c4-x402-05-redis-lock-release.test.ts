@@ -52,13 +52,11 @@ describe("C4-X402-05 — throwing verifier releases the redis dedup lock", () =>
     // Intercept `require("ioredis")` inside redis-dedup.ts so
     // LiveRedisDedup constructs an ioredis-mock instance. Mirrors the
     // aud-126 deferred-import + require.cache pattern exactly.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const Module = require("node:module");
     const requireForRelay = Module.createRequire(
       require.resolve("../redis-dedup.ts"),
     );
     const ioredisResolvedPath = requireForRelay.resolve("ioredis");
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const RedisMockCtor = require("ioredis-mock");
     require.cache[ioredisResolvedPath] = {
       id: ioredisResolvedPath,
