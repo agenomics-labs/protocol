@@ -47,7 +47,6 @@
     "test": "node --import tsx --test test/canonical.test.ts test/sign-verify.test.ts test/freshness.test.ts test/issuer.test.ts"
   },
   "dependencies": {
-    "@agenomics/action-runtime": "*",
     "@noble/curves": "^2.2.0",
     "@noble/hashes": "^1.4.0",
     "canonicalize": "^3.0.0",
