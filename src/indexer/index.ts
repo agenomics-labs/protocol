@@ -2636,8 +2636,8 @@ function persistEventsForTx(
   // projection half-applied, so the next boot replayed from a torn
   // state. `db.transaction()` makes the whole per-tx commit all-or-
   // nothing; metric/PG side-effects are applied ONLY after it commits.
-  let inserted = 0;
-  let skipped = 0;
+  let inserted: number;
+  let skipped: number;
   const insertedEventNames: string[] = [];
   const txResult = db.transaction(() => {
     let txInserted = 0;
@@ -2822,7 +2822,8 @@ async function backfillProgram(
   let before: Signature | undefined;
 
   try {
-    // eslint-disable-next-line no-constant-condition -- backfill paginates until the RPC returns an empty page; the loop body's early `break` is the exit condition.
+    // backfill paginates until the RPC returns an empty page; the loop
+    // body's early `break` is the exit condition.
     while (true) {
       const page = await rpc
         .getSignaturesForAddress(programId, {

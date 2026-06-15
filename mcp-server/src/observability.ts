@@ -72,6 +72,9 @@ export function startMcpMetricsServer(port: number = 9101): http.Server {
   });
 
   server.listen(port, host, () => {
+    // Bootstrap-phase log: pino is configured elsewhere; this fires at
+    // startup before structured logging is wired into this module.
+    // eslint-disable-next-line no-console
     console.error(
       `[metrics] Prometheus scrape endpoint on http://${host}:${port}/metrics`,
     );
@@ -121,6 +124,9 @@ export function initTracing(): void {
   provider.addSpanProcessor(new SimpleSpanProcessor(exporter));
   provider.register();
 
+  // Bootstrap-phase log: pino is configured elsewhere; this fires at
+  // startup before structured logging is wired into this module.
+  // eslint-disable-next-line no-console
   console.error(`[otel] OTLP trace exporter configured → ${endpoint}`);
 }
 

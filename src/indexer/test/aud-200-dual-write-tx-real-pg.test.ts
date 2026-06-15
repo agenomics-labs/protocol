@@ -79,7 +79,6 @@ const SUITE_ENABLED = typeof PG_TEST_URL === "string" && PG_TEST_URL.trim().leng
 if (!SUITE_ENABLED) {
   // One-line skip notice so operators / CI logs make the gate visible.
   // node:test reporters surface `console.log` between suite blocks.
-  // eslint-disable-next-line no-console
   console.log(
     "[OFF-217] Skipping real-PG suite — set INDEXER_PG_TEST_URL to enable " +
       "(e.g. postgres://user:pass@127.0.0.1:5432/aep_indexer_test).",
