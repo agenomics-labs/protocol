@@ -158,7 +158,6 @@ export class RedisIdempotencyStore implements IdempotencyStore {
       // for the lazy ioredis load — same intent as the prior CJS require,
       // keeps the constructor synchronous, and ioredis's CJS export shape
       // (function vs. .default) is preserved.
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const requireCJS = createRequire(import.meta.url);
       const RedisCtor = requireCJS("ioredis") as { default?: unknown } & Record<
         string,
