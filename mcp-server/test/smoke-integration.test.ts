@@ -21,7 +21,7 @@
 import { describe, it, before } from "node:test";
 import * as assert from "node:assert/strict";
 import { Keypair } from "@solana/web3.js";
-import { ed25519 } from "@noble/curves/ed25519";
+import { ed25519 } from "@noble/curves/ed25519.js";
 import {
   encodeBase58,
   base58Decode,

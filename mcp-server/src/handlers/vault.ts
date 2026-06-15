@@ -24,7 +24,7 @@ import {
   SYSVAR_INSTRUCTIONS_PUBKEY,
   SystemProgram,
 } from "@solana/web3.js";
-import { ed25519 } from "@noble/curves/ed25519";
+import { ed25519 } from "@noble/curves/ed25519.js";
 import * as crypto from "node:crypto";
 // `bs58` is already a transitive dep of `@solana/web3.js`; we import it
 // directly via the package.json declaration so the agent_identity secret-key

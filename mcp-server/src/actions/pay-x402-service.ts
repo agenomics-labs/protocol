@@ -120,7 +120,7 @@ const payX402ServiceInput = {
     ),
   request: z.object({
     method: z.enum(["GET", "POST"]),
-    headers: z.record(z.string()).optional(),
+    headers: z.record(z.string(), z.string()).optional(),
     body: z.string().optional(),
   }),
   reasoning: z

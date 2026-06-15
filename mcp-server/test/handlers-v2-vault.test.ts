@@ -16,7 +16,7 @@
 import { describe, it } from "node:test";
 import * as assert from "node:assert/strict";
 import { Keypair, PublicKey } from "@solana/web3.js";
-import { ed25519 } from "@noble/curves/ed25519";
+import { ed25519 } from "@noble/curves/ed25519.js";
 import * as crypto from "crypto";
 
 import {
