@@ -919,6 +919,7 @@ export function createPostgresStore(env: NodeJS.ProcessEnv = process.env): Postg
     // operator config error, not a runtime fault.
     throw new Error(
       `INDEXER_PG_URL is set but malformed: ${(err as Error).message}`,
+      { cause: err },
     );
   }
   // OFF-215: pre-fix `parseInt(env.INDEXER_PG_POOL_MAX || "10", 10)`

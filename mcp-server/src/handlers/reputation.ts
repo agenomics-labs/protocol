@@ -235,6 +235,7 @@ async function fetchManifestFromIpfs(
       throw new Error(
         `IPFS manifest fetch failed for CID ${cid} (${url}): ` +
           `${e.kind} — ${e.message}`,
+        { cause: e },
       );
     }
     throw e;
@@ -248,6 +249,7 @@ async function fetchManifestFromIpfs(
       `Manifest body at CID ${cid} is not valid JSON: ${
         e instanceof Error ? e.message : String(e)
       }`,
+      { cause: e },
     );
   }
   return { bytes: buf, json };
