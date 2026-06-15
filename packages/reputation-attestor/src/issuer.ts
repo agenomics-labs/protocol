@@ -21,7 +21,7 @@
 // holds a single `IssuerKeypair` for its lifetime, and rate-limits
 // at the HTTP layer rather than re-loading per request.
 
-import { ed25519 } from "@noble/curves/ed25519";
+import { ed25519 } from "@noble/curves/ed25519.js";
 import { readFileSync } from "node:fs";
 import {
   REPUTATION_SCHEMA_V1,

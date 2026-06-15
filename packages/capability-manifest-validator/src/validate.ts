@@ -6,7 +6,7 @@
 // fetching is out of scope for this crate — a future indexer service
 // owns that layer.
 
-import { ed25519 } from "@noble/curves/ed25519";
+import { ed25519 } from "@noble/curves/ed25519.js";
 import { ok, err, type Result } from "@agenomics/action-runtime";
 import {
   CapabilityManifestSchema,

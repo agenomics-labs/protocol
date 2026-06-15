@@ -19,7 +19,7 @@
 // `OnChainProfileFetcher` and pass it via `opts.onChain`. The default
 // path is signature-only and stateless.
 
-import { ed25519 } from "@noble/curves/ed25519";
+import { ed25519 } from "@noble/curves/ed25519.js";
 import {
   ReputationCredentialSchema,
   REPUTATION_SCHEMA_V1,

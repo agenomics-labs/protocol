@@ -6,7 +6,7 @@
 
 import { describe, it } from "node:test";
 import * as assert from "node:assert/strict";
-import { ed25519 } from "@noble/curves/ed25519";
+import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2";
 import {
   validateManifest,

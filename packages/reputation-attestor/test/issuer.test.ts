@@ -11,7 +11,7 @@ import {
   issueAttestation,
   type AgentProfileSnapshot,
 } from "../src/index.js";
-import { ed25519 } from "@noble/curves/ed25519";
+import { ed25519 } from "@noble/curves/ed25519.js";
 
 function makeSolanaKeypairBytes(secret: Uint8Array): number[] {
   const pub = ed25519.getPublicKey(secret);

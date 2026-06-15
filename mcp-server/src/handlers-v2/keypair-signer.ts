@@ -25,7 +25,7 @@
  * `@solana/keychain-core` per ADR-058 §5.
  */
 
-import { ed25519 } from "@noble/curves/ed25519";
+import { ed25519 } from "@noble/curves/ed25519.js";
 import type { Keypair } from "@solana/web3.js";
 import { publicKeyToAddress } from "../solana.js";
 import type {
