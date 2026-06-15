@@ -44,8 +44,8 @@
  * process; they're tallied in the JSON results file. Operators
  * inspect the JSON for SLO-breach counts.
  */
-import * as anchor from "@coral-xyz/anchor";
-import { Program, BN } from "@coral-xyz/anchor";
+import * as anchor from "@anchor-lang/core";
+import { Program, BN } from "@anchor-lang/core";
 import {
   Connection,
   Keypair,

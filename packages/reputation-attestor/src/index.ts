@@ -13,7 +13,7 @@
 // The package is read-only with respect to chain state — issuers feed
 // in a pre-fetched `AgentProfileSnapshot`, and verifiers can optionally
 // supply an `OnChainProfileFetcher` for the §3 step-6 cross-check. The
-// package itself does not depend on `@solana/kit` or `@coral-xyz/anchor`
+// package itself does not depend on `@solana/kit` or `@anchor-lang/core`
 // so it can be embedded by anyone that already has a typed profile.
 
 export {

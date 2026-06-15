@@ -10,7 +10,7 @@
   },
   "_comments": [
     "This package intentionally has NO `dependencies` block. The harness",
-    "uses the root workspace's @coral-xyz/anchor + @solana/web3.js +",
+    "uses the root workspace's @anchor-lang/core + @solana/web3.js +",
     "@solana/spl-token + better-sqlite3 + tsx via Node's normal module",
     "resolution walking up to the repo root. Keeping it dependency-free",
     "matches the fuzz/ Phase 1 pattern (standalone but minimal-install).",

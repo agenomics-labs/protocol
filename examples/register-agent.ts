@@ -37,7 +37,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { AnchorProvider, Wallet, type Idl } from "@coral-xyz/anchor";
+import { AnchorProvider, Wallet, type Idl } from "@anchor-lang/core";
 import { Connection, Keypair } from "@solana/web3.js";
 import type { Address } from "@solana/kit";
 
@@ -109,7 +109,7 @@ async function main(): Promise<void> {
   console.log(`agent-registry program: ${registryProgramId}`);
 
   // Step 4: instantiate AgentRegistryClient. Cast the IDL JSON to `Idl`
-  //         from @coral-xyz/anchor — this is the canonical pattern
+  //         from @anchor-lang/core — this is the canonical pattern
   //         documented in `sdk/client/README.md`.
   const registry = new AgentRegistryClient(
     provider,

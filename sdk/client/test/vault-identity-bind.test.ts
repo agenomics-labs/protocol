@@ -26,7 +26,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as crypto from "node:crypto";
-import { web3 } from "@coral-xyz/anchor";
+import { web3 } from "@anchor-lang/core";
 import { getAddressEncoder, type Address } from "@solana/kit";
 import { ed25519 } from "@noble/curves/ed25519";
 

@@ -28,7 +28,7 @@ explicitly framed as operator-driven events rather than CI gates.
 
 - **Framework**: TypeScript, executed via `tsx`. No new heavy
   dependencies — the harness reuses the root workspace's
-  `@coral-xyz/anchor`, `@solana/web3.js`, `@solana/spl-token`,
+  `@anchor-lang/core`, `@solana/web3.js`, `@solana/spl-token`,
   `@noble/curves` (transitive), and `better-sqlite3` (transitive
   via the indexer workspace). External load tools (k6, artillery,
   autocannon) were considered and rejected: they are HTTP-shaped,

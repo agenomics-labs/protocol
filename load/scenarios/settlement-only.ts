@@ -73,8 +73,8 @@
  * Settlement-ix failures inside individual flows do NOT fail the
  * process; they're tallied in the JSON results file.
  */
-import * as anchor from "@coral-xyz/anchor";
-import { Program, BN } from "@coral-xyz/anchor";
+import * as anchor from "@anchor-lang/core";
+import { Program, BN } from "@anchor-lang/core";
 import {
   Connection,
   Keypair,

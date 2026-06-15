@@ -24,7 +24,7 @@
   "dependencies": {
     "@agenomics/capability-manifest-validator": "file:packages/capability-manifest-validator",
     "@agenomics/sas-resolver": "file:packages/sas-resolver",
-    "@coral-xyz/anchor": "^0.31.1",
+    "@anchor-lang/core": "^1.0.2",
     "@solana/web3.js": "^1.98.4"
   },
   "devDependencies": {

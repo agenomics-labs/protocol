@@ -6,7 +6,7 @@
  *
  * Usage:
  *   import settlementIdl from "path/to/idl/settlement.json" assert { type: "json" };
- *   import { Idl } from "@coral-xyz/anchor";
+ *   import { Idl } from "@anchor-lang/core";
  *   import type { Address } from "@solana/kit";
  *
  *   const SETTLEMENT_PROGRAM_ID = "9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95" as Address;
@@ -16,7 +16,7 @@
  *   const escrow = await client.fetchEscrow(clientKey, providerKey, 1n);
  */
 
-import { Program, AnchorProvider, web3 } from "@coral-xyz/anchor";
+import { Program, AnchorProvider, web3 } from "@anchor-lang/core";
 import { type Address } from "@solana/kit";
 
 import type { Settlement } from "./idl-types.js";

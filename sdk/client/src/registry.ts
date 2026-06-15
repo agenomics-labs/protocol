@@ -6,7 +6,7 @@
  *
  * Usage:
  *   import agentRegistryIdl from "path/to/idl/agent_registry.json" assert { type: "json" };
- *   import { Idl } from "@coral-xyz/anchor";
+ *   import { Idl } from "@anchor-lang/core";
  *   import type { Address } from "@solana/kit";
  *
  *   const REGISTRY_PROGRAM_ID = "psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv" as Address;
@@ -16,7 +16,7 @@
  *   const profile = await client.fetchProfile(authority, 0n);
  */
 
-import { Program, AnchorProvider, web3 } from "@coral-xyz/anchor";
+import { Program, AnchorProvider, web3 } from "@anchor-lang/core";
 import {
   getProgramDerivedAddress,
   getAddressEncoder,

@@ -6,7 +6,7 @@
  *
  * Usage:
  *   import agentVaultIdl from "path/to/idl/agent_vault.json" assert { type: "json" };
- *   import { Idl } from "@coral-xyz/anchor";
+ *   import { Idl } from "@anchor-lang/core";
  *   import type { Address } from "@solana/kit";
  *
  *   const VAULT_PROGRAM_ID = "28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw" as Address;
@@ -16,7 +16,7 @@
  *   const vault = await client.fetchVault(authority);
  */
 
-import { Program, AnchorProvider, web3 } from "@coral-xyz/anchor";
+import { Program, AnchorProvider, web3 } from "@anchor-lang/core";
 import {
   getProgramDerivedAddress,
   getAddressEncoder,

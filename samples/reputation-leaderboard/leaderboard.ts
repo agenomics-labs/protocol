@@ -34,7 +34,7 @@
  *      descending, and render a ranked leaderboard table.
  */
 
-import { AnchorProvider, Wallet, type Idl } from "@coral-xyz/anchor";
+import { AnchorProvider, Wallet, type Idl } from "@anchor-lang/core";
 import { Connection, Keypair } from "@solana/web3.js";
 import type { Address } from "@solana/kit";
 
