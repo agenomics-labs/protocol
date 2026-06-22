@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@agenomics/reputation-attestor": "*",
-    "@solana/kit": "^6.8.0",
+    "@solana/kit": "^6.10.0",
     "async-mutex": "^0.5.0",
     "better-sqlite3": "^12.10.0",
     "express": "^4.21.0",
