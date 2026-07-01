@@ -39,7 +39,7 @@ DEMO_OUT="$OUT_DIR/demo-meta.json"
 export DEMO_OUT
 
 # Fallback URL used in the report block if the demo failed to capture one.
-FALLBACK_URL="https://explorer.solana.com/address/28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw?cluster=devnet"
+FALLBACK_URL="https://explorer.solana.com/address/D2y1dEi4dj1pcxw6GvkFWX34RRbuFJCaGWdPNJAasQ5q?cluster=devnet"
 
 # ── Cleanup hook ─────────────────────────────────────────────────────
 cleanup() {

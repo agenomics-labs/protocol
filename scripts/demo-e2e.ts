@@ -34,8 +34,8 @@ import {
 // CONFIGURATION
 // ============================================================================
 
-const REGISTRY_PROGRAM_ID = new PublicKey("psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv");
-const SETTLEMENT_PROGRAM_ID = new PublicKey("9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95");
+const REGISTRY_PROGRAM_ID = new PublicKey("26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7");
+const SETTLEMENT_PROGRAM_ID = new PublicKey("AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia");
 
 function deriveAgentProfilePDA(
   authority: PublicKey,

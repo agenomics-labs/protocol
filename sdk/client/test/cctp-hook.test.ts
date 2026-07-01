@@ -30,10 +30,10 @@ import {
 
 const { PublicKey } = web3;
 
-const HOOK_PROGRAM_ID_BS58 = "3yifMBDVChLzcihZWh4or9zxgzbmQVghdNZzpuP814vb";
+const HOOK_PROGRAM_ID_BS58 = "MtqZaquyJCMu1ph8CygpKBQECfAkH2gig7TUtYXdWdC";
 const HOOK_PROGRAM_ID = HOOK_PROGRAM_ID_BS58 as Address;
 
-const ESCROW_PDA_BS58 = "9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95";
+const ESCROW_PDA_BS58 = "AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia";
 const ESCROW_PDA = ESCROW_PDA_BS58 as Address;
 
 function fixturePayload(): ReflexHookPayload {

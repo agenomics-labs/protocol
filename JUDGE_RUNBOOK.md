@@ -171,7 +171,7 @@ The protocol's three Solana programs are deployed to devnet at fixed addresses. 
 
 ```bash
 curl -s https://api.devnet.solana.com -X POST -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"getAccountInfo","params":["28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw",{"encoding":"jsonParsed"}]}' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"getAccountInfo","params":["D2y1dEi4dj1pcxw6GvkFWX34RRbuFJCaGWdPNJAasQ5q",{"encoding":"jsonParsed"}]}' \
   | python3 -c "import json,sys;a=json.load(sys.stdin)['result']['value'];print('executable:',a['executable'],'owner:',a['owner'])"
 ```
 
@@ -185,10 +185,10 @@ Same check works for the other two programs (`8VQuB…tfh` Registry and `GK8L…
 
 Or browse them directly on Solana Explorer:
 
-- [Vault `4wjdJ…gvwN`](https://explorer.solana.com/address/28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw?cluster=devnet)
-- [Registry `8VQuB…tfh`](https://explorer.solana.com/address/psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv?cluster=devnet)
-- [Settlement `GK8L…3wvc3`](https://explorer.solana.com/address/9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95?cluster=devnet)
-- [CCTP Hook `3yifM…4vb`](https://explorer.solana.com/address/3yifMBDVChLzcihZWh4or9zxgzbmQVghdNZzpuP814vb?cluster=devnet)
+- [Vault `4wjdJ…gvwN`](https://explorer.solana.com/address/D2y1dEi4dj1pcxw6GvkFWX34RRbuFJCaGWdPNJAasQ5q?cluster=devnet)
+- [Registry `8VQuB…tfh`](https://explorer.solana.com/address/26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7?cluster=devnet)
+- [Settlement `GK8L…3wvc3`](https://explorer.solana.com/address/AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia?cluster=devnet)
+- [CCTP Hook `3yifM…4vb`](https://explorer.solana.com/address/MtqZaquyJCMu1ph8CygpKBQECfAkH2gig7TUtYXdWdC?cluster=devnet)
 
 ---
 

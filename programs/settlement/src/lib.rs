@@ -9,7 +9,7 @@ mod instructions;
 use state::*;
 use contexts::*;
 
-declare_id!("9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95");
+declare_id!("AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia");
 
 #[program]
 pub mod settlement {

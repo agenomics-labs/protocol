@@ -13,6 +13,6 @@ authority: Address;
 };
 
 export async function findVaultPda(seeds: VaultSeeds, config: { programAddress?: Address | undefined } = {}): Promise<ProgramDerivedAddress> {
-  const { programAddress = '28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw' as Address<'28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw'> } = config;
+  const { programAddress = 'D2y1dEi4dj1pcxw6GvkFWX34RRbuFJCaGWdPNJAasQ5q' as Address<'D2y1dEi4dj1pcxw6GvkFWX34RRbuFJCaGWdPNJAasQ5q'> } = config;
   return await getProgramDerivedAddress({ programAddress, seeds: [getBytesEncoder().encode(new Uint8Array([118, 97, 117, 108, 116])), getAddressEncoder().encode(seeds.authority)]});
 }

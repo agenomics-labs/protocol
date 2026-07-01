@@ -56,19 +56,19 @@ pub use events::*;
 pub use payload::*;
 pub use state::*;
 
-declare_id!("3yifMBDVChLzcihZWh4or9zxgzbmQVghdNZzpuP814vb");
+declare_id!("MtqZaquyJCMu1ph8CygpKBQECfAkH2gig7TUtYXdWdC");
 
 /// Static address of the AEP Settlement program. Mirrors
 /// `programs/settlement/src/lib.rs::declare_id!()`. Must stay in sync with the
 /// devnet/mainnet IDs declared in `Anchor.toml`.
 pub const SETTLEMENT_PROGRAM_ID: Pubkey =
-    anchor_lang::solana_program::pubkey!("9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95");
+    anchor_lang::solana_program::pubkey!("AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia");
 
 /// Static address of the AEP Agent Registry program. Surface-3 only reads from
 /// Registry — it never writes — so the on-chain dependency is limited to the
 /// `agent_profile` PDA derivation that the Settlement CPI itself performs.
 pub const AGENT_REGISTRY_PROGRAM_ID: Pubkey =
-    anchor_lang::solana_program::pubkey!("psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv");
+    anchor_lang::solana_program::pubkey!("26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7");
 
 /// Anchor instruction discriminator for `settlement::approve_milestone`.
 ///

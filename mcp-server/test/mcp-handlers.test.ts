@@ -36,13 +36,13 @@ const connection = new Connection(RPC_URL, "confirmed");
 // simulating what the MCP handlers do internally.
 
 const VAULT_PROGRAM_ID = new PublicKey(
-  "28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw"
+  "D2y1dEi4dj1pcxw6GvkFWX34RRbuFJCaGWdPNJAasQ5q"
 );
 const REGISTRY_PROGRAM_ID = new PublicKey(
-  "psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv"
+  "26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7"
 );
 const SETTLEMENT_PROGRAM_ID = new PublicKey(
-  "9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95"
+  "AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia"
 );
 
 function loadIdl(name: string): any {

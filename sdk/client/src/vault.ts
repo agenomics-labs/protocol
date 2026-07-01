@@ -9,7 +9,7 @@
  *   import { Idl } from "@anchor-lang/core";
  *   import type { Address } from "@solana/kit";
  *
- *   const VAULT_PROGRAM_ID = "28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw" as Address;
+ *   const VAULT_PROGRAM_ID = "D2y1dEi4dj1pcxw6GvkFWX34RRbuFJCaGWdPNJAasQ5q" as Address;
  *   const client = new AgentVaultClient(provider, agentVaultIdl as Idl, VAULT_PROGRAM_ID);
  *
  *   const pda = await client.vaultPda(authority);  // Address

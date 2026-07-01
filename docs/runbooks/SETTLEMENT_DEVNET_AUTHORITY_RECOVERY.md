@@ -7,7 +7,7 @@ present on the host running ceremonies.
 ## When to use this runbook
 
 The Settlement program on devnet
-(`9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95`) is deployed but its
+(`AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia`) is deployed but its
 singleton `ProtocolConfig` PDA
 (`EEz7JfgdJ1nVYafjpzvtXtvnyC4yHF1mayAT5EUxz3oh`) was never
 initialized. Until `initialize_protocol_config` runs, every
@@ -25,7 +25,7 @@ Only the Settlement program's upgrade authority can run the one-shot
 init. On-chain readback:
 
 ```bash
-solana program show 9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95 -u devnet
+solana program show AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia -u devnet
 # Authority: 8vj7tBNqdZxzcMt3U2F4wQNsrvz5SJmd8FpdSLTTMqKz
 ```
 

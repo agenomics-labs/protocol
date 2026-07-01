@@ -36,7 +36,7 @@ The entire protocol is accessible to any AI agent through a Model Context Protoc
 
 ## Programs
 
-### 1. Agent Vault (`28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw`)
+### 1. Agent Vault (`D2y1dEi4dj1pcxw6GvkFWX34RRbuFJCaGWdPNJAasQ5q`)
 
 Programmable wallets that let agents hold and spend funds under configurable policies.
 
@@ -66,7 +66,7 @@ Programmable wallets that let agents hold and spend funds under configurable pol
 
 ---
 
-### 2. Agent Registry (`psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv`)
+### 2. Agent Registry (`26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7`)
 
 On-chain discovery and reputation system where agents register profiles with capabilities, pricing, and accepted tokens.
 
@@ -90,7 +90,7 @@ On-chain discovery and reputation system where agents register profiles with cap
 
 ---
 
-### 3. Settlement Protocol (`9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95`)
+### 3. Settlement Protocol (`AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia`)
 
 Milestone-based escrow that locks SPL tokens and releases them as milestones are approved, with full dispute resolution.
 
@@ -118,7 +118,7 @@ Milestone-based escrow that locks SPL tokens and releases them as milestones are
 
 ---
 
-### 4. CCTP Hook (`3yifMBDVChLzcihZWh4or9zxgzbmQVghdNZzpuP814vb`)
+### 4. CCTP Hook (`MtqZaquyJCMu1ph8CygpKBQECfAkH2gig7TUtYXdWdC`)
 
 Cross-chain CCTP V2 hook program that auto-approves Settlement milestones when a CCTP burn-and-mint round-trip completes on the Base side (Reflex Surface 3 — IC-4 interface contract).
 

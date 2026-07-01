@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 use crate::errors::AgentRegistryError;
 
 /// The Settlement program ID — used to verify CPI caller for reputation updates.
-pub const SETTLEMENT_PROGRAM_ID: Pubkey = pubkey!("9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95");
+pub const SETTLEMENT_PROGRAM_ID: Pubkey = pubkey!("AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia");
 
 /// The Agent Vault program ID — used to validate that `AgentProfile.vault_address`
 /// is the canonical vault PDA for the registering authority.
@@ -12,7 +12,7 @@ pub const SETTLEMENT_PROGRAM_ID: Pubkey = pubkey!("9TRVbw2dvER1zDQcxwA8Puub4fLnP
 /// controlled account and off-chain consumers (discovery, MCP) would trust it.
 /// Now the field is derived from a seed-constrained account, so impersonation
 /// is rejected at transaction construction time.
-pub const AGENT_VAULT_PROGRAM_ID: Pubkey = pubkey!("28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw");
+pub const AGENT_VAULT_PROGRAM_ID: Pubkey = pubkey!("D2y1dEi4dj1pcxw6GvkFWX34RRbuFJCaGWdPNJAasQ5q");
 
 /// ADR-096: bytes reserved beyond `AgentProfile::SPACE` in the initial account
 /// allocation and as the growth target for `migrate_agent_profile`.

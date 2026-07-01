@@ -108,10 +108,10 @@ const args = { ...input,  };
 
 // Resolve default values.
 if (!accounts.clientVault.value) {
-accounts.clientVault.value = await getProgramDerivedAddress({ programAddress: '28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw' as Address<'28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw'>, seeds: [getBytesEncoder().encode(new Uint8Array([118, 97, 117, 108, 116])), getAddressEncoder().encode(getAddressFromResolvedInstructionAccount("client", accounts.client.value))] });
+accounts.clientVault.value = await getProgramDerivedAddress({ programAddress: 'D2y1dEi4dj1pcxw6GvkFWX34RRbuFJCaGWdPNJAasQ5q' as Address<'D2y1dEi4dj1pcxw6GvkFWX34RRbuFJCaGWdPNJAasQ5q'>, seeds: [getBytesEncoder().encode(new Uint8Array([118, 97, 117, 108, 116])), getAddressEncoder().encode(getAddressFromResolvedInstructionAccount("client", accounts.client.value))] });
 }
 if (!accounts.providerVault.value) {
-accounts.providerVault.value = await getProgramDerivedAddress({ programAddress: '28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw' as Address<'28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw'>, seeds: [getBytesEncoder().encode(new Uint8Array([118, 97, 117, 108, 116])), getAddressEncoder().encode(getAddressFromResolvedInstructionAccount("provider", accounts.provider.value))] });
+accounts.providerVault.value = await getProgramDerivedAddress({ programAddress: 'D2y1dEi4dj1pcxw6GvkFWX34RRbuFJCaGWdPNJAasQ5q' as Address<'D2y1dEi4dj1pcxw6GvkFWX34RRbuFJCaGWdPNJAasQ5q'>, seeds: [getBytesEncoder().encode(new Uint8Array([118, 97, 117, 108, 116])), getAddressEncoder().encode(getAddressFromResolvedInstructionAccount("provider", accounts.provider.value))] });
 }
 if (!accounts.escrow.value) {
 accounts.escrow.value = await findEscrowPda({ client: getAddressFromResolvedInstructionAccount("client", accounts.client.value), provider: getAddressFromResolvedInstructionAccount("provider", accounts.provider.value), taskId: getNonNullResolvedInstructionInput("taskId", args.taskId) });

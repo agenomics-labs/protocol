@@ -8,7 +8,7 @@
  * via `AEP_USE_V2_VAULT_TRANSFER=1` (see `src/actions/vault.ts`).
  *
  * On-chain target: `execute_transfer(amount_lamports: u64)` on the
- * `agent_vault` program (id `28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw`).
+ * `agent_vault` program (id `D2y1dEi4dj1pcxw6GvkFWX34RRbuFJCaGWdPNJAasQ5q`).
  * Account layout (from `programs/agent-vault/src/contexts.rs::ExecuteTransfer`):
  *   0. vault          — WRITABLE  (PDA, seeds=["vault", authority])
  *   1. agent          — READONLY_SIGNER  (authority keypair)

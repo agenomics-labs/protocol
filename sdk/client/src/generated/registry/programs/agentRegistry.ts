@@ -12,7 +12,7 @@ import { getAgentProfileCodec, getOwnerNonceCodec, type AgentProfile, type Agent
 import { getClearSuspensionInstructionAsync, getDeregisterAgentInstructionAsync, getMigrateAgentProfileInstructionAsync, getProposeReputationDeltaInstructionAsync, getRegisterAgentInstructionAsync, getStakeReputationInstructionAsync, getUnstakeReputationInstructionAsync, getUpdateCdpWalletInstructionAsync, getUpdateManifestInstructionAsync, getUpdateProfileInstructionAsync, getUpdateStatusInstructionAsync, getVerifyProtocolInvariantsInstructionAsync, parseClearSuspensionInstruction, parseDeregisterAgentInstruction, parseMigrateAgentProfileInstruction, parseProposeReputationDeltaInstruction, parseRegisterAgentInstruction, parseStakeReputationInstruction, parseUnstakeReputationInstruction, parseUpdateCdpWalletInstruction, parseUpdateManifestInstruction, parseUpdateProfileInstruction, parseUpdateStatusInstruction, parseVerifyProtocolInvariantsInstruction, type ClearSuspensionAsyncInput, type DeregisterAgentAsyncInput, type MigrateAgentProfileAsyncInput, type ParsedClearSuspensionInstruction, type ParsedDeregisterAgentInstruction, type ParsedMigrateAgentProfileInstruction, type ParsedProposeReputationDeltaInstruction, type ParsedRegisterAgentInstruction, type ParsedStakeReputationInstruction, type ParsedUnstakeReputationInstruction, type ParsedUpdateCdpWalletInstruction, type ParsedUpdateManifestInstruction, type ParsedUpdateProfileInstruction, type ParsedUpdateStatusInstruction, type ParsedVerifyProtocolInvariantsInstruction, type ProposeReputationDeltaAsyncInput, type RegisterAgentAsyncInput, type StakeReputationAsyncInput, type UnstakeReputationAsyncInput, type UpdateCdpWalletAsyncInput, type UpdateManifestAsyncInput, type UpdateProfileAsyncInput, type UpdateStatusAsyncInput, type VerifyProtocolInvariantsAsyncInput } from '../instructions/index.js';
 import { findMigrateAgentProfileOwnerNoncePda, findOwnerNoncePda, findStakingPdaPda } from '../pdas/index.js';
 
-export const AGENT_REGISTRY_PROGRAM_ADDRESS = 'psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv' as Address<'psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv'>;
+export const AGENT_REGISTRY_PROGRAM_ADDRESS = '26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7' as Address<'26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7'>;
 
 export enum AgentRegistryAccount { AgentProfile, OwnerNonce }
 
@@ -42,7 +42,7 @@ if (containsBytes(data, fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Arr
     throw new SolanaError(SOLANA_ERROR__PROGRAM_CLIENTS__FAILED_TO_IDENTIFY_INSTRUCTION, { instructionData: data, programName: "agentRegistry" });
 }
 
-export type ParsedAgentRegistryInstruction<TProgram extends string = 'psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv'> =
+export type ParsedAgentRegistryInstruction<TProgram extends string = '26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7'> =
 | { instructionType: AgentRegistryInstruction.ClearSuspension } & ParsedClearSuspensionInstruction<TProgram>
 | { instructionType: AgentRegistryInstruction.DeregisterAgent } & ParsedDeregisterAgentInstruction<TProgram>
 | { instructionType: AgentRegistryInstruction.MigrateAgentProfile } & ParsedMigrateAgentProfileInstruction<TProgram>

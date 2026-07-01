@@ -96,7 +96,7 @@ if (!accounts.vault.value) {
 accounts.vault.value = await findVaultPda({ authority: getAddressFromResolvedInstructionAccount("authority", accounts.authority.value) });
 }
 if (!accounts.ownerNonce.value) {
-accounts.ownerNonce.value = await getProgramDerivedAddress({ programAddress: 'psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv' as Address<'psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv'>, seeds: [getAddressEncoder().encode(getAddressFromResolvedInstructionAccount("authority", accounts.authority.value)), getBytesEncoder().encode(new Uint8Array([111, 119, 110, 101, 114, 45, 110, 111, 110, 99, 101]))] });
+accounts.ownerNonce.value = await getProgramDerivedAddress({ programAddress: '26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7' as Address<'26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7'>, seeds: [getAddressEncoder().encode(getAddressFromResolvedInstructionAccount("authority", accounts.authority.value)), getBytesEncoder().encode(new Uint8Array([111, 119, 110, 101, 114, 45, 110, 111, 110, 99, 101]))] });
 }
 if (!accounts.instructionsSysvar.value) {
 accounts.instructionsSysvar.value = 'Sysvar1nstructions1111111111111111111111111' as Address<'Sysvar1nstructions1111111111111111111111111'>;

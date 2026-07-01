@@ -87,7 +87,7 @@ RPC_URL="https://your-private-rpc.example/devnet" npm start
 ```
 reputation-leaderboard — ranking 2 candidate authorities on devnet
 
-agent-registry program: psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv
+agent-registry program: 26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7
 
 no registered profiles found among the candidate set (2 unregistered).
    this is expected with the built-in defaults — set

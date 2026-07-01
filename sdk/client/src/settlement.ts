@@ -9,7 +9,7 @@
  *   import { Idl } from "@anchor-lang/core";
  *   import type { Address } from "@solana/kit";
  *
- *   const SETTLEMENT_PROGRAM_ID = "9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95" as Address;
+ *   const SETTLEMENT_PROGRAM_ID = "AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia" as Address;
  *   const client = new SettlementClient(provider, settlementIdl as Idl, SETTLEMENT_PROGRAM_ID);
  *
  *   const pda = await client.escrowPda(clientKey, providerKey, 1n);  // Address

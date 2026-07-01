@@ -1,47 +1,44 @@
+[toolchain]
+
 [features]
-seeds = false
+resolution = true
 skip-lint = false
 
-[programs.localnet]
-agent_vault = "28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw"
-agent_registry = "psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv"
-settlement = "9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95"
-cctp_hook = "3yifMBDVChLzcihZWh4or9zxgzbmQVghdNZzpuP814vb"
-
 [programs.devnet]
-agent_vault = "28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw"
-agent_registry = "psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv"
-settlement = "9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95"
-cctp_hook = "3yifMBDVChLzcihZWh4or9zxgzbmQVghdNZzpuP814vb"
+agent_registry = "26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7"
+agent_vault = "D2y1dEi4dj1pcxw6GvkFWX34RRbuFJCaGWdPNJAasQ5q"
+cctp_hook = "MtqZaquyJCMu1ph8CygpKBQECfAkH2gig7TUtYXdWdC"
+settlement = "AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia"
+
+[programs.localnet]
+agent_registry = "26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7"
+agent_vault = "D2y1dEi4dj1pcxw6GvkFWX34RRbuFJCaGWdPNJAasQ5q"
+cctp_hook = "MtqZaquyJCMu1ph8CygpKBQECfAkH2gig7TUtYXdWdC"
+settlement = "AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "Localnet"
+cluster = "localnet"
 wallet = "~/.config/solana/id.json"
 
-# AUD-005 (PR-H) test plumbing: deploy workspace programs to the test
-# validator with the upgradeable loader (BPFLoaderUpgradeab1e…) instead of
-# the legacy non-upgradeable `--bpf-program` path. This causes anchor 0.31.x
-# to invoke `solana-test-validator --upgradeable-program <addr> <binary>
-# <provider.wallet>` so that:
-#   1. A `ProgramData` account exists for each workspace program (seeds =
-#      [program_id] under bpf_loader_upgradeable::ID).
-#   2. `program_data.upgrade_authority_address == provider.wallet.publicKey`,
-#      satisfying initialize_protocol_config's AUD-005 governance gate.
-# Without this flag, tests/settlement.ts's Setup before() would fail (and
-# cascade 14 downstream Settlement / 5 AUD-017 tests) with
-# `SettlementError::Unauthorized` (6028) — see Option A guard for the
-# precise error message that surfaces if this is ever inadvertently
-# disabled.
+[scripts]
+test = "npx ts-mocha -p ./tsconfig.json -t 1000000 tests/settlement.ts tests/agent-registry.ts tests/agent-vault.ts tests/cpi-failures.test.ts tests/cctp-hook.ts"
+
 [test]
+startup_wait = 5000
+shutdown_wait = 2000
 upgradeable = true
 
-[scripts]
-# S-xcut-04: scope `anchor test` to the on-chain integration suites that
-# actually need solana-test-validator. The `*.test.ts` files under tests/
-# (indexer, x402-relay) are plain unit suites whose deps (better-sqlite3,
-# express, jsonwebtoken) live in src/*/node_modules, not the workspace
-# root — sweeping them in via tests/**/*.ts fails at import time.
-test = "npx ts-mocha -p ./tsconfig.json -t 1000000 tests/settlement.ts tests/agent-registry.ts tests/agent-vault.ts tests/cpi-failures.test.ts tests/cctp-hook.ts"
+[test.validator]
+# Default gossip port 8000 (and 8001) collide with an unrelated service
+# already running on the shared dev host — solana-test-validator would
+# otherwise panic at startup with "Address already in use" and every
+# anchor-integration/anchor-test run would silently fail before any test
+# executes. Pinned to a free port found via `ss -tln`.
+gossip_port = 18000
+# Anchor injects `--bind-address` once this table is present; 0.0.0.0 makes
+# gossip's external-IP resolution panic (UnspecifiedIpAddr). Local-only test
+# validator, so bind to loopback explicitly.
+bind_address = "127.0.0.1"

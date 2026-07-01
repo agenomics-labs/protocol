@@ -39,11 +39,11 @@ import * as path from "path";
 // The byte values are identical; only the TypeScript brand differs.
 
 export const VAULT_PROGRAM_ADDRESS: Address =
-  "28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw" as Address;
+  "D2y1dEi4dj1pcxw6GvkFWX34RRbuFJCaGWdPNJAasQ5q" as Address;
 export const REGISTRY_PROGRAM_ADDRESS: Address =
-  "psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv" as Address;
+  "26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7" as Address;
 export const SETTLEMENT_PROGRAM_ADDRESS: Address =
-  "9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95" as Address;
+  "AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia" as Address;
 
 export const TOKEN_PROGRAM_ADDRESS: Address =
   "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" as Address;

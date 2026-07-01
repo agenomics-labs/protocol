@@ -63,7 +63,7 @@ if (!accounts.protocolConfig.value) {
 accounts.protocolConfig.value = await findProtocolConfigPda();
 }
 if (!accounts.programData.value) {
-accounts.programData.value = await getProgramDerivedAddress({ programAddress: 'BPFLoaderUpgradeab1e11111111111111111111111' as Address<'BPFLoaderUpgradeab1e11111111111111111111111'>, seeds: [getBytesEncoder().encode(new Uint8Array([125, 162, 74, 122, 121, 225, 231, 114, 114, 54, 87, 199, 173, 226, 134, 113, 68, 46, 178, 226, 28, 72, 169, 207, 12, 161, 44, 125, 234, 207, 176, 132]))] });
+accounts.programData.value = await getProgramDerivedAddress({ programAddress: 'BPFLoaderUpgradeab1e11111111111111111111111' as Address<'BPFLoaderUpgradeab1e11111111111111111111111'>, seeds: [getBytesEncoder().encode(new Uint8Array([147, 190, 193, 27, 158, 5, 100, 182, 107, 52, 230, 13, 126, 151, 78, 33, 16, 122, 159, 47, 160, 50, 207, 87, 138, 132, 122, 168, 137, 224, 31, 107]))] });
 }
 if (!accounts.systemProgram.value) {
 accounts.systemProgram.value = '11111111111111111111111111111111' as Address<'11111111111111111111111111111111'>;

@@ -12,7 +12,7 @@ import { getOwnerNonceCodec, getProtocolConfigCodec, getTaskEscrowCodec, type Ow
 import { getAcceptTaskInstruction, getApproveMilestoneInstructionAsync, getCancelActiveEscrowInstruction, getCancelEscrowInstruction, getCloseEscrowInstruction, getCreateEscrowInstructionAsync, getExpireEscrowInstructionAsync, getInitializeProtocolConfigInstructionAsync, getRaiseDisputeInstruction, getRejectMilestoneInstruction, getResolveDisputeInstructionAsync, getResolveDisputeTimeoutInstructionAsync, getSubmitMilestoneInstruction, getUpdateProtocolConfigInstructionAsync, parseAcceptTaskInstruction, parseApproveMilestoneInstruction, parseCancelActiveEscrowInstruction, parseCancelEscrowInstruction, parseCloseEscrowInstruction, parseCreateEscrowInstruction, parseExpireEscrowInstruction, parseInitializeProtocolConfigInstruction, parseRaiseDisputeInstruction, parseRejectMilestoneInstruction, parseResolveDisputeInstruction, parseResolveDisputeTimeoutInstruction, parseSubmitMilestoneInstruction, parseUpdateProtocolConfigInstruction, type AcceptTaskInput, type ApproveMilestoneAsyncInput, type CancelActiveEscrowInput, type CancelEscrowInput, type CloseEscrowInput, type CreateEscrowAsyncInput, type ExpireEscrowAsyncInput, type InitializeProtocolConfigAsyncInput, type ParsedAcceptTaskInstruction, type ParsedApproveMilestoneInstruction, type ParsedCancelActiveEscrowInstruction, type ParsedCancelEscrowInstruction, type ParsedCloseEscrowInstruction, type ParsedCreateEscrowInstruction, type ParsedExpireEscrowInstruction, type ParsedInitializeProtocolConfigInstruction, type ParsedRaiseDisputeInstruction, type ParsedRejectMilestoneInstruction, type ParsedResolveDisputeInstruction, type ParsedResolveDisputeTimeoutInstruction, type ParsedSubmitMilestoneInstruction, type ParsedUpdateProtocolConfigInstruction, type RaiseDisputeInput, type RejectMilestoneInput, type ResolveDisputeAsyncInput, type ResolveDisputeTimeoutAsyncInput, type SubmitMilestoneInput, type UpdateProtocolConfigAsyncInput } from '../instructions/index.js';
 import { findEscrowPda, findProtocolConfigPda, findSettlementAuthorityPda } from '../pdas/index.js';
 
-export const SETTLEMENT_PROGRAM_ADDRESS = '9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95' as Address<'9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95'>;
+export const SETTLEMENT_PROGRAM_ADDRESS = 'AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia' as Address<'AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia'>;
 
 export enum SettlementAccount { OwnerNonce, ProtocolConfig, TaskEscrow }
 
@@ -45,7 +45,7 @@ if (containsBytes(data, fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Arr
     throw new SolanaError(SOLANA_ERROR__PROGRAM_CLIENTS__FAILED_TO_IDENTIFY_INSTRUCTION, { instructionData: data, programName: "settlement" });
 }
 
-export type ParsedSettlementInstruction<TProgram extends string = '9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95'> =
+export type ParsedSettlementInstruction<TProgram extends string = 'AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia'> =
 | { instructionType: SettlementInstruction.AcceptTask } & ParsedAcceptTaskInstruction<TProgram>
 | { instructionType: SettlementInstruction.ApproveMilestone } & ParsedApproveMilestoneInstruction<TProgram>
 | { instructionType: SettlementInstruction.CancelActiveEscrow } & ParsedCancelActiveEscrowInstruction<TProgram>

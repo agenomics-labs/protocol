@@ -38,9 +38,9 @@ import * as crypto from "crypto";
 import * as fs from "fs";
 import * as path from "path";
 
-const VAULT_PROGRAM_ID = new PublicKey("28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw");
-const REGISTRY_PROGRAM_ID = new PublicKey("psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv");
-const SETTLEMENT_PROGRAM_ID = new PublicKey("9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95");
+const VAULT_PROGRAM_ID = new PublicKey("D2y1dEi4dj1pcxw6GvkFWX34RRbuFJCaGWdPNJAasQ5q");
+const REGISTRY_PROGRAM_ID = new PublicKey("26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7");
+const SETTLEMENT_PROGRAM_ID = new PublicKey("AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia");
 
 const PROJECT_ROOT = path.resolve(__dirname, "..");
 const MANIFEST_SCHEMA_V1_URL =

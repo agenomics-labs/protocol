@@ -5,13 +5,13 @@ use anchor_lang::prelude::*;
 // ============================================================================
 
 /// Agent Registry program ID — used for CPI reputation updates.
-pub const AGENT_REGISTRY_PROGRAM_ID: Pubkey = pubkey!("psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv");
+pub const AGENT_REGISTRY_PROGRAM_ID: Pubkey = pubkey!("26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7");
 
 /// Finding #21: Agent Vault program ID — used to validate that
 /// `client_vault`/`provider_vault` in `CreateEscrow` are genuine
 /// vault PDAs derived under the vault program, not arbitrary
 /// 32-byte keys. Must match `declare_id!` in programs/agent-vault/src/lib.rs.
-pub const AGENT_VAULT_PROGRAM_ID: Pubkey = pubkey!("28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw");
+pub const AGENT_VAULT_PROGRAM_ID: Pubkey = pubkey!("D2y1dEi4dj1pcxw6GvkFWX34RRbuFJCaGWdPNJAasQ5q");
 
 pub const MAX_MILESTONES: usize = 5;
 

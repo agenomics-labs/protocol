@@ -9,13 +9,13 @@
 import { PublicKey } from "@solana/web3.js";
 
 export const REGISTRY_PROGRAM_ID = new PublicKey(
-  "psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv",
+  "26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7",
 );
 export const VAULT_PROGRAM_ID = new PublicKey(
-  "28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw",
+  "D2y1dEi4dj1pcxw6GvkFWX34RRbuFJCaGWdPNJAasQ5q",
 );
 export const SETTLEMENT_PROGRAM_ID = new PublicKey(
-  "9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95",
+  "AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia",
 );
 
 /** ADR-097: agent_profile PDA seeds = [authority, "agent-profile", nonce-le u64]. */

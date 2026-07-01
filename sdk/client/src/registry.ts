@@ -9,7 +9,7 @@
  *   import { Idl } from "@anchor-lang/core";
  *   import type { Address } from "@solana/kit";
  *
- *   const REGISTRY_PROGRAM_ID = "psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv" as Address;
+ *   const REGISTRY_PROGRAM_ID = "26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7" as Address;
  *   const client = new AgentRegistryClient(provider, agentRegistryIdl as Idl, REGISTRY_PROGRAM_ID);
  *
  *   const pda = await client.profilePda(authority, 0n);  // Address (base58 string)

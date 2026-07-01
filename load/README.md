@@ -270,9 +270,9 @@ load/results/<scenario>_<utc-iso>.json           # one per run
 anchor test --skip-deploy   # or just `anchor test` for a full run
 # ... then leave the resulting test-validator running, OR:
 solana-test-validator \
-  --upgradeable-program psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv target/deploy/agent_registry.so ~/.config/solana/id.json \
-  --upgradeable-program 28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw target/deploy/agent_vault.so ~/.config/solana/id.json \
-  --upgradeable-program 9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95 target/deploy/settlement.so ~/.config/solana/id.json
+  --upgradeable-program 26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7 target/deploy/agent_registry.so ~/.config/solana/id.json \
+  --upgradeable-program D2y1dEi4dj1pcxw6GvkFWX34RRbuFJCaGWdPNJAasQ5q target/deploy/agent_vault.so ~/.config/solana/id.json \
+  --upgradeable-program AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia target/deploy/settlement.so ~/.config/solana/id.json
 
 # In another shell: run the scenario.
 cd load

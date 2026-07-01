@@ -75,10 +75,10 @@ Restart Claude Desktop after editing. The 29 tools (`create_vault`, `register_ag
 
 | Program | Address |
 |---------|---------|
-| Agent Vault | `28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw` |
-| Agent Registry | `psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv` |
-| Settlement | `9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95` |
-| CCTP Hook | `3yifMBDVChLzcihZWh4or9zxgzbmQVghdNZzpuP814vb` |
+| Agent Vault | `D2y1dEi4dj1pcxw6GvkFWX34RRbuFJCaGWdPNJAasQ5q` |
+| Agent Registry | `26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7` |
+| Settlement | `AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia` |
+| CCTP Hook | `MtqZaquyJCMu1ph8CygpKBQECfAkH2gig7TUtYXdWdC` |
 
 ## MCP Tools (29)
 

@@ -35,7 +35,7 @@ const provider = AnchorProvider.env();
 const programId = getProgramIds("devnet").agentRegistry as Address;
 const registry = new AgentRegistryClient(provider, AgentRegistryIdl as Idl, programId);
 
-const authority = "psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv" as Address;
+const authority = "26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7" as Address;
 const profilePda = await registry.profilePda(authority, 0n);
 const profile = await registry.fetchProfile(authority, 0n);
 const score = clampReputationScore(BigInt(profile.reputationScore.toString()));

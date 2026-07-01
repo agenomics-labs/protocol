@@ -30,9 +30,9 @@ The default `.env.devnet` points at `https://api.devnet.solana.com` and the thre
 
 | Program | Program ID |
 |---------|-----------|
-| Agent Vault | `28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw` |
-| Agent Registry | `psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv` |
-| Settlement | `9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95` |
+| Agent Vault | `D2y1dEi4dj1pcxw6GvkFWX34RRbuFJCaGWdPNJAasQ5q` |
+| Agent Registry | `26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7` |
+| Settlement | `AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia` |
 
 Set `ANCHOR_WALLET` to point at your devnet keypair (default `~/.config/solana/id.json`) and you're ready to invoke any of the 28 tools.
 

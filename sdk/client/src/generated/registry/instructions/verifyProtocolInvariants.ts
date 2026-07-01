@@ -55,7 +55,7 @@ const accounts = originalAccounts as Record<keyof typeof originalAccounts, Resol
 
 // Resolve default values.
 if (!accounts.protocolConfig.value) {
-accounts.protocolConfig.value = await getProgramDerivedAddress({ programAddress: '9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95' as Address<'9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95'>, seeds: [getBytesEncoder().encode(new Uint8Array([112, 114, 111, 116, 111, 99, 111, 108, 95, 99, 111, 110, 102, 105, 103]))] });
+accounts.protocolConfig.value = await getProgramDerivedAddress({ programAddress: 'AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia' as Address<'AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia'>, seeds: [getBytesEncoder().encode(new Uint8Array([112, 114, 111, 116, 111, 99, 111, 108, 95, 99, 111, 110, 102, 105, 103]))] });
 }
 
 const getAccountMeta = getAccountMetaFactory(programAddress, 'programId');

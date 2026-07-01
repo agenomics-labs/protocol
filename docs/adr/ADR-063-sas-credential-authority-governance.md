@@ -294,6 +294,7 @@ Published to the protocol repo and linked from the documentation site.
 - `scripts/emergency-suspend-credential.ts` — the suspend script referenced by §6.1 step 2; idempotent / resumable; auditor cosign enforced
 - `programs/agent-registry/**` — current on-chain surfaces (unchanged by this ADR)
 - SAS documentation — credential PDA layout, multi-signer authority admin instructions, attestation closure semantics
+- `docs/KEY_MANAGEMENT.md` — operational key inventory, tiering, and backup procedure for the keys this protocol actually uses today (devnet deployer, Squads devnet signers, CI secrets). Added 2026-07-01 after a same-host key-loss incident; complements this ADR's §6 emergency procedures for the (not-yet-bootstrapped) SAS credential multisig specifically.
 
 ## Concrete Proposal (decision-ready — maintainer fills bracketed blanks)
 

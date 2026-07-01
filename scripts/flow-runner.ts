@@ -37,8 +37,8 @@ const TOTAL = BigInt(process.env.FLOW_TOTAL || "3000000");
 const M1 = BigInt(process.env.FLOW_M1 || "1000000");
 const M2 = BigInt(process.env.FLOW_M2 || "2000000");
 
-const REGISTRY_PROGRAM_ID = new PublicKey("psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv");
-const SETTLEMENT_PROGRAM_ID = new PublicKey("9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95");
+const REGISTRY_PROGRAM_ID = new PublicKey("26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7");
+const SETTLEMENT_PROGRAM_ID = new PublicKey("AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia");
 
 function deriveEscrowPDA(client: PublicKey, provider: PublicKey, taskId: number): [PublicKey, number] {
   const buf = Buffer.alloc(8);

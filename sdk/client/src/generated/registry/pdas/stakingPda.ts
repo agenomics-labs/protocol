@@ -13,6 +13,6 @@ authority: Address;
 };
 
 export async function findStakingPdaPda(seeds: StakingPdaSeeds, config: { programAddress?: Address | undefined } = {}): Promise<ProgramDerivedAddress> {
-  const { programAddress = 'psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv' as Address<'psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv'> } = config;
+  const { programAddress = '26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7' as Address<'26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7'> } = config;
   return await getProgramDerivedAddress({ programAddress, seeds: [getAddressEncoder().encode(seeds.authority), getBytesEncoder().encode(new Uint8Array([114, 101, 112, 117, 116, 97, 116, 105, 111, 110, 45, 115, 116, 97, 107, 101]))]});
 }

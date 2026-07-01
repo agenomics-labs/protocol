@@ -34,7 +34,7 @@ const RPC_URL = process.env.RPC_URL ?? "http://127.0.0.1:8899";
 
 // The agent-registry program ID (must match declare_id! in lib.rs)
 const REGISTRY_PROGRAM_ID = new PublicKey(
-  "psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv"
+  "26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7"
 );
 
 // ---------------------------------------------------------------------------

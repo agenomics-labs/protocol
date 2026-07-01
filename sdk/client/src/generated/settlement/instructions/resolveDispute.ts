@@ -100,7 +100,7 @@ const args = { ...input,  };
 
 // Resolve default values.
 if (!accounts.providerOwnerNonce.value) {
-accounts.providerOwnerNonce.value = await getProgramDerivedAddress({ programAddress: 'psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv' as Address<'psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv'>, seeds: [getAddressEncoder().encode(getAddressFromResolvedInstructionAccount("providerAuthority", accounts.providerAuthority.value)), getBytesEncoder().encode(new Uint8Array([111, 119, 110, 101, 114, 45, 110, 111, 110, 99, 101]))] });
+accounts.providerOwnerNonce.value = await getProgramDerivedAddress({ programAddress: '26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7' as Address<'26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7'>, seeds: [getAddressEncoder().encode(getAddressFromResolvedInstructionAccount("providerAuthority", accounts.providerAuthority.value)), getBytesEncoder().encode(new Uint8Array([111, 119, 110, 101, 114, 45, 110, 111, 110, 99, 101]))] });
 }
 if (!accounts.settlementAuthority.value) {
 accounts.settlementAuthority.value = await findSettlementAuthorityPda();

@@ -199,9 +199,9 @@ const PORT = parseInt(process.env.INDEXER_PORT || "3100", 10);
 const INDEXER_HOST =
   process.env.INDEXER_METRICS_HOST ?? process.env.METRICS_HOST ?? "127.0.0.1";
 const PROGRAM_IDS: Record<"vault" | "registry" | "settlement", Address> = {
-  vault: toAddressBrand("28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw"),
-  registry: toAddressBrand("psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv"),
-  settlement: toAddressBrand("9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95"),
+  vault: toAddressBrand("D2y1dEi4dj1pcxw6GvkFWX34RRbuFJCaGWdPNJAasQ5q"),
+  registry: toAddressBrand("26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7"),
+  settlement: toAddressBrand("AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia"),
 };
 
 // Finding #23: "confirmed" can be rolled back by a fork. Use "finalized"
@@ -604,7 +604,7 @@ const DISCRIMINATOR_MAP: Record<string, string> = {
 // cctp-hook's address to attribute that one event correctly.
 // Mirrors `programs/cctp-hook/src/lib.rs::declare_id!()`.
 const CCTP_HOOK_PROGRAM_ID: Address = toAddressBrand(
-  "3yifMBDVChLzcihZWh4or9zxgzbmQVghdNZzpuP814vb",
+  "MtqZaquyJCMu1ph8CygpKBQECfAkH2gig7TUtYXdWdC",
 );
 
 // ADR-142 — every decoded event is bound to the program that is

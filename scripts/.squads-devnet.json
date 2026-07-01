@@ -1,14 +1,14 @@
 {
   "cluster": "devnet",
   "multisigProgramId": "SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf",
-  "multisigPda": "EHdxwBkcSEcJe3E2UrRwwYozPjqZNe8HZrrBTeU6NPcz",
-  "createKey": "6uHaurCR8A59se7TtTssMTKsZKp5SpSg2wp3XhR1BqvP",
+  "multisigPda": "4Br6bfFrQ8U27TWvwk7QvdudChHweoftXdKvDCXaAPyv",
+  "createKey": "9VfdwoVz97tbtinnMnW2irihbPf9VfW9ks7YWfxF7h3o",
   "threshold": 2,
   "members": [
-    "BUdXA1FiWnV7ksXYodH3uEhDUhfBJ8g4UmmWdshWjTXL",
-    "C1vm83htBDUwbHyBn4GAzwHoKtLeyc13EPW2nc3udvW5",
-    "8xMiCZdgCTB9J244JDiPqkm2yVTQbLuGTc12Qu5AynjB"
+    "7ybwQVQTf6Ma7NedBFh9wSsmchBQnJXQrGmVyMC44oqs",
+    "8xy1iryTfpKKMvd12MP8MCt8dSESZw8zrNvbrkiPtp1z",
+    "5YktpGwbcJxWWcrUSidLpyj1vShz77MVZ1Y5zcyqvU3k"
   ],
-  "createdAt": "2026-04-22T18:48:35.846Z",
-  "createSignature": "2DNgubLNyRG5NSBd7XeZVr5KksXKok2FcCWpN2rBU6oquvSzhRxpdEnCAbgzcba7qXpZdSWBYKtcZYGn27EBfBqJ"
+  "createdAt": "2026-07-01T22:57:50.164Z",
+  "createSignature": "4McKiMDWGGWmbzeM3hfxF5gjgs4VykhiTho8Hn9eAp79mPidwQLd2gLTbUJ1FBWZaN4jgmuL1umHQBAGvgSFs7Ri"
 }

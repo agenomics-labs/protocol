@@ -64,7 +64,7 @@ const NONCE: bigint = 0n;
  * to see populated rows.
  */
 const DEFAULT_AUTHORITIES: string[] = [
-  "psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv",
+  "26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7",
   "9TRVbwhq3rR1Hpd8Yq1qd2dCw8Yq3xQ1cWw6q9rR1Hpd",
 ];
 

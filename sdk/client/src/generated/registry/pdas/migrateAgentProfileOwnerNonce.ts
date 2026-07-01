@@ -13,6 +13,6 @@ owner: Address;
 };
 
 export async function findMigrateAgentProfileOwnerNoncePda(seeds: MigrateAgentProfileOwnerNonceSeeds, config: { programAddress?: Address | undefined } = {}): Promise<ProgramDerivedAddress> {
-  const { programAddress = 'psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv' as Address<'psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv'> } = config;
+  const { programAddress = '26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7' as Address<'26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7'> } = config;
   return await getProgramDerivedAddress({ programAddress, seeds: [getAddressEncoder().encode(seeds.owner), getBytesEncoder().encode(new Uint8Array([111, 119, 110, 101, 114, 45, 110, 111, 110, 99, 101]))]});
 }

@@ -15,6 +15,6 @@ taskId: number | bigint;
 };
 
 export async function findEscrowPda(seeds: EscrowSeeds, config: { programAddress?: Address | undefined } = {}): Promise<ProgramDerivedAddress> {
-  const { programAddress = '9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95' as Address<'9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95'> } = config;
+  const { programAddress = 'AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia' as Address<'AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia'> } = config;
   return await getProgramDerivedAddress({ programAddress, seeds: [getBytesEncoder().encode(new Uint8Array([101, 115, 99, 114, 111, 119])), getAddressEncoder().encode(seeds.client), getAddressEncoder().encode(seeds.provider), getU64Encoder().encode(seeds.taskId)]});
 }

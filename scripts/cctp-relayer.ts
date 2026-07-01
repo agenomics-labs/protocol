@@ -292,7 +292,7 @@ async function main() {
     process.env.SOLANA_RPC_URL ?? "https://api.devnet.solana.com";
   const settlementProgramId = new PublicKey(
     process.env.SETTLEMENT_PROGRAM_ID ??
-      "9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95",
+      "AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia",
   );
   const keyPath =
     process.env.RELAYER_KEY_PATH ??

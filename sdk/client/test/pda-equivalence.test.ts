@@ -56,9 +56,9 @@ type PublicKey = web3.PublicKey;
 // in programs/*/src/lib.rs and the values exported from
 // `mcp-server/src/solana.ts`.
 // ---------------------------------------------------------------------------
-const VAULT_PROGRAM_ID_BS58 = "28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw";
-const REGISTRY_PROGRAM_ID_BS58 = "psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv";
-const SETTLEMENT_PROGRAM_ID_BS58 = "9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95";
+const VAULT_PROGRAM_ID_BS58 = "D2y1dEi4dj1pcxw6GvkFWX34RRbuFJCaGWdPNJAasQ5q";
+const REGISTRY_PROGRAM_ID_BS58 = "26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7";
+const SETTLEMENT_PROGRAM_ID_BS58 = "AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia";
 
 const VAULT_PROGRAM_ID = new PublicKey(VAULT_PROGRAM_ID_BS58);
 const REGISTRY_PROGRAM_ID = new PublicKey(REGISTRY_PROGRAM_ID_BS58);
@@ -154,31 +154,32 @@ function canonicalProtocolConfigPda(): string {
 // Pinned here so a regression in BOTH the SDK helper and the canonical
 // helper (e.g. a copy-paste typo in this file) still fails the gate.
 // ---------------------------------------------------------------------------
-// Golden vectors regenerated for program IDs rotated in chore(devnet) ee7d216.
-// Old IDs: vault=4wjdJP…, registry=8VQuB…, settlement=GK8L…
-// New IDs: vault=28Km3…, registry=psJT2…, settlement=9TRVB…
+// Golden vectors regenerated for program IDs rotated 2026-07-01 (devnet
+// deployer/signer key-loss incident; see docs/KEY_MANAGEMENT.md).
+// Old IDs: vault=28Km3…, registry=psJT2…, settlement=9TRVB…
+// New IDs: vault=D2y1d…, registry=26KET…, settlement=Awjds…
 // Recomputed with: PublicKey.findProgramAddressSync(seeds, NEW_ID)
 const GOLDEN = {
   vault: {
-    A: "DVbM5aCtrwQ1azFyQXxqV8Cmto8gXSLzArsWCSwQ1nfv",
-    B: "G2JuDSmLKaxheLELYMAcMMJKbYQpBadZLAeL5FNJqi4",
-    C: "ECzwNoHxRW4bJF5gNx7xBunsmbbCuqRuhKKuFmNa8ZfH",
+    A: "Ato9hhizseWtRkCzpTDEcfNq56BcDsYYF3Lw2KoJ2hpg",
+    B: "AU1ntwJhQspaEhgUb9s1TDuNhC2DSRCGD9qq8k9QttVw",
+    C: "29gNHV4VVf7AC4rcwPceYeDBqzazeo1rxiutgaZGcNpF",
   },
   ownerNonce: {
-    A: "BtgY59SDm6DWzMbBVZExnpE1esrUov5KXcVDPpmDkMH3",
-    B: "7CnVVYqJ1PhjNmfWgmt8SLPEMDF9SuMTr1rAVmtbwTVm",
+    A: "8cn3iCUm2EQPZjtKmSPS96eiQkTM1acyAKmSP1tXXovF",
+    B: "7wbxdxbNDasf544NP2qs9vJYytPLf3viSnWvwhm5zhuV",
   },
   profile: {
-    A0: "DnjqCXQQ9N7S2oET9nNMGBVas2gBuri6n6HV4FunwetH",
-    A1: "AQZHT9S9cEhqQdQLuukWHeAxYPrF9pMN92AC77zoruH7",
-    B42: "7o5XM9xxCuBve8Nr8mLm55Ma39yA7YreTrBkNwWvPiAH",
+    A0: "3FCUFP2mjNAngGXGA3fT3sLX7GJum5Ve3AWU59HAU8wH",
+    A1: "FfHhoPkwk1MttLr6GetqdVK4avko6NNudLe3TveArwmi",
+    B42: "8YBpDRg2Eg1e89f2NFtcA7yJGypt6isSAykG9VhEymmE",
   },
   escrow: {
-    AB1: "EggCDLpux6iLzCbZmRsJboWKEjufXCfyitWdpoLRbewC",
-    AB2: "357GbEhphWesFpsdXYxefm2xk6ntsuLtL6B1iPygX74F",
-    BC99: "891Ta3SwLsSChmDW6VSdpWFcqpqYq4KZecmaJ23hQKfa",
+    AB1: "3nqGrfSyhCpCeebUTUnUdA1SiTRJPWjSqryJmx6owtis",
+    AB2: "3CycvvUN9U5JpTFPgEfdkkvZuS78HMqVS3FXzR6j8sxH",
+    BC99: "CQNYvkH49qNVPhKjJE56kgLEDb9xrbwwkmKy5PLFDFQs",
   },
-  protocolConfig: "EEz7JfgdJ1nVYafjpzvtXtvnyC4yHF1mayAT5EUxz3oh",
+  protocolConfig: "2NQLLMpbg6CahmbbLhdU9esmGCNDsujSYknhf1nA5jnv",
 } as const;
 
 // ---------------------------------------------------------------------------

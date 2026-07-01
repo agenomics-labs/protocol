@@ -28,11 +28,20 @@ _Last updated: 2026-05-06 (5 days to Colosseum deadline; PR #76 + PR #77 closed 
 
 ## 3. Devnet deployment
 
+**2026-07-01 incident**: the deployer/upgrade-authority keypair and Squads
+signer 2 were lost (primary dev host state wiped, no backup existed). All
+3 programs + the multisig were redeployed/recreated fresh the same day.
+See `docs/KEY_MANAGEMENT.md` for the postmortem and the backup practice
+adopted afterward. The addresses below are current as of that rotation —
+everything before it (the addresses in git history, old audit docs, etc.)
+refers to the now-abandoned prior deployment.
+
 | Program | Program ID | Binary matches main? | Upgrade authority |
 |---|---|---|---|
-| Agent Vault | `28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw` | ✓ | `BUdXA1Fi...jTXL` (single key) |
-| Agent Registry | `psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv` | ✓ | same |
-| Settlement | `9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95` | ✓ | same |
+| Agent Vault | `D2y1dEi4dj1pcxw6GvkFWX34RRbuFJCaGWdPNJAasQ5q` | ✓ | `7ybwQVQT...44oqs` (single key) |
+| Agent Registry | `26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7` | ✓ | same |
+| Settlement | `AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia` | ✓ | same |
+| CCTP Hook | `MtqZaquyJCMu1ph8CygpKBQECfAkH2gig7TUtYXdWdC` | ✓ | same |
 
 - Upgrade authority transfer to Squads multisig: **deferred** (see §4). Single key keeps devnet iteration cheap.
 - ADR-060 (manifest fields, `update_manifest` IX) is live on all programs.
@@ -41,20 +50,22 @@ _Last updated: 2026-05-06 (5 days to Colosseum deadline; PR #76 + PR #77 closed 
 
 | | |
 |---|---|
-| Multisig PDA | `EHdxwBkcSEcJe3E2UrRwwYozPjqZNe8HZrrBTeU6NPcz` |
+| Multisig PDA | `4Br6bfFrQ8U27TWvwk7QvdudChHweoftXdKvDCXaAPyv` |
 | Threshold | 2-of-3 |
-| Member 1 | `BUdXA1FiWnV7ksXYodH3uEhDUhfBJ8g4UmmWdshWjTXL` (current upgrade-auth wallet) |
-| Member 2 | `C1vm83htBDUwbHyBn4GAzwHoKtLeyc13EPW2nc3udvW5` — devnet-v1 throwaway keypair at `.keys/squads-signer-2.json` (gitignored) |
-| Member 3 | `8xMiCZdgCTB9J244JDiPqkm2yVTQbLuGTc12Qu5AynjB` — devnet-v1 throwaway keypair at `.keys/squads-signer-3.json` (gitignored) |
-| Create tx | `2DNgubLNyRG5NSBd7XeZVr5KksXKok2FcCWpN2rBU6oquvSzhRxpdEnCAbgzcba7qXpZdSWBYKtcZYGn27EBfBqJ` |
+| Member 1 | `7ybwQVQTf6Ma7NedBFh9wSsmchBQnJXQrGmVyMC44oqs` (current upgrade-auth wallet) |
+| Member 2 | `8xy1iryTfpKKMvd12MP8MCt8dSESZw8zrNvbrkiPtp1z` — devnet-v1 throwaway keypair at `.keys/squads-signer-2.json` (gitignored) |
+| Member 3 | `5YktpGwbcJxWWcrUSidLpyj1vShz77MVZ1Y5zcyqvU3k` — devnet-v1 throwaway keypair at `.keys/squads-signer-3.json` (gitignored) |
+| Create tx | `4McKiMDWGGWmbzeM3hfxF5gjgs4VykhiTho8Hn9eAp79mPidwQLd2gLTbUJ1FBWZaN4jgmuL1umHQBAGvgSFs7Ri` |
 | Public config | `scripts/.squads-devnet.json` |
 | Operator docs | `docs/SQUADS_DEVNET.md` |
 
 **Role scope (v1)**: intended future `AEP_PROTOCOL` SAS credential authority. Currently holds **no** authority — the SAS bootstrap ceremony hasn't run yet.
 
-Signers 2+3 are throwaway dev keypairs. For mainnet they must be replaced with real signers per ADR-063 §1.1 (3-of-5 with role slots). Rotation procedure in ADR-063 §4.
+Signers 2+3 are throwaway dev keypairs, encrypted-backed-up per `docs/KEY_MANAGEMENT.md` but still both resident on one host — move at least one to a second holder before relying on the 2-of-3 threshold. For mainnet they must be replaced with real signers per ADR-063 §1.1 (3-of-5 with role slots). Rotation procedure in ADR-063 §4.
 
-**Abandoned prior PDA**: `6QUUP78t3mKeSroV7fTAP9WPkfWkHXbVEhHzBR3Q9Xi` (create tx `5uS1vRyqRYxGs9Gf6ite2hrAzhp23nEVY8PZcJK4LTzGh5YbLdjUGub2SioCA2cQZWXCeNVBuUdW6GkVRqWJ9235`). Original v1 bootstrap from 2026-04-22T00:29Z; signer-2/signer-3 private keys were not persisted between sessions, leaving only 1-of-3 signing capability against a 2-of-3 threshold. No authority had been transferred to it, so it stays on-chain as inert dust (~0.0025 SOL).
+**Abandoned prior PDA (2nd occurrence)**: `EHdxwBkcSEcJe3E2UrRwwYozPjqZNe8HZrrBTeU6NPcz`, members `BUdXA1FiWnV7ksXYodH3uEhDUhfBJ8g4UmmWdshWjTXL` / `C1vm83htBDUwbHyBn4GAzwHoKtLeyc13EPW2nc3udvW5` / `8xMiCZdgCTB9J244JDiPqkm2yVTQbLuGTc12Qu5AynjB` (create tx `2DNgubLNyRG5NSBd7XeZVr5KksXKok2FcCWpN2rBU6oquvSzhRxpdEnCAbgzcba7qXpZdSWBYKtcZYGn27EBfBqJ`). Lost in the 2026-07-01 incident above; see `docs/KEY_MANAGEMENT.md`. No authority had been transferred to it, so it stays on-chain as inert dust.
+
+**Abandoned prior-prior PDA**: `6QUUP78t3mKeSroV7fTAP9WPkfWkHXbVEhHzBR3Q9Xi` (create tx `5uS1vRyqRYxGs9Gf6ite2hrAzhp23nEVY8PZcJK4LTzGh5YbLdjUGub2SioCA2cQZWXCeNVBuUdW6GkVRqWJ9235`). Original v1 bootstrap from 2026-04-22T00:29Z; signer-2/signer-3 private keys were not persisted between sessions, leaving only 1-of-3 signing capability against a 2-of-3 threshold. No authority had been transferred to it, so it stays on-chain as inert dust (~0.0025 SOL).
 
 ## 5. npm publishing state
 
@@ -201,9 +212,9 @@ cd ../../mcp-server && npm install && npm run build
 # 3. Verify devnet state
 solana config get                                # should be devnet
 solana balance                                   # should be > 10 SOL for full smoke
-for id in 28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw \
-          psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv \
-          9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95; do
+for id in D2y1dEi4dj1pcxw6GvkFWX34RRbuFJCaGWdPNJAasQ5q \
+          26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7 \
+          AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia; do
   solana program show "$id" | head -6
 done
 

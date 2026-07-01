@@ -32,7 +32,7 @@ file is committed to the repo because it contains only public data.
 | Cluster | `devnet` |
 | Program ID | `SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf` |
 | Threshold | 2-of-3 |
-| Member 1 (funder) | `BUdXA1FiWnV7ksXYodH3uEhDUhfBJ8g4UmmWdshWjTXL` (existing protocol wallet) |
+| Member 1 (funder) | `7ybwQVQTf6Ma7NedBFh9wSsmchBQnJXQrGmVyMC44oqs` (protocol deployer wallet — rotated 2026-07-01, see `docs/KEY_MANAGEMENT.md`) |
 | Members 2–3 | generated at bootstrap; see `scripts/.squads-devnet.json` |
 | Config authority | `null` (controlled by its own members) |
 | Time-lock | `0` |

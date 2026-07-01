@@ -30,10 +30,10 @@ The MCP server bridges all three programs to any MCP-compatible agent (Claude De
 
 **Devnet programs — RPC-verifiable right now:**
 
-- Vault: [`28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw`](https://explorer.solana.com/address/28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw?cluster=devnet)
-- Registry: [`psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv`](https://explorer.solana.com/address/psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv?cluster=devnet)
-- Settlement: [`9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95`](https://explorer.solana.com/address/9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95?cluster=devnet)
-- CCTP Hook: [`3yifMBDVChLzcihZWh4or9zxgzbmQVghdNZzpuP814vb`](https://explorer.solana.com/address/3yifMBDVChLzcihZWh4or9zxgzbmQVghdNZzpuP814vb?cluster=devnet)
+- Vault: [`D2y1dEi4dj1pcxw6GvkFWX34RRbuFJCaGWdPNJAasQ5q`](https://explorer.solana.com/address/D2y1dEi4dj1pcxw6GvkFWX34RRbuFJCaGWdPNJAasQ5q?cluster=devnet)
+- Registry: [`26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7`](https://explorer.solana.com/address/26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7?cluster=devnet)
+- Settlement: [`AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia`](https://explorer.solana.com/address/AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia?cluster=devnet)
+- CCTP Hook: [`MtqZaquyJCMu1ph8CygpKBQECfAkH2gig7TUtYXdWdC`](https://explorer.solana.com/address/MtqZaquyJCMu1ph8CygpKBQECfAkH2gig7TUtYXdWdC?cluster=devnet)
 
 ## Watch the videos
 

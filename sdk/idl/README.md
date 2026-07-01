@@ -28,9 +28,9 @@ import type { Idl } from "@coral-xyz/anchor";
 const cluster: Cluster = "devnet";
 const ids: ProgramIds = getProgramIds(cluster);
 
-console.log(ids.agentRegistry); // psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv
-console.log(ids.agentVault);    // 28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw
-console.log(ids.settlement);    // 9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95
+console.log(ids.agentRegistry); // 26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7
+console.log(ids.agentVault);    // D2y1dEi4dj1pcxw6GvkFWX34RRbuFJCaGWdPNJAasQ5q
+console.log(ids.settlement);    // AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia
 
 // Pass the IDL to Anchor (cast at the call site).
 const idl = AgentRegistryIdl as Idl;

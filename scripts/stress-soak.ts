@@ -25,8 +25,8 @@ const DURATION_SEC = parseInt(process.env.DURATION_SEC || "600", 10);
 const INTERVAL_MS = parseInt(process.env.INTERVAL_MS || "1000", 10);
 const SNAPSHOT_SEC = parseInt(process.env.SNAPSHOT_SEC || "30", 10);
 
-const REGISTRY_PROGRAM_ID = new PublicKey("psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv");
-const SETTLEMENT_PROGRAM_ID = new PublicKey("9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95");
+const REGISTRY_PROGRAM_ID = new PublicKey("26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7");
+const SETTLEMENT_PROGRAM_ID = new PublicKey("AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia");
 
 function deriveEscrowPDA(client: PublicKey, provider: PublicKey, taskId: number): [PublicKey, number] {
   const buf = Buffer.alloc(8);

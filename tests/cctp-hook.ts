@@ -46,13 +46,13 @@ describe("Surface 3 — cctp-hook program", () => {
 
   // Program IDs (kept in lockstep with `Anchor.toml [programs.localnet]`).
   const HOOK_PROGRAM_ID = new PublicKey(
-    "3yifMBDVChLzcihZWh4or9zxgzbmQVghdNZzpuP814vb",
+    "MtqZaquyJCMu1ph8CygpKBQECfAkH2gig7TUtYXdWdC",
   );
   const SETTLEMENT_PROGRAM_ID = new PublicKey(
-    "9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95",
+    "AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia",
   );
   const REGISTRY_PROGRAM_ID = new PublicKey(
-    "psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv",
+    "26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7",
   );
 
   const HOOK_SIGNER_SEED = Buffer.from("hook_signer");

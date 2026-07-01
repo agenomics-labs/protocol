@@ -3,7 +3,7 @@ import { Shield, Users, Coins } from "lucide-react";
 export const PROGRAMS = {
   vault: {
     name: "Agent Vault",
-    id: "28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw",
+    id: "D2y1dEi4dj1pcxw6GvkFWX34RRbuFJCaGWdPNJAasQ5q",
     icon: Shield,
     color: "from-violet-500 to-purple-600",
     tagColor: "bg-violet-100 text-violet-800",
@@ -31,7 +31,7 @@ export const PROGRAMS = {
   },
   registry: {
     name: "Agent Registry",
-    id: "psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv",
+    id: "26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7",
     icon: Users,
     color: "from-blue-500 to-cyan-600",
     tagColor: "bg-blue-100 text-blue-800",
@@ -58,7 +58,7 @@ export const PROGRAMS = {
   },
   settlement: {
     name: "Settlement Protocol",
-    id: "9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95",
+    id: "AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia",
     icon: Coins,
     color: "from-emerald-500 to-teal-600",
     tagColor: "bg-emerald-100 text-emerald-800",
@@ -88,7 +88,7 @@ export const PROGRAMS = {
   },
   cctp_hook: {
     name: "CCTP Hook",
-    id: "3yifMBDVChLzcihZWh4or9zxgzbmQVghdNZzpuP814vb",
+    id: "MtqZaquyJCMu1ph8CygpKBQECfAkH2gig7TUtYXdWdC",
     icon: Coins,
     color: "from-sky-500 to-blue-600",
     tagColor: "bg-sky-100 text-sky-800",

@@ -111,7 +111,7 @@ if (!accounts.ownerNonce.value) {
 accounts.ownerNonce.value = await findOwnerNoncePda({ authority: getAddressFromResolvedInstructionAccount("authority", accounts.authority.value) });
 }
 if (!accounts.vault.value) {
-accounts.vault.value = await getProgramDerivedAddress({ programAddress: '28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw' as Address<'28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw'>, seeds: [getBytesEncoder().encode(new Uint8Array([118, 97, 117, 108, 116])), getAddressEncoder().encode(getAddressFromResolvedInstructionAccount("authority", accounts.authority.value))] });
+accounts.vault.value = await getProgramDerivedAddress({ programAddress: 'D2y1dEi4dj1pcxw6GvkFWX34RRbuFJCaGWdPNJAasQ5q' as Address<'D2y1dEi4dj1pcxw6GvkFWX34RRbuFJCaGWdPNJAasQ5q'>, seeds: [getBytesEncoder().encode(new Uint8Array([118, 97, 117, 108, 116])), getAddressEncoder().encode(getAddressFromResolvedInstructionAccount("authority", accounts.authority.value))] });
 }
 if (!accounts.systemProgram.value) {
 accounts.systemProgram.value = '11111111111111111111111111111111' as Address<'11111111111111111111111111111111'>;

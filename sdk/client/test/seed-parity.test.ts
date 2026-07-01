@@ -133,9 +133,9 @@ function assertSeedInProgram(src: string, seed: string, ctx: string): void {
 // ---------------------------------------------------------------------------
 // Program IDs (match declare_id! in programs/*/src/lib.rs).
 // ---------------------------------------------------------------------------
-const VAULT_PROGRAM_ID_BS58 = "28Km3edbdMASVzKDnG2gHNLBgC7JQodGd9FVRAEVzYYw";
-const REGISTRY_PROGRAM_ID_BS58 = "psJT29X5QAqkc9ZL3mt1YbyUsGqgdXjBU7RhEUEyNyv";
-const SETTLEMENT_PROGRAM_ID_BS58 = "9TRVbw2dvER1zDQcxwA8Puub4fLnPGstc1GGDDLTUF95";
+const VAULT_PROGRAM_ID_BS58 = "D2y1dEi4dj1pcxw6GvkFWX34RRbuFJCaGWdPNJAasQ5q";
+const REGISTRY_PROGRAM_ID_BS58 = "26KETQPxeMmbakxpVbUEpQBQmVgpabHAweTHBRgBHjW7";
+const SETTLEMENT_PROGRAM_ID_BS58 = "AwjdsNvhR2uwPNbU6F2fsYB33VcNGL5XaANdgsyvZDia";
 
 const VAULT_PROGRAM_ID = new PublicKey(VAULT_PROGRAM_ID_BS58);
 const REGISTRY_PROGRAM_ID = new PublicKey(REGISTRY_PROGRAM_ID_BS58);
