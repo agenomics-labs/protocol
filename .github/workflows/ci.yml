@@ -10,6 +10,7 @@ jobs:
   rust-check:
     name: Rust Check & Test
     runs-on: [self-hosted, linux]
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
 
@@ -61,6 +62,7 @@ jobs:
   security-audit:
     name: Security Audit
     runs-on: [self-hosted, linux]
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
 
@@ -105,6 +107,7 @@ jobs:
   typescript-check-mcp:
     name: TypeScript Check (mcp-server)
     runs-on: [self-hosted, linux]
+    timeout-minutes: 10
     # ADR-088: mcp-server's tsc resolves Anchor IDL types through the
     # `src/idl/types.d.ts` re-export shim, which points at
     # `target/types/*.ts` — a build artifact of `anchor-build`. We wait
@@ -188,6 +191,7 @@ jobs:
   typescript-check-indexer:
     name: TypeScript Check (indexer)
     runs-on: [self-hosted, linux]
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
       - uses: ./.github/actions/setup-node # vendored (AUD-406 follow-up: no codeload fetch)
@@ -209,6 +213,7 @@ jobs:
   typescript-check-x402-relay:
     name: TypeScript Check + Tests (x402-relay)
     runs-on: [self-hosted, linux]
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
       - uses: ./.github/actions/setup-node # vendored (AUD-406 follow-up: no codeload fetch)
@@ -230,6 +235,7 @@ jobs:
   typescript-check-validator:
     name: TypeScript Check (capability-manifest-validator)
     runs-on: [self-hosted, linux]
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
       - uses: ./.github/actions/setup-node # vendored (AUD-406 follow-up: no codeload fetch)
@@ -252,6 +258,7 @@ jobs:
   typescript-check-sas-resolver:
     name: TypeScript Check (sas-resolver)
     runs-on: [self-hosted, linux]
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
       - uses: ./.github/actions/setup-node # vendored (AUD-406 follow-up: no codeload fetch)
@@ -282,6 +289,7 @@ jobs:
   typescript-check-sdk-idl:
     name: TypeScript Check (sdk/idl)
     runs-on: [self-hosted, linux]
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
       - uses: ./.github/actions/setup-node # vendored (AUD-406 follow-up: no codeload fetch)
@@ -299,6 +307,7 @@ jobs:
   typescript-check-sdk-action-runtime:
     name: TypeScript Check (sdk/action-runtime)
     runs-on: [self-hosted, linux]
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
       - uses: ./.github/actions/setup-node # vendored (AUD-406 follow-up: no codeload fetch)
@@ -316,6 +325,7 @@ jobs:
   typescript-check-sdk-client:
     name: TypeScript Check (sdk/client)
     runs-on: [self-hosted, linux]
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
       - uses: ./.github/actions/setup-node # vendored (AUD-406 follow-up: no codeload fetch)
@@ -353,6 +363,7 @@ jobs:
   dashboard-build:
     name: Dashboard build (vite)
     runs-on: [self-hosted, linux]
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
       - uses: ./.github/actions/setup-node # vendored (AUD-406 follow-up: no codeload fetch)
@@ -371,6 +382,7 @@ jobs:
   mcp-server-tests:
     name: mcp-server unit tests
     runs-on: [self-hosted, linux]
+    timeout-minutes: 10
     # ADR-088: same Anchor-types dependency as `typescript-check-mcp`.
     # The new `idl-typed-decode.test.ts` exercises the typed
     # `IdlAccounts<AgentRegistry>["agentProfile"]` shape, which only
@@ -415,6 +427,7 @@ jobs:
   workspace-build-order:
     name: Workspace build-order check
     runs-on: [self-hosted, linux]
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
       - uses: ./.github/actions/setup-node # vendored (AUD-406 follow-up: no codeload fetch)
@@ -443,6 +456,7 @@ jobs:
   lockfile-determinism:
     name: Lockfile determinism check
     runs-on: [self-hosted, linux]
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
       - uses: ./.github/actions/setup-node # vendored (AUD-406 follow-up: no codeload fetch)
@@ -472,6 +486,7 @@ jobs:
   tool-parity:
     name: Tool parity check (mcp-server ↔ dashboard ↔ README)
     runs-on: [self-hosted, linux]
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
       - name: Run tool parity check
@@ -485,6 +500,7 @@ jobs:
   license-parity:
     name: License parity check (Apache-2.0 across workspaces + programs)
     runs-on: [self-hosted, linux]
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
       - name: Run license parity check
@@ -498,6 +514,7 @@ jobs:
   doc-commands-lint:
     name: Doc-commands lint (executable instructions in user docs)
     runs-on: [self-hosted, linux]
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
       - name: Run doc-commands lint
@@ -513,6 +530,7 @@ jobs:
   program-ids-parity:
     name: Program-ID parity check (declare_id! ↔ docs ↔ dashboard)
     runs-on: [self-hosted, linux]
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
       - name: Run program-ID parity check
@@ -528,6 +546,7 @@ jobs:
   adr-refs:
     name: ADR cross-reference check
     runs-on: [self-hosted, linux]
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
       - name: Run ADR cross-reference check
@@ -541,6 +560,7 @@ jobs:
   md-links:
     name: Markdown link check (relative file paths)
     runs-on: [self-hosted, linux]
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
       - name: Run markdown link check
@@ -553,6 +573,7 @@ jobs:
   secret-scan:
     name: Secret Scan
     runs-on: [self-hosted, linux]
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
         with:
@@ -586,6 +607,7 @@ jobs:
   anchor-build:
     name: Anchor Build & IDL Diff
     runs-on: [self-hosted, linux]
+    timeout-minutes: 15
     env:
       # Agave 3.1.13 ships platform-tools v1.52 (Rust 1.89 + cargo 1.89),
       # which is the first Solana/Agave release whose bundled cargo can
@@ -707,6 +729,7 @@ jobs:
   anchor-integration:
     name: Anchor Integration Tests
     runs-on: [self-hosted, linux]
+    timeout-minutes: 20
     needs: anchor-build
     # ADR-105 self-hosted runners share one host — solana-test-validator
     # binds RPC port 8899 by default, so two anchor-test jobs in parallel

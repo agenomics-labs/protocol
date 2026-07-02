@@ -329,9 +329,13 @@ async function startTestServer(opts: {
   return {
     url,
     close: () =>
-      new Promise<void>((resolve, reject) =>
-        server.close((err) => (err ? reject(err) : resolve())),
-      ),
+      new Promise<void>((resolve, reject) => {
+        // See x402-relay/test/admin-drain-endpoint.test.ts for the full
+        // rationale: undici's fetch() keeps keep-alive sockets open, and
+        // server.close() waits on them indefinitely otherwise.
+        server.closeAllConnections();
+        server.close((err) => (err ? reject(err) : resolve()));
+      }),
   };
 }
 

@@ -93,6 +93,11 @@ function startApp(opts: {
         url: `http://127.0.0.1:${port}`,
         close: () =>
           new Promise<void>((res) => {
+            // See x402-relay/test/admin-drain-endpoint.test.ts for the
+            // full rationale: undici's fetch() keeps keep-alive sockets
+            // open, and server.close() waits on them indefinitely
+            // otherwise.
+            server.closeAllConnections();
             server.close(() => res());
           }),
       });
