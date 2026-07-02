@@ -41,7 +41,7 @@
     "@agenomics/capability-manifest-validator": "*",
     "@agenomics/sas-resolver": "*",
     "@anchor-lang/core": "^1.0.2",
-    "@coinbase/cdp-sdk": "^1.51.0",
+    "@coinbase/cdp-sdk": "^1.51.2",
     "@coinbase/x402": "^2.1.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@opentelemetry/api": "^1.9.1",
