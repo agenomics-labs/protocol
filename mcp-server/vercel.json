@@ -1,5 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "cd .. && npm ci --no-audit --no-fund",
   "buildCommand": "cd .. && npm ci && npm -w @agenomics/action-runtime -w @agenomics/capability-manifest-validator -w @agenomics/sas-resolver -w @agenomics/mcp-server run build && cd mcp-server && node scripts/bundle-vercel.mjs",
   "outputDirectory": "dist",
   "functions": {
