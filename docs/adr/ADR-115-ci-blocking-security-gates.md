@@ -15,7 +15,7 @@ but are `continue-on-error: true`. Specifically:
 - `.github/workflows/ci.yml:47-49` — `cargo clippy` advisory.
 - `.github/workflows/ci.yml:84-86` — `cargo audit` advisory.
 - `.github/workflows/ci.yml` — no `npm audit` step at all.
-- `mcp-server/.eslintrc.json:10` — `@typescript-eslint/no-explicit-any`
+- `eslint.config.mjs:13` — `@typescript-eslint/no-explicit-any`
   is `"warn"` (7+ `as any` casts accumulated).
 
 The prior audit (S-xcut-08) documented the same. The original
