@@ -7,6 +7,42 @@ on:
     branches: [main]
 
 jobs:
+  # EXPERIMENTAL (branch: ci/share-shared-package-artifacts) — build once,
+  # share via artifact, instead of 4 separate jobs (typescript-check-mcp,
+  # typescript-check-validator, typescript-check-sas-resolver,
+  # mcp-server-tests) each independently rebuilding the same 3 packages
+  # from scratch. `workspace-build-order` intentionally does NOT consume
+  # this artifact — its entire purpose is proving a clean `npm ci` +
+  # build-from-scratch works, so it must keep building everything itself.
+  build-shared-packages:
+    name: Build shared TS packages (once, for reuse)
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: ./.github/actions/setup-node # vendored (AUD-406 follow-up: no codeload fetch)
+        with:
+          node-version: "20"
+          cache: "npm"
+      - name: Install workspace deps (npm ci)
+        run: npm ci --no-audit --no-fund
+      # action-runtime first: capability-manifest-validator and
+      # sas-resolver both depend on it (PR-T / AUD-013 / AUD-201).
+      - name: Build @agenomics/action-runtime
+        run: npm run build --workspace @agenomics/action-runtime
+      - name: Build @agenomics/capability-manifest-validator
+        run: npm run build --workspace @agenomics/capability-manifest-validator
+      - name: Build @agenomics/sas-resolver
+        run: npm run build --workspace @agenomics/sas-resolver
+      - name: Upload shared package dist/ output
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # pin v7 (AUD-406)
+        with:
+          name: shared-ts-dist
+          path: |
+            sdk/action-runtime/dist
+            packages/capability-manifest-validator/dist
+            packages/sas-resolver/dist
+          if-no-files-found: error
+
   rust-check:
     name: Rust Check & Test
     runs-on: [self-hosted, linux]
@@ -110,7 +146,11 @@ jobs:
     # `target/types/*.ts` — a build artifact of `anchor-build`. We wait
     # for that job, download the `anchor-types` artifact, and place it
     # under `target/types/` before running `tsc --noEmit`.
-    needs: anchor-build
+    #
+    # EXPERIMENTAL: also needs build-shared-packages and downloads its
+    # dist/ output instead of rebuilding action-runtime /
+    # capability-manifest-validator / sas-resolver locally.
+    needs: [anchor-build, build-shared-packages]
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
 
@@ -133,17 +173,13 @@ jobs:
       # mcp-server consumes @agenomics/capability-manifest-validator,
       # @agenomics/sas-resolver, and @agenomics/action-runtime via `file:`
       # deps. tsc --noEmit in mcp-server needs the d.ts output from those
-      # packages, so build them first. action-runtime is built before
-      # sas-resolver because PR-T (AUD-013) made sas-resolver re-export from
-      # action-runtime.
-      - name: Build @agenomics/action-runtime
-        run: npm run build --workspace @agenomics/action-runtime
-
-      - name: Build @agenomics/capability-manifest-validator
-        run: npm run build --workspace @agenomics/capability-manifest-validator
-
-      - name: Build @agenomics/sas-resolver
-        run: npm run build --workspace @agenomics/sas-resolver
+      # packages — downloaded pre-built from build-shared-packages rather
+      # than rebuilt here.
+      - name: Download shared package dist/ output
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # pin v8 (AUD-406)
+        with:
+          name: shared-ts-dist
+          path: .
 
       - name: Type check
         working-directory: mcp-server
@@ -230,6 +266,9 @@ jobs:
   typescript-check-validator:
     name: TypeScript Check (capability-manifest-validator)
     runs-on: [self-hosted, linux]
+    # EXPERIMENTAL: downloads build-shared-packages' dist/ output instead
+    # of rebuilding @agenomics/action-runtime locally.
+    needs: build-shared-packages
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
       - uses: ./.github/actions/setup-node # vendored (AUD-406 follow-up: no codeload fetch)
@@ -239,10 +278,13 @@ jobs:
       - name: Install workspace deps (npm ci)
         run: npm ci --no-audit --no-fund
       # capability-manifest-validator now depends on @agenomics/action-runtime
-      # (PR-T completion / AUD-201 / commit 66b7240). Build action-runtime
-      # first so its d.ts is on disk for the typecheck.
-      - name: Build @agenomics/action-runtime
-        run: npm run build --workspace @agenomics/action-runtime
+      # (PR-T completion / AUD-201 / commit 66b7240). Needs its d.ts on
+      # disk for the typecheck — downloaded pre-built, not rebuilt here.
+      - name: Download shared package dist/ output
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # pin v8 (AUD-406)
+        with:
+          name: shared-ts-dist
+          path: .
       - name: Type check
         working-directory: packages/capability-manifest-validator
         run: npx tsc --noEmit
@@ -252,6 +294,9 @@ jobs:
   typescript-check-sas-resolver:
     name: TypeScript Check (sas-resolver)
     runs-on: [self-hosted, linux]
+    # EXPERIMENTAL: downloads build-shared-packages' dist/ output instead
+    # of rebuilding action-runtime / capability-manifest-validator locally.
+    needs: build-shared-packages
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
       - uses: ./.github/actions/setup-node # vendored (AUD-406 follow-up: no codeload fetch)
@@ -262,11 +307,13 @@ jobs:
         run: npm ci --no-audit --no-fund
       # sas-resolver depends on capability-manifest-validator (runtime) and
       # @agenomics/action-runtime (PR-T / AUD-013 — re-exports Result/ok/err).
-      # Build both before typecheck/test.
-      - name: Build @agenomics/action-runtime
-        run: npm run build --workspace @agenomics/action-runtime
-      - name: Build @agenomics/capability-manifest-validator
-        run: npm run build --workspace @agenomics/capability-manifest-validator
+      # Needs both before typecheck/test — downloaded pre-built, not
+      # rebuilt here.
+      - name: Download shared package dist/ output
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # pin v8 (AUD-406)
+        with:
+          name: shared-ts-dist
+          path: .
       - name: Type check
         working-directory: packages/sas-resolver
         run: npx tsc --noEmit
@@ -375,7 +422,10 @@ jobs:
     # The new `idl-typed-decode.test.ts` exercises the typed
     # `IdlAccounts<AgentRegistry>["agentProfile"]` shape, which only
     # resolves once `target/types/agent_registry.ts` is on disk.
-    needs: anchor-build
+    #
+    # EXPERIMENTAL: also needs build-shared-packages and downloads its
+    # dist/ output instead of rebuilding the 3 packages locally.
+    needs: [anchor-build, build-shared-packages]
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
       - uses: ./.github/actions/setup-node # vendored (AUD-406 follow-up: no codeload fetch)
@@ -389,16 +439,14 @@ jobs:
           path: target/types
       - name: Install workspace deps (npm ci)
         run: npm ci --no-audit --no-fund
-      # Build the @agenomics/* packages so the `file:` deps + tsx ESM loader
-      # can resolve their dist/*.js at test runtime. action-runtime is built
-      # first so sas-resolver (which re-exports from it post PR-T / AUD-013)
-      # has its types resolvable.
-      - name: Build @agenomics/action-runtime
-        run: npm run build --workspace @agenomics/action-runtime
-      - name: Build @agenomics/capability-manifest-validator
-        run: npm run build --workspace @agenomics/capability-manifest-validator
-      - name: Build @agenomics/sas-resolver
-        run: npm run build --workspace @agenomics/sas-resolver
+      # The @agenomics/* packages' dist/*.js is needed for the `file:`
+      # deps + tsx ESM loader to resolve at test runtime — downloaded
+      # pre-built from build-shared-packages rather than rebuilt here.
+      - name: Download shared package dist/ output
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # pin v8 (AUD-406)
+        with:
+          name: shared-ts-dist
+          path: .
       - name: Unit tests (node:test + tsx)
         run: npm test --workspace @agenomics/mcp-server
 
