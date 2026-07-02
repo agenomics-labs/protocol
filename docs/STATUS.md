@@ -45,6 +45,7 @@ refers to the now-abandoned prior deployment.
 
 - Upgrade authority transfer to Squads multisig: **deferred** (see §4). Single key keeps devnet iteration cheap.
 - ADR-060 (manifest fields, `update_manifest` IX) is live on all programs.
+- 2026-07-01 incident close-out: Agent Registry, Settlement, and CCTP Hook were upgraded on devnet (funded via `devnet-pow` after the standard faucets were rate-limited) to carry the corrected cross-program-reference constants — Agent Vault needed no upgrade (no cross-program references). `scripts/smoke-test-devnet.ts` passed end-to-end against the live redeployed programs (registration, vault creation, `update_manifest`, MCP dispatch, SAS resolver round-trip all green).
 
 ## 4. Squads multisig (devnet)
 
