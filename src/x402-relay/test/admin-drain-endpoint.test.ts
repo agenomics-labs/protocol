@@ -101,7 +101,16 @@ describe("admin /drain endpoint lifecycle", () => {
     relay.__resetRedemptionStateForTests();
     relay.__resetDrainStateForTests();
     await new Promise<void>((resolve, reject) => {
-      (relay.server as Server).close((err) => (err ? reject(err) : resolve()));
+      const server = relay.server as Server;
+      // Node's undici `fetch()` keeps HTTP keep-alive sockets open after
+      // the response resolves. `server.close()`'s callback does not fire
+      // until every connection closes, and an idle keep-alive socket can
+      // sit open well past the test run — this hung a CI runner for 2h43m
+      // (see PR #297 investigation). Force-close idle sockets so close()
+      // resolves promptly; safe here because all assertions have already
+      // awaited their responses by this point.
+      server.closeAllConnections();
+      server.close((err) => (err ? reject(err) : resolve()));
     });
   });
 
