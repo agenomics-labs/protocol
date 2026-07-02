@@ -12,7 +12,7 @@ jobs:
     runs-on: [self-hosted, linux]
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # pin v5 (AUD-406)
 
       - name: Verify preinstalled Rust toolchain
         # ADR-105: self-hosted runner ships with stable + nightly toolchains
@@ -64,7 +64,7 @@ jobs:
     runs-on: [self-hosted, linux]
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # pin v5 (AUD-406)
 
       - name: Verify preinstalled Rust toolchain
         # ADR-105: self-hosted runner ships with stable + nightly toolchains
@@ -115,7 +115,7 @@ jobs:
     # under `target/types/` before running `tsc --noEmit`.
     needs: anchor-build
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # pin v5 (AUD-406)
 
       - uses: ./.github/actions/setup-node # vendored (AUD-406 follow-up: no codeload fetch)
         with:
@@ -193,7 +193,7 @@ jobs:
     runs-on: [self-hosted, linux]
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # pin v5 (AUD-406)
       - uses: ./.github/actions/setup-node # vendored (AUD-406 follow-up: no codeload fetch)
         with:
           node-version: "20"
@@ -215,7 +215,7 @@ jobs:
     runs-on: [self-hosted, linux]
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # pin v5 (AUD-406)
       - uses: ./.github/actions/setup-node # vendored (AUD-406 follow-up: no codeload fetch)
         with:
           node-version: "20"
@@ -237,7 +237,7 @@ jobs:
     runs-on: [self-hosted, linux]
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # pin v5 (AUD-406)
       - uses: ./.github/actions/setup-node # vendored (AUD-406 follow-up: no codeload fetch)
         with:
           node-version: "20"
@@ -260,7 +260,7 @@ jobs:
     runs-on: [self-hosted, linux]
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # pin v5 (AUD-406)
       - uses: ./.github/actions/setup-node # vendored (AUD-406 follow-up: no codeload fetch)
         with:
           node-version: "20"
@@ -291,7 +291,7 @@ jobs:
     runs-on: [self-hosted, linux]
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # pin v5 (AUD-406)
       - uses: ./.github/actions/setup-node # vendored (AUD-406 follow-up: no codeload fetch)
         with:
           node-version: "20"
@@ -309,7 +309,7 @@ jobs:
     runs-on: [self-hosted, linux]
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # pin v5 (AUD-406)
       - uses: ./.github/actions/setup-node # vendored (AUD-406 follow-up: no codeload fetch)
         with:
           node-version: "20"
@@ -327,7 +327,7 @@ jobs:
     runs-on: [self-hosted, linux]
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # pin v5 (AUD-406)
       - uses: ./.github/actions/setup-node # vendored (AUD-406 follow-up: no codeload fetch)
         with:
           node-version: "20"
@@ -365,7 +365,7 @@ jobs:
     runs-on: [self-hosted, linux]
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # pin v5 (AUD-406)
       - uses: ./.github/actions/setup-node # vendored (AUD-406 follow-up: no codeload fetch)
         with:
           node-version: "20"
@@ -389,7 +389,7 @@ jobs:
     # resolves once `target/types/agent_registry.ts` is on disk.
     needs: anchor-build
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # pin v5 (AUD-406)
       - uses: ./.github/actions/setup-node # vendored (AUD-406 follow-up: no codeload fetch)
         with:
           node-version: "20"
@@ -429,7 +429,7 @@ jobs:
     runs-on: [self-hosted, linux]
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # pin v5 (AUD-406)
       - uses: ./.github/actions/setup-node # vendored (AUD-406 follow-up: no codeload fetch)
         with:
           node-version: "20"
@@ -458,7 +458,7 @@ jobs:
     runs-on: [self-hosted, linux]
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # pin v5 (AUD-406)
       - uses: ./.github/actions/setup-node # vendored (AUD-406 follow-up: no codeload fetch)
         with:
           node-version: "20"
@@ -488,7 +488,7 @@ jobs:
     runs-on: [self-hosted, linux]
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # pin v5 (AUD-406)
       - name: Run tool parity check
         run: bash scripts/check-tools-parity.sh
 
@@ -502,7 +502,7 @@ jobs:
     runs-on: [self-hosted, linux]
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # pin v5 (AUD-406)
       - name: Run license parity check
         run: bash scripts/check-license-parity.sh
 
@@ -516,7 +516,7 @@ jobs:
     runs-on: [self-hosted, linux]
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # pin v5 (AUD-406)
       - name: Run doc-commands lint
         run: bash scripts/check-doc-commands.sh
 
@@ -532,7 +532,7 @@ jobs:
     runs-on: [self-hosted, linux]
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # pin v5 (AUD-406)
       - name: Run program-ID parity check
         run: bash scripts/check-program-ids.sh
 
@@ -548,7 +548,7 @@ jobs:
     runs-on: [self-hosted, linux]
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # pin v5 (AUD-406)
       - name: Run ADR cross-reference check
         run: bash scripts/check-adr-refs.sh
 
@@ -562,7 +562,7 @@ jobs:
     runs-on: [self-hosted, linux]
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # pin v5 (AUD-406)
       - name: Run markdown link check
         run: bash scripts/check-md-links.sh
 
@@ -575,7 +575,7 @@ jobs:
     runs-on: [self-hosted, linux]
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # pin v5 (AUD-406)
         with:
           # TruffleHog needs the commit history to diff against `base`.
           fetch-depth: 0
@@ -620,7 +620,7 @@ jobs:
       SOLANA_VERSION: v3.1.13
       ANCHOR_VERSION: 0.31.1
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # pin v5 (AUD-406)
 
       - name: Verify preinstalled Rust toolchain
         # ADR-105: self-hosted runner ships with stable + nightly toolchains
@@ -744,7 +744,7 @@ jobs:
       SOLANA_VERSION: v3.1.13
       ANCHOR_VERSION: 0.31.1
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # pin v5 (AUD-406)
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # pin v5 (AUD-406)
 
       - name: Verify preinstalled Rust toolchain
         # ADR-105: self-hosted runner ships with stable + nightly toolchains
