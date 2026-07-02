@@ -27,7 +27,6 @@
 // `test/tools/schema-snapshot.test.ts`.
 
 import { z, type ZodRawShape } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 /**
@@ -35,15 +34,24 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
  * normalized to the pre-ADR-135 wire shape (no `$schema`, no synthetic
  * top-level `additionalProperties`). This is THE projection function;
  * `tools/*.ts` and `adapters/mcp.ts` must both route through it.
+ *
+ * Uses Zod's own built-in `z.toJSONSchema()` (Zod 4+) rather than the
+ * third-party `zod-to-json-schema` package: that package's peerDependencies
+ * claim Zod v4 support, but at runtime it doesn't understand Zod 4's
+ * internal schema representation and silently renders an empty schema
+ * (`{ "$schema": "..." }` with no `type`/`properties`/`required`) for any
+ * Zod v4 object. `target: "draft-7"` matches the pre-migration output
+ * draft; `reused: "inline"` matches the old `$refStrategy: "none"` — MCP
+ * tool descriptors are single flat objects, never `$ref`/`$defs`.
  */
 export function renderInputSchema(shape: ZodRawShape): Tool["inputSchema"] {
   // Cast to `any` to avoid TS2589 ("type instantiation is excessively
   // deep") which `ZodObject<ZodRawShape>` triggers under strict TS — the
   // same workaround `adapters/mcp.ts#toJsonSchema` carried pre-ADR-135.
   const obj = z.object(shape) as unknown as z.ZodType<unknown>;
-  const rendered = zodToJsonSchema(obj as any, {
-    target: "jsonSchema7",
-    $refStrategy: "none",
+  const rendered = z.toJSONSchema(obj as any, {
+    target: "draft-7",
+    reused: "inline",
   }) as Record<string, unknown>;
 
   // Strip the zod-to-json-schema envelope/synthetic keys so the wire

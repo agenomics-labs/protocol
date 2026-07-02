@@ -26,6 +26,7 @@
         "milestoneIndex": {
           "type": "integer",
           "minimum": 0,
+          "maximum": 9007199254740991,
           "description": "Zero-based index of the milestone to approve"
         },
         "providerTokenAccount": {
@@ -33,10 +34,10 @@
           "description": "Provider's token account to receive the milestone payment"
         },
         "rating": {
+          "description": "Optional 0..=5 star rating. 0 means no rating (default). AUD-007 (PR-Q): `avg_rating` was removed from on-chain `AgentProfile`; the value is accepted for forward-compat (future rating ix) and currently has no on-chain effect.",
           "type": "number",
           "minimum": 0,
-          "maximum": 5,
-          "description": "Optional 0..=5 star rating. 0 means no rating (default). AUD-007 (PR-Q): `avg_rating` was removed from on-chain `AgentProfile`; the value is accepted for forward-compat (future rating ix) and currently has no on-chain effect."
+          "maximum": 5
         }
       },
       "required": [
@@ -92,6 +93,8 @@
           "description": "Unix timestamp deadline for task completion"
         },
         "milestones": {
+          "minItems": 1,
+          "maxItems": 5,
           "type": "array",
           "items": {
             "type": "object",
@@ -111,13 +114,11 @@
             ],
             "additionalProperties": false
           },
-          "minItems": 1,
-          "maxItems": 5,
           "description": "1-5 milestones. Amounts must sum to totalAmountTokens."
         },
         "disputeResolverAddress": {
-          "type": "string",
-          "description": "Optional: public key of a third-party dispute resolver"
+          "description": "Optional: public key of a third-party dispute resolver",
+          "type": "string"
         }
       },
       "required": [
@@ -153,9 +154,11 @@
         "maxTxsPerHour": {
           "type": "integer",
           "minimum": 0,
+          "maximum": 9007199254740991,
           "description": "Maximum number of transactions allowed per hour"
         },
         "agentIdentitySecretKey": {
+          "description": "ADR-124 (AUD-116 path-a) — OPTIONAL. The agent_identity's secret key, used locally to produce the proof-of-control signature. Never leaves the process. Omit for self-bind (wallet == agent_identity).",
           "anyOf": [
             {
               "type": "string",
@@ -164,18 +167,17 @@
               "description": "Base58-encoded 64-byte Solana secret key for the agent_identity hot key. Required if agentIdentity != wallet.publicKey."
             },
             {
+              "minItems": 64,
+              "maxItems": 64,
               "type": "array",
               "items": {
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 255
               },
-              "minItems": 64,
-              "maxItems": 64,
               "description": "JSON-style 64-byte secret key array for the agent_identity hot key."
             }
-          ],
-          "description": "ADR-124 (AUD-116 path-a) — OPTIONAL. The agent_identity's secret key, used locally to produce the proof-of-control signature. Never leaves the process. Omit for self-bind (wallet == agent_identity)."
+          ]
         }
       },
       "required": [
@@ -192,21 +194,22 @@
       "type": "object",
       "properties": {
         "capability": {
-          "type": "string",
-          "description": "Filter by capability tag (partial match)"
+          "description": "Filter by capability tag (partial match)",
+          "type": "string"
         },
         "category": {
-          "type": "string",
-          "description": "Filter by category (exact match)"
+          "description": "Filter by category (exact match)",
+          "type": "string"
         },
         "minReputation": {
-          "type": "number",
-          "description": "Minimum reputation score"
+          "description": "Minimum reputation score",
+          "type": "number"
         },
         "limit": {
+          "description": "Max results to return (default: 20)",
           "type": "integer",
           "exclusiveMinimum": 0,
-          "description": "Max results to return (default: 20)"
+          "maximum": 9007199254740991
         }
       }
     }
@@ -228,10 +231,10 @@
           "description": "Maximum number of similar agents to return (1-50). The seed agent is excluded from results, so a top_k of 10 returns up to 10 *peers* (not 10 including the seed)."
         },
         "min_similarity": {
+          "description": "Cosine-similarity floor in [0, 1]. Default 0.3 (matches EVO's ADR-062 default). Hits below this threshold are dropped before hydration.",
           "type": "number",
           "minimum": 0,
-          "maximum": 1,
-          "description": "Cosine-similarity floor in [0, 1]. Default 0.3 (matches EVO's ADR-062 default). Hits below this threshold are dropped before hydration."
+          "maximum": 1
         }
       },
       "required": [
@@ -246,8 +249,8 @@
       "type": "object",
       "properties": {
         "agentAddress": {
-          "type": "string",
-          "description": "Public key (authority) of the agent to look up. If omitted, returns this agent's profile."
+          "description": "Public key (authority) of the agent to look up. If omitted, returns this agent's profile.",
+          "type": "string"
         }
       }
     }
@@ -258,8 +261,8 @@
       "type": "object",
       "properties": {
         "agentAddress": {
-          "type": "string",
-          "description": "Public key (authority) of the agent to look up. If omitted, returns this agent's snapshot."
+          "description": "Public key (authority) of the agent to look up. If omitted, returns this agent's snapshot.",
+          "type": "string"
         }
       }
     }
@@ -285,8 +288,8 @@
       "type": "object",
       "properties": {
         "vaultAddress": {
-          "type": "string",
-          "description": "Public key (base58) of the vault. If omitted, derives from the agent's wallet."
+          "description": "Public key (base58) of the vault. If omitted, derives from the agent's wallet.",
+          "type": "string"
         }
       }
     }
@@ -311,12 +314,12 @@
           "description": "Public key of the token mint or program to add/remove"
         },
         "perTxLimit": {
-          "type": "number",
-          "description": "REQUIRED for add_token. Max per-tx amount in the mint's base units."
+          "description": "REQUIRED for add_token. Max per-tx amount in the mint's base units.",
+          "type": "number"
         },
         "dailyLimit": {
-          "type": "number",
-          "description": "REQUIRED for add_token. Max daily amount in the mint's base units. Must be >= perTxLimit."
+          "description": "REQUIRED for add_token. Max daily amount in the mint's base units. Must be >= perTxLimit.",
+          "type": "number"
         }
       },
       "required": [
@@ -350,6 +353,7 @@
         "max_price_usdc_micros": {
           "type": "integer",
           "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
           "description": "Hard cap on the payment in USDC micros (10^-6 USDC). Tool refuses if the x402 quote exceeds this value."
         },
         "request": {
@@ -364,6 +368,9 @@
             },
             "headers": {
               "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
               "additionalProperties": {
                 "type": "string"
               }
@@ -402,14 +409,15 @@
       "type": "object",
       "properties": {
         "agentIdentity": {
-          "type": "string",
-          "description": "Base58 agent_identity hot-key pubkey. Mutually exclusive with `vault`."
+          "description": "Base58 agent_identity hot-key pubkey. Mutually exclusive with `vault`.",
+          "type": "string"
         },
         "vault": {
-          "type": "string",
-          "description": "Base58 vault PDA. Mutually exclusive with `agentIdentity`."
+          "description": "Base58 vault PDA. Mutually exclusive with `agentIdentity`.",
+          "type": "string"
         },
         "actionKind": {
+          "description": "Optional filter — limit to this action kind only.",
           "type": "string",
           "enum": [
             "Transfer",
@@ -420,24 +428,24 @@
             "PauseToggle",
             "GrantTransfer",
             "GrantTokenTransfer"
-          ],
-          "description": "Optional filter — limit to this action kind only."
+          ]
         },
         "toolId": {
+          "description": "Optional 64-char hex SHA-256 tool_id. See `toolIdHash(name)` in `@agenomics/client`.",
           "type": "string",
-          "pattern": "^[0-9a-fA-F]{64}$",
-          "description": "Optional 64-char hex SHA-256 tool_id. See `toolIdHash(name)` in `@agenomics/client`."
+          "pattern": "^[0-9a-fA-F]{64}$"
         },
         "since": {
+          "description": "Optional lower-bound slot. Pass the previous response's `next_cursor.before_slot` to walk further into the past.",
           "type": "integer",
           "minimum": 0,
-          "description": "Optional lower-bound slot. Pass the previous response's `next_cursor.before_slot` to walk further into the past."
+          "maximum": 9007199254740991
         },
         "limit": {
+          "description": "Page size (1..500, default 50).",
           "type": "integer",
           "minimum": 1,
-          "maximum": 500,
-          "description": "Page size (1..500, default 50)."
+          "maximum": 500
         }
       }
     }
@@ -477,12 +485,12 @@
           "description": "Primary category (e.g., 'data-analysis', 'trading', 'content-generation')"
         },
         "capabilities": {
+          "minItems": 1,
+          "maxItems": 10,
           "type": "array",
           "items": {
             "type": "string"
           },
-          "minItems": 1,
-          "maxItems": 10,
           "description": "List of capability tags (1-10 tags)"
         },
         "pricingModel": {
@@ -500,12 +508,12 @@
           "description": "Price amount in SOL according to the pricing model"
         },
         "acceptedTokens": {
+          "minItems": 1,
+          "maxItems": 5,
           "type": "array",
           "items": {
             "type": "string"
           },
-          "minItems": 1,
-          "maxItems": 5,
           "description": "Mint addresses of accepted payment tokens (1-5 tokens)"
         }
       },
@@ -532,6 +540,7 @@
         "milestoneIndex": {
           "type": "integer",
           "minimum": 0,
+          "maximum": 9007199254740991,
           "description": "Zero-based index of the milestone to reject"
         }
       },
@@ -611,6 +620,7 @@
           "description": "Base58-encoded Solana public key of the new agent_identity hot key. Must be a valid pubkey; on-chain requires an Ed25519 proof-of-control signature over `vault_identity_bind_message(authority, newAgentIdentity)` (see `newAgentIdentitySecretKey`)."
         },
         "newAgentIdentitySecretKey": {
+          "description": "AUD-200 / ADR-124: optional. Base58 string or number[64] secret key for the new agent_identity. Required when `newAgentIdentity` differs from the wallet pubkey (operator-managed flow). Omit for self-bind (wallet IS the new agent_identity).",
           "anyOf": [
             {
               "type": "string",
@@ -619,18 +629,17 @@
               "description": "Base58-encoded 64-byte Solana secret key for the new agent_identity. Decoded server-side and used to sign the bind message; never sent on-chain."
             },
             {
+              "minItems": 64,
+              "maxItems": 64,
               "type": "array",
               "items": {
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 255
               },
-              "minItems": 64,
-              "maxItems": 64,
               "description": "JSON-style number[64] secret key for the new agent_identity. Same usage as the base58 form."
             }
-          ],
-          "description": "AUD-200 / ADR-124: optional. Base58 string or number[64] secret key for the new agent_identity. Required when `newAgentIdentity` differs from the wallet pubkey (operator-managed flow). Omit for self-bind (wallet IS the new agent_identity)."
+          ]
         }
       },
       "required": [
@@ -666,6 +675,7 @@
         "milestoneIndex": {
           "type": "integer",
           "minimum": 0,
+          "maximum": 9007199254740991,
           "description": "Zero-based index of the milestone to submit"
         }
       },
@@ -681,43 +691,43 @@
       "type": "object",
       "properties": {
         "name": {
-          "type": "string",
-          "description": "New agent name"
+          "description": "New agent name",
+          "type": "string"
         },
         "description": {
-          "type": "string",
-          "description": "New description"
+          "description": "New description",
+          "type": "string"
         },
         "category": {
-          "type": "string",
-          "description": "New primary category"
+          "description": "New primary category",
+          "type": "string"
         },
         "capabilities": {
+          "description": "New capability tags",
           "type": "array",
           "items": {
             "type": "string"
-          },
-          "description": "New capability tags"
+          }
         },
         "pricingModel": {
+          "description": "New pricing model",
           "type": "string",
           "enum": [
             "perTask",
             "perHour",
             "perToken"
-          ],
-          "description": "New pricing model"
+          ]
         },
         "pricingAmountSol": {
-          "type": "number",
-          "description": "New pricing amount in SOL"
+          "description": "New pricing amount in SOL",
+          "type": "number"
         },
         "acceptedTokens": {
+          "description": "New accepted token mint addresses",
           "type": "array",
           "items": {
             "type": "string"
-          },
-          "description": "New accepted token mint addresses"
+          }
         }
       }
     }
@@ -740,6 +750,7 @@
         "maxTxsPerHour": {
           "type": "integer",
           "minimum": 0,
+          "maximum": 9007199254740991,
           "description": "New max transactions per hour"
         }
       },
@@ -803,14 +814,14 @@
       "type": "object",
       "properties": {
         "accounts": {
+          "minItems": 1,
+          "maxItems": 16,
           "type": "array",
           "items": {
             "type": "string",
             "minLength": 32,
             "description": "Base58-encoded `AgentProfile` PDA pubkey"
           },
-          "minItems": 1,
-          "maxItems": 16,
           "description": "Batch of agent-profile PDAs to sweep (1-16). AUD-106: the on-chain handler enforces the same upper bound."
         }
       },

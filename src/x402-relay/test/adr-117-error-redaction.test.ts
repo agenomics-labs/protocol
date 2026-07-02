@@ -51,6 +51,7 @@ import * as crypto from "node:crypto";
 import type { AddressInfo } from "node:net";
 import type { Server as HttpServer } from "node:http";
 import { getBase58Decoder } from "@solana/kit";
+import type { Logger } from "pino";
 
 // C4-X402-03: the relay now rejects any `txSignature` that is not a
 // syntactically valid 64-byte Solana signature BEFORE it reaches the
@@ -72,55 +73,65 @@ process.env.PAYMENT_RECIPIENT ??= "TEST_RECIPIENT_PUBKEY_NOT_USED_BY_MOCK";
 type RelayModule = typeof import("../index.js");
 let relay: RelayModule;
 
-// Captured pino output across the suite. We attach a custom
-// write-stream destination to the relay's `logger` (the production
-// pino instance) so the `logger.error(..., err)` call inside the
-// verify catch flows through to a buffer we can grep. The relay's
-// logger is module-scoped and there is no setter — but pino has no
-// API for replacing destinations after construction either, so we
-// instead hook the underlying `_writable` symbol via the documented
-// `pino.symbols.streamSym`. Simpler: spy via `process.stdout.write`
-// in non-pretty mode is fragile under the pino-pretty transport
-// (which is what the default dev config uses).
+// Captured pino output across the suite. We attach a spy directly to
+// the relay's `logger` (the production pino instance) so the
+// `logger.error(..., err)` call inside the verify catch flows through
+// to a buffer we can grep.
 //
-// Practical choice: set `LOG_PRETTY=0` BEFORE the dynamic import so
-// pino writes plain ndjson directly to stdout. Intercept the
-// destination by monkey-patching the logger's child-prototype-bound
-// `write` after we have a relay handle. This matches the pattern
-// other tests use (off-201-203-205-206 swaps logger instances on a
-// constructed LiveRedisDedup).
+// A prior version of this capture monkey-patched `process.stdout.write`
+// / `process.stderr.write`. That doesn't work: pino's default
+// destination (no explicit stream/transport configured) is a SonicBoom
+// instance that writes to the file descriptor directly, bypassing
+// `process.stdout.write` entirely — and the `logger` singleton is
+// constructed at module-import time (`logger.ts`'s top-level `export
+// const logger = pino(...)`), before this test file gets a chance to
+// patch anything. The captured buffer ended up empty of real pino
+// output and instead picked up whatever else happens to call
+// `process.stdout.write` at the JS level (e.g. the test runner's own
+// internal reporter protocol), which is why the assertion failure
+// showed binary-looking garbage instead of the expected log line.
+//
+// Fix: patch the logger's actual destination stream, reached via
+// pino's own documented internal symbol `Symbol(pino.stream)`. This
+// works regardless of when the logger was constructed relative to the
+// patch, because we're not relying on a global (`process.stdout`)
+// pino may or may not route through — we're wrapping the specific
+// object pino itself holds a reference to and calls `.write()` on.
+//
+// `LOG_PRETTY=0` (set before the dynamic import below) keeps this
+// simple by keeping the destination a plain SonicBoom writing ndjson,
+// not the pino-pretty worker-thread transport.
 process.env.LOG_PRETTY = "0";
 
-// Capture stderr writes too — pino's error level routes to stderr
-// in some configs. We attach the listener on import.
 const capturedLogLines: string[] = [];
-const originalStdoutWrite = process.stdout.write.bind(process.stdout);
-const originalStderrWrite = process.stderr.write.bind(process.stderr);
+let restoreStreamWrite: (() => void) | null = null;
 
-function startLogCapture(): void {
+function startLogCapture(logger: Logger): void {
   capturedLogLines.length = 0;
-  // Wrap stdout.write — call through so the test runner output is not
-  // suppressed and we just observe a tee of every line pino emits.
-  (process.stdout as { write: typeof process.stdout.write }).write = ((
-    chunk: string | Uint8Array,
-    ...rest: unknown[]
-  ): boolean => {
-    const str = typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+  const streamSym = Object.getOwnPropertySymbols(logger).find(
+    (s) => s.toString() === "Symbol(pino.stream)",
+  );
+  if (!streamSym) {
+    throw new Error(
+      "startLogCapture: Symbol(pino.stream) not found on the logger instance — pino internals changed",
+    );
+  }
+  const stream = (logger as unknown as Record<symbol, { write: (chunk: unknown) => boolean }>)[
+    streamSym
+  ];
+  const originalWrite = stream.write.bind(stream);
+  stream.write = (chunk: unknown): boolean => {
+    const str = typeof chunk === "string" ? chunk : Buffer.from(chunk as Uint8Array).toString("utf8");
     capturedLogLines.push(str);
-    return (originalStdoutWrite as (c: unknown, ...r: unknown[]) => boolean)(chunk, ...rest);
-  }) as typeof process.stdout.write;
-  (process.stderr as { write: typeof process.stderr.write }).write = ((
-    chunk: string | Uint8Array,
-    ...rest: unknown[]
-  ): boolean => {
-    const str = typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
-    capturedLogLines.push(str);
-    return (originalStderrWrite as (c: unknown, ...r: unknown[]) => boolean)(chunk, ...rest);
-  }) as typeof process.stderr.write;
+    return originalWrite(chunk as never);
+  };
+  restoreStreamWrite = () => {
+    stream.write = originalWrite;
+  };
 }
 function stopLogCapture(): void {
-  (process.stdout as { write: typeof process.stdout.write }).write = originalStdoutWrite;
-  (process.stderr as { write: typeof process.stderr.write }).write = originalStderrWrite;
+  restoreStreamWrite?.();
+  restoreStreamWrite = null;
 }
 
 describe("ADR-117: typed error envelope redaction", () => {
@@ -336,9 +347,9 @@ describe("ADR-117: typed error envelope redaction", () => {
       // from under `verifyPaymentOnChain`, this assertion still pins
       // the pino-emission contract for the catch path.
 
-      startLogCapture();
-
       const { logger } = await import("../logger.js");
+      startLogCapture(logger);
+
       const SIG = "adr-117-pino-capture-" + crypto.randomBytes(4).toString("hex");
       const LEAKY_ERR = new Error(
         "connect ECONNREFUSED http://internal-rpc.example.com:8899",
